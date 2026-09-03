@@ -1,0 +1,24 @@
+---
+alwaysApply: true
+---
+
+# AI Context Index
+
+このファイルは、AIが仕様文書を探すための入口です。
+
+## 目的別の参照先
+
+- 全体仕様
+  - `.cursor/rules/Otofa.mdc`
+- 出力仕様
+  - `.cursor/rules/Output.mdc`
+
+## AIへの依頼テンプレート
+
+以下のように依頼すると、参照漏れを減らせます。
+
+## 運用ルール
+
+- 仕様を更新したら、該当mdの変更に合わせてこの索引も更新する。
+- 重要仕様は、文書本文だけでなく `.cursor/rules/copilot-instructions.md` にも短く要約する。
+- 実装時は、回答で参照した文書名を明示する。

@@ -1,0 +1,59 @@
+{
+	"folders": [
+		{
+			"name": "Onta_core",
+			"path": "./Onta_core"
+		},
+		{
+			"name": "cursor rules",
+			"path": "./.cursor/rules",
+		},
+		{
+			"name": "root",
+			"path": "./"
+		}
+	],
+	"settings": {
+		"workbench.settings.useSplitJSON": true,
+		"editor.fontSize": 12,
+		"git.ignoreLimitWarning": true,
+		"editor.trimAutoWhitespace": false,
+		"diffEditor.ignoreTrimWhitespace": true,
+		"files.trimTrailingWhitespace": true,
+		"github.copilot.nextEditSuggestions.enabled": true,
+		"github.copilot.enable": {
+			"csharp": true
+		},
+		"editor.inlineSuggest.enabled": true,
+		"editor.formatOnSave": true,
+		"files.associations": {
+			"*.conf": "ini",
+			"*.config": "ini",
+			"*.properties": "ini",
+		},
+		"search.exclude": {
+			"**/bin": true
+		},
+		"files.exclude": {
+			"**/bin": true
+		},
+		"prettier.documentSelectors": [
+			"**/*.md",
+			"**/*.mdc",
+			"**/*.markdown"
+		],
+	},
+	"extensions": {
+		"recommendations": [
+			"MS-CEINTL.vscode-language-pack-ja",
+			"esbenp.prettier-vscode",
+			"donjayamanne.githistory",
+			"mhutchie.git-graph",
+			"GitHub.copilot-chat",
+			"mattpocock.ts-error-translator",
+			"usernamehw.errorlens",
+			"ms-dotnettools.csdevkit",
+			"ms-dotnettools.csharp"
+		]
+	}
+}
