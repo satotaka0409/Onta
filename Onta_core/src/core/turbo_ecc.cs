@@ -2,11 +2,38 @@ using System;
 
 namespace Otofa.Core;
 
+/// <summary>
+/// 固定 1024 バイトのペイロードを扱うターボ符号エンコーダ／デコーダです。
+/// </summary>
 public static class TurboEcc1024
 {
+    /// <summary>
+    /// 復号時の補正統計を表します。
+    /// </summary>
+    public readonly record struct DecodeMetrics(
+        int CorrectedBitCount,
+        int CorrectedByteCount,
+        int PayloadBitLength,
+        double CorrectionRate);
+
+    /// <summary>
+    /// <see cref="Encode(byte[])"/> が受け付けるペイロード長（バイト）です。
+    /// </summary>
     public const int DataUnitBytes = 1024;
+
+    /// <summary>
+    /// ペイロード長（ビット）です。
+    /// </summary>
     public const int DataUnitBits = DataUnitBytes * 8;
+
+    /// <summary>
+    /// 符号化後のビット長（符号化率 1/3）です。
+    /// </summary>
     public const int EncodedBits = DataUnitBits * 3;
+
+    /// <summary>
+    /// 符号化後のバイト長です。
+    /// </summary>
     public const int EncodedBytes = EncodedBits / 8;
 
     private const int StateCount = 8;
@@ -17,6 +44,13 @@ public static class TurboEcc1024
     private static readonly int[,] NextState = BuildNextStateTable();
     private static readonly int[,] ParityBit = BuildParityTable();
 
+    /// <summary>
+    /// 1024 バイトのペイロードを符号化率 1/3 のターボ符号語へ変換します。
+    /// </summary>
+    /// <param name="data1024">ペイロード。長さは <see cref="DataUnitBytes"/> である必要があります。</param>
+    /// <returns>長さ <see cref="EncodedBytes"/> の符号化バイト列。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="data1024"/> が null の場合にスローされます。</exception>
+    /// <exception cref="ArgumentException">入力長が不正な場合にスローされます。</exception>
     public static byte[] Encode(byte[] data1024)
     {
         ArgumentNullException.ThrowIfNull(data1024);
@@ -25,6 +59,7 @@ public static class TurboEcc1024
             throw new ArgumentException($"Input must be exactly {DataUnitBytes} bytes.", nameof(data1024));
         }
 
+        // 符号化率 1/3: 系統ビット + 2 本の RSC 構成符号器のパリティで構成する。
         var dataBits = BytesToBits(data1024);
         var interleavedBits = InterleaveBits(dataBits, Interleaver);
 
@@ -43,7 +78,31 @@ public static class TurboEcc1024
         return PackBits(encodedTriples);
     }
 
+    /// <summary>
+    /// 反復 Max-Log-MAP 構成復号により、ターボ符号化ブロックを復号します。
+    /// </summary>
+    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> である必要があります。</param>
+    /// <param name="iterations">反復回数。0 より大きい必要があります。</param>
+    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。0 より大きい必要があります。</param>
+    /// <returns>長さ <see cref="DataUnitBytes"/> の復号ペイロード。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
+    /// <exception cref="ArgumentException">いずれかの引数が有効範囲外の場合にスローされます。</exception>
     public static byte[] Decode(byte[] encoded, int iterations = 6, double channelReliability = 2.0)
+    {
+        return Decode(encoded, out _, iterations, channelReliability);
+    }
+
+    /// <summary>
+    /// 反復 Max-Log-MAP 構成復号により、ターボ符号化ブロックを復号し補正統計も返します。
+    /// </summary>
+    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> である必要があります。</param>
+    /// <param name="metrics">補正統計。<see cref="DecodeMetrics.CorrectionRate"/> は 8192 ビットに対する補正率です。</param>
+    /// <param name="iterations">反復回数。0 より大きい必要があります。</param>
+    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。0 より大きい必要があります。</param>
+    /// <returns>長さ <see cref="DataUnitBytes"/> の復号ペイロード。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
+    /// <exception cref="ArgumentException">いずれかの引数が有効範囲外の場合にスローされます。</exception>
+    public static byte[] Decode(byte[] encoded, out DecodeMetrics metrics, int iterations = 6, double channelReliability = 2.0)
     {
         ArgumentNullException.ThrowIfNull(encoded);
         if (encoded.Length != EncodedBytes)
@@ -61,6 +120,7 @@ public static class TurboEcc1024
             throw new ArgumentException("Channel reliability must be > 0.", nameof(channelReliability));
         }
 
+        // 直列化された 3 要素組を、系統ビット・パリティ1・パリティ2へ分離する。
         var triples = UnpackBits(encoded, EncodedBits);
         var sysBits = new bool[DataUnitBits];
         var p1Bits = new bool[DataUnitBits];
@@ -74,6 +134,7 @@ public static class TurboEcc1024
             p2Bits[i] = triples[baseIndex + 2];
         }
 
+        // ハード判定ビットを簡易チャネル LLR に変換する。正は 0 優勢、負は 1 優勢。
         var systematic = BitsToLlr(sysBits, channelReliability);
         var parity1 = BitsToLlr(p1Bits, channelReliability);
         var parity2 = BitsToLlr(p2Bits, channelReliability);
@@ -81,6 +142,7 @@ public static class TurboEcc1024
 
         var apriori1 = new double[DataUnitBits];
 
+        // 2 つの構成復号器間で外部情報を反復交換する。
         for (var iter = 0; iter < iterations; iter++)
         {
             var extrinsic1 = DecodeSisoMaxLogMap(systematic, parity1, apriori1);
@@ -101,15 +163,49 @@ public static class TurboEcc1024
             decodedBits[i] = posterior[i] < 0.0;
         }
 
-        return BitsToBytes(decodedBits);
+        var correctedBitCount = CountDifferentBits(decodedBits, sysBits);
+        var decodedBytes = BitsToBytes(decodedBits);
+        var systematicBytes = BitsToBytes(sysBits);
+        var correctedByteCount = CountDifferentBytes(decodedBytes, systematicBytes);
+
+        metrics = new DecodeMetrics(
+            CorrectedBitCount: correctedBitCount,
+            CorrectedByteCount: correctedByteCount,
+            PayloadBitLength: DataUnitBits,
+            CorrectionRate: (double)correctedBitCount / DataUnitBits);
+
+        return decodedBytes;
     }
 
+    /// <summary>
+    /// ターボ符号化ブロックの復号を試みます。
+    /// </summary>
+    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> を想定します。</param>
+    /// <param name="decoded1024">成功時は復号ペイロード、失敗時は空配列。</param>
+    /// <param name="iterations">反復回数。</param>
+    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。</param>
+    /// <returns>復号成功時は <see langword="true"/>、それ以外は <see langword="false"/>。</returns>
     public static bool TryDecode(byte[] encoded, out byte[] decoded1024, int iterations = 6, double channelReliability = 2.0)
     {
+        return TryDecode(encoded, out decoded1024, out _, iterations, channelReliability);
+    }
+
+    /// <summary>
+    /// ターボ符号化ブロックの復号を試み、補正統計も返します。
+    /// </summary>
+    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> を想定します。</param>
+    /// <param name="decoded1024">成功時は復号ペイロード、失敗時は空配列。</param>
+    /// <param name="metrics">成功時は補正統計、失敗時は既定値。</param>
+    /// <param name="iterations">反復回数。</param>
+    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。</param>
+    /// <returns>復号成功時は <see langword="true"/>、それ以外は <see langword="false"/>。</returns>
+    public static bool TryDecode(byte[] encoded, out byte[] decoded1024, out DecodeMetrics metrics, int iterations = 6, double channelReliability = 2.0)
+    {
         decoded1024 = Array.Empty<byte>();
+        metrics = default;
         try
         {
-            decoded1024 = Decode(encoded, iterations, channelReliability);
+            decoded1024 = Decode(encoded, out metrics, iterations, channelReliability);
             return true;
         }
         catch
@@ -120,6 +216,7 @@ public static class TurboEcc1024
 
     private static bool[] EncodeRscParity(bool[] inputBits)
     {
+        // 再帰的系統畳み込み符号器を 1 本実行し、パリティのみを出力する。
         var parity = new bool[inputBits.Length];
         var state = 0;
 
@@ -139,6 +236,7 @@ public static class TurboEcc1024
         var alpha = new double[n + 1, StateCount];
         var beta = new double[n + 1, StateCount];
 
+        // 前向き（alpha）および後ろ向き（beta）の状態メトリクス。
         for (var s = 0; s < StateCount; s++)
         {
             alpha[0, s] = s == 0 ? 0.0 : NegativeInfinity;
@@ -193,6 +291,7 @@ public static class TurboEcc1024
             }
         }
 
+        // 各ビット位置の Max-Log-MAP LLR と外部情報を算出する。
         var extrinsic = new double[n];
         for (var k = 0; k < n; k++)
         {
@@ -240,6 +339,7 @@ public static class TurboEcc1024
 
     private static int[,] BuildNextStateTable()
     {
+        // 記憶素子 3 段の RSC 符号器に対するトレリス遷移表。
         var table = new int[StateCount, 2];
         for (var state = 0; state < StateCount; state++)
         {
@@ -260,6 +360,7 @@ public static class TurboEcc1024
 
     private static int[,] BuildParityTable()
     {
+        // 各（状態, 入力）ペアに対するトレリスのパリティ出力表。
         var table = new int[StateCount, 2];
         for (var state = 0; state < StateCount; state++)
         {
@@ -280,6 +381,7 @@ public static class TurboEcc1024
 
     private static int[] BuildInterleaver(int length, int seed)
     {
+        // 固定シードの Fisher-Yates で、再現可能なインタリーバ順列を生成する。
         var permutation = new int[length];
         for (var i = 0; i < length; i++)
         {
@@ -342,6 +444,7 @@ public static class TurboEcc1024
 
     private static double[] BitsToLlr(bool[] bits, double reliability)
     {
+        // 簡易復号器で使う、ハード判定から疑似 LLR への写像。
         var llr = new double[bits.Length];
         for (var i = 0; i < bits.Length; i++)
         {
@@ -414,5 +517,33 @@ public static class TurboEcc1024
         }
 
         return bits;
+    }
+
+    private static int CountDifferentBytes(byte[] left, byte[] right)
+    {
+        var different = 0;
+        for (var i = 0; i < left.Length; i++)
+        {
+            if (left[i] != right[i])
+            {
+                different++;
+            }
+        }
+
+        return different;
+    }
+
+    private static int CountDifferentBits(bool[] left, bool[] right)
+    {
+        var different = 0;
+        for (var i = 0; i < left.Length; i++)
+        {
+            if (left[i] != right[i])
+            {
+                different++;
+            }
+        }
+
+        return different;
     }
 }

@@ -7,11 +7,18 @@ using System.Numerics;
 
 namespace Otofa.Core;
 
+/// <summary>
+/// OFDM フレームを生成し、複素サンプルを CSV に出力する CLI エントリポイントです。
+/// </summary>
 public static class OfdmProgram
 {
+    /// <summary>
+    /// OFDM フレームを 1 つ生成し、CSV ファイルへ保存します。
+    /// </summary>
+    /// <param name="args">省略可能な引数です。先頭要素は出力 CSV パスとして扱われます。</param>
     public static void Main(string[] args)
     {
-        // Parameters: FFT size, used carriers, cyclic prefix, and OFDM symbol count.
+        // パラメータ: FFT サイズ、使用サブキャリア数、巡回プレフィックス長、OFDM シンボル数。
         var config = new OfdmConfig(
             fftSize: 64,
             activeSubcarriers: 52,
@@ -39,6 +46,7 @@ public static class OfdmProgram
         using var writer = new StreamWriter(path, false);
         writer.WriteLine("index,real,imag,magnitude");
 
+        // 後段処理しやすいよう、カルチャ非依存かつ再現性のある数値書式で保存する。
         for (var i = 0; i < samples.Length; i++)
         {
             var s = samples[i];
@@ -51,14 +59,45 @@ public static class OfdmProgram
     }
 }
 
+/// <summary>
+/// コンストラクタで妥当性検証を行う、不変の OFDM パラメータ集合です。
+/// </summary>
 public sealed record OfdmConfig
 {
+    /// <summary>
+    /// FFT サイズを取得します。2 のべき乗である必要があります。
+    /// </summary>
     public int FftSize { get; }
+
+    /// <summary>
+    /// 有効サブキャリア数を取得します。
+    /// </summary>
     public int ActiveSubcarriers { get; }
+
+    /// <summary>
+    /// サンプル数単位の巡回プレフィックス長を取得します。
+    /// </summary>
     public int CyclicPrefixLength { get; }
+
+    /// <summary>
+    /// 1 フレームあたりに生成する OFDM シンボル数を取得します。
+    /// </summary>
     public int OfdmSymbolCount { get; }
+
+    /// <summary>
+    /// 乱数シードを取得します。0 の場合は <see cref="Random.Shared"/> を使用します。
+    /// </summary>
     public int RandomSeed { get; }
 
+    /// <summary>
+    /// 妥当性検証済みの OFDM 設定を初期化します。
+    /// </summary>
+    /// <param name="fftSize">FFT サイズ。0 より大きい 2 のべき乗を指定します。</param>
+    /// <param name="activeSubcarriers">有効サブキャリア数。0 より大きく FFT サイズ未満を指定します。</param>
+    /// <param name="cyclicPrefixLength">巡回プレフィックス長。0 以上かつ FFT サイズ未満を指定します。</param>
+    /// <param name="ofdmSymbolCount">OFDM シンボル数。0 より大きい値を指定します。</param>
+    /// <param name="randomSeed">乱数シード。0 を指定すると <see cref="Random.Shared"/> を使用します。</param>
+    /// <exception cref="ArgumentException">いずれかの引数が有効範囲外の場合にスローされます。</exception>
     public OfdmConfig(
         int fftSize,
         int activeSubcarriers,
@@ -94,19 +133,31 @@ public sealed record OfdmConfig
     }
 }
 
+/// <summary>
+/// <see cref="OfdmConfig"/> に基づいて時間領域 OFDM サンプルを生成します。
+/// </summary>
 public sealed class OfdmGenerator
 {
     private readonly OfdmConfig _config;
     private readonly Random _random;
 
+    /// <summary>
+    /// 新しいジェネレータを初期化します。
+    /// </summary>
+    /// <param name="config">妥当性検証済みの OFDM 設定。</param>
     public OfdmGenerator(OfdmConfig config)
     {
         _config = config;
         _random = config.RandomSeed == 0 ? Random.Shared : new Random(config.RandomSeed);
     }
 
+    /// <summary>
+    /// 設定された OFDM シンボル列に巡回プレフィックスを付与した 1 フレームを生成します。
+    /// </summary>
+    /// <returns>フレーム全体を連結した時間領域サンプル列。</returns>
     public Complex[] GenerateFrame()
     {
+        // 出力フレームは、CP 付与後の OFDM シンボルを連結した配列。
         var symbolsWithCp = new List<Complex>(_config.OfdmSymbolCount * (_config.FftSize + _config.CyclicPrefixLength));
 
         for (var i = 0; i < _config.OfdmSymbolCount; i++)
@@ -125,7 +176,7 @@ public sealed class OfdmGenerator
         var bins = new Complex[_config.FftSize];
         var half = _config.ActiveSubcarriers / 2;
 
-        // Symmetrically place active QPSK carriers around DC, excluding the DC carrier.
+        // DC を除き、QPSK サブキャリアを DC 周りに対称配置する。
         for (var k = 1; k <= half; k++)
         {
             bins[k] = GenerateQpskSymbol();
@@ -142,6 +193,7 @@ public sealed class OfdmGenerator
 
     private Complex GenerateQpskSymbol()
     {
+        // ここではグレイマッピングは行わず、QPSK シンボルをランダム生成する。
         var real = _random.Next(2) == 0 ? -1.0 : 1.0;
         var imag = _random.Next(2) == 0 ? -1.0 : 1.0;
         return new Complex(real, imag) / Math.Sqrt(2.0);
@@ -162,6 +214,7 @@ public sealed class OfdmGenerator
 
     private static Complex[] InverseFft(Complex[] frequency)
     {
+        // 共役を用いた IFFT: IFFT(x) = conj( FFT(conj(x)) ) / N。
         var conjugated = frequency.Select(Complex.Conjugate).ToArray();
         var fft = Fft(conjugated);
         var n = frequency.Length;
@@ -181,6 +234,7 @@ public sealed class OfdmGenerator
         var output = new Complex[n];
         Array.Copy(input, output, n);
 
+        // ビット反転並べ替えを伴う反復型 radix-2 Cooley-Tukey FFT。
         var bits = (int)Math.Log2(n);
 
         for (var i = 0; i < n; i++)
@@ -194,6 +248,7 @@ public sealed class OfdmGenerator
 
         for (var len = 2; len <= n; len <<= 1)
         {
+            // 部分 DFT 長を段階的に増やすバタフライ演算。
             var angle = -2.0 * Math.PI / len;
             var wLen = Complex.FromPolarCoordinates(1.0, angle);
 
@@ -217,6 +272,7 @@ public sealed class OfdmGenerator
 
     private static int ReverseBits(int value, int bitCount)
     {
+        // バタフライ演算前のビット反転並べ替えで使用する。
         var reversed = 0;
         for (var i = 0; i < bitCount; i++)
         {

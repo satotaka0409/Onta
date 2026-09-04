@@ -15,6 +15,21 @@
 	],
 	"settings": {
 		"workbench.settings.useSplitJSON": true,
+		"dotnetAcquisitionExtension.sharedExistingDotnetPath": "C:\\Program Files\\dotnet\\dotnet.exe",
+		"files.encoding": "utf8",
+		"files.autoGuessEncoding": false,
+		"terminal.integrated.defaultProfile.windows": "PowerShell (UTF-8)",
+		"terminal.integrated.profiles.windows": {
+			"PowerShell (UTF-8)": {
+				"source": "PowerShell",
+				"args": [
+					"-NoLogo",
+					"-NoExit",
+					"-Command",
+					"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding"
+				]
+			}
+		},
 		"editor.fontSize": 12,
 		"git.ignoreLimitWarning": true,
 		"editor.trimAutoWhitespace": false,

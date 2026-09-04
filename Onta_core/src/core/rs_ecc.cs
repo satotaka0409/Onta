@@ -3,14 +3,57 @@ using System.Collections.Generic;
 
 namespace Otofa.Core;
 
+/// <summary>
+/// 固定長 GF(256) ブロック向けの Reed-Solomon 誤り訂正 API です。
+/// </summary>
+/// <remarks>
+/// 128 バイトのペイロードに 32 シンボルのパリティを付加して処理します。
+/// </remarks>
 public static class RsEcc256
 {
+    /// <summary>
+    /// 復号時の補正統計を表します。
+    /// </summary>
+    public readonly record struct DecodeMetrics(
+        int PayloadCorrectedBitCount,
+        int PayloadCorrectedByteCount,
+        int CodewordCorrectedSymbolCount,
+        int CodewordCorrectedBitCount,
+        int PayloadBitLength,
+        double PayloadCorrectionRate);
+
+    /// <summary>
+    /// <see cref="Encode(byte[])"/> が受け付けるペイロード長（バイト）です。
+    /// </summary>
     public const int DataUnitSize = 128;
+
+    /// <summary>
+    /// 各ブロックに付加するパリティシンボル数です。
+    /// </summary>
     public const int ParitySymbols = 32;
+
+    /// <summary>
+    /// 1 コードブロックあたりのペイロード長（バイト）です。
+    /// </summary>
     public const int PayloadBytesPerBlock = 128;
+
+    /// <summary>
+    /// 1 ブロックあたりの符号語長（バイト）です。
+    /// </summary>
     public const int CodewordBytesPerBlock = PayloadBytesPerBlock + ParitySymbols;
+
+    /// <summary>
+    /// <see cref="Decode(byte[])"/> が受け付ける符号化データ長（バイト）です。
+    /// </summary>
     public const int EncodedUnitSize = CodewordBytesPerBlock;
 
+    /// <summary>
+    /// ペイロード 1 ブロックを符号化し、パリティシンボルを付加します。
+    /// </summary>
+    /// <param name="data128">ペイロード。長さは <see cref="DataUnitSize"/> である必要があります。</param>
+    /// <returns>符号化後の符号語バイト列。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="data128"/> が null の場合にスローされます。</exception>
+    /// <exception cref="ArgumentException">入力長が不正な場合にスローされます。</exception>
     public static byte[] Encode(byte[] data128)
     {
         ArgumentNullException.ThrowIfNull(data128);
@@ -22,7 +65,29 @@ public static class RsEcc256
         return ReedSolomonCodec.EncodeBlock(data128, ParitySymbols);
     }
 
+    /// <summary>
+    /// 符号語 1 ブロックを復号し、訂正可能な誤りを補正します。
+    /// </summary>
+    /// <param name="encoded160">符号語。長さは <see cref="EncodedUnitSize"/> である必要があります。</param>
+    /// <returns>復号後のペイロードバイト列。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="encoded160"/> が null の場合にスローされます。</exception>
+    /// <exception cref="ArgumentException">入力長が不正な場合にスローされます。</exception>
+    /// <exception cref="InvalidOperationException">誤り位置の特定または訂正に失敗した場合にスローされます。</exception>
     public static byte[] Decode(byte[] encoded160)
+    {
+        return Decode(encoded160, out _);
+    }
+
+    /// <summary>
+    /// 符号語 1 ブロックを復号し、補正統計とともに返します。
+    /// </summary>
+    /// <param name="encoded160">符号語。長さは <see cref="EncodedUnitSize"/> である必要があります。</param>
+    /// <param name="metrics">補正統計。<see cref="DecodeMetrics.PayloadCorrectionRate"/> は 1024 ビットに対する補正率です。</param>
+    /// <returns>復号後のペイロードバイト列。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="encoded160"/> が null の場合にスローされます。</exception>
+    /// <exception cref="ArgumentException">入力長が不正な場合にスローされます。</exception>
+    /// <exception cref="InvalidOperationException">誤り位置の特定または訂正に失敗した場合にスローされます。</exception>
+    public static byte[] Decode(byte[] encoded160, out DecodeMetrics metrics)
     {
         ArgumentNullException.ThrowIfNull(encoded160);
         if (encoded160.Length != EncodedUnitSize)
@@ -30,15 +95,36 @@ public static class RsEcc256
             throw new ArgumentException($"Input must be exactly {EncodedUnitSize} bytes.", nameof(encoded160));
         }
 
-        return ReedSolomonCodec.DecodeBlock(encoded160, ParitySymbols);
+        var result = ReedSolomonCodec.DecodeBlockWithMetrics(encoded160, ParitySymbols, PayloadBytesPerBlock);
+        metrics = result.Metrics;
+        return result.Decoded;
     }
 
+    /// <summary>
+    /// 符号語 1 ブロックの復号と誤り訂正を試みます。
+    /// </summary>
+    /// <param name="encoded160">符号語。長さは <see cref="EncodedUnitSize"/> を想定します。</param>
+    /// <param name="decoded128">成功時は復号ペイロード、失敗時は空配列。</param>
+    /// <returns>復号成功時は <see langword="true"/>、それ以外は <see langword="false"/>。</returns>
     public static bool TryDecode(byte[] encoded160, out byte[] decoded128)
     {
+        return TryDecode(encoded160, out decoded128, out _);
+    }
+
+    /// <summary>
+    /// 符号語 1 ブロックの復号と誤り訂正を試み、補正統計も返します。
+    /// </summary>
+    /// <param name="encoded160">符号語。長さは <see cref="EncodedUnitSize"/> を想定します。</param>
+    /// <param name="decoded128">成功時は復号ペイロード、失敗時は空配列。</param>
+    /// <param name="metrics">成功時は補正統計、失敗時は既定値。</param>
+    /// <returns>復号成功時は <see langword="true"/>、それ以外は <see langword="false"/>。</returns>
+    public static bool TryDecode(byte[] encoded160, out byte[] decoded128, out DecodeMetrics metrics)
+    {
         decoded128 = Array.Empty<byte>();
+        metrics = default;
         try
         {
-            decoded128 = Decode(encoded160);
+            decoded128 = Decode(encoded160, out metrics);
             return true;
         }
         catch
@@ -50,6 +136,8 @@ public static class RsEcc256
 
 internal static class ReedSolomonCodec
 {
+    internal readonly record struct DecodeResult(byte[] Decoded, RsEcc256.DecodeMetrics Metrics);
+
     private const int FieldSize = 256;
     private const int PrimitivePolynomial = 0x11D;
 
@@ -74,6 +162,7 @@ internal static class ReedSolomonCodec
             throw new ArgumentException("Block length + parity must be <= 255 for GF(256) RS.", nameof(data));
         }
 
+        // バッファ先頭にメッセージを置き、多項式除算の余りを末尾パリティとして生成する。
         var generator = BuildGeneratorPolynomial(paritySymbols);
         var buffer = new int[data.Length + paritySymbols];
         for (var i = 0; i < data.Length; i++)
@@ -107,20 +196,39 @@ internal static class ReedSolomonCodec
 
     public static byte[] DecodeBlock(byte[] received, int paritySymbols)
     {
+        return DecodeBlockWithMetrics(received, paritySymbols, received.Length - paritySymbols).Decoded;
+    }
+
+    public static DecodeResult DecodeBlockWithMetrics(byte[] received, int paritySymbols, int payloadBytes)
+    {
         ArgumentNullException.ThrowIfNull(received);
         if (received.Length <= paritySymbols)
         {
             throw new ArgumentException("Received block is too short.", nameof(received));
         }
 
+        if (payloadBytes <= 0 || payloadBytes > received.Length - paritySymbols)
+        {
+            throw new ArgumentException("Payload byte length is out of range.", nameof(payloadBytes));
+        }
+
+        // シンドロームが全ゼロでなければ誤りあり、全ゼロなら訂正不要。
         var syndromes = CalculateSyndromes(received, paritySymbols);
         if (IsAllZero(syndromes))
         {
             var noParity = new byte[received.Length - paritySymbols];
             Array.Copy(received, 0, noParity, 0, noParity.Length);
-            return noParity;
+            var noCorrectionMetrics = new RsEcc256.DecodeMetrics(
+                PayloadCorrectedBitCount: 0,
+                PayloadCorrectedByteCount: 0,
+                CodewordCorrectedSymbolCount: 0,
+                CodewordCorrectedBitCount: 0,
+                PayloadBitLength: payloadBytes * 8,
+                PayloadCorrectionRate: 0.0);
+            return new DecodeResult(noParity, noCorrectionMetrics);
         }
 
+        // Berlekamp-Massey でシンドローム列から誤り位置多項式を求める。
         var errorLocator = FindErrorLocatorBerlekampMassey(syndromes, paritySymbols);
         var errorPositions = FindErrorPositions(errorLocator, received.Length);
         if (errorPositions.Count == 0)
@@ -129,6 +237,7 @@ internal static class ReedSolomonCodec
         }
 
         var corrected = (byte[])received.Clone();
+        // 誤り値を解いて、特定したシンボル位置へ補正を適用する。
         var magnitudes = SolveErrorMagnitudes(syndromes, errorPositions, corrected.Length);
         for (var i = 0; i < errorPositions.Count; i++)
         {
@@ -141,13 +250,64 @@ internal static class ReedSolomonCodec
             throw new InvalidOperationException("Too many errors to correct.");
         }
 
+        var payloadCorrectedBits = CountDifferentBits(received, corrected, payloadBytes);
+        var payloadCorrectedBytes = CountDifferentBytes(received, corrected, payloadBytes);
+        var codewordCorrectedBits = CountDifferentBits(received, corrected, corrected.Length);
+        var codewordCorrectedSymbols = CountDifferentBytes(received, corrected, corrected.Length);
+
         var decoded = new byte[corrected.Length - paritySymbols];
         Array.Copy(corrected, 0, decoded, 0, decoded.Length);
-        return decoded;
+        var metrics = new RsEcc256.DecodeMetrics(
+            PayloadCorrectedBitCount: payloadCorrectedBits,
+            PayloadCorrectedByteCount: payloadCorrectedBytes,
+            CodewordCorrectedSymbolCount: codewordCorrectedSymbols,
+            CodewordCorrectedBitCount: codewordCorrectedBits,
+            PayloadBitLength: payloadBytes * 8,
+            PayloadCorrectionRate: payloadBytes == 0 ? 0.0 : (double)payloadCorrectedBits / (payloadBytes * 8));
+
+        return new DecodeResult(decoded, metrics);
+    }
+
+    private static int CountDifferentBytes(byte[] left, byte[] right, int count)
+    {
+        var different = 0;
+        for (var i = 0; i < count; i++)
+        {
+            if (left[i] != right[i])
+            {
+                different++;
+            }
+        }
+
+        return different;
+    }
+
+    private static int CountDifferentBits(byte[] left, byte[] right, int count)
+    {
+        var bitCount = 0;
+        for (var i = 0; i < count; i++)
+        {
+            bitCount += CountBitsInByte(left[i] ^ right[i]);
+        }
+
+        return bitCount;
+    }
+
+    private static int CountBitsInByte(int value)
+    {
+        var count = 0;
+        while (value != 0)
+        {
+            value &= value - 1;
+            count++;
+        }
+
+        return count;
     }
 
     private static void InitializeTables()
     {
+        // 乗除算を高速化するため、GF(256) の log/antilog テーブルを構築する。
         var x = 1;
         for (var i = 0; i < FieldSize - 1; i++)
         {
@@ -168,6 +328,7 @@ internal static class ReedSolomonCodec
 
     private static int[] BuildGeneratorPolynomial(int paritySymbols)
     {
+        // 生成多項式 g(x) = Π_{i=0..parity-1}(x - a^i) を構築する。
         var gen = new[] { 1 };
         for (var i = 0; i < paritySymbols; i++)
         {
@@ -203,6 +364,7 @@ internal static class ReedSolomonCodec
 
     private static int[] FindErrorLocatorBerlekampMassey(int[] syndromes, int paritySymbols)
     {
+        // 低次係数先頭の表現で Berlekamp-Massey の漸化式を適用する。
         var c = new List<int> { 1 };
         var b = new List<int> { 1 };
 
@@ -255,6 +417,7 @@ internal static class ReedSolomonCodec
             return new List<int>();
         }
 
+        // Chien 探索で誤り位置多項式の根を探索し、誤りシンボル位置へ対応付ける。
         var positions = new List<int>(degree);
         for (var i = 0; i < messageLength; i++)
         {
@@ -298,6 +461,7 @@ internal static class ReedSolomonCodec
 
     private static int[] SolveLinearSystemGf256(int[,] augmentedMatrix, int size)
     {
+        // 誤り値算出のため、GF(256) 上でガウス消去を行う。
         var row = 0;
         for (var col = 0; col < size && row < size; col++)
         {
@@ -458,6 +622,7 @@ internal static class ReedSolomonCodec
             return 0;
         }
 
+        // log(a*b) = log(a) + log(b) (mod 255) を利用する。
         return ExpTable[LogTable[a] + LogTable[b]];
     }
 
@@ -504,6 +669,7 @@ internal static class ReedSolomonCodec
             return 0;
         }
 
+        // log(value^power) = power * log(value) (mod 255) を利用する。
         var logValue = LogTable[value];
         var exponent = (logValue * power) % 255;
         if (exponent < 0)
