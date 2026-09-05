@@ -18,7 +18,10 @@
 
   <ItemGroup>
     <Compile Remove="test\**" />
+    <Compile Remove="test_host\**" />
     <None Include="test\**" Exclude="test\bin\**;test\obj\**" />
+    <None Include="test_host\**" Exclude="test_host\bin\**;test_host\obj\**" />
     <Page Remove="test\**" />
+    <Page Remove="test_host\**" />
   </ItemGroup>
 </Project>

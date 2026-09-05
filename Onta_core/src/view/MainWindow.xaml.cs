@@ -35,6 +35,7 @@ public partial class MainWindow : Window
             $"チャンネル: {snap.ChannelMode}\n" +
             $"サブキャリア: {snap.ActiveSubcarriers}\n" +
             $"変調: {snap.ModulationScheme}\n" +
+            $"インターリーブ: ×{snap.BlockInterleaveFactor}\n" +
             $"入力: {snap.InputFilePath}\n" +
             $"WAV出力: {(snap.WriteWav ? snap.WavOutputPath : "なし")}\n" +
             $"音声出力: {(snap.PlayAudio ? "あり" : "なし")}",

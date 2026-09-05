@@ -42,14 +42,15 @@ public partial class FileEstimatePanel : UserControl
         var headerSec = Math.Max(1, (int)Math.Round(10 * rateFactor));
         var blockSec = Math.Max(1, (int)Math.Round(9 * rateFactor));
         var blockCount = 4;
-        var total = headerSec + (blockSec * blockCount);
+        var interleave = Math.Clamp(settings.BlockInterleaveFactor, 1, 3);
+        var total = (headerSec * (interleave + 1)) + (blockSec * blockCount * interleave);
         var maxBar = Math.Max(1, total);
 
         _rows.Clear();
-        _rows.Add(CreateRow("ヘッダー", headerSec, maxBar));
+        _rows.Add(CreateRow("ヘッダー", headerSec * (interleave + 1), maxBar));
         for (var i = 1; i <= blockCount; i++)
         {
-            _rows.Add(CreateRow($"ブロック{i}", blockSec, maxBar));
+            _rows.Add(CreateRow($"ブロック{i}×{interleave}", blockSec * interleave, maxBar));
         }
 
         _rows.Add(CreateRow("合計", total, maxBar));

@@ -9,6 +9,7 @@ public sealed record SendSettingsSnapshot(
     ChannelMode ChannelMode,
     int ActiveSubcarriers,
     ModulationScheme ModulationScheme,
+    int BlockInterleaveFactor,
     string InputFilePath,
     bool WriteWav,
     string WavOutputPath,

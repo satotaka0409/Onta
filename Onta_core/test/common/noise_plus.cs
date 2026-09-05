@@ -60,7 +60,7 @@ public static class NoisePlus
         double noiseLevel,
         int seed = 0)
     {
-        if (left.Length != right.Length)
+        if (right.Length != 0 && left.Length != right.Length)
         {
             throw new ArgumentException("Left/right length mismatch.");
         }
@@ -74,7 +74,10 @@ public static class NoisePlus
         for (var i = 0; i < left.Length; i++)
         {
             left[i] = ClampToUnit(left[i] + (NextGaussian(random) * noiseLevel));
-            right[i] = ClampToUnit(right[i] + (NextGaussian(random) * noiseLevel));
+            if (right.Length != 0)
+            {
+                right[i] = ClampToUnit(right[i] + (NextGaussian(random) * noiseLevel));
+            }
         }
     }
 
@@ -90,7 +93,7 @@ public static class NoisePlus
     {
         ArgumentNullException.ThrowIfNull(left);
         ArgumentNullException.ThrowIfNull(right);
-        if (left.Length != right.Length)
+        if (right.Length != 0 && left.Length != right.Length)
         {
             throw new ArgumentException("Left/right length mismatch.");
         }

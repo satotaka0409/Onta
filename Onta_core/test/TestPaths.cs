@@ -1,49 +1,35 @@
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// テスト用入出力パスの解決です（in_files / out_files）。
+/// テスト用入出力パスの解決です（Onta_core/test/in_files / out_files）。
 /// </summary>
 internal static class TestPaths
 {
     private const string InputFileName = "QR_326213.png";
+    private static readonly string TestProjectDir = LocateTestProjectDir();
 
     /// <summary>
-    /// 既定の入力 PNG（in_files/QR_326213.png）を解決します。
+    /// 既定の入力 PNG（test/in_files/QR_326213.png）を解決します。
     /// </summary>
     public static string ResolveInputPng()
     {
-        foreach (var candidate in EnumerateInputCandidates(InputFileName))
+        var path = Path.Combine(TestProjectDir, "in_files", InputFileName);
+        if (!File.Exists(path))
         {
-            var full = Path.GetFullPath(candidate);
-            if (File.Exists(full))
-            {
-                return full;
-            }
+            throw new FileNotFoundException($"入力ファイルが見つかりません: {path}");
         }
 
-        throw new FileNotFoundException($"入力ファイル in_files/{InputFileName} が見つかりません。");
+        return path;
     }
 
     /// <summary>
-    /// 出力ディレクトリ（out_files）を解決し、なければ作成します。
+    /// 出力ディレクトリ（C:\proj\Onta\Onta_core\test\out_files）を解決し、なければ作成します。
     /// </summary>
     public static string ResolveOutputDir()
     {
-        foreach (var candidate in EnumerateOutputDirCandidates())
-        {
-            var full = Path.GetFullPath(candidate);
-            var parent = Path.GetDirectoryName(full);
-            // out_files の親（Onta ルート）が見える候補を優先する。
-            if (parent is not null && Directory.Exists(parent))
-            {
-                Directory.CreateDirectory(full);
-                return full;
-            }
-        }
-
-        var fallback = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "out_files"));
-        Directory.CreateDirectory(fallback);
-        return fallback;
+        var dir = Path.Combine(TestProjectDir, "out_files");
+        Directory.CreateDirectory(dir);
+        return dir;
     }
 
     /// <summary>
@@ -54,23 +40,27 @@ internal static class TestPaths
         return Path.Combine(ResolveOutputDir(), fileName);
     }
 
-    private static IEnumerable<string> EnumerateInputCandidates(string fileName)
+    /// <summary>
+    /// Onta_core.Tests.csproj がある test ディレクトリを探します。
+    /// </summary>
+    private static string LocateTestProjectDir()
     {
-        yield return Path.Combine("in_files", fileName);
-        yield return Path.Combine("..", "in_files", fileName);
-        yield return Path.Combine("..", "..", "..", "..", "in_files", fileName);
-        yield return Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "in_files", fileName);
-        yield return Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "in_files", fileName);
-        yield return Path.Combine(@"C:\proj\Onta\in_files", fileName);
-    }
+        const string projectFile = "Onta_core.Tests.csproj";
+        var known = @"C:\proj\Onta\Onta_core\test";
+        if (File.Exists(Path.Combine(known, projectFile)))
+        {
+            return known;
+        }
 
-    private static IEnumerable<string> EnumerateOutputDirCandidates()
-    {
-        yield return "out_files";
-        yield return Path.Combine("..", "out_files");
-        yield return Path.Combine("..", "..", "..", "..", "out_files");
-        yield return Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "out_files");
-        yield return Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "out_files");
-        yield return @"C:\proj\Onta\out_files";
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, projectFile)))
+            {
+                return dir.FullName;
+            }
+        }
+
+        throw new DirectoryNotFoundException(
+            $"テストプロジェクトディレクトリ（{projectFile}）が見つかりません。");
     }
 }

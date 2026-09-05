@@ -63,20 +63,29 @@ public sealed class OntaTest4
         }
 
         var leftF = ToFloat(leftOut);
-        var rightF = ToFloat(rightOut.Length == 0 ? leftOut : rightOut);
+        var rightF = rightOut.Length == 0 ? Array.Empty<float>() : ToFloat(rightOut);
         // ピーク正規化後にノイズを載せる（正規化前だと小振幅 OFDM に対し実効 SNR が極端に悪化する）。
-        NormalizeToPeak(leftF, rightF, (float)Profile.SamplePeak);
+        if (rightF.Length == 0)
+        {
+            NormalizeToPeakMono(leftF, (float)Profile.SamplePeak);
+        }
+        else
+        {
+            NormalizeToPeak(leftF, rightF, (float)Profile.SamplePeak);
+        }
+
         if (whiteNoiseLevel > 0.0)
         {
             NoisePlus.AddWhiteNoiseInMemory(leftF, rightF, whiteNoiseLevel, ImpairmentSeed);
         }
 
-        WavWriter.WriteStereo16(
+        WavWriter.WritePcm16(
             wavPath,
             Profile.SampleRate,
             ToComplex(leftF),
-            ToComplex(rightF),
-            Profile.SamplePeak);
+            rightF.Length == 0 ? Array.Empty<Complex>() : ToComplex(rightF),
+            Profile.SamplePeak,
+            Profile.ChannelMode);
 
         (double Amount, double WowPhase, double FlutterPhase)? wowParams =
             wowAmount > 0.0 ? (wowAmount, wowPhase, flutterPhase) : null;
@@ -109,6 +118,26 @@ public sealed class OntaTest4
         {
             left[i] *= scale;
             right[i] *= scale;
+        }
+    }
+
+    private static void NormalizeToPeakMono(float[] samples, float peakTarget)
+    {
+        var peak = 0.0f;
+        for (var i = 0; i < samples.Length; i++)
+        {
+            peak = Math.Max(peak, Math.Abs(samples[i]));
+        }
+
+        if (peak <= 0.0f)
+        {
+            return;
+        }
+
+        var scale = peakTarget / peak;
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] *= scale;
         }
     }
 

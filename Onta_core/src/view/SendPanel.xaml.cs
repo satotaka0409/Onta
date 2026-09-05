@@ -29,6 +29,7 @@ public partial class SendPanel : UserControl
             ChannelMode: MonoRadio.IsChecked == true ? ChannelMode.Mono : ChannelMode.Stereo,
             ActiveSubcarriers: ReadSelectedInt("Subcarrier", 18),
             ModulationScheme: ReadSelectedModulation(),
+            BlockInterleaveFactor: ReadSelectedInt("Interleave", 1),
             InputFilePath: InputPathBox.Text,
             WriteWav: WriteWavCheck.IsChecked == true,
             WavOutputPath: WavPathBox.Text,

@@ -7,12 +7,15 @@
       "type": "process",
       "args": [
         "build",
-        "${workspaceFolder}/Onta_core/Onta_core.csproj",
+        "C:/proj/Onta/Onta_core/Onta_core.csproj",
         "-c",
         "Debug",
         "/property:GenerateFullPaths=true",
         "/consoleloggerparameters:NoSummary"
       ],
+      "options": {
+        "cwd": "C:/proj/Onta"
+      },
       "problemMatcher": "$msCompile",
       "group": {
         "kind": "build",
@@ -20,17 +23,20 @@
       }
     },
     {
-      "label": "build-tests-debug",
+      "label": "build-testhost-debug",
       "command": "dotnet",
       "type": "process",
       "args": [
         "build",
-        "${workspaceFolder}/Onta_core/test/Onta_core.Tests.csproj",
+        "C:/proj/Onta/Onta_core/test_host/Onta_core.TestHost.csproj",
         "-c",
         "Debug",
         "/property:GenerateFullPaths=true",
         "/consoleloggerparameters:NoSummary"
       ],
+      "options": {
+        "cwd": "C:/proj/Onta"
+      },
       "problemMatcher": "$msCompile",
       "group": "build"
     }

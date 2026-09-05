@@ -41,7 +41,7 @@ public enum ChannelMode : byte
     Mono = 0,
 
     /// <summary>
-    /// ステレオ（L/R でサブキャリア配置をずらす）。
+    /// ステレオ（L/R でサブキャリアをずらし、各 ch に ActiveSubcarriers 本＝合計 2 倍）。
     /// </summary>
     Stereo = 1
 }
@@ -93,6 +93,7 @@ public sealed record OfdmConfig
 
     /// <summary>
     /// ステレオ時に R チャンネルの各サブキャリアを外側へずらすビン数を取得します。
+    /// L/R は別データ・各 ActiveSubcarriers 本（合計 2 倍）です。
     /// </summary>
     public int StereoFrequencyShiftBins { get; }
 
