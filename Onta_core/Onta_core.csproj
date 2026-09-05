@@ -1,16 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Library</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <!-- LiveCharts2 / SkiaSharp 3 向けに Windows 10 SDK を明示 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Onta.Core</RootNamespace>
     <AssemblyName>Onta</AssemblyName>
     <LangVersion>latest</LangVersion>
+    <ApplicationIcon />
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.0" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="test\**" />
     <None Include="test\**" Exclude="test\bin\**;test\obj\**" />
+    <Page Remove="test\**" />
   </ItemGroup>
 </Project>

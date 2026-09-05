@@ -1,0 +1,69 @@
+<UserControl x:Class="Onta.View.SendPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <TextBlock Text="送信" FontSize="18" FontWeight="Bold" Margin="4,0,0,8"/>
+
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="130"/>
+        <ColumnDefinition Width="130"/>
+        <ColumnDefinition Width="130"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <GroupBox Header="チャンネル" Margin="4">
+        <StackPanel Margin="8">
+          <RadioButton x:Name="StereoRadio" Content="ステレオ" GroupName="Channel" IsChecked="True" Margin="0,0,0,8"/>
+          <RadioButton x:Name="MonoRadio" Content="モノラル" GroupName="Channel"/>
+        </StackPanel>
+      </GroupBox>
+
+      <GroupBox Grid.Column="1" Header="サブキャリア" Margin="4">
+        <StackPanel Margin="8">
+          <RadioButton Content="9-SC" Tag="9" GroupName="Subcarrier" Checked="OnSettingsChanged"/>
+          <RadioButton Content="18-SC" Tag="18" GroupName="Subcarrier" IsChecked="True" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+          <RadioButton Content="27-SC" Tag="27" GroupName="Subcarrier" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+          <RadioButton Content="36-SC" Tag="36" GroupName="Subcarrier" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+        </StackPanel>
+      </GroupBox>
+
+      <GroupBox Grid.Column="2" Header="変調" Margin="4">
+        <StackPanel Margin="8">
+          <RadioButton Content="BPSK" Tag="Bpsk" GroupName="Modulation" Checked="OnSettingsChanged"/>
+          <RadioButton Content="QPSK" Tag="Qpsk" GroupName="Modulation" IsChecked="True" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+          <RadioButton Content="16QAM" Tag="Qam16" GroupName="Modulation" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+          <RadioButton Content="64QAM" Tag="Qam64" GroupName="Modulation" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+        </StackPanel>
+      </GroupBox>
+
+      <GroupBox Grid.Column="3" Header="入出力" Margin="4">
+        <Grid Margin="8">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Button Content="ファイル選択" Width="100" HorizontalAlignment="Left" Click="OnBrowseInput"/>
+          <TextBox x:Name="InputPathBox" Grid.Row="1" Margin="0,8,0,0" IsReadOnly="True"/>
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+            <CheckBox x:Name="WriteWavCheck" Content="WAV出力" IsChecked="True" VerticalAlignment="Center" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged"/>
+            <Button Content="…" Width="36" Margin="12,0,0,0" Click="OnBrowseWav"/>
+            <CheckBox x:Name="PlayAudioCheck" Content="音声出力" Margin="16,0,0,0" VerticalAlignment="Center" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged"/>
+          </StackPanel>
+          <TextBox x:Name="WavPathBox" Grid.Row="3" Margin="0,8,0,0" IsReadOnly="True"/>
+        </Grid>
+      </GroupBox>
+    </Grid>
+
+    <Button Grid.Row="2" Content="スタート" Width="120" Height="34"
+            HorizontalAlignment="Right" Margin="0,8,4,0" Click="OnStartClick"/>
+  </Grid>
+</UserControl>

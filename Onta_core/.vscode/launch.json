@@ -1,0 +1,58 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Onta (WPF Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-onta-debug",
+      "program": "${workspaceFolder}/bin/Debug/net8.0-windows10.0.19041.0/Onta.exe",
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "stopAtEntry": false
+    },
+    {
+      "name": "Debug Onta_core.Tests",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-tests-debug",
+      "program": "C:\\Program Files\\dotnet\\dotnet.exe",
+      "args": [
+        "exec",
+        "--runtimeconfig",
+        "${workspaceFolder}/test/bin/Debug/net8.0-windows10.0.19041.0/Onta_core.Tests.runtimeconfig.json",
+        "--depsfile",
+        "${workspaceFolder}/test/bin/Debug/net8.0-windows10.0.19041.0/Onta_core.Tests.deps.json",
+        "${workspaceFolder}/test/bin/Debug/net8.0-windows10.0.19041.0/testhost.dll",
+        "${workspaceFolder}/test/bin/Debug/net8.0-windows10.0.19041.0/Onta_core.Tests.dll"
+      ],
+      "cwd": "${workspaceFolder}/test/bin/Debug/net8.0-windows10.0.19041.0",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    },
+    {
+      "name": "Debug OntaTest1 only",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-tests-debug",
+      "program": "C:\\Program Files\\dotnet\\dotnet.exe",
+      "args": [
+        "test",
+        "${workspaceFolder}/test/Onta_core.Tests.csproj",
+        "-c",
+        "Debug",
+        "--no-build",
+        "--nologo",
+        "--filter",
+        "FullyQualifiedName~OntaTest1"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    }
+  ]
+}

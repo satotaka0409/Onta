@@ -8,6 +8,7 @@
 #   make
 #   make CONFIG=Debug
 #   make test
+#   make testdebug
 #   make clean
 #
 # DOTNET のパス指定例:
@@ -18,7 +19,7 @@ PROJECT := Onta_core/Onta_core.csproj
 TEST_PROJECT := Onta_core/test/Onta_core.Tests.csproj
 CONFIG  ?= Release
 
-.PHONY: all build clean rebuild test
+.PHONY: all build clean rebuild test testdebug
 
 all: build
 
@@ -34,3 +35,9 @@ clean:
 
 test: build
 	"$(DOTNET)" test "$(TEST_PROJECT)" -c "$(CONFIG)" --no-build --nologo
+
+# ブレークポイント用（Debug / 最適化なし）
+testdebug:
+	"$(DOTNET)" build "$(PROJECT)" -c Debug --nologo
+	"$(DOTNET)" build "$(TEST_PROJECT)" -c Debug --nologo
+	"$(DOTNET)" test "$(TEST_PROJECT)" -c Debug --no-build --nologo

@@ -1,0 +1,39 @@
+<Window x:Class="Onta.View.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Onta.View"
+        Title="Onta"
+        Width="920" Height="840"
+        MinWidth="800" MinHeight="720"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BrushBg}">
+  <Grid Margin="10">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="260"/>
+      <RowDefinition Height="*" MinHeight="220"/>
+      <RowDefinition Height="0.8*" MinHeight="180"/>
+    </Grid.RowDefinitions>
+
+    <Border Grid.Row="0" Style="{StaticResource PanelBorder}" Margin="0,0,0,8">
+      <local:SendPanel x:Name="SendPanel"/>
+    </Border>
+
+    <Border Grid.Row="1" Style="{StaticResource PanelBorder}" Margin="0,0,0,8">
+      <local:ReceivePanel x:Name="ReceivePanel"/>
+    </Border>
+
+    <Border Grid.Row="2" Style="{StaticResource PanelBorder}" Padding="4">
+      <TabControl BorderThickness="0" Background="Transparent">
+        <TabItem Header="送信タブ">
+          <local:FileEstimatePanel x:Name="EstimatePanel" Margin="8"/>
+        </TabItem>
+        <TabItem Header="受信タブ">
+          <TextBlock Margin="12"
+                     Foreground="{StaticResource BrushTextMuted}"
+                     TextWrapping="Wrap"
+                     Text="受信詳細（たたき台）&#x0a;復元ファイル一覧・ブロック取り込み履歴などをここに表示します。&#x0a;エラー率グラフは上段の受信パネルで LiveCharts2 により更新されます。"/>
+        </TabItem>
+      </TabControl>
+    </Border>
+  </Grid>
+</Window>

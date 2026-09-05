@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/Onta_core/" />
+  <Folder Name="/Onta_core/test/">
+    <Project Path="Onta_core/test/Onta_core.Tests.csproj" />
+  </Folder>
+  <Project Path="Onta_core/Onta_core.csproj" />
+</Solution>

@@ -16,6 +16,7 @@
 	"settings": {
 		"workbench.settings.useSplitJSON": true,
 		"dotnetAcquisitionExtension.sharedExistingDotnetPath": "C:\\Program Files\\dotnet\\dotnet.exe",
+		"dotnet.defaultSolution": "Onta.slnx",
 		"files.encoding": "utf8",
 		"files.autoGuessEncoding": false,
 		"terminal.integrated.defaultProfile.windows": "PowerShell (UTF-8)",
@@ -48,10 +49,8 @@
 			"*.mdc": "markdown"
 		},
 		"search.exclude": {
-			"**/bin": true
-		},
-		"files.exclude": {
-			"**/bin": true
+			"**/bin": true,
+			"**/obj": true
 		},
 		"prettier.documentSelectors": [
 			"**/*.md",

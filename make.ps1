@@ -6,6 +6,7 @@
 #   .\make.ps1 build
 #   .\make.ps1 clean
 #   .\make.ps1 test
+#   .\make.ps1 testdebug
 #   .\make.ps1 rebuild -Config Debug
 #   .\make.ps1 build -Dotnet "C:\Program Files\dotnet\dotnet.exe"
 #
@@ -14,7 +15,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("all", "build", "clean", "rebuild", "test")]
+    [ValidateSet("all", "build", "clean", "rebuild", "test", "testdebug")]
     [string]$Target = "build",
 
     [string]$Config = "Release",
@@ -74,6 +75,15 @@ function Invoke-Test {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+function Invoke-TestDebug {
+    & $dotnetExe build $project -c Debug --nologo
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $dotnetExe build $testProject -c Debug --nologo
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $dotnetExe test $testProject -c Debug --no-build --nologo
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 switch ($Target) {
     "all" { Invoke-Build }
     "build" { Invoke-Build }
@@ -83,4 +93,5 @@ switch ($Target) {
         Invoke-Build
     }
     "test" { Invoke-Test }
+    "testdebug" { Invoke-TestDebug }
 }

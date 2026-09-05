@@ -28,7 +28,7 @@ public sealed class OntaTest4
             whiteNoiseLevel: WhiteNoiseLevel,
             wowAmount: WowFlutterAmount,
             wavName: "QR_326213_test4.wav",
-            restoredName: "QR_326213_test4__.png");
+            restoredName: "QR_326213_test4.png");
     }
 
     private void RoundTripWithImpairments(
@@ -38,9 +38,8 @@ public sealed class OntaTest4
         string restoredName)
     {
         var inputPath = TestPaths.ResolveInputPng();
-        var outputDir = Path.GetDirectoryName(inputPath)!;
-        var wavPath = Path.Combine(outputDir, wavName);
-        var restoredPath = Path.Combine(outputDir, restoredName);
+        var wavPath = TestPaths.ResolveOutputPath(wavName);
+        var restoredPath = TestPaths.ResolveOutputPath(restoredName);
 
         var original = File.ReadAllBytes(inputPath);
         var codec = new FileWavCodec(Profile);
