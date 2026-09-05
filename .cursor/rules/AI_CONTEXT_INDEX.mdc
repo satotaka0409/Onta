@@ -9,9 +9,11 @@ alwaysApply: true
 ## 目的別の参照先
 
 - 全体仕様
-  - `.cursor/rules/Otofa.mdc`
-- 出力仕様
-  - `.cursor/rules/Output.mdc`
+  - `.cursor/rules/Onta.mdc`
+- データ仕様
+  - `.cursor/rules/data_struct.mdc`
+- 変調仕様
+  - `.cursor/rules/modulation.mdc`
 
 ## AIへの依頼テンプレート
 

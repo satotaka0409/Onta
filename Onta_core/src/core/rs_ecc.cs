@@ -1,4 +1,4 @@
-namespace Otofa.Core;
+namespace Onta.Core;
 
 /// <summary>
 /// 固定長 GF(256) ブロック向けの Reed-Solomon 誤り訂正 API です。

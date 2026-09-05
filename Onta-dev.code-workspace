@@ -45,6 +45,7 @@
 			"*.conf": "ini",
 			"*.config": "ini",
 			"*.properties": "ini",
+			"*.mdc": "markdown"
 		},
 		"search.exclude": {
 			"**/bin": true
@@ -57,6 +58,10 @@
 			"**/*.mdc",
 			"**/*.markdown"
 		],
+		"[markdown]": {
+			"editor.formatOnSave": true,
+			"editor.defaultFormatter": "esbenp.prettier-vscode"
+		}
 	},
 	"extensions": {
 		"recommendations": [
@@ -66,9 +71,10 @@
 			"mhutchie.git-graph",
 			"GitHub.copilot-chat",
 			"mattpocock.ts-error-translator",
+			"esbenp.prettier-vscode",
 			"usernamehw.errorlens",
 			"ms-dotnettools.csdevkit",
-			"ms-dotnettools.csharp"
+			"ms-dotnettools.csharp",
 		]
 	}
 }

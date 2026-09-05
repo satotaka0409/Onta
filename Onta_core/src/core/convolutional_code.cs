@@ -1,4 +1,4 @@
-namespace Otofa.Core;
+namespace Onta.Core;
 
 /// <summary>
 /// レート 1/2 の畳み込み符号（拘束長 7, 生成多項式 171/133 octal）を提供します。
@@ -190,6 +190,203 @@ public static class ConvolutionalCode
             CorrectionRate: expectedCodeBitLength == 0 ? 0.0 : (double)correctedCodeBits / expectedCodeBitLength);
 
         return decoded;
+    }
+
+    /// <summary>
+    /// ソフト LLR 入力の復号です。LLR&gt;0 をビット 1 寄りと解釈します。
+    /// </summary>
+    public static byte[] DecodeSoft(ReadOnlySpan<double> codeLlrs, int originalByteLength, bool terminated = true)
+    {
+        return DecodeSoftToInfoLlrs(codeLlrs, originalByteLength, out _, terminated);
+    }
+
+    /// <summary>
+    /// Max-Log BCJR でソフト入力ソフト出力復号し、情報ビット LLR を返します。
+    /// 情報ビット LLR はターボと同じ極性（正=ビット0優勢、負=ビット1優勢）です。
+    /// QAM チャネル LLR の柔らかさをターボへ直接渡せます。
+    /// </summary>
+    public static byte[] DecodeSoftToInfoLlrs(
+        ReadOnlySpan<double> codeLlrs,
+        int originalByteLength,
+        out double[] infoLlrs,
+        bool terminated = true)
+    {
+        if (originalByteLength < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(originalByteLength));
+        }
+
+        var originalBitLength = originalByteLength * 8;
+        var expectedInputBits = originalBitLength + (terminated ? TailBits : 0);
+        var expectedCodeBitLength = expectedInputBits * OutputBitsPerInputBit;
+        if (codeLlrs.Length < expectedCodeBitLength)
+        {
+            throw new ArgumentException(
+                $"Soft LLR length {codeLlrs.Length} is shorter than required {expectedCodeBitLength}.",
+                nameof(codeLlrs));
+        }
+
+        var tCount = expectedCodeBitLength / OutputBitsPerInputBit;
+        const double negInf = -1e300;
+
+        // alpha[t, s]: 時刻 t で状態 s にいる前向きメトリック（t=0..tCount）
+        var alpha = new double[tCount + 1, StateCount];
+        var beta = new double[tCount + 1, StateCount];
+        for (var t = 0; t <= tCount; t++)
+        {
+            for (var s = 0; s < StateCount; s++)
+            {
+                alpha[t, s] = negInf;
+                beta[t, s] = negInf;
+            }
+        }
+
+        alpha[0, 0] = 0.0;
+        for (var t = 0; t < tCount; t++)
+        {
+            var llr0 = codeLlrs[t * 2];
+            var llr1 = codeLlrs[(t * 2) + 1];
+            for (var state = 0; state < StateCount; state++)
+            {
+                var a = alpha[t, state];
+                if (a <= negInf / 2)
+                {
+                    continue;
+                }
+
+                for (var inputBit = 0; inputBit <= 1; inputBit++)
+                {
+                    var nextState = GetNextState(state, inputBit);
+                    var gamma = BranchLogLikelihood(state, inputBit, llr0, llr1);
+                    var candidate = a + gamma;
+                    if (candidate > alpha[t + 1, nextState])
+                    {
+                        alpha[t + 1, nextState] = candidate;
+                    }
+                }
+            }
+        }
+
+        if (terminated)
+        {
+            beta[tCount, 0] = 0.0;
+        }
+        else
+        {
+            for (var s = 0; s < StateCount; s++)
+            {
+                beta[tCount, s] = 0.0;
+            }
+        }
+
+        for (var t = tCount - 1; t >= 0; t--)
+        {
+            var llr0 = codeLlrs[t * 2];
+            var llr1 = codeLlrs[(t * 2) + 1];
+            for (var state = 0; state < StateCount; state++)
+            {
+                for (var inputBit = 0; inputBit <= 1; inputBit++)
+                {
+                    var nextState = GetNextState(state, inputBit);
+                    var b = beta[t + 1, nextState];
+                    if (b <= negInf / 2)
+                    {
+                        continue;
+                    }
+
+                    var gamma = BranchLogLikelihood(state, inputBit, llr0, llr1);
+                    var candidate = b + gamma;
+                    if (candidate > beta[t, state])
+                    {
+                        beta[t, state] = candidate;
+                    }
+                }
+            }
+        }
+
+        var decidedBits = new bool[tCount];
+        var infoSoft = new double[tCount];
+        for (var t = 0; t < tCount; t++)
+        {
+            var llr0 = codeLlrs[t * 2];
+            var llr1 = codeLlrs[(t * 2) + 1];
+            var best0 = negInf;
+            var best1 = negInf;
+            for (var state = 0; state < StateCount; state++)
+            {
+                var a = alpha[t, state];
+                if (a <= negInf / 2)
+                {
+                    continue;
+                }
+
+                for (var inputBit = 0; inputBit <= 1; inputBit++)
+                {
+                    var nextState = GetNextState(state, inputBit);
+                    var b = beta[t + 1, nextState];
+                    if (b <= negInf / 2)
+                    {
+                        continue;
+                    }
+
+                    var metric = a + BranchLogLikelihood(state, inputBit, llr0, llr1) + b;
+                    if (inputBit == 0)
+                    {
+                        if (metric > best0)
+                        {
+                            best0 = metric;
+                        }
+                    }
+                    else if (metric > best1)
+                    {
+                        best1 = metric;
+                    }
+                }
+            }
+
+            // ターボ極性: L = log P(u=0)/P(u=1) ≈ best0 - best1
+            var app = best0 - best1;
+            if (double.IsNaN(app) || double.IsInfinity(app))
+            {
+                app = 0.0;
+            }
+
+            infoSoft[t] = app;
+            decidedBits[t] = app < 0.0;
+        }
+
+        var payloadBits = new bool[originalBitLength];
+        Array.Copy(decidedBits, 0, payloadBits, 0, originalBitLength);
+        infoLlrs = new double[originalBitLength];
+        Array.Copy(infoSoft, 0, infoLlrs, 0, originalBitLength);
+        return BitsToBytes(payloadBits);
+    }
+
+    /// <summary>
+    /// 符号ビット LLR（正=bit1）に対する枝の対数尤度です。
+    /// </summary>
+    private static double BranchLogLikelihood(int state, int inputBit, double llr0, double llr1)
+    {
+        var branch0 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]);
+        var branch1 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[1]);
+        // L>0 が bit1 優勢 → 期待ビットが 1 なら +L、0 なら 0（定数差は APP で相殺）
+        return ((branch0 == 1) ? llr0 : 0.0) + ((branch1 == 1) ? llr1 : 0.0);
+    }
+
+    private static int FindMinMetricState(double[] metrics)
+    {
+        var best = 0;
+        var bestMetric = metrics[0];
+        for (var s = 1; s < metrics.Length; s++)
+        {
+            if (metrics[s] < bestMetric)
+            {
+                bestMetric = metrics[s];
+                best = s;
+            }
+        }
+
+        return best;
     }
 
     /// <summary>

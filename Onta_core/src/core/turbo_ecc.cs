@@ -1,4 +1,4 @@
-namespace Otofa.Core;
+namespace Onta.Core;
 
 /// <summary>
 /// 固定 1024 バイトのペイロードを扱うターボ符号エンコーダ／デコーダです。
@@ -136,8 +136,64 @@ public static class TurboEcc1024
         var systematic = BitsToLlr(sysBits, channelReliability);
         var parity1 = BitsToLlr(p1Bits, channelReliability);
         var parity2 = BitsToLlr(p2Bits, channelReliability);
-        var systematicInterleaved = InterleaveDoubles(systematic, Interleaver);
+        return DecodeFromComponentLlrs(systematic, parity1, parity2, sysBits, iterations, out metrics);
+    }
 
+    /// <summary>
+    /// チャネル LLR（長さ <see cref="EncodedBits"/>、正=ビット0・負=ビット1）からターボ復号します。
+    /// </summary>
+    public static byte[] DecodeFromChannelLlrs(
+        ReadOnlySpan<double> encodedBitLlrs,
+        int iterations = 12)
+    {
+        return DecodeFromChannelLlrs(encodedBitLlrs, out _, iterations);
+    }
+
+    /// <summary>
+    /// チャネル LLR からターボ復号し、補正統計も返します。
+    /// </summary>
+    public static byte[] DecodeFromChannelLlrs(
+        ReadOnlySpan<double> encodedBitLlrs,
+        out DecodeMetrics metrics,
+        int iterations = 12)
+    {
+        if (encodedBitLlrs.Length < EncodedBits)
+        {
+            throw new ArgumentException(
+                $"Channel LLR length {encodedBitLlrs.Length} is shorter than required {EncodedBits}.",
+                nameof(encodedBitLlrs));
+        }
+
+        if (iterations <= 0)
+        {
+            throw new ArgumentException("Iterations must be > 0.", nameof(iterations));
+        }
+
+        var systematic = new double[DataUnitBits];
+        var parity1 = new double[DataUnitBits];
+        var parity2 = new double[DataUnitBits];
+        var sysBits = new bool[DataUnitBits];
+        for (var i = 0; i < DataUnitBits; i++)
+        {
+            var baseIndex = i * 3;
+            systematic[i] = encodedBitLlrs[baseIndex];
+            parity1[i] = encodedBitLlrs[baseIndex + 1];
+            parity2[i] = encodedBitLlrs[baseIndex + 2];
+            sysBits[i] = systematic[i] < 0.0;
+        }
+
+        return DecodeFromComponentLlrs(systematic, parity1, parity2, sysBits, iterations, out metrics);
+    }
+
+    private static byte[] DecodeFromComponentLlrs(
+        double[] systematic,
+        double[] parity1,
+        double[] parity2,
+        bool[] sysBits,
+        int iterations,
+        out DecodeMetrics metrics)
+    {
+        var systematicInterleaved = InterleaveDoubles(systematic, Interleaver);
         var apriori1 = new double[DataUnitBits];
 
         // 2 つの構成復号器間で外部情報を反復交換する。

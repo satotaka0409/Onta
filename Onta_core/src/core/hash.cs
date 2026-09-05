@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace Otofa.Core;
+namespace Onta.Core;
 
 /// <summary>
 /// SHA-256 / SHA-512 ハッシュを計算するユーティリティです。
