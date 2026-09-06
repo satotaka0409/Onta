@@ -9,8 +9,8 @@ namespace Onta.Core.Tests;
 public sealed class OntaTest5
 {
     private static readonly FileWavCodecProfile BaseProfile = new(
-        FftSize: 32,
-        CyclicPrefixLength: 8,
+        FftSize: 128,
+        CyclicPrefixLength: 32,
         ActiveSubcarriers: 9,
         ModulationScheme: ModulationScheme.Qpsk,
         ChannelMode: ChannelMode.Mono);
@@ -21,6 +21,34 @@ public sealed class OntaTest5
         Assert.Equal([0, 1, 2, 3], FileWavCodec.GetBlockEmissionOrder(4, passIndex: 0));
         Assert.Equal([1, 0, 3, 2], FileWavCodec.GetBlockEmissionOrder(4, passIndex: 1));
         Assert.Equal([0, 1, 2, 3], FileWavCodec.GetBlockEmissionOrder(4, passIndex: 2));
+    }
+
+    [Fact]
+    public void ConceptualLeftBins_MatchModulationGroupTable()
+    {
+        Assert.Equal(Enumerable.Range(10, 9), OfdmConfig.ResolveGroupBLeftBins());
+        Assert.Equal(Enumerable.Range(10, 9), OfdmConfig.ResolveConceptualLeftBins(9));
+        Assert.Equal(Enumerable.Range(10, 18), OfdmConfig.ResolveConceptualLeftBins(18));
+        Assert.Equal(Enumerable.Range(1, 27), OfdmConfig.ResolveConceptualLeftBins(27));
+        Assert.Equal(Enumerable.Range(1, 36), OfdmConfig.ResolveConceptualLeftBins(36));
+    }
+
+    [Fact]
+    public void HeaderOfdmConfig_UsesGroupBConceptualBins()
+    {
+        var groupB = OfdmConfig.ResolveGroupBLeftBins();
+        var (fft, cp) = OfdmConfig.RecommendedFft(ChannelMode.Mono);
+        var config = new OfdmConfig(
+            fftSize: fft,
+            activeSubcarriers: groupB.Length,
+            cyclicPrefixLength: cp,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Bpsk,
+            channelMode: ChannelMode.Mono,
+            conceptualLeftBins: groupB);
+
+        Assert.Equal(groupB, config.ConceptualLeftBins);
+        Assert.Equal(Enumerable.Range(10, 9), config.ConceptualLeftBins);
     }
 
     [Fact]

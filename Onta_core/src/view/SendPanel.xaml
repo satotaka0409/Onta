@@ -6,16 +6,16 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
     <TextBlock Text="送信" FontSize="18" FontWeight="Bold" Margin="4,0,0,8"/>
 
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="130"/>
-        <ColumnDefinition Width="130"/>
-        <ColumnDefinition Width="130"/>
+        <ColumnDefinition Width="110"/>
+        <ColumnDefinition Width="110"/>
+        <ColumnDefinition Width="110"/>
+        <ColumnDefinition Width="110"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
@@ -44,7 +44,15 @@
         </StackPanel>
       </GroupBox>
 
-      <GroupBox Grid.Column="3" Header="入出力" Margin="4">
+      <GroupBox Grid.Column="3" Header="繰り返し回数" Margin="4">
+        <StackPanel Margin="8">
+          <RadioButton x:Name="RepeatNoneRadio" Content="なし" Tag="1" GroupName="Repeat" IsChecked="True" Checked="OnSettingsChanged"/>
+          <RadioButton x:Name="Repeat2Radio" Content="2回" Tag="2" GroupName="Repeat" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+          <RadioButton x:Name="Repeat3Radio" Content="3回" Tag="3" GroupName="Repeat" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+        </StackPanel>
+      </GroupBox>
+
+      <GroupBox Grid.Column="4" Header="入出力" Margin="4">
         <Grid Margin="8">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -64,15 +72,7 @@
       </GroupBox>
     </Grid>
 
-    <GroupBox Grid.Row="2" Header="ブロックインターリーブ" Margin="4,8,4,0" HorizontalAlignment="Left">
-      <StackPanel Orientation="Horizontal" Margin="8,4">
-        <RadioButton Content="×1" Tag="1" GroupName="Interleave" IsChecked="True" Checked="OnSettingsChanged" Margin="0,0,16,0"/>
-        <RadioButton Content="×2" Tag="2" GroupName="Interleave" Checked="OnSettingsChanged" Margin="0,0,16,0"/>
-        <RadioButton Content="×3" Tag="3" GroupName="Interleave" Checked="OnSettingsChanged"/>
-      </StackPanel>
-    </GroupBox>
-
-    <Button Grid.Row="3" Content="スタート" Width="120" Height="34"
+    <Button Grid.Row="2" Content="スタート" Width="120" Height="34"
             HorizontalAlignment="Right" Margin="0,8,4,0" Click="OnStartClick"/>
   </Grid>
 </UserControl>

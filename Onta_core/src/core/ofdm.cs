@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Numerics;
 
 namespace Onta.Core;
@@ -92,8 +93,7 @@ public sealed record OfdmConfig
     public int PilotSpacing { get; }
 
     /// <summary>
-    /// ステレオ時に R チャンネルの各サブキャリアを外側へずらすビン数を取得します。
-    /// L/R は別データ・各 ActiveSubcarriers 本（合計 2 倍）です。
+    /// （互換用）旧ステレオ整数ビンずれ。現行実装では R は L 隣接 CH の中間周波数に固定するため未使用です。
     /// </summary>
     public int StereoFrequencyShiftBins { get; }
 
@@ -113,6 +113,12 @@ public sealed record OfdmConfig
     public int RandomSeed { get; }
 
     /// <summary>
+    /// L 概念ビン（N_L=128）。null のときは <see cref="ResolveConceptualLeftBins"/> を使用します。
+    /// FH/BH は GROUP B を明示指定します。
+    /// </summary>
+    public IReadOnlyList<int> ConceptualLeftBins { get; }
+
+    /// <summary>
     /// 妥当性検証済みの OFDM 設定を初期化します。
     /// </summary>
     public OfdmConfig(
@@ -127,7 +133,8 @@ public sealed record OfdmConfig
         int stereoFrequencyShiftBins = 1,
         int sampleRate = 44100,
         double frequencyInterleaveIntervalSeconds = 1.0,
-        int randomSeed = 0)
+        int randomSeed = 0,
+        IReadOnlyList<int>? conceptualLeftBins = null)
     {
         FftSize = fftSize;
         ActiveSubcarriers = activeSubcarriers;
@@ -141,15 +148,25 @@ public sealed record OfdmConfig
         SampleRate = sampleRate;
         FrequencyInterleaveIntervalSeconds = frequencyInterleaveIntervalSeconds;
         RandomSeed = randomSeed;
+        ConceptualLeftBins = conceptualLeftBins ?? ResolveConceptualLeftBins(activeSubcarriers);
 
         if (FftSize <= 0 || (FftSize & (FftSize - 1)) != 0)
         {
             throw new ArgumentException("FFT size must be a power of two and > 0.");
         }
 
-        if (ActiveSubcarriers <= 0 || ActiveSubcarriers >= FftSize)
+        if (ActiveSubcarriers is not (9 or 18 or 27 or 36))
         {
-            throw new ArgumentException("Active subcarriers must be > 0 and < FFT size.");
+            throw new ArgumentException(
+                "Active subcarriers must be 9, 18, 27, or 36 (modulation.mdc).",
+                nameof(activeSubcarriers));
+        }
+
+        if (ConceptualLeftBins.Count != ActiveSubcarriers)
+        {
+            throw new ArgumentException(
+                $"Conceptual left bin count ({ConceptualLeftBins.Count}) must equal active subcarriers ({ActiveSubcarriers}).",
+                nameof(conceptualLeftBins));
         }
 
         if (CyclicPrefixLength < 0 || CyclicPrefixLength >= FftSize)
@@ -195,11 +212,73 @@ public sealed record OfdmConfig
             throw new ArgumentException("Frequency interleave interval must be > 0.", nameof(frequencyInterleaveIntervalSeconds));
         }
 
-        var maxOffset = ActiveSubcarriers / 2;
-        if (channelMode == ChannelMode.Stereo && maxOffset + stereoFrequencyShiftBins >= FftSize / 2)
+        // modulation.mdc: 概念グリッド N_L=128。ステレオは分解能 2 倍（N=256）で中間周波数。
+        var maxConcept = ConceptualLeftBins.Max();
+        if (channelMode == ChannelMode.Mono)
         {
-            throw new ArgumentException("Stereo frequency shift is too large for current FFT size and active subcarriers.", nameof(stereoFrequencyShiftBins));
+            if (maxConcept >= FftSize / 2)
+            {
+                throw new ArgumentException(
+                    $"FFT size {FftSize} is too small for conceptual L bin {maxConcept} (need < {FftSize / 2}).",
+                    nameof(fftSize));
+            }
         }
+        else
+        {
+            var maxFineBin = (2 * maxConcept) + 1;
+            if (maxFineBin >= FftSize / 2)
+            {
+                throw new ArgumentException(
+                    $"FFT size {FftSize} is too small for stereo midpoint carriers (need max bin {maxFineBin} < {FftSize / 2}).",
+                    nameof(fftSize));
+            }
+        }
+    }
+
+    /// <summary>GROUP A の L 概念ビン（1–9）。</summary>
+    public static int[] ResolveGroupALeftBins() => Enumerable.Range(1, 9).ToArray();
+
+    /// <summary>GROUP B の L 概念ビン（10–18）。FH/BH で使用。</summary>
+    public static int[] ResolveGroupBLeftBins() => Enumerable.Range(10, 9).ToArray();
+
+    /// <summary>GROUP C の L 概念ビン（19–27）。</summary>
+    public static int[] ResolveGroupCLeftBins() => Enumerable.Range(19, 9).ToArray();
+
+    /// <summary>GROUP D の L 概念ビン（28–36）。</summary>
+    public static int[] ResolveGroupDLeftBins() => Enumerable.Range(28, 9).ToArray();
+
+    /// <summary>
+    /// modulation.mdc の GROUP 表に従う L 概念ビン（N_L=128）を返します。
+    /// SC-9=B(10-18), SC-18=B+C(10-27), SC-27=A+B+C(1-27), SC-36=A+B+C+D(1-36)。
+    /// </summary>
+    public static int[] ResolveConceptualLeftBins(int activeSubcarriers) =>
+        activeSubcarriers switch
+        {
+            9 => ResolveGroupBLeftBins(),
+            18 => ResolveGroupBLeftBins().Concat(ResolveGroupCLeftBins()).ToArray(),
+            27 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).Concat(ResolveGroupCLeftBins()).ToArray(),
+            36 => ResolveGroupALeftBins()
+                .Concat(ResolveGroupBLeftBins())
+                .Concat(ResolveGroupCLeftBins())
+                .Concat(ResolveGroupDLeftBins())
+                .ToArray(),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(activeSubcarriers),
+                activeSubcarriers,
+                "Active subcarriers must be 9, 18, 27, or 36.")
+        };
+
+    /// <summary>使用する L 概念ビンの最大値です。</summary>
+    public static int MaxConceptualLeftBin(int activeSubcarriers) =>
+        ResolveConceptualLeftBins(activeSubcarriers)[^1];
+
+    /// <summary>
+    /// 仕様周波数グリッドに合わせた推奨 FFT / CP です（mono=128, stereo=256）。
+    /// </summary>
+    public static (int FftSize, int CyclicPrefix) RecommendedFft(ChannelMode channelMode)
+    {
+        var fft = channelMode == ChannelMode.Stereo ? 256 : 128;
+        return (fft, fft / 4);
     }
 }
 
@@ -302,29 +381,49 @@ public sealed class OfdmGenerator
 
     /// <summary>
     /// 正周波数側のアクティブサブキャリアビンを返します（Hermitian 実 OFDM 用）。
+    /// modulation.mdc: L は GROUP 表の概念ビン、ステレオ R はその中間（細密グリッドで 2k / 2k+1）。
     /// </summary>
     private List<int> GetPositiveCarrierBins(CarrierChannel channel)
     {
-        var shift = 0;
-        if (_config.ChannelMode == ChannelMode.Stereo && channel == CarrierChannel.Right)
+        var conceptBins = _config.ConceptualLeftBins;
+        var bins = new List<int>(conceptBins.Count);
+        if (_config.ChannelMode == ChannelMode.Mono)
         {
-            shift = _config.StereoFrequencyShiftBins;
-        }
-
-        var bins = new List<int>(_config.ActiveSubcarriers);
-        for (var k = 1; k <= _config.ActiveSubcarriers; k++)
-        {
-            var bin = k + shift;
-            if (bin <= 0 || bin >= _config.FftSize / 2)
+            foreach (var k in conceptBins)
             {
-                throw new InvalidOperationException(
-                    $"Carrier bin {bin} is out of positive-frequency range for FFT={_config.FftSize}.");
+                AddPositiveBin(bins, k);
             }
 
-            bins.Add(bin);
+            return bins;
+        }
+
+        if (channel == CarrierChannel.Left)
+        {
+            foreach (var k in conceptBins)
+            {
+                AddPositiveBin(bins, 2 * k);
+            }
+        }
+        else
+        {
+            foreach (var k in conceptBins)
+            {
+                AddPositiveBin(bins, (2 * k) + 1);
+            }
         }
 
         return bins;
+    }
+
+    private void AddPositiveBin(List<int> bins, int bin)
+    {
+        if (bin <= 0 || bin >= _config.FftSize / 2)
+        {
+            throw new InvalidOperationException(
+                $"Carrier bin {bin} is out of positive-frequency range for FFT={_config.FftSize}.");
+        }
+
+        bins.Add(bin);
     }
 
     private static void ApplyHermitianSymmetry(Complex[] bins)
@@ -2803,51 +2902,8 @@ public sealed class OfdmGenerator
 
     private List<int> GetActiveCarrierBins(CarrierChannel channel)
     {
-        var half = _config.ActiveSubcarriers / 2;
-        var offsets = new List<int>(_config.ActiveSubcarriers);
-
-        for (var k = half; k >= 1; k--)
-        {
-            offsets.Add(-k);
-        }
-
-        for (var k = 1; k <= half; k++)
-        {
-            offsets.Add(k);
-        }
-
-        if (_config.ActiveSubcarriers % 2 != 0)
-        {
-            offsets.Add(half + 1);
-        }
-
-        if (_config.ChannelMode == ChannelMode.Stereo && channel == CarrierChannel.Right)
-        {
-            var shift = _config.StereoFrequencyShiftBins;
-            for (var i = 0; i < offsets.Count; i++)
-            {
-                offsets[i] += offsets[i] < 0 ? -shift : shift;
-            }
-        }
-
-        var bins = new List<int>(offsets.Count);
-        foreach (var offset in offsets)
-        {
-            if (offset == 0)
-            {
-                continue;
-            }
-
-            var bin = offset < 0 ? _config.FftSize + offset : offset;
-            if (bin <= 0 || bin >= _config.FftSize)
-            {
-                continue;
-            }
-
-            bins.Add(bin);
-        }
-
-        return bins;
+        // 実 OFDM は正周波数側のみを使用（GetPositiveCarrierBins と同一配置）。
+        return GetPositiveCarrierBins(channel);
     }
 
     private static HashSet<int> SelectPilotBins(List<int> orderedBins, int spacing)

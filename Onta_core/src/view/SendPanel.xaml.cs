@@ -6,7 +6,7 @@ using Onta.Core;
 namespace Onta.View;
 
 /// <summary>
-/// 送信設定パネルです（ステレオ／SC／変調はラジオ、入出力／スタート）。
+/// 送信設定パネルです（チャンネル／SC／変調／繰り返し回数／入出力）。
 /// </summary>
 public partial class SendPanel : UserControl
 {
@@ -18,6 +18,9 @@ public partial class SendPanel : UserControl
         InitializeComponent();
         StereoRadio.Checked += OnSettingsChanged;
         MonoRadio.Checked += OnSettingsChanged;
+        RepeatNoneRadio.Checked += OnSettingsChanged;
+        Repeat2Radio.Checked += OnSettingsChanged;
+        Repeat3Radio.Checked += OnSettingsChanged;
     }
 
     /// <summary>
@@ -29,11 +32,29 @@ public partial class SendPanel : UserControl
             ChannelMode: MonoRadio.IsChecked == true ? ChannelMode.Mono : ChannelMode.Stereo,
             ActiveSubcarriers: ReadSelectedInt("Subcarrier", 18),
             ModulationScheme: ReadSelectedModulation(),
-            BlockInterleaveFactor: ReadSelectedInt("Interleave", 1),
+            BlockInterleaveFactor: ReadRepeatCount(),
             InputFilePath: InputPathBox.Text,
             WriteWav: WriteWavCheck.IsChecked == true,
             WavOutputPath: WavPathBox.Text,
             PlayAudio: PlayAudioCheck.IsChecked == true);
+    }
+
+    /// <summary>
+    /// 繰り返し回数（なし=1 / 2回=2 / 3回=3）。data_struct.mdc のブロックインターリーブ倍率。
+    /// </summary>
+    private int ReadRepeatCount()
+    {
+        if (Repeat3Radio.IsChecked == true)
+        {
+            return 3;
+        }
+
+        if (Repeat2Radio.IsChecked == true)
+        {
+            return 2;
+        }
+
+        return 1;
     }
 
     private void OnSettingsChanged(object sender, RoutedEventArgs e)

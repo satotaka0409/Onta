@@ -50,7 +50,8 @@ public partial class FileEstimatePanel : UserControl
         _rows.Add(CreateRow("ヘッダー", headerSec * (interleave + 1), maxBar));
         for (var i = 1; i <= blockCount; i++)
         {
-            _rows.Add(CreateRow($"ブロック{i}×{interleave}", blockSec * interleave, maxBar));
+            var name = interleave <= 1 ? $"ブロック{i}" : $"ブロック{i}（{interleave}回）";
+            _rows.Add(CreateRow(name, blockSec * interleave, maxBar));
         }
 
         _rows.Add(CreateRow("合計", total, maxBar));
@@ -59,7 +60,8 @@ public partial class FileEstimatePanel : UserControl
     private static EstimateRow CreateRow(string name, int seconds, int maxBar)
     {
         var filled = Math.Clamp((int)Math.Round(24.0 * seconds / maxBar), 1, 24);
-        return new EstimateRow(name, seconds.ToString(), new string('■', filled));
+        var percent = Math.Clamp((int)Math.Round(100.0 * seconds / maxBar), 1, 100);
+        return new EstimateRow(name, seconds.ToString(), $"{new string('■', filled)} {percent}%");
     }
 
     private sealed record EstimateRow(string Name, string Seconds, string Meter);

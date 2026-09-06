@@ -410,13 +410,12 @@ public sealed class FileWavCodec
 
     private OfdmGenerator CreateHeaderOfdm()
     {
-        // modulation.mdc: FH/BH は 9 SC/ch + BPSK。ステレオ時は L/R で合計 18 SC。
-        var scPerChannel = 9;
-        var fftSize = _profile.ChannelMode == ChannelMode.Stereo ? 64 : 32;
-        var cp = fftSize / 4;
+        // modulation.mdc: FH/BH は GROUP B（概念ビン 10–18）9 SC + BPSK。周波数グリッドは N_L=128 / ステレオ 256。
+        var groupB = OfdmConfig.ResolveGroupBLeftBins();
+        var (fftSize, cp) = OfdmConfig.RecommendedFft(_profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
-            activeSubcarriers: scPerChannel,
+            activeSubcarriers: groupB.Length,
             cyclicPrefixLength: cp,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
@@ -426,19 +425,21 @@ public sealed class FileWavCodec
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
             frequencyInterleaveIntervalSeconds: 1.0,
-            randomSeed: _profile.RandomSeed);
+            randomSeed: _profile.RandomSeed,
+            conceptualLeftBins: groupB);
 
         return new OfdmGenerator(config);
     }
 
     private OfdmGenerator CreateDataOfdm()
     {
-        // ステレオ時は L/R 各 ActiveSubcarriers 本 → 合計 2 倍のスループット（ビット列を L/R 分割）。
+        // データ部も同一周波数グリッド（mono 128 / stereo 256）で GROUP 表に従う。
         var scPerChannel = _profile.ActiveSubcarriers;
+        var (fftSize, cp) = OfdmConfig.RecommendedFft(_profile.ChannelMode);
         var config = new OfdmConfig(
-            fftSize: _profile.FftSize,
+            fftSize: fftSize,
             activeSubcarriers: scPerChannel,
-            cyclicPrefixLength: _profile.CyclicPrefixLength,
+            cyclicPrefixLength: cp,
             ofdmSymbolCount: 1,
             modulationScheme: _profile.ModulationScheme,
             channelMode: _profile.ChannelMode,
