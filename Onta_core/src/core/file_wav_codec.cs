@@ -37,15 +37,12 @@ public sealed record FileWavCodecProfile(
     public byte ChannelModeByte => (byte)ChannelMode;
     public int LeadingSilenceSamples => SampleRate / 10;
     public int TrailingSilenceSamples => SampleRate / 10;
-    /// <summary>
-    /// 全体先頭の無変調プリアンブル（廃止）。
-    /// 互換のためプロパティは残すが、送受信処理では使用しません。
-    /// </summary>
-    public int UnmodulatedPreambleSamples => 0;
+    /// <summary>全体先頭の全サブキャリア無変調プリアンブル（2 秒）。modulation.mdc。</summary>
+    public int UnmodulatedPreambleSamples => SampleRate * 2;
     /// <summary>ファイルヘッダー先頭の無変調区間（1 秒）。</summary>
     public int FileHeaderUnmodulatedSamples => SampleRate;
-    /// <summary>ブロックヘッダー先頭の無変調区間（0.5 秒）。</summary>
-    public int BlockHeaderUnmodulatedSamples => SampleRate / 2;
+    /// <summary>ブロックヘッダー先頭の無変調区間（0.3 秒）。</summary>
+    public int BlockHeaderUnmodulatedSamples => (SampleRate * 3) / 10;
 }
 
 /// <summary>
@@ -69,8 +66,6 @@ public sealed record DecodeRuntimeTuning(
 /// </summary>
 public sealed class FileWavCodec
 {
-    private const int FftSizeSc9Sc18 = 64;
-    private const int FftSizeSc27Sc36 = 128;
     private const int FileHeaderBytes = 880;
     private const int FileNameBytes = 768;
     private const int BlockHeaderBytes = 124;
@@ -125,7 +120,7 @@ public sealed class FileWavCodec
             _profile.SamplePeak,
             _profile.ChannelMode);
 
-        var decodedBytes = DecodeWavToFileBytes(wavPath);
+        var decodedBytes = DecodeWavToFileBytes(wavPath, correctWow: false);
         if (restoredPath is not null)
         {
             File.WriteAllBytes(restoredPath, decodedBytes);
@@ -164,6 +159,10 @@ public sealed class FileWavCodec
         var rightPcm = new List<Complex>(1 << 20);
 
         AppendSilence(leftPcm, rightPcm, _profile.LeadingSilenceSamples, stereo: _profile.ChannelMode == ChannelMode.Stereo);
+        if (_profile.UnmodulatedPreambleSamples > 0)
+        {
+            AppendPair(leftPcm, rightPcm, headerOfdm.GenerateUnmodulated(_profile.UnmodulatedPreambleSamples));
+        }
 
         // data_struct.mdc: 各パス先頭に FH、(BH+BD)×N（パス内は4ブロックごとに FH）、最後に FH。
         // ×2 の第2パスは奇偶入れ替え、×3 の第3パスは第1パスと同順。
@@ -265,6 +264,7 @@ public sealed class FileWavCodec
         // warpedCursor: 実波形上の読み位置 / logicalOffset: 符号化時のサンプル時刻（インターリーブ用）
         var warpedCursor = 0;
         warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.LeadingSilenceSamples);
+        warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.UnmodulatedPreambleSamples);
         var logicalOffset = (long)warpedCursor;
 
         var coarseRadius = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 8, _profile.SampleRate / 50);
@@ -546,14 +546,15 @@ public sealed class FileWavCodec
 
     private OfdmGenerator CreateHeaderOfdm()
     {
-        // FH/BH は 9 SC/ch + BPSK。
-        var fftSize = ResolveFftSizeBySubcarrier(_profile.ActiveSubcarriers);
-        var cyclicPrefixLength = _profile.HeaderCyclicPrefixLength;
-        var scPerChannel = 9;
+        // modulation.mdc: FH/BH は GROUP B（概念 10–18）9 SC + BPSK。
+        // 周波数グリッドはデータ部 SC 族に合わせる（SC-9/18 族 or SC-27/36 族）。
+        var groupB = OfdmConfig.ResolveGroupBLeftBins();
+        var grid = OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
+        var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
-            activeSubcarriers: scPerChannel,
-            cyclicPrefixLength: cyclicPrefixLength,
+            activeSubcarriers: groupB.Length,
+            cyclicPrefixLength: _profile.HeaderCyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: _profile.ChannelMode,
@@ -562,23 +563,24 @@ public sealed class FileWavCodec
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
             frequencyInterleaveIntervalSymbols: 1,
-            randomSeed: _profile.RandomSeed);
+            randomSeed: _profile.RandomSeed,
+            conceptualLeftBins: groupB,
+            carrierGrid: grid);
 
         return new OfdmGenerator(config);
     }
 
     private OfdmGenerator CreateDataOfdm()
     {
-        // modulation.mdc: SC-9/18 は FFT=64、SC-27/36 は FFT=128 固定。
-        // ステレオ時は L/R 各 ActiveSubcarriers 本 → 合計 2 倍のスループット（ビット列を L/R 分割）。
-        var fftSize = ResolveFftSizeBySubcarrier(_profile.ActiveSubcarriers);
-        var cyclicPrefixLength = _profile.DataCyclicPrefixLength;
+        // SC-9/18: 440Hz 起点・1.3Δf・FFT=128。SC-27/36: FFT=128（ステレオ×2）。
+        // CP はデータ部 16 固定。
+        var grid = OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
+        var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
         var scPerChannel = _profile.ActiveSubcarriers;
-        var (fftSize, cp) = OfdmConfig.RecommendedFft(_profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
             activeSubcarriers: scPerChannel,
-            cyclicPrefixLength: cyclicPrefixLength,
+            cyclicPrefixLength: _profile.DataCyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: _profile.ModulationScheme,
             channelMode: _profile.ChannelMode,
@@ -587,19 +589,10 @@ public sealed class FileWavCodec
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
             frequencyInterleaveIntervalSymbols: 1,
-            randomSeed: _profile.RandomSeed);
+            randomSeed: _profile.RandomSeed,
+            carrierGrid: grid);
 
         return new OfdmGenerator(config);
-    }
-
-    private static int ResolveFftSizeBySubcarrier(int activeSubcarriers)
-    {
-        return activeSubcarriers switch
-        {
-            9 or 18 => FftSizeSc9Sc18,
-            27 or 36 => FftSizeSc27Sc36,
-            _ => throw new ArgumentOutOfRangeException(nameof(activeSubcarriers), activeSubcarriers, "Supported values are 9, 18, 27, or 36.")
-        };
     }
 
     private void AppendFileHeaderPacket(
@@ -619,7 +612,7 @@ public sealed class FileWavCodec
     }
 
     /// <summary>
-    /// ファイルヘッダー（1 秒）／ブロックヘッダー（0.5 秒）の無変調区間を付けてから OFDM 変調します。
+    /// ファイルヘッダー（1 秒）／ブロックヘッダー（0.3 秒）の無変調区間を付けてから OFDM 変調します。
     /// </summary>
     private static void AppendHeaderPackets(
         List<Complex> leftPcm,
@@ -1878,6 +1871,7 @@ public sealed class FileWavCodec
         var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, profile.BlockHeaderUnmodulatedSamples);
 
         AddSegment(segments, "LEAD", profile.LeadingSilenceSamples, profile.SampleRate, ref totalSamples);
+        AddSegment(segments, "PREAMBLE", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples);
 
         for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
         {

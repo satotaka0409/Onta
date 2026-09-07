@@ -12,13 +12,13 @@ internal static class CodecProfileFactory
     /// </summary>
     public static FileWavCodecProfile FromSnapshot(SendSettingsSnapshot snap)
     {
-        var (fft, cp) = OfdmConfig.RecommendedFft(snap.ChannelMode);
+        var fft = OfdmConfig.ResolveFftSize(snap.ActiveSubcarriers, snap.ChannelMode);
         return new FileWavCodecProfile(
-            FftSize: fft,
-            CyclicPrefixLength: cp,
             ActiveSubcarriers: snap.ActiveSubcarriers,
             ModulationScheme: snap.ModulationScheme,
             ChannelMode: snap.ChannelMode,
+            HeaderFftSize: fft,
+            DataFftSize: fft,
             BlockInterleaveFactor: Math.Clamp(snap.BlockInterleaveFactor, 1, 3));
     }
 }

@@ -39,25 +39,17 @@ public partial class SendPanel : UserControl
             InputFilePath: InputPathBox.Text,
             WriteWav: WriteWavCheck.IsChecked == true,
             WavOutputPath: WavPathBox.Text,
-            PlayAudio: PlayAudioCheck.IsChecked == true);
+            PlayAudio: PlayAudioCheck.IsChecked == true,
+            AudioDeviceNumber: ReadSelectedAudioDeviceNumber(),
+            AudioDeviceName: ReadSelectedAudioDeviceName());
     }
 
     /// <summary>
-    /// 繰り返し回数（なし=1 / 2回=2 / 3回=3）。data_struct.mdc のブロックインターリーブ倍率。
+    /// 繰り返し回数（×1=1 / ×2=2 / ×3=3）。data_struct.mdc のブロックインターリーブ倍率。
     /// </summary>
     private int ReadRepeatCount()
     {
-        if (Repeat3Radio.IsChecked == true)
-        {
-            return 3;
-        }
-
-        if (Repeat2Radio.IsChecked == true)
-        {
-            return 2;
-        }
-
-        return 1;
+        return ReadSelectedInt("Interleave", 1);
     }
 
     private void OnSettingsChanged(object sender, RoutedEventArgs e)

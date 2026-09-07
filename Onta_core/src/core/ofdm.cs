@@ -48,6 +48,18 @@ public enum ChannelMode : byte
 }
 
 /// <summary>
+/// 搬送波周波数グリッドの族です（modulation.mdc）。
+/// </summary>
+public enum OfdmCarrierGrid : byte
+{
+    /// <summary>SC-9/18: 440 Hz 起点、Δf = 1.3 × (fs/128)、R は L の中間。</summary>
+    Sc9Family = 0,
+
+    /// <summary>SC-27/36: 概念ビン k × (fs/128)、ステレオは 2k / 2k+1。</summary>
+    Sc27Family = 1
+}
+
+/// <summary>
 /// コンストラクタで妥当性検証を行う、不変の OFDM パラメータ集合です。
 /// </summary>
 public sealed record OfdmConfig
@@ -113,10 +125,16 @@ public sealed record OfdmConfig
     public int RandomSeed { get; }
 
     /// <summary>
-    /// L 概念ビン（N_L=128）。null のときは <see cref="ResolveConceptualLeftBins"/> を使用します。
-    /// FH/BH は GROUP B を明示指定します。
+    /// L 概念チャンネル番号（GROUP 表の 1 始まりインデックス。A0=1 … D8=36）。
+    /// null のときは <see cref="ResolveConceptualLeftBins"/> を使用します。
+    /// FH/BH は GROUP B（10–18）を明示指定します。
     /// </summary>
     public IReadOnlyList<int> ConceptualLeftBins { get; }
+
+    /// <summary>
+    /// SC-9/18 族または SC-27/36 族の周波数グリッドです。
+    /// </summary>
+    public OfdmCarrierGrid CarrierGrid { get; }
 
     /// <summary>
     /// 妥当性検証済みの OFDM 設定を初期化します。
@@ -133,7 +151,9 @@ public sealed record OfdmConfig
         int stereoFrequencyShiftBins = 1,
         int sampleRate = 44100,
         int frequencyInterleaveIntervalSymbols = 1,
-        int randomSeed = 0)
+        int randomSeed = 0,
+        IReadOnlyList<int>? conceptualLeftBins = null,
+        OfdmCarrierGrid? carrierGrid = null)
     {
         FftSize = fftSize;
         ActiveSubcarriers = activeSubcarriers;
@@ -148,6 +168,7 @@ public sealed record OfdmConfig
         FrequencyInterleaveIntervalSymbols = frequencyInterleaveIntervalSymbols;
         RandomSeed = randomSeed;
         ConceptualLeftBins = conceptualLeftBins ?? ResolveConceptualLeftBins(activeSubcarriers);
+        CarrierGrid = carrierGrid ?? ResolveCarrierGrid(activeSubcarriers);
 
         if (FftSize <= 0 || (FftSize & (FftSize - 1)) != 0)
         {
@@ -211,15 +232,39 @@ public sealed record OfdmConfig
             throw new ArgumentException("Frequency interleave interval symbols must be > 0.", nameof(frequencyInterleaveIntervalSymbols));
         }
 
-        // modulation.mdc: 概念グリッド N_L=128。ステレオは分解能 2 倍（N=256）で中間周波数。
+        ValidateCarrierBinsFitFft();
+    }
+
+    private void ValidateCarrierBinsFitFft()
+    {
+        if (CarrierGrid == OfdmCarrierGrid.Sc9Family)
+        {
+            foreach (var k in ConceptualLeftBins)
+            {
+                var leftHz = LeftCarrierHzSc9(k - 1);
+                var rightHz = RightCarrierHzSc9(k - 1);
+                var leftBin = HzToPositiveBin(leftHz, FftSize, SampleRate);
+                var rightBin = HzToPositiveBin(rightHz, FftSize, SampleRate);
+                if (leftBin <= 0 || leftBin >= FftSize / 2 || rightBin <= 0 || rightBin >= FftSize / 2)
+                {
+                    throw new ArgumentException(
+                        $"SC-9 family carrier Hz (L={leftHz:F1}, R={rightHz:F1}) does not fit FFT={FftSize}.",
+                        nameof(FftSize));
+                }
+            }
+
+            return;
+        }
+
+        // SC-27/36: 概念ビンを FFT ビンとして使用（ステレオは 2k / 2k+1）。
         var maxConcept = ConceptualLeftBins.Max();
-        if (channelMode == ChannelMode.Mono)
+        if (ChannelMode == ChannelMode.Mono)
         {
             if (maxConcept >= FftSize / 2)
             {
                 throw new ArgumentException(
                     $"FFT size {FftSize} is too small for conceptual L bin {maxConcept} (need < {FftSize / 2}).",
-                    nameof(fftSize));
+                    nameof(FftSize));
             }
         }
         else
@@ -229,32 +274,32 @@ public sealed record OfdmConfig
             {
                 throw new ArgumentException(
                     $"FFT size {FftSize} is too small for stereo midpoint carriers (need max bin {maxFineBin} < {FftSize / 2}).",
-                    nameof(fftSize));
+                    nameof(FftSize));
             }
         }
     }
 
-    /// <summary>GROUP A の L 概念ビン（1–9）。</summary>
+    /// <summary>GROUP A の L 概念番号（1–9）。</summary>
     public static int[] ResolveGroupALeftBins() => Enumerable.Range(1, 9).ToArray();
 
-    /// <summary>GROUP B の L 概念ビン（10–18）。FH/BH で使用。</summary>
+    /// <summary>GROUP B の L 概念番号（10–18）。FH/BH で使用。</summary>
     public static int[] ResolveGroupBLeftBins() => Enumerable.Range(10, 9).ToArray();
 
-    /// <summary>GROUP C の L 概念ビン（19–27）。</summary>
+    /// <summary>GROUP C の L 概念番号（19–27）。</summary>
     public static int[] ResolveGroupCLeftBins() => Enumerable.Range(19, 9).ToArray();
 
-    /// <summary>GROUP D の L 概念ビン（28–36）。</summary>
+    /// <summary>GROUP D の L 概念番号（28–36）。</summary>
     public static int[] ResolveGroupDLeftBins() => Enumerable.Range(28, 9).ToArray();
 
     /// <summary>
-    /// modulation.mdc の GROUP 表に従う L 概念ビン（N_L=128）を返します。
-    /// SC-9=B(10-18), SC-18=B+C(10-27), SC-27=A+B+C(1-27), SC-36=A+B+C+D(1-36)。
+    /// modulation.mdc の GROUP 表に従う L 概念番号を返します。
+    /// SC-9=B(10-18), SC-18=A+B(1-18), SC-27=A+B+C(1-27), SC-36=A+B+C+D(1-36)。
     /// </summary>
     public static int[] ResolveConceptualLeftBins(int activeSubcarriers) =>
         activeSubcarriers switch
         {
             9 => ResolveGroupBLeftBins(),
-            18 => ResolveGroupBLeftBins().Concat(ResolveGroupCLeftBins()).ToArray(),
+            18 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).ToArray(),
             27 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).Concat(ResolveGroupCLeftBins()).ToArray(),
             36 => ResolveGroupALeftBins()
                 .Concat(ResolveGroupBLeftBins())
@@ -267,17 +312,51 @@ public sealed record OfdmConfig
                 "Active subcarriers must be 9, 18, 27, or 36.")
         };
 
-    /// <summary>使用する L 概念ビンの最大値です。</summary>
+    /// <summary>使用する L 概念番号の最大値です。</summary>
     public static int MaxConceptualLeftBin(int activeSubcarriers) =>
         ResolveConceptualLeftBins(activeSubcarriers)[^1];
 
-    /// <summary>
-    /// 仕様周波数グリッドに合わせた推奨 FFT / CP です（mono=128, stereo=256）。
-    /// </summary>
-    public static (int FftSize, int CyclicPrefix) RecommendedFft(ChannelMode channelMode)
+    /// <summary>SC-27/36 のビン間隔 Δf = fs/128。</summary>
+    public static double DeltaF27(int sampleRate = 44100) => sampleRate / 128.0;
+
+    /// <summary>SC-9/18 のビン間隔 Δf = 1.3 × Δf27。</summary>
+    public static double DeltaF9(int sampleRate = 44100) => DeltaF27(sampleRate) * 1.3;
+
+    /// <summary>SC-9/18 の L 先頭周波数（GROUP A CH0）。</summary>
+    public const double Sc9StartHz = 440.0;
+
+    /// <summary>SC-9/18 の L 搬送波周波数（i=0 が A0）。</summary>
+    public static double LeftCarrierHzSc9(int zeroBasedChannelIndex, int sampleRate = 44100) =>
+        Sc9StartHz + zeroBasedChannelIndex * DeltaF9(sampleRate);
+
+    /// <summary>SC-9/18 の R 搬送波周波数（L の中間 = L + Δf9/2）。</summary>
+    public static double RightCarrierHzSc9(int zeroBasedChannelIndex, int sampleRate = 44100) =>
+        LeftCarrierHzSc9(zeroBasedChannelIndex, sampleRate) + (DeltaF9(sampleRate) / 2.0);
+
+    /// <summary>目標周波数を正周波数 FFT ビンへ最近傍割当します。</summary>
+    public static int HzToPositiveBin(double hz, int fftSize, int sampleRate)
     {
-        var fft = channelMode == ChannelMode.Stereo ? 256 : 128;
-        return (fft, fft / 4);
+        var bin = (int)Math.Round(hz * fftSize / sampleRate);
+        return Math.Clamp(bin, 1, (fftSize / 2) - 1);
+    }
+
+    public static OfdmCarrierGrid ResolveCarrierGrid(int activeSubcarriers) =>
+        activeSubcarriers is 9 or 18 ? OfdmCarrierGrid.Sc9Family : OfdmCarrierGrid.Sc27Family;
+
+    /// <summary>
+    /// modulation.mdc: SC-9/18 → FFT=128（目標 Hz を最近傍ビンへ）、SC-27/36 → 128（ステレオは中間配置のため×2）。
+    /// </summary>
+    public static int ResolveFftSize(int activeSubcarriers, ChannelMode channelMode)
+    {
+        var grid = ResolveCarrierGrid(activeSubcarriers);
+        if (grid == OfdmCarrierGrid.Sc9Family)
+        {
+            // L/R は別 PCM。仕様どおり FFT=128 で目標周波数を最近傍ビン割当。
+            return 128;
+        }
+
+        var mono = 128;
+        return channelMode == ChannelMode.Stereo ? mono * 2 : mono;
     }
 }
 
@@ -417,12 +496,32 @@ public sealed class OfdmGenerator
 
     /// <summary>
     /// 正周波数側のアクティブサブキャリアビンを返します（Hermitian 実 OFDM 用）。
-    /// modulation.mdc: L は GROUP 表の概念ビン、ステレオ R はその中間（細密グリッドで 2k / 2k+1）。
+    /// SC-9/18: 目標 Hz（440 起点・1.3Δf・R 中間）を最近傍ビンへ。
+    /// SC-27/36: 概念ビン k、ステレオは 2k / 2k+1。
     /// </summary>
     private List<int> GetPositiveCarrierBins(CarrierChannel channel)
     {
         var conceptBins = _config.ConceptualLeftBins;
         var bins = new List<int>(conceptBins.Count);
+        var used = new HashSet<int>();
+
+        if (_config.CarrierGrid == OfdmCarrierGrid.Sc9Family)
+        {
+            var useRight = channel == CarrierChannel.Right
+                && _config.ChannelMode == ChannelMode.Stereo;
+            foreach (var k in conceptBins)
+            {
+                var hz = useRight
+                    ? OfdmConfig.RightCarrierHzSc9(k - 1, _config.SampleRate)
+                    : OfdmConfig.LeftCarrierHzSc9(k - 1, _config.SampleRate);
+                var bin = OfdmConfig.HzToPositiveBin(hz, _config.FftSize, _config.SampleRate);
+                bin = EnsureUniquePositiveBin(bin, used);
+                AddPositiveBin(bins, bin);
+            }
+
+            return bins;
+        }
+
         if (_config.ChannelMode == ChannelMode.Mono)
         {
             foreach (var k in conceptBins)
@@ -435,38 +534,59 @@ public sealed class OfdmGenerator
 
         if (channel == CarrierChannel.Left)
         {
-            shift = _config.StereoFrequencyShiftBins;
-        }
-
-        // modulation.mdc のグループ規約:
-        // SC-9=B, SC-18=A+B, SC-27=A+B+C, SC-36=A+B+C+D。
-        var baseBins = ResolveCarrierGroupBins(_config.ActiveSubcarriers);
-        var bins = new List<int>(baseBins.Count);
-        for (var i = 0; i < baseBins.Count; i++)
-        {
-            var bin = baseBins[i] + shift;
-            if (bin <= 0 || bin >= _config.FftSize / 2)
+            foreach (var k in conceptBins)
             {
-                throw new InvalidOperationException(
-                    $"Carrier bin {bin} is out of positive-frequency range for FFT={_config.FftSize}.");
+                AddPositiveBin(bins, 2 * k);
             }
-
-            bins.Add(bin);
+        }
+        else
+        {
+            foreach (var k in conceptBins)
+            {
+                AddPositiveBin(bins, (2 * k) + 1);
+            }
         }
 
         return bins;
     }
 
-    private static List<int> ResolveCarrierGroupBins(int activeSubcarriers)
+    private int EnsureUniquePositiveBin(int preferred, HashSet<int> used)
     {
-        return activeSubcarriers switch
+        var bin = preferred;
+        var max = (_config.FftSize / 2) - 1;
+        while (used.Contains(bin))
         {
-            9 => Enumerable.Range(10, 9).ToList(),
-            18 => Enumerable.Range(1, 18).ToList(),
-            27 => Enumerable.Range(1, 27).ToList(),
-            36 => Enumerable.Range(1, 36).ToList(),
-            _ => Enumerable.Range(1, activeSubcarriers).ToList()
-        };
+            bin++;
+            if (bin > max)
+            {
+                bin = preferred - 1;
+                while (bin >= 1 && used.Contains(bin))
+                {
+                    bin--;
+                }
+
+                if (bin < 1)
+                {
+                    throw new InvalidOperationException("Unable to allocate unique positive carrier bin.");
+                }
+
+                break;
+            }
+        }
+
+        used.Add(bin);
+        return bin;
+    }
+
+    private void AddPositiveBin(List<int> bins, int bin)
+    {
+        if (bin <= 0 || bin >= _config.FftSize / 2)
+        {
+            throw new InvalidOperationException(
+                $"Carrier bin {bin} is out of positive-frequency range for FFT={_config.FftSize}.");
+        }
+
+        bins.Add(bin);
     }
 
     private static void ApplyHermitianSymmetry(Complex[] bins)
@@ -578,7 +698,7 @@ public sealed class OfdmGenerator
 
     /// <summary>
     /// 全アクティブサブキャリアを無変調（固定参照点）で並べた OFDM を、指定サンプル数ぶん生成します。
-    /// 全体先頭の同期用プリアンブル、および FH（1 秒）／BH（0.5 秒）先頭の無変調区間に使用します。
+    /// 全体先頭の同期用プリアンブル、および FH（1 秒）／BH（0.3 秒）先頭の無変調区間に使用します。
     /// </summary>
     /// <param name="sampleCount">生成する時間領域サンプル数。</param>
     /// <returns>モノラル時は Left のみ、ステレオ時は L/R 両方。</returns>

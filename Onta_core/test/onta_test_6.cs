@@ -14,7 +14,7 @@ public sealed class OntaTest6
     public void PilotEqualizer_IsClosedWithinEachSubcarrierGroup()
     {
         var config = new OfdmConfig(
-            fftSize: 64,
+            fftSize: OfdmConfig.ResolveFftSize(18, ChannelMode.Mono),
             activeSubcarriers: 18,
             cyclicPrefixLength: 16,
             ofdmSymbolCount: 1,
@@ -22,7 +22,8 @@ public sealed class OntaTest6
             channelMode: ChannelMode.Mono,
             enableFrequencyInterleaving: false,
             pilotSpacing: 9,
-            randomSeed: 1);
+            randomSeed: 1,
+            carrierGrid: OfdmCarrierGrid.Sc9Family);
         var ofdm = new OfdmGenerator(config);
 
         var allCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
@@ -63,7 +64,7 @@ public sealed class OntaTest6
     public void PilotEqualizer_IsClosedWithinEachSubcarrierGroup_ForStereoLeftAndRight()
     {
         var config = new OfdmConfig(
-            fftSize: 64,
+            fftSize: OfdmConfig.ResolveFftSize(18, ChannelMode.Stereo),
             activeSubcarriers: 18,
             cyclicPrefixLength: 16,
             ofdmSymbolCount: 1,
@@ -72,7 +73,8 @@ public sealed class OntaTest6
             enableFrequencyInterleaving: false,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: 1,
-            randomSeed: 2);
+            randomSeed: 2,
+            carrierGrid: OfdmCarrierGrid.Sc9Family);
         var ofdm = new OfdmGenerator(config);
 
         var leftCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
