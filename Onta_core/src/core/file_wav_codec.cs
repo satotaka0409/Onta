@@ -542,7 +542,7 @@ public sealed class FileWavCodec
             pilotSpacing: 9,
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
-            frequencyInterleaveIntervalSeconds: 1.0,
+            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: _profile.RandomSeed);
 
         return new OfdmGenerator(config);
@@ -566,7 +566,7 @@ public sealed class FileWavCodec
             pilotSpacing: 9,
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
-            frequencyInterleaveIntervalSeconds: 1.0,
+            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: _profile.RandomSeed);
 
         return new OfdmGenerator(config);

@@ -98,14 +98,14 @@ public sealed record OfdmConfig
     public int StereoFrequencyShiftBins { get; }
 
     /// <summary>
-    /// サンプリング周波数 (Hz) を取得します。周波数インターリーブ間隔の計算に使用します。
+    /// サンプリング周波数 (Hz) を取得します。
     /// </summary>
     public int SampleRate { get; }
 
     /// <summary>
-    /// 周波数インターリーブ並べ替えを更新する間隔（秒）を取得します。
+    /// 周波数インターリーブ並べ替えを更新する間隔（OFDM シンボル数）を取得します。
     /// </summary>
-    public double FrequencyInterleaveIntervalSeconds { get; }
+    public int FrequencyInterleaveIntervalSymbols { get; }
 
     /// <summary>
     /// 乱数シードを取得します。0 の場合は <see cref="Random.Shared"/> を使用します。
@@ -126,7 +126,7 @@ public sealed record OfdmConfig
         int pilotSpacing = 9,
         int stereoFrequencyShiftBins = 1,
         int sampleRate = 44100,
-        double frequencyInterleaveIntervalSeconds = 1.0,
+        int frequencyInterleaveIntervalSymbols = 1,
         int randomSeed = 0)
     {
         FftSize = fftSize;
@@ -139,7 +139,7 @@ public sealed record OfdmConfig
         PilotSpacing = pilotSpacing;
         StereoFrequencyShiftBins = stereoFrequencyShiftBins;
         SampleRate = sampleRate;
-        FrequencyInterleaveIntervalSeconds = frequencyInterleaveIntervalSeconds;
+        FrequencyInterleaveIntervalSymbols = frequencyInterleaveIntervalSymbols;
         RandomSeed = randomSeed;
 
         if (FftSize <= 0 || (FftSize & (FftSize - 1)) != 0)
@@ -190,9 +190,9 @@ public sealed record OfdmConfig
             throw new ArgumentException("Sample rate must be > 0.", nameof(sampleRate));
         }
 
-        if (frequencyInterleaveIntervalSeconds <= 0.0)
+        if (frequencyInterleaveIntervalSymbols <= 0)
         {
-            throw new ArgumentException("Frequency interleave interval must be > 0.", nameof(frequencyInterleaveIntervalSeconds));
+            throw new ArgumentException("Frequency interleave interval symbols must be > 0.", nameof(frequencyInterleaveIntervalSymbols));
         }
 
         var maxOffset = ActiveSubcarriers / 2;
@@ -266,13 +266,13 @@ public sealed class OfdmGenerator
         }
 
         var pilots = SelectPilotBins(all, _config.PilotSpacing).OrderBy(x => x).ToList();
-        // データ順のベース（未シャッフル）。FrequencyInterleaveIntervalSeconds ごとに並べ替える。
+        // データ順のベース（未シャッフル）。FrequencyInterleaveIntervalSymbols ごとに並べ替える。
         var data = all.Where(bin => !pilots.Contains(bin)).ToList();
         return (all, pilots, data);
     }
 
-    private int InterleaveIntervalSamples =>
-        Math.Max(1, (int)Math.Round(_config.SampleRate * _config.FrequencyInterleaveIntervalSeconds));
+    private int InterleaveIntervalSymbols =>
+        Math.Max(1, _config.FrequencyInterleaveIntervalSymbols);
 
     private int[] ResolveDataCarrierOrder(bool useRightChannel, long absoluteSamplePosition)
     {
@@ -282,7 +282,8 @@ public sealed class OfdmGenerator
             return baseOrder.ToArray();
         }
 
-        var epoch = absoluteSamplePosition / InterleaveIntervalSamples;
+        var absoluteSymbolPosition = absoluteSamplePosition / SamplesPerOfdmSymbol;
+        var epoch = absoluteSymbolPosition / InterleaveIntervalSymbols;
         var key = (useRightChannel, epoch);
         if (_interleaveCache.TryGetValue(key, out var cached))
         {
