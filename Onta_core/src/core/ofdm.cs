@@ -222,7 +222,6 @@ public sealed class OfdmGenerator
     private readonly List<int> _rightAllCarrierBins;
     private readonly List<int> _rightPilotBins;
     private readonly List<int> _rightDataCarrierBase;
-    private readonly Dictionary<(bool UseRight, long Epoch), int[]> _interleaveCache = new();
     private static readonly int[] Qam16Levels = [-3, -1, 1, 3];
     private static readonly int[] Qam64Levels = [-7, -5, -3, -1, 1, 3, 5, 7];
     private static readonly Complex PilotSymbol = Complex.One;
@@ -284,21 +283,57 @@ public sealed class OfdmGenerator
 
         var absoluteSymbolPosition = absoluteSamplePosition / SamplesPerOfdmSymbol;
         var epoch = absoluteSymbolPosition / InterleaveIntervalSymbols;
-        var key = (useRightChannel, epoch);
-        if (_interleaveCache.TryGetValue(key, out var cached))
+        if (baseOrder.Count <= 1)
         {
-            return cached;
+            return baseOrder.ToArray();
         }
 
         var order = baseOrder.ToArray();
-        var seed = unchecked(
-            (_config.RandomSeed * 397) ^
-            (useRightChannel ? 0xA5A5 : 0x5A5A) ^
-            (int)(epoch & 0x7FFFFFFF) ^
-            (int)(epoch >> 31));
-        ShuffleInPlace(order, new Random(seed == 0 ? 1 : seed));
-        _interleaveCache[key] = order;
+        var state = CreateMSequenceState(epoch, useRightChannel);
+        var keys = new uint[order.Length];
+
+        for (var i = 0; i < keys.Length; i++)
+        {
+            keys[i] = NextMSequenceWord(ref state);
+        }
+
+        Array.Sort(keys, order);
         return order;
+    }
+
+    private uint CreateMSequenceState(long epoch, bool useRightChannel)
+    {
+        // SplitMix で初期状態を拡散し、31bit LFSR のゼロ状態を避ける。
+        ulong x = (uint)(_config.RandomSeed == 0 ? 1 : _config.RandomSeed);
+        x ^= useRightChannel ? 0xA5A5A5A5u : 0x5A5A5A5Au;
+        x ^= unchecked((ulong)epoch * 0x9E3779B97F4A7C15UL);
+        x += 0x9E3779B97F4A7C15UL;
+        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
+        x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
+        x ^= x >> 31;
+
+        var state = (uint)(x & 0x7FFFFFFF);
+        return state == 0 ? 1u : state;
+    }
+
+    private static uint NextMSequenceWord(ref uint state)
+    {
+        var value = 0u;
+        for (var i = 0; i < 31; i++)
+        {
+            state = AdvanceMSequence31(state);
+            value = (value << 1) | (state & 1u);
+        }
+
+        return value;
+    }
+
+    private static uint AdvanceMSequence31(uint state)
+    {
+        // Primitive polynomial: x^31 + x^28 + 1
+        var feedback = ((state >> 30) ^ (state >> 27)) & 1u;
+        state = ((state << 1) & 0x7FFFFFFF) | feedback;
+        return state == 0 ? 1u : state;
     }
 
     /// <summary>
