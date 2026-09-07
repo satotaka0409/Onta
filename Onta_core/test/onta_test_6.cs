@@ -150,12 +150,42 @@ public sealed class OntaTest6
         Assert.NotNull(resolveMethod);
 
         var symbolLength = ofdm.SamplesPerOfdmSymbol;
-        var order0 = (int[]?)resolveMethod!.Invoke(ofdm, [false, 0L]);
-        var order1 = (int[]?)resolveMethod.Invoke(ofdm, [false, (long)symbolLength]);
+        var order0 = (int[]?)resolveMethod!.Invoke(ofdm, [false, 0L, 0]);
+        var order1 = (int[]?)resolveMethod.Invoke(ofdm, [false, (long)symbolLength, 0]);
         Assert.NotNull(order0);
         Assert.NotNull(order1);
 
         Assert.False(order0!.SequenceEqual(order1!));
+    }
+
+    [Fact]
+    public void FrequencyInterleavePermutation_DiffersByInitSeed()
+    {
+        var config = new OfdmConfig(
+            fftSize: 64,
+            activeSubcarriers: 18,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qpsk,
+            channelMode: ChannelMode.Mono,
+            enableFrequencyInterleaving: true,
+            pilotSpacing: 9,
+            sampleRate: 44100,
+            frequencyInterleaveIntervalSymbols: 1,
+            randomSeed: 17);
+        var ofdm = new OfdmGenerator(config);
+
+        var resolveMethod = typeof(OfdmGenerator).GetMethod(
+            "ResolveDataCarrierOrder",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(resolveMethod);
+
+        var fhOrder = (int[]?)resolveMethod!.Invoke(ofdm, [false, 0L, unchecked((int)0x13579BDF)]);
+        var blockOrder = (int[]?)resolveMethod.Invoke(ofdm, [false, 0L, unchecked((int)0x2468ACE1)]);
+        Assert.NotNull(fhOrder);
+        Assert.NotNull(blockOrder);
+
+        Assert.False(fhOrder!.SequenceEqual(blockOrder!));
     }
 
     private static T GetPrivateField<T>(object instance, string fieldName)

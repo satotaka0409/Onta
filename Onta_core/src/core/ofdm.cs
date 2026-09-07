@@ -273,7 +273,7 @@ public sealed class OfdmGenerator
     private int InterleaveIntervalSymbols =>
         Math.Max(1, _config.FrequencyInterleaveIntervalSymbols);
 
-    private int[] ResolveDataCarrierOrder(bool useRightChannel, long absoluteSamplePosition)
+    private int[] ResolveDataCarrierOrder(bool useRightChannel, long symbolLocalSamplePosition, int interleaveInitSeed)
     {
         var baseOrder = useRightChannel ? _rightDataCarrierBase : _leftDataCarrierBase;
         if (!_config.EnableFrequencyInterleaving)
@@ -281,7 +281,7 @@ public sealed class OfdmGenerator
             return baseOrder.ToArray();
         }
 
-        var absoluteSymbolPosition = absoluteSamplePosition / SamplesPerOfdmSymbol;
+        var absoluteSymbolPosition = symbolLocalSamplePosition / SamplesPerOfdmSymbol;
         var epoch = absoluteSymbolPosition / InterleaveIntervalSymbols;
         if (baseOrder.Count <= 1)
         {
@@ -289,7 +289,7 @@ public sealed class OfdmGenerator
         }
 
         var order = baseOrder.ToArray();
-        var state = CreateMSequenceState(epoch, useRightChannel);
+        var state = CreateMSequenceState(epoch, useRightChannel, interleaveInitSeed);
         var keys = new uint[order.Length];
 
         for (var i = 0; i < keys.Length; i++)
@@ -301,10 +301,11 @@ public sealed class OfdmGenerator
         return order;
     }
 
-    private uint CreateMSequenceState(long epoch, bool useRightChannel)
+    private uint CreateMSequenceState(long epoch, bool useRightChannel, int interleaveInitSeed)
     {
         // SplitMix で初期状態を拡散し、31bit LFSR のゼロ状態を避ける。
         ulong x = (uint)(_config.RandomSeed == 0 ? 1 : _config.RandomSeed);
+        x ^= (uint)interleaveInitSeed;
         x ^= useRightChannel ? 0xA5A5A5A5u : 0x5A5A5A5Au;
         x ^= unchecked((ulong)epoch * 0x9E3779B97F4A7C15UL);
         x += 0x9E3779B97F4A7C15UL;
@@ -540,9 +541,9 @@ public sealed class OfdmGenerator
     /// </summary>
     /// <param name="bits">変調するビット列。</param>
     /// <param name="absoluteSampleOffset">WAV 全体先頭からのサンプル位置（インターリーブ epoch 算出用）。</param>
-    public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0)
+    public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0, int interleaveInitSeed = 0)
     {
-        return ModulateBitStreams(bits, bits, absoluteSampleOffset);
+        return ModulateBitStreams(bits, bits, absoluteSampleOffset, interleaveInitSeed);
     }
 
     /// <summary>
@@ -555,20 +556,21 @@ public sealed class OfdmGenerator
     public (Complex[] Left, Complex[] Right) ModulateBitStreams(
         ReadOnlySpan<bool> leftBits,
         ReadOnlySpan<bool> rightBits,
-        long absoluteSampleOffset = 0)
+        long absoluteSampleOffset = 0,
+        int interleaveInitSeed = 0)
     {
         if (BitsPerOfdmSymbol <= 0)
         {
             throw new InvalidOperationException("No data carriers available for modulation.");
         }
 
-        var left = ModulateBitsOnChannel(leftBits, useRightChannel: false, absoluteSampleOffset);
+        var left = ModulateBitsOnChannel(leftBits, useRightChannel: false, absoluteSampleOffset, interleaveInitSeed);
         if (_config.ChannelMode == ChannelMode.Mono)
         {
             return (left, Array.Empty<Complex>());
         }
 
-        var right = ModulateBitsOnChannel(rightBits, useRightChannel: true, absoluteSampleOffset);
+        var right = ModulateBitsOnChannel(rightBits, useRightChannel: true, absoluteSampleOffset, interleaveInitSeed);
         if (left.Length != right.Length)
         {
             throw new InvalidOperationException(
@@ -581,7 +583,8 @@ public sealed class OfdmGenerator
     private Complex[] ModulateBitsOnChannel(
         ReadOnlySpan<bool> bits,
         bool useRightChannel,
-        long absoluteSampleOffset)
+        long absoluteSampleOffset,
+        int interleaveInitSeed)
     {
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
         var symbolCount = (bits.Length + BitsPerOfdmSymbol - 1) / BitsPerOfdmSymbol;
@@ -595,8 +598,9 @@ public sealed class OfdmGenerator
 
         for (var s = 0; s < symbolCount; s++)
         {
-            var symbolOffset = absoluteSampleOffset + ((long)s * SamplesPerOfdmSymbol);
-            var dataCarrierOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset);
+            _ = absoluteSampleOffset;
+            var symbolOffset = (long)s * SamplesPerOfdmSymbol;
+            var dataCarrierOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
 
             var freqBins = new Complex[_config.FftSize];
             foreach (var pilotBin in pilotBins)
@@ -2044,7 +2048,8 @@ public sealed class OfdmGenerator
         int bitCount,
         bool useRightChannel,
         long logicalSampleOffset,
-        int searchRadius = 16)
+        int searchRadius = 16,
+        int interleaveInitSeed = 0)
     {
         if (bitCount < 0)
         {
@@ -2065,7 +2070,7 @@ public sealed class OfdmGenerator
 
         var bits = new bool[bitCount];
         var bitIndex = 0;
-        var logical = logicalSampleOffset;
+        _ = logicalSampleOffset;
         var agcState = new PilotGroupAgcState(pilotBins.Count);
         // シンボルごとに CP/パイロットで追従し、ワウによる累積ずれを吸収する。
         var followRadius = Math.Max(searchRadius, 2);
@@ -2083,7 +2088,8 @@ public sealed class OfdmGenerator
             var time = RemoveCyclicPrefix(symbol, _config.CyclicPrefixLength);
             var freqBins = ForwardFftMatchingInverse(time);
             var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical);
+            var symbolOffset = (long)s * symbolLength;
+            var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
 
             foreach (var dataBin in dataOrder)
             {
@@ -2096,7 +2102,6 @@ public sealed class OfdmGenerator
             }
 
             position = start + symbolLength;
-            logical += symbolLength;
         }
 
         cursor = position;
@@ -2113,7 +2118,8 @@ public sealed class OfdmGenerator
         bool useRightChannel,
         long logicalSampleOffset,
         int searchRadius = 16,
-        double noiseVariance = 0.05)
+        double noiseVariance = 0.05,
+        int interleaveInitSeed = 0)
     {
         return DemodulateSoftLlrsFromStreamCore(
             samples,
@@ -2125,7 +2131,8 @@ public sealed class OfdmGenerator
             logicalSampleOffset,
             searchRadius,
             noiseVariance,
-            estimateNoiseFromPilots: false);
+            estimateNoiseFromPilots: false,
+            interleaveInitSeed);
     }
 
     /// <summary>
@@ -2140,7 +2147,8 @@ public sealed class OfdmGenerator
         long logicalSampleOffset,
         int searchRadius = 16,
         double noiseVariance = 0.05,
-        bool estimateNoiseFromPilots = true)
+        bool estimateNoiseFromPilots = true,
+        int interleaveInitSeed = 0)
     {
         ArgumentNullException.ThrowIfNull(leftSamples);
         ArgumentNullException.ThrowIfNull(rightSamples);
@@ -2156,7 +2164,8 @@ public sealed class OfdmGenerator
                 logicalSampleOffset,
                 searchRadius,
                 noiseVariance,
-                estimateNoiseFromPilots);
+                estimateNoiseFromPilots,
+                interleaveInitSeed);
         }
 
         if (leftSamples.Length != rightSamples.Length)
@@ -2174,7 +2183,8 @@ public sealed class OfdmGenerator
             logicalSampleOffset,
             searchRadius,
             noiseVariance,
-            estimateNoiseFromPilots);
+            estimateNoiseFromPilots,
+            interleaveInitSeed);
     }
 
     private double[] DemodulateSoftLlrsFromStreamCore(
@@ -2187,7 +2197,8 @@ public sealed class OfdmGenerator
         long logicalSampleOffset,
         int searchRadius,
         double noiseVariance,
-        bool estimateNoiseFromPilots)
+        bool estimateNoiseFromPilots,
+        int interleaveInitSeed)
     {
         if (bitCount < 0)
         {
@@ -2209,7 +2220,7 @@ public sealed class OfdmGenerator
 
         var llrs = new double[bitCount];
         var bitIndex = 0;
-        var logical = logicalSampleOffset;
+        _ = logicalSampleOffset;
         var primaryAgcState = new PilotGroupAgcState(pilotBins.Count);
         var secondaryAgcState = new PilotGroupAgcState(secondaryPilotBins.Count);
         var followRadius = Math.Max(searchRadius, 2);
@@ -2270,11 +2281,12 @@ public sealed class OfdmGenerator
                 pilotBins,
                 useRightChannel,
                 primaryAgcState,
-                logical,
+                (long)s * symbolLength,
                 ref bitIndex,
                 llrs,
                 effectiveVariance,
-                addToExisting: false);
+                addToExisting: false,
+                interleaveInitSeed);
 
             if (secondarySamples is not null)
             {
@@ -2289,15 +2301,15 @@ public sealed class OfdmGenerator
                     secondaryPilotBins,
                     secondaryUseRightChannel,
                     secondaryAgcState,
-                    logical,
+                    (long)s * symbolLength,
                     ref secondaryBitIndex,
                     llrs,
                     effectiveVariance,
-                    addToExisting: true);
+                    addToExisting: true,
+                    interleaveInitSeed);
             }
 
             position = start + symbolLength;
-            logical += symbolLength;
         }
 
         cursor = position;
@@ -2313,12 +2325,13 @@ public sealed class OfdmGenerator
         ref int bitIndex,
         double[] llrs,
         double noiseVariance,
-        bool addToExisting)
+        bool addToExisting,
+        int interleaveInitSeed)
     {
         var time = RemoveCyclicPrefix(symbolWithCp, _config.CyclicPrefixLength);
         var freqBins = ForwardFftMatchingInverse(time);
         var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
-        var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical);
+        var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
         foreach (var dataBin in dataOrder)
         {
             if (bitIndex >= llrs.Length)
@@ -2404,7 +2417,8 @@ public sealed class OfdmGenerator
         ReadOnlySpan<Complex> samples,
         int bitCount,
         bool useRightChannel = false,
-        long absoluteSampleOffset = 0)
+        long absoluteSampleOffset = 0,
+        int interleaveInitSeed = 0)
     {
         if (bitCount < 0)
         {
@@ -2431,8 +2445,9 @@ public sealed class OfdmGenerator
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
-            var symbolOffset = absoluteSampleOffset + ((long)s * symbolLength);
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset);
+            _ = absoluteSampleOffset;
+            var symbolOffset = (long)s * symbolLength;
+            var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
 
             var symbol = samples.Slice(s * symbolLength, symbolLength);
             var time = RemoveCyclicPrefix(symbol, _config.CyclicPrefixLength);

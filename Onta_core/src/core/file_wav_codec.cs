@@ -86,6 +86,8 @@ public sealed class FileWavCodec
     private const string DataTraceEnvVar = "ONTA_TRACE_DATA_ERRORS";
     /// <summary>ファイルヘッダーをデータ部の何ブロックごとに再送出するか。</summary>
     private const int FileHeaderRepeatIntervalBlocks = 4;
+    private const int InterleaveInitSeedFileHeader = unchecked((int)0x13579BDF);
+    private const int InterleaveInitSeedBlock = unchecked((int)0x2468ACE1);
 
     private readonly FileWavCodecProfile _profile;
 
@@ -184,9 +186,15 @@ public sealed class FileWavCodec
                     headerOfdm,
                     blockHeaders[blockIndex],
                     blockHeaders[blockIndex],
-                    _profile.BlockHeaderUnmodulatedSamples);
+                    _profile.BlockHeaderUnmodulatedSamples,
+                    InterleaveInitSeedBlock);
                 onFrameTransmitted?.Invoke(TransmissionFrameKind.Bh);
-                AppendModulatedDataBlock(leftPcm, rightPcm, dataOfdm, blocks[blockIndex].Payload);
+                AppendModulatedDataBlock(
+                    leftPcm,
+                    rightPcm,
+                    dataOfdm,
+                    blocks[blockIndex].Payload,
+                    InterleaveInitSeedBlock);
                 onFrameTransmitted?.Invoke(TransmissionFrameKind.Bd);
             }
         }
@@ -345,7 +353,8 @@ public sealed class FileWavCodec
             headerOfdm,
             FileHeaderBytes,
             FileHeaderPilot,
-            coarseRadius);
+            coarseRadius,
+            InterleaveInitSeedFileHeader);
         EnsureHeaderCrc(fileHeader, "file header");
         var fileSize = BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(860, 8));
         var blockCount = (int)BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(868, 8));
@@ -379,7 +388,8 @@ public sealed class FileWavCodec
                     headerOfdm,
                     FileHeaderBytes,
                     FileHeaderPilot,
-                    fineRadius);
+                    fineRadius,
+                    InterleaveInitSeedFileHeader);
                 EnsureHeaderCrc(passFh, "pass file header");
             }
 
@@ -402,7 +412,8 @@ public sealed class FileWavCodec
                         headerOfdm,
                         FileHeaderBytes,
                         FileHeaderPilot,
-                        fineRadius);
+                        fineRadius,
+                        InterleaveInitSeedFileHeader);
                     EnsureHeaderCrc(midFh, "mid file header");
                 }
 
@@ -421,7 +432,8 @@ public sealed class FileWavCodec
                     headerOfdm,
                     BlockHeaderBytes,
                     BlockHeaderPilot,
-                    fineRadius);
+                    fineRadius,
+                    InterleaveInitSeedBlock);
                 EnsureHeaderCrc(blockHeader, "block header");
                 var blockIndex = BinaryPrimitives.ReadInt64BigEndian(blockHeader.AsSpan(12, 8));
                 var blockSize = BinaryPrimitives.ReadInt32BigEndian(blockHeader.AsSpan(20, 4));
@@ -446,6 +458,7 @@ public sealed class FileWavCodec
                     expectedBlockHash: blockHeader.AsSpan(24, 32).ToArray(),
                     payloadLength: blockSize,
                     tuning,
+                    InterleaveInitSeedBlock,
                     out var diag);
                 if (traceDataErrors)
                 {
@@ -489,7 +502,8 @@ public sealed class FileWavCodec
                     headerOfdm,
                     FileHeaderBytes,
                     FileHeaderPilot,
-                    fineRadius);
+                    fineRadius,
+                    InterleaveInitSeedFileHeader);
                 EnsureHeaderCrc(endFh, "trailing file header");
             }
         }
@@ -594,7 +608,8 @@ public sealed class FileWavCodec
             headerOfdm,
             fileHeader,
             fileHeader,
-            _profile.FileHeaderUnmodulatedSamples);
+            _profile.FileHeaderUnmodulatedSamples,
+            InterleaveInitSeedFileHeader);
     }
 
     /// <summary>
@@ -606,7 +621,8 @@ public sealed class FileWavCodec
         OfdmGenerator ofdm,
         byte[] leftHeaderBytes,
         byte[] rightHeaderBytes,
-        int unmodulatedSamples)
+        int unmodulatedSamples,
+        int interleaveInitSeed)
     {
         if (unmodulatedSamples > 0)
         {
@@ -617,14 +633,14 @@ public sealed class FileWavCodec
         if (ofdm.ChannelMode == ChannelMode.Mono)
         {
             // モノラル: L のみ。R に同一データを載せない。
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(leftBits, leftPcm.Count));
+            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(leftBits, leftPcm.Count, interleaveInitSeed));
             return;
         }
 
         // ステレオ: L/R で別ビット列（ヘッダー本体を分割）し SC 合計 2 倍にする。
         _ = rightHeaderBytes;
         SplitBitsForStereo(leftBits, out var splitLeft, out var splitRight);
-        AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(splitLeft, splitRight, leftPcm.Count));
+        AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(splitLeft, splitRight, leftPcm.Count, interleaveInitSeed));
     }
 
     private int HeaderUnmodulatedSamplesFor(int packetLength) =>
@@ -658,7 +674,8 @@ public sealed class FileWavCodec
         OfdmGenerator ofdm,
         int payloadLength,
         byte[]? expectedPilot,
-        int searchRadius)
+        int searchRadius,
+        int interleaveInitSeed)
     {
         var rsByteLength = GetReedSolomonEncodedLength(payloadLength);
         var convByteLength = GetConvolutionalEncodedLength(rsByteLength);
@@ -685,6 +702,7 @@ public sealed class FileWavCodec
                 expectedPilot,
                 stereoSplit,
                 perSymbolSearchRadius: 0,
+                interleaveInitSeed,
                 out var exactPayload,
                 out var exactEnd))
         {
@@ -726,6 +744,7 @@ public sealed class FileWavCodec
                         expectedPilot,
                         stereoSplit,
                         perSymbolSearchRadius: Math.Min(2, Math.Max(0, symbolLength / 16)),
+                        interleaveInitSeed,
                         out var payload,
                         out var endCursor))
                 {
@@ -759,6 +778,7 @@ public sealed class FileWavCodec
         byte[]? expectedPilot,
         bool stereoSplit,
         int perSymbolSearchRadius,
+        int interleaveInitSeed,
         out byte[] payload,
         out int endCursor)
     {
@@ -790,7 +810,8 @@ public sealed class FileWavCodec
                     stereoSplit,
                     logicalOffset,
                     searchRadius: Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
-                    noiseVariance: 0.05);
+                    noiseVariance: 0.05,
+                    interleaveInitSeed);
                 endCursor = cursor;
             }
             else
@@ -806,7 +827,8 @@ public sealed class FileWavCodec
                     stereoSplit,
                     logicalOffset,
                     perSymbolSearchRadius,
-                    noiseVariance: 0.05);
+                    noiseVariance: 0.05,
+                    interleaveInitSeed);
                 endCursor = cursor;
             }
 
@@ -919,7 +941,8 @@ public sealed class FileWavCodec
         List<Complex> leftPcm,
         List<Complex> rightPcm,
         OfdmGenerator ofdm,
-        byte[] payload)
+        byte[] payload,
+        int interleaveInitSeed)
     {
         var packed = PackDataBlockWithCrc(payload);
         // データ部: ターボ → 畳み込み → QAM。ステレオ時はビット列を L/R に分割して SC 合計 2 倍相当にする。
@@ -929,11 +952,11 @@ public sealed class FileWavCodec
         if (ofdm.ChannelMode == ChannelMode.Stereo)
         {
             SplitBitsForStereo(bits, out var leftBits, out var rightBits);
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(leftBits, rightBits, leftPcm.Count));
+            AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(leftBits, rightBits, leftPcm.Count, interleaveInitSeed));
         }
         else
         {
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(bits, leftPcm.Count));
+            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(bits, leftPcm.Count, interleaveInitSeed));
         }
     }
 
@@ -1039,6 +1062,7 @@ public sealed class FileWavCodec
         byte[] expectedBlockHash,
         int payloadLength,
         DecodeRuntimeTuning tuning,
+        int interleaveInitSeed,
         out DataDecodeDiag diag)
     {
         var paddedLen = TurboPaddedLength(payloadLength + CrcBytes);
@@ -1090,7 +1114,7 @@ public sealed class FileWavCodec
                             }
 
                             bits = DemodulateDataBitsFixed(
-                                ofdm, leftSamples, rightSamples, start, channelBitCount, bitCount, useStereoSplit, logical);
+                                ofdm, leftSamples, rightSamples, start, channelBitCount, bitCount, useStereoSplit, logical, interleaveInitSeed);
                             end = start + sampleCount;
                         }
                         else
@@ -1104,7 +1128,8 @@ public sealed class FileWavCodec
                                 bitCount,
                                 useStereoSplit,
                                 logical,
-                                perSymbolRadius);
+                                perSymbolRadius,
+                                interleaveInitSeed);
                             end = cursor;
                         }
 
@@ -1127,7 +1152,8 @@ public sealed class FileWavCodec
                             useStereoSplit,
                             logical,
                             radius,
-                            noiseVariance: 0.05);
+                            noiseVariance: 0.05,
+                            interleaveInitSeed);
                         end = cursor;
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
                             qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true);
@@ -1213,7 +1239,8 @@ public sealed class FileWavCodec
                 useStereoSplit,
                 logicalOffset,
                 Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
-                noiseVariance: 0.08);
+                noiseVariance: 0.08,
+                interleaveInitSeed);
             warpedCursor = cursor;
             logicalOffset += sampleCount;
             var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
@@ -1249,19 +1276,20 @@ public sealed class FileWavCodec
         int channelBitCount,
         int totalBitCount,
         bool stereoSplit,
-        long logical)
+        long logical,
+        int interleaveInitSeed)
     {
         var sliceL = new Complex[ofdm.SampleCountForBitCount(channelBitCount)];
         Array.Copy(leftSamples, start, sliceL, 0, sliceL.Length);
         if (!stereoSplit)
         {
-            return ofdm.DemodulateBits(sliceL, totalBitCount, useRightChannel: false, logical);
+            return ofdm.DemodulateBits(sliceL, totalBitCount, useRightChannel: false, logical, interleaveInitSeed);
         }
 
         var sliceR = new Complex[sliceL.Length];
         Array.Copy(rightSamples, start, sliceR, 0, sliceR.Length);
-        var leftBits = ofdm.DemodulateBits(sliceL, channelBitCount, useRightChannel: false, logical);
-        var rightBits = ofdm.DemodulateBits(sliceR, channelBitCount, useRightChannel: true, logical);
+        var leftBits = ofdm.DemodulateBits(sliceL, channelBitCount, useRightChannel: false, logical, interleaveInitSeed);
+        var rightBits = ofdm.DemodulateBits(sliceR, channelBitCount, useRightChannel: true, logical, interleaveInitSeed);
         return JoinStereoBits(leftBits, rightBits, totalBitCount);
     }
 
@@ -1274,20 +1302,21 @@ public sealed class FileWavCodec
         int totalBitCount,
         bool stereoSplit,
         long logical,
-        int searchRadius)
+        int searchRadius,
+        int interleaveInitSeed)
     {
         if (!stereoSplit)
         {
             return ofdm.DemodulateBitsFromStream(
-                leftSamples, ref cursor, totalBitCount, useRightChannel: false, logical, searchRadius);
+                leftSamples, ref cursor, totalBitCount, useRightChannel: false, logical, searchRadius, interleaveInitSeed);
         }
 
         var leftCursor = cursor;
         var rightCursor = cursor;
         var leftBits = ofdm.DemodulateBitsFromStream(
-            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius);
+            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, interleaveInitSeed);
         var rightBits = ofdm.DemodulateBitsFromStream(
-            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius);
+            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, interleaveInitSeed);
         cursor = leftCursor;
         return JoinStereoBits(leftBits, rightBits, totalBitCount);
     }
@@ -1302,7 +1331,8 @@ public sealed class FileWavCodec
         bool stereoSplit,
         long logical,
         int searchRadius,
-        double noiseVariance)
+        double noiseVariance,
+        int interleaveInitSeed)
     {
         if (!stereoSplit)
         {
@@ -1313,15 +1343,16 @@ public sealed class FileWavCodec
                 useRightChannel: false,
                 logical,
                 searchRadius,
-                noiseVariance);
+                noiseVariance,
+                interleaveInitSeed);
         }
 
         var leftCursor = cursor;
         var rightCursor = cursor;
         var leftLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, noiseVariance);
+            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, noiseVariance, interleaveInitSeed);
         var rightLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, noiseVariance);
+            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, noiseVariance, interleaveInitSeed);
         cursor = leftCursor;
         var joined = new double[totalBitCount];
         var half = (totalBitCount + 1) / 2;
