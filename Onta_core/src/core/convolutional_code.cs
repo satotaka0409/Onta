@@ -5,6 +5,13 @@ namespace Onta.Core;
 /// </summary>
 public static class ConvolutionalCode
 {
+    public enum PunctureRate
+    {
+        Rate1_2,
+        Rate2_3,
+        Rate3_4
+    }
+
     /// <summary>
     /// 拘束長 K（シフトレジスタ全体の段数）です。
     /// </summary>
@@ -25,6 +32,9 @@ public static class ConvolutionalCode
     private const int StateCount = 1 << MemoryBits;
     private const int StateMask = StateCount - 1;
     private const int LargeMetric = 1_000_000_000;
+    private static readonly bool[] PuncturePatternRate1_2 = [true, true];
+    private static readonly bool[] PuncturePatternRate2_3 = [true, true, true, false];
+    private static readonly bool[] PuncturePatternRate3_4 = [true, true, true, false, false, true, true, true];
 
     /// <summary>
     /// 復号時の統計情報を表します。
@@ -42,7 +52,7 @@ public static class ConvolutionalCode
     /// <param name="terminate">true の場合、末尾にテールビット（0）を追加して終端状態へ収束させます。</param>
     /// <returns>符号化ビット列（MSB-first）をパックしたバイト列。</returns>
     /// <exception cref="ArgumentNullException"><paramref name="data"/> が null の場合にスローされます。</exception>
-    public static byte[] Encode(byte[] data, bool terminate = true)
+    public static byte[] Encode(byte[] data, bool terminate = true, PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
         ArgumentNullException.ThrowIfNull(data);
 
@@ -68,7 +78,8 @@ public static class ConvolutionalCode
             }
         }
 
-        return PackBits(encodedBits);
+        var puncturedBits = Puncture(encodedBits, punctureRate);
+        return PackBits(puncturedBits);
     }
 
     /// <summary>
@@ -81,9 +92,13 @@ public static class ConvolutionalCode
     /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="originalByteLength"/> が負値の場合にスローされます。</exception>
     /// <exception cref="ArgumentException">入力ビット長が期待フォーマットと一致しない場合にスローされます。</exception>
-    public static byte[] Decode(byte[] encoded, int originalByteLength, bool terminated = true)
+    public static byte[] Decode(
+        byte[] encoded,
+        int originalByteLength,
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
-        return Decode(encoded, originalByteLength, out _, terminated);
+        return Decode(encoded, originalByteLength, out _, terminated, punctureRate);
     }
 
     /// <summary>
@@ -97,7 +112,12 @@ public static class ConvolutionalCode
     /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="originalByteLength"/> が負値の場合にスローされます。</exception>
     /// <exception cref="ArgumentException">入力ビット長が期待フォーマットと一致しない場合にスローされます。</exception>
-    public static byte[] Decode(byte[] encoded, int originalByteLength, out DecodeMetrics metrics, bool terminated = true)
+    public static byte[] Decode(
+        byte[] encoded,
+        int originalByteLength,
+        out DecodeMetrics metrics,
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
         ArgumentNullException.ThrowIfNull(encoded);
         if (originalByteLength < 0)
@@ -108,7 +128,14 @@ public static class ConvolutionalCode
         var originalBitLength = originalByteLength * 8;
         var expectedInputBits = originalBitLength + (terminated ? TailBits : 0);
         var expectedCodeBitLength = expectedInputBits * OutputBitsPerInputBit;
-        var encodedBits = UnpackBits(encoded, expectedCodeBitLength);
+        var expectedPuncturedBitLength = GetPuncturedBitLength(expectedCodeBitLength, punctureRate);
+        var puncturedBits = UnpackBits(encoded, expectedPuncturedBitLength);
+        DepunctureHard(
+            puncturedBits,
+            expectedCodeBitLength,
+            punctureRate,
+            out var encodedBits,
+            out var presentMask);
 
         var inputSymbolCount = expectedCodeBitLength / OutputBitsPerInputBit;
         var prevMetric = new int[StateCount];
@@ -134,6 +161,8 @@ public static class ConvolutionalCode
 
             var rx0 = encodedBits[t * 2] ? 1 : 0;
             var rx1 = encodedBits[(t * 2) + 1] ? 1 : 0;
+            var hasRx0 = presentMask[t * 2];
+            var hasRx1 = presentMask[(t * 2) + 1];
 
             for (var state = 0; state < StateCount; state++)
             {
@@ -148,7 +177,17 @@ public static class ConvolutionalCode
                     var nextState = GetNextState(state, inputBit);
                     var branch0 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]);
                     var branch1 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[1]);
-                    var branchDistance = (branch0 ^ rx0) + (branch1 ^ rx1);
+                    var branchDistance = 0;
+                    if (hasRx0)
+                    {
+                        branchDistance += branch0 ^ rx0;
+                    }
+
+                    if (hasRx1)
+                    {
+                        branchDistance += branch1 ^ rx1;
+                    }
+
                     var candidate = baseMetric + branchDistance;
 
                     if (candidate < nextMetric[nextState])
@@ -185,9 +224,9 @@ public static class ConvolutionalCode
         var correctedCodeBits = bestMetric;
         metrics = new DecodeMetrics(
             PathHammingDistance: bestMetric,
-            ComparedCodeBitCount: expectedCodeBitLength,
+            ComparedCodeBitCount: expectedPuncturedBitLength,
             CorrectedCodeBitCount: correctedCodeBits,
-            CorrectionRate: expectedCodeBitLength == 0 ? 0.0 : (double)correctedCodeBits / expectedCodeBitLength);
+            CorrectionRate: expectedPuncturedBitLength == 0 ? 0.0 : (double)correctedCodeBits / expectedPuncturedBitLength);
 
         return decoded;
     }
@@ -195,9 +234,13 @@ public static class ConvolutionalCode
     /// <summary>
     /// ソフト LLR 入力の復号です。LLR&gt;0 をビット 1 寄りと解釈します。
     /// </summary>
-    public static byte[] DecodeSoft(ReadOnlySpan<double> codeLlrs, int originalByteLength, bool terminated = true)
+    public static byte[] DecodeSoft(
+        ReadOnlySpan<double> codeLlrs,
+        int originalByteLength,
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
-        return DecodeSoftToInfoLlrs(codeLlrs, originalByteLength, out _, terminated);
+        return DecodeSoftToInfoLlrs(codeLlrs, originalByteLength, out _, terminated, punctureRate);
     }
 
     /// <summary>
@@ -209,7 +252,8 @@ public static class ConvolutionalCode
         ReadOnlySpan<double> codeLlrs,
         int originalByteLength,
         out double[] infoLlrs,
-        bool terminated = true)
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
         if (originalByteLength < 0)
         {
@@ -219,12 +263,15 @@ public static class ConvolutionalCode
         var originalBitLength = originalByteLength * 8;
         var expectedInputBits = originalBitLength + (terminated ? TailBits : 0);
         var expectedCodeBitLength = expectedInputBits * OutputBitsPerInputBit;
-        if (codeLlrs.Length < expectedCodeBitLength)
+        var expectedPuncturedBitLength = GetPuncturedBitLength(expectedCodeBitLength, punctureRate);
+        if (codeLlrs.Length < expectedPuncturedBitLength)
         {
             throw new ArgumentException(
-                $"Soft LLR length {codeLlrs.Length} is shorter than required {expectedCodeBitLength}.",
+            $"Soft LLR length {codeLlrs.Length} is shorter than required {expectedPuncturedBitLength}.",
                 nameof(codeLlrs));
         }
+
+        var fullCodeLlrs = DepunctureSoft(codeLlrs, expectedCodeBitLength, punctureRate);
 
         var tCount = expectedCodeBitLength / OutputBitsPerInputBit;
         const double negInf = -1e300;
@@ -244,8 +291,8 @@ public static class ConvolutionalCode
         alpha[0, 0] = 0.0;
         for (var t = 0; t < tCount; t++)
         {
-            var llr0 = codeLlrs[t * 2];
-            var llr1 = codeLlrs[(t * 2) + 1];
+            var llr0 = fullCodeLlrs[t * 2];
+            var llr1 = fullCodeLlrs[(t * 2) + 1];
             for (var state = 0; state < StateCount; state++)
             {
                 var a = alpha[t, state];
@@ -281,8 +328,8 @@ public static class ConvolutionalCode
 
         for (var t = tCount - 1; t >= 0; t--)
         {
-            var llr0 = codeLlrs[t * 2];
-            var llr1 = codeLlrs[(t * 2) + 1];
+            var llr0 = fullCodeLlrs[t * 2];
+            var llr1 = fullCodeLlrs[(t * 2) + 1];
             for (var state = 0; state < StateCount; state++)
             {
                 for (var inputBit = 0; inputBit <= 1; inputBit++)
@@ -308,8 +355,8 @@ public static class ConvolutionalCode
         var infoSoft = new double[tCount];
         for (var t = 0; t < tCount; t++)
         {
-            var llr0 = codeLlrs[t * 2];
-            var llr1 = codeLlrs[(t * 2) + 1];
+            var llr0 = fullCodeLlrs[t * 2];
+            var llr1 = fullCodeLlrs[(t * 2) + 1];
             var best0 = negInf;
             var best1 = negInf;
             for (var state = 0; state < StateCount; state++)
@@ -397,9 +444,14 @@ public static class ConvolutionalCode
     /// <param name="decoded">成功時は復号結果、失敗時は空配列。</param>
     /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
     /// <returns>成功時 true、失敗時 false。</returns>
-    public static bool TryDecode(byte[] encoded, int originalByteLength, out byte[] decoded, bool terminated = true)
+    public static bool TryDecode(
+        byte[] encoded,
+        int originalByteLength,
+        out byte[] decoded,
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
-        return TryDecode(encoded, originalByteLength, out decoded, out _, terminated);
+        return TryDecode(encoded, originalByteLength, out decoded, out _, terminated, punctureRate);
     }
 
     /// <summary>
@@ -411,20 +463,136 @@ public static class ConvolutionalCode
     /// <param name="metrics">成功時は復号統計、失敗時は既定値。</param>
     /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
     /// <returns>成功時 true、失敗時 false。</returns>
-    public static bool TryDecode(byte[] encoded, int originalByteLength, out byte[] decoded, out DecodeMetrics metrics, bool terminated = true)
+    public static bool TryDecode(
+        byte[] encoded,
+        int originalByteLength,
+        out byte[] decoded,
+        out DecodeMetrics metrics,
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
         decoded = Array.Empty<byte>();
         metrics = default;
 
         try
         {
-            decoded = Decode(encoded, originalByteLength, out metrics, terminated);
+            decoded = Decode(encoded, originalByteLength, out metrics, terminated, punctureRate);
             return true;
         }
         catch
         {
             return false;
         }
+    }
+
+    public static int GetEncodedBitLength(int originalBitLength, bool terminated, PunctureRate punctureRate)
+    {
+        if (originalBitLength < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(originalBitLength));
+        }
+
+        var inputBits = originalBitLength + (terminated ? TailBits : 0);
+        var motherBits = inputBits * OutputBitsPerInputBit;
+        return GetPuncturedBitLength(motherBits, punctureRate);
+    }
+
+    private static int GetPuncturedBitLength(int motherBitLength, PunctureRate punctureRate)
+    {
+        var pattern = GetPuncturePattern(punctureRate);
+        var count = 0;
+        for (var i = 0; i < motherBitLength; i++)
+        {
+            if (pattern[i % pattern.Length])
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static bool[] Puncture(bool[] motherBits, PunctureRate punctureRate)
+    {
+        var pattern = GetPuncturePattern(punctureRate);
+        var output = new bool[GetPuncturedBitLength(motherBits.Length, punctureRate)];
+        var write = 0;
+        for (var i = 0; i < motherBits.Length; i++)
+        {
+            if (!pattern[i % pattern.Length])
+            {
+                continue;
+            }
+
+            output[write++] = motherBits[i];
+        }
+
+        return output;
+    }
+
+    private static void DepunctureHard(
+        bool[] puncturedBits,
+        int motherBitLength,
+        PunctureRate punctureRate,
+        out bool[] fullBits,
+        out bool[] presentMask)
+    {
+        var pattern = GetPuncturePattern(punctureRate);
+        fullBits = new bool[motherBitLength];
+        presentMask = new bool[motherBitLength];
+        var read = 0;
+        for (var i = 0; i < motherBitLength; i++)
+        {
+            if (!pattern[i % pattern.Length])
+            {
+                fullBits[i] = false;
+                presentMask[i] = false;
+                continue;
+            }
+
+            if (read >= puncturedBits.Length)
+            {
+                throw new ArgumentException("Punctured bit stream is shorter than expected.", nameof(puncturedBits));
+            }
+
+            fullBits[i] = puncturedBits[read++];
+            presentMask[i] = true;
+        }
+    }
+
+    private static double[] DepunctureSoft(ReadOnlySpan<double> puncturedLlrs, int motherBitLength, PunctureRate punctureRate)
+    {
+        var pattern = GetPuncturePattern(punctureRate);
+        var full = new double[motherBitLength];
+        var read = 0;
+        for (var i = 0; i < motherBitLength; i++)
+        {
+            if (!pattern[i % pattern.Length])
+            {
+                full[i] = 0.0;
+                continue;
+            }
+
+            if (read >= puncturedLlrs.Length)
+            {
+                throw new ArgumentException("Punctured LLR stream is shorter than expected.", nameof(puncturedLlrs));
+            }
+
+            full[i] = puncturedLlrs[read++];
+        }
+
+        return full;
+    }
+
+    private static bool[] GetPuncturePattern(PunctureRate punctureRate)
+    {
+        return punctureRate switch
+        {
+            PunctureRate.Rate1_2 => PuncturePatternRate1_2,
+            PunctureRate.Rate2_3 => PuncturePatternRate2_3,
+            PunctureRate.Rate3_4 => PuncturePatternRate3_4,
+            _ => throw new ArgumentOutOfRangeException(nameof(punctureRate), punctureRate, "Unsupported puncture rate.")
+        };
     }
 
     private static void EncodeOneBit(int inputBit, ref int state, bool[] encodedBits, ref int writeIndex)

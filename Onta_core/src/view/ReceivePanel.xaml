@@ -8,12 +8,17 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*" MinHeight="120"/>
+      <RowDefinition Height="*"
+          MinHeight="120"/>
     </Grid.RowDefinitions>
 
-    <TextBlock Text="受信" FontSize="18" FontWeight="Bold" Margin="4,0,0,8"/>
+    <TextBlock Text="受信"
+        FontSize="18"
+        FontWeight="Bold"
+        Margin="4,0,0,8"/>
 
-    <Grid Grid.Row="1" Margin="4,0,4,8">
+    <Grid Grid.Row="1"
+        Margin="4,0,4,8">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="2*"/>
@@ -22,25 +27,85 @@
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="0.7*"/>
       </Grid.ColumnDefinitions>
-      <TextBlock Text="ファイル名" VerticalAlignment="Center" Margin="0,0,8,0"/>
-      <TextBox x:Name="FileNameBox" Grid.Column="1" IsReadOnly="True" Margin="0,0,12,0"/>
-      <TextBlock Grid.Column="2" Text="ファイルサイズ" VerticalAlignment="Center" Margin="0,0,8,0"/>
-      <TextBox x:Name="FileSizeBox" Grid.Column="3" IsReadOnly="True" Margin="0,0,12,0"/>
-      <TextBlock Grid.Column="4" Text="ブロック数" VerticalAlignment="Center" Margin="0,0,8,0"/>
-      <TextBox x:Name="BlockCountBox" Grid.Column="5" IsReadOnly="True"/>
+      <TextBlock Text="ファイル名"
+          VerticalAlignment="Center"
+          Margin="0,0,8,0"/>
+      <TextBox x:Name="FileNameBox"
+          Grid.Column="1"
+          IsReadOnly="True"
+          Margin="0,0,12,0"/>
+      <TextBlock Grid.Column="2"
+          Text="ファイルサイズ"
+          VerticalAlignment="Center"
+          Margin="0,0,8,0"/>
+      <TextBox x:Name="FileSizeBox"
+          Grid.Column="3"
+          IsReadOnly="True"
+          Margin="0,0,12,0"/>
+      <TextBlock Grid.Column="4"
+          Text="ブロック数"
+          VerticalAlignment="Center"
+          Margin="0,0,8,0"/>
+      <TextBox x:Name="BlockCountBox"
+          Grid.Column="5"
+          IsReadOnly="True"/>
     </Grid>
 
-    <Grid Grid.Row="2" Margin="0,0,0,8">
+    <Grid Grid.Row="2"
+        Margin="0,0,0,8">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <local:WowFlutterMeter x:Name="WowLeft" ChannelLabel="L" Margin="0,0,6,0"/>
-      <local:WowFlutterMeter x:Name="WowRight" Grid.Column="1" ChannelLabel="R" Margin="6,0,0,0"/>
+
+      <Grid Grid.Column="0"
+          Margin="0,0,10,0">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="ワウフラッター"
+            Margin="4,0,0,6"
+            Foreground="{StaticResource BrushTextMuted}"/>
+        <Grid Grid.Row="1">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <local:WowFlutterMeter x:Name="WowLeft"
+              ChannelLabel="L"
+              Margin="0,0,6,0"/>
+          <local:WowFlutterMeter x:Name="WowRight"
+              Grid.Column="1"
+              ChannelLabel="R"
+              Margin="6,0,0,0"/>
+        </Grid>
+      </Grid>
+
+      <StackPanel Grid.Column="1"
+          Orientation="Vertical"
+          HorizontalAlignment="Right"
+          VerticalAlignment="Center">
+        <Button Content="WAV入力"
+            Width="110"
+            Margin="0,0,0,6"
+            Click="OnBrowseWavInput"/>
+        <Button Content="音声入力"
+            Width="110"
+            Margin="0,0,0,6"
+            Click="OnUseAudioInput"/>
+        <Button Content="スタート"
+            Width="110"
+            Click="OnReceiveStartClick"/>
+      </StackPanel>
     </Grid>
 
-    <Border Grid.Row="3" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-            Background="{StaticResource BrushInput}" CornerRadius="3" Padding="4">
+    <Border Grid.Row="3"
+        BorderBrush="{StaticResource BrushBorder}"
+        BorderThickness="1"
+            Background="{StaticResource BrushInput}"
+        CornerRadius="3"
+        Padding="4">
       <lvc:CartesianChart x:Name="ErrorChart"
                           Background="{StaticResource BrushInput}"
                           Series="{Binding Series}"

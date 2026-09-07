@@ -9,8 +9,6 @@ namespace Onta.Core.Tests;
 public sealed class OntaTest1
 {
     private static readonly FileWavCodecProfile Profile = new(
-        FftSize: 256,
-        CyclicPrefixLength: 64,
         ActiveSubcarriers: 9,
         ModulationScheme: ModulationScheme.Qpsk);
 

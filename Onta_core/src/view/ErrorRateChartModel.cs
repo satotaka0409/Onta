@@ -7,16 +7,30 @@ using SkiaSharp;
 
 namespace Onta.View;
 
+public enum ErrorRateFrameKind
+{
+    Fh,
+    Bh,
+    Bd
+}
+
 /// <summary>
 /// LiveCharts2 によるエラー率（%）グラフのモデルです（グレー基調）。
 /// </summary>
 public sealed class ErrorRateChartModel
 {
     private const int MaxSamples = 240;
-    private readonly ObservableCollection<ObservableValue> _values = [];
+    private readonly ObservableCollection<ObservablePoint> _fhValues = [];
+    private readonly ObservableCollection<ObservablePoint> _bhValues = [];
+    private readonly ObservableCollection<ObservablePoint> _bdValues = [];
+    private readonly List<ErrorRateFrameKind> _kinds = [];
+    private int _firstSampleIndex;
+    private int _nextSampleIndex;
 
-    // 画面のグレーパレットに合わせたチャート色。
-    private static readonly SKColor LineColor = new(196, 202, 212);
+    // FH/BH/BD を見分けやすくする色分け。
+    private static readonly SKColor FhColor = new(186, 215, 255);
+    private static readonly SKColor BhColor = new(240, 204, 140);
+    private static readonly SKColor BdColor = new(166, 221, 176);
     private static readonly SKColor AxisColor = new(176, 181, 191);
     private static readonly SKColor GridColor = new(92, 97, 108);
 
@@ -24,14 +38,32 @@ public sealed class ErrorRateChartModel
     {
         Series =
         [
-            new LineSeries<ObservableValue>
+            new LineSeries<ObservablePoint>
             {
-                Values = _values,
-                Name = "エラー率",
-                Fill = new SolidColorPaint(new SKColor(138, 144, 156, 40)),
+                Values = _fhValues,
+                Name = "FH",
+                Fill = null,
                 GeometrySize = 0,
                 LineSmoothness = 0,
-                Stroke = new SolidColorPaint(LineColor, 2)
+                Stroke = new SolidColorPaint(FhColor, 2)
+            },
+            new LineSeries<ObservablePoint>
+            {
+                Values = _bhValues,
+                Name = "BH",
+                Fill = null,
+                GeometrySize = 0,
+                LineSmoothness = 0,
+                Stroke = new SolidColorPaint(BhColor, 2)
+            },
+            new LineSeries<ObservablePoint>
+            {
+                Values = _bdValues,
+                Name = "BD",
+                Fill = null,
+                GeometrySize = 0,
+                LineSmoothness = 0,
+                Stroke = new SolidColorPaint(BdColor, 2)
             }
         ];
 
@@ -53,7 +85,12 @@ public sealed class ErrorRateChartModel
         [
             new Axis
             {
-                IsVisible = false
+                Name = "属性",
+                Labeler = LabelForSample,
+                MinStep = 1,
+                NamePaint = new SolidColorPaint(AxisColor),
+                LabelsPaint = new SolidColorPaint(AxisColor),
+                SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
             }
         ];
     }
@@ -69,20 +106,72 @@ public sealed class ErrorRateChartModel
     /// <summary>
     /// エラー率サンプル（0〜100%）を追加します。
     /// </summary>
-    public void AddSample(double errorRatePercent)
+    public void AddSample(double errorRatePercent, ErrorRateFrameKind kind)
     {
         var value = Math.Clamp(errorRatePercent, 0.0, 100.0);
         LatestPercent = value;
-        _values.Add(new ObservableValue(value));
-        while (_values.Count > MaxSamples)
+
+        var x = _nextSampleIndex;
+        _nextSampleIndex++;
+        _kinds.Add(kind);
+
+        switch (kind)
         {
-            _values.RemoveAt(0);
+            case ErrorRateFrameKind.Fh:
+                _fhValues.Add(new ObservablePoint(x, value));
+                break;
+            case ErrorRateFrameKind.Bh:
+                _bhValues.Add(new ObservablePoint(x, value));
+                break;
+            default:
+                _bdValues.Add(new ObservablePoint(x, value));
+                break;
         }
+
+        while (_kinds.Count > MaxSamples)
+        {
+            _kinds.RemoveAt(0);
+            _firstSampleIndex++;
+        }
+
+        TrimOldPoints(_fhValues);
+        TrimOldPoints(_bhValues);
+        TrimOldPoints(_bdValues);
+    }
+
+    private void TrimOldPoints(ObservableCollection<ObservablePoint> series)
+    {
+        while (series.Count > 0 && series[0].X < _firstSampleIndex)
+        {
+            series.RemoveAt(0);
+        }
+    }
+
+    private string LabelForSample(double value)
+    {
+        var index = (int)Math.Round(value);
+        var local = index - _firstSampleIndex;
+        if (local < 0 || local >= _kinds.Count)
+        {
+            return string.Empty;
+        }
+
+        return _kinds[local] switch
+        {
+            ErrorRateFrameKind.Fh => "FH",
+            ErrorRateFrameKind.Bh => "BH",
+            _ => "BD"
+        };
     }
 
     public void Clear()
     {
-        _values.Clear();
+        _fhValues.Clear();
+        _bhValues.Clear();
+        _bdValues.Clear();
+        _kinds.Clear();
+        _firstSampleIndex = 0;
+        _nextSampleIndex = 0;
         LatestPercent = 0;
     }
 }

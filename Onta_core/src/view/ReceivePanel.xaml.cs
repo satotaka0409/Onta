@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using Microsoft.Win32;
 
 namespace Onta.View;
 
@@ -15,6 +16,7 @@ public partial class ReceivePanel : UserControl
     private bool _demoRunning;
     private double _demoBias;
     private double _demoTimeSec;
+    private string _receiveSource = "WAV入力";
 
     public ReceivePanel()
     {
@@ -27,7 +29,9 @@ public partial class ReceivePanel : UserControl
 
         Loaded += (_, _) =>
         {
-            StartDemoFeed();
+            StopDemoFeed();
+            SetWowFlutterPercent(0, 0);
+            ErrorGraph.Clear();
             SetFileInfo("(未受信)", "-", "-");
         };
         Unloaded += (_, _) => StopDemoFeed();
@@ -58,9 +62,22 @@ public partial class ReceivePanel : UserControl
         WowRight.AddSample(rightPercent);
     }
 
-    public void AddErrorRateSample(double errorRatePercent)
+    public void AddErrorRateSample(double errorRatePercent, ErrorRateFrameKind frameKind)
     {
-        _errorChart.AddSample(errorRatePercent);
+        _errorChart.AddSample(errorRatePercent, frameKind);
+    }
+
+    public void AddErrorRateSamples(double errorRatePercent, IReadOnlyList<ErrorRateFrameKind> frameKinds)
+    {
+        if (frameKinds.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < frameKinds.Count; i++)
+        {
+            _errorChart.AddSample(errorRatePercent, frameKinds[i]);
+        }
     }
 
     public void StartDemoFeed()
@@ -77,6 +94,35 @@ public partial class ReceivePanel : UserControl
         _demoTimer.Stop();
     }
 
+    private void OnBrowseWavInput(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = "受信 WAV ファイルを選択",
+            Filter = "WAV (*.wav)|*.wav|すべてのファイル (*.*)|*.*",
+            InitialDirectory = AppPaths.InputDir
+        };
+        if (dlg.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _receiveSource = "WAV入力";
+        var fileInfo = new FileInfo(dlg.FileName);
+        SetFileInfo(fileInfo.Name, $"{fileInfo.Length:N0} bytes", "-");
+    }
+
+    private void OnUseAudioInput(object sender, RoutedEventArgs e)
+    {
+        _receiveSource = "音声入力";
+        SetFileInfo("(音声入力)", "-", "-");
+    }
+
+    private void OnReceiveStartClick(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show($"受信スタート（たたき台）\n入力元: {_receiveSource}", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     private void OnDemoTick(object? sender, EventArgs e)
     {
         if (!_demoRunning)
@@ -90,7 +136,7 @@ public partial class ReceivePanel : UserControl
         _demoBias = Math.Clamp(_demoBias, 0.2, 4.0);
         var spike = _rng.NextDouble() < 0.03 ? _rng.NextDouble() * 8.0 : 0.0;
         var err = Math.Max(0.0, _demoBias + ((_rng.NextDouble() - 0.5) * 0.6) + spike);
-        _errorChart.AddSample(err);
+        _errorChart.AddSample(err, ErrorRateFrameKind.Bd);
 
         var wowL = (1.2 * Math.Sin((2.0 * Math.PI * 0.5 * _demoTimeSec) + 0.3))
                    + (0.35 * Math.Sin((2.0 * Math.PI * 6.0 * _demoTimeSec) + 1.1));
