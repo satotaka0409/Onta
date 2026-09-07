@@ -1943,6 +1943,7 @@ public sealed class OfdmGenerator
         var bits = new bool[bitCount];
         var bitIndex = 0;
         var logical = logicalSampleOffset;
+        var agcState = new PilotGroupAgcState(pilotBins.Count);
         // シンボルごとに CP/パイロットで追従し、ワウによる累積ずれを吸収する。
         var followRadius = Math.Max(searchRadius, 2);
         var position = cursor;
@@ -1958,7 +1959,7 @@ public sealed class OfdmGenerator
             var symbol = samples.AsSpan(start, symbolLength);
             var time = RemoveCyclicPrefix(symbol, _config.CyclicPrefixLength);
             var freqBins = ForwardFftMatchingInverse(time);
-            var equalizer = EstimatePilotEqualizer(freqBins, pilotBins);
+            var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
             var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical);
 
             foreach (var dataBin in dataOrder)
@@ -1968,7 +1969,7 @@ public sealed class OfdmGenerator
                     break;
                 }
 
-                EmitSymbolBits(freqBins[dataBin] * equalizer, ref bitIndex, bits);
+                EmitSymbolBits(freqBins[dataBin] * equalizers[dataBin], ref bitIndex, bits);
             }
 
             position = start + symbolLength;
@@ -2086,6 +2087,8 @@ public sealed class OfdmGenerator
         var llrs = new double[bitCount];
         var bitIndex = 0;
         var logical = logicalSampleOffset;
+        var primaryAgcState = new PilotGroupAgcState(pilotBins.Count);
+        var secondaryAgcState = new PilotGroupAgcState(secondaryPilotBins.Count);
         var followRadius = Math.Max(searchRadius, 2);
         var position = cursor;
         var noiseAccum = 0.0;
@@ -2107,6 +2110,7 @@ public sealed class OfdmGenerator
                 AccumulatePilotNoise(
                     samples.AsSpan(start, symbolLength),
                     pilotBins,
+                    useRightChannel,
                     ref noiseAccum,
                     ref noiseCount);
                 if (secondarySamples is not null && start + symbolLength <= secondarySamples.Length)
@@ -2114,6 +2118,7 @@ public sealed class OfdmGenerator
                     AccumulatePilotNoise(
                         secondarySamples.AsSpan(start, symbolLength),
                         secondaryPilotBins,
+                        secondaryUseRightChannel,
                         ref noiseAccum,
                         ref noiseCount);
                 }
@@ -2141,6 +2146,7 @@ public sealed class OfdmGenerator
                 samples.AsSpan(start, symbolLength),
                 pilotBins,
                 useRightChannel,
+                primaryAgcState,
                 logical,
                 ref bitIndex,
                 llrs,
@@ -2159,6 +2165,7 @@ public sealed class OfdmGenerator
                     secondarySamples.AsSpan(start, symbolLength),
                     secondaryPilotBins,
                     secondaryUseRightChannel,
+                    secondaryAgcState,
                     logical,
                     ref secondaryBitIndex,
                     llrs,
@@ -2178,6 +2185,7 @@ public sealed class OfdmGenerator
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
         bool useRightChannel,
+        PilotGroupAgcState agcState,
         long logical,
         ref int bitIndex,
         double[] llrs,
@@ -2186,7 +2194,7 @@ public sealed class OfdmGenerator
     {
         var time = RemoveCyclicPrefix(symbolWithCp, _config.CyclicPrefixLength);
         var freqBins = ForwardFftMatchingInverse(time);
-        var equalizer = EstimatePilotEqualizer(freqBins, pilotBins);
+        var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
         var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical);
         foreach (var dataBin in dataOrder)
         {
@@ -2199,7 +2207,7 @@ public sealed class OfdmGenerator
             {
                 var tmp = new double[BitsPerModulationSymbol];
                 var tmpIndex = 0;
-                EmitSymbolSoftLlrs(freqBins[dataBin] * equalizer, ref tmpIndex, tmp, noiseVariance);
+                EmitSymbolSoftLlrs(freqBins[dataBin] * equalizers[dataBin], ref tmpIndex, tmp, noiseVariance);
                 for (var i = 0; i < tmpIndex && (bitIndex + i) < llrs.Length; i++)
                 {
                     llrs[bitIndex + i] += tmp[i];
@@ -2209,7 +2217,7 @@ public sealed class OfdmGenerator
             }
             else
             {
-                EmitSymbolSoftLlrs(freqBins[dataBin] * equalizer, ref bitIndex, llrs, noiseVariance);
+                EmitSymbolSoftLlrs(freqBins[dataBin] * equalizers[dataBin], ref bitIndex, llrs, noiseVariance);
             }
         }
     }
@@ -2217,15 +2225,16 @@ public sealed class OfdmGenerator
     private void AccumulatePilotNoise(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
+        bool useRightChannel,
         ref double noiseAccum,
         ref int noiseCount)
     {
         var time = RemoveCyclicPrefix(symbolWithCp, _config.CyclicPrefixLength);
         var freqBins = ForwardFftMatchingInverse(time);
-        var equalizer = EstimatePilotEqualizer(freqBins, pilotBins);
+        var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel);
         foreach (var pilotBin in pilotBins)
         {
-            var eq = freqBins[pilotBin] * equalizer;
+            var eq = freqBins[pilotBin] * equalizers[pilotBin];
             var err = eq - PilotSymbol;
             noiseAccum += 0.5 * ((err.Real * err.Real) + (err.Imaginary * err.Imaginary));
             noiseCount++;
@@ -2295,6 +2304,7 @@ public sealed class OfdmGenerator
         var bits = new bool[bitCount];
         var bitIndex = 0;
         var symbolCount = samples.Length / symbolLength;
+        var agcState = new PilotGroupAgcState(pilotBins.Count);
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
@@ -2304,7 +2314,7 @@ public sealed class OfdmGenerator
             var symbol = samples.Slice(s * symbolLength, symbolLength);
             var time = RemoveCyclicPrefix(symbol, _config.CyclicPrefixLength);
             var freqBins = ForwardFftMatchingInverse(time);
-            var equalizer = EstimatePilotEqualizer(freqBins, pilotBins);
+            var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
 
             foreach (var dataBin in dataOrder)
             {
@@ -2313,7 +2323,7 @@ public sealed class OfdmGenerator
                     break;
                 }
 
-                EmitSymbolBits(freqBins[dataBin] * equalizer, ref bitIndex, bits);
+                EmitSymbolBits(freqBins[dataBin] * equalizers[dataBin], ref bitIndex, bits);
             }
         }
 
@@ -2321,9 +2331,14 @@ public sealed class OfdmGenerator
     }
 
     /// <summary>
-    /// パイロットから周波数方向に補間した正則化 ZF 等化係数を推定します（多値QAM向け）。
+    /// パイロット配置グループごとに等化係数を推定します。
+    /// 同一グループのキャリアへ同一係数を適用し、シンボルごとにAGC状態を更新します。
     /// </summary>
-    private Complex[] EstimatePilotEqualizers(Complex[] freqBins, List<int> pilotBins, bool useRightChannel)
+    private Complex[] EstimatePilotEqualizers(
+        Complex[] freqBins,
+        List<int> pilotBins,
+        bool useRightChannel,
+        PilotGroupAgcState? agcState = null)
     {
         var equalizers = new Complex[freqBins.Length];
         Array.Fill(equalizers, Complex.One);
@@ -2340,55 +2355,107 @@ public sealed class OfdmGenerator
         }
 
         var allCarriers = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
-        var meanChannel = Complex.Zero;
-        for (var i = 0; i < channels.Length; i++)
-        {
-            meanChannel += channels[i];
-        }
-
-        meanChannel /= channels.Length;
-        var meanMag2 = (meanChannel.Real * meanChannel.Real) + (meanChannel.Imaginary * meanChannel.Imaginary);
-        if (meanMag2 < 1e-18)
-        {
-            return equalizers;
-        }
-
-        // 正則化付き ZF: 雑音増幅を抑えつつ、パイロット通過後の振幅をほぼ 1 に保つ。
         var noisePower = EstimateNoisePower(freqBins, orderedPilots, allCarriers);
-        var regularization = Math.Max(noisePower * 0.25, meanMag2 * 1e-3);
+        var regularization = Math.Max(noisePower * 0.10, 1e-4);
 
-        for (var bin = 1; bin < freqBins.Length / 2; bin++)
+        var groupedCarriers = new List<int>[orderedPilots.Count];
+        for (var i = 0; i < groupedCarriers.Length; i++)
         {
-            var h = InterpolatePilotChannel(bin, orderedPilots, channels);
+            groupedCarriers[i] = new List<int>();
+        }
+
+        foreach (var carrier in allCarriers)
+        {
+            var groupIndex = ResolvePilotGroupIndex(carrier, orderedPilots);
+            groupedCarriers[groupIndex].Add(carrier);
+        }
+
+        for (var i = 0; i < orderedPilots.Count; i++)
+        {
+            var h = channels[i];
             var mag2 = (h.Real * h.Real) + (h.Imaginary * h.Imaginary);
             if (mag2 < 1e-18)
             {
-                equalizers[bin] = Complex.One / meanChannel;
                 continue;
             }
 
-            equalizers[bin] = Complex.Conjugate(h) / (mag2 + regularization);
-        }
-
-        // パイロット位置で平均通過利得が 1 になるよう再スケールする。
-        var pass = Complex.Zero;
-        for (var i = 0; i < orderedPilots.Count; i++)
-        {
-            pass += channels[i] * equalizers[orderedPilots[i]];
-        }
-
-        pass /= orderedPilots.Count;
-        var passMag2 = (pass.Real * pass.Real) + (pass.Imaginary * pass.Imaginary);
-        if (passMag2 > 1e-18)
-        {
-            var rescale = Complex.One / pass;
-            for (var bin = 1; bin < freqBins.Length / 2; bin++)
+            // received ≈ 1 * h を逆補正し、群ごとのレベルを 1 に合わせる。
+            var groupEq = Complex.Conjugate(h) / (mag2 + regularization);
+            var pass = h * groupEq;
+            var passMag2 = (pass.Real * pass.Real) + (pass.Imaginary * pass.Imaginary);
+            if (passMag2 > 1e-18)
             {
-                equalizers[bin] *= rescale;
+                groupEq *= Complex.One / pass;
+            }
+
+            if (agcState is not null)
+            {
+                groupEq = agcState.Update(i, groupEq);
+            }
+
+            foreach (var carrier in groupedCarriers[i])
+            {
+                equalizers[carrier] = groupEq;
             }
         }
 
         return equalizers;
+    }
+
+    private static int ResolvePilotGroupIndex(int carrierBin, List<int> orderedPilots)
+    {
+        if (orderedPilots.Count <= 1)
+        {
+            return 0;
+        }
+
+        if (carrierBin <= orderedPilots[0])
+        {
+            return 0;
+        }
+
+        for (var i = 0; i < orderedPilots.Count - 1; i++)
+        {
+            var mid = (orderedPilots[i] + orderedPilots[i + 1]) / 2;
+            if (carrierBin <= mid)
+            {
+                return i;
+            }
+        }
+
+        return orderedPilots.Count - 1;
+    }
+
+    private sealed class PilotGroupAgcState
+    {
+        private readonly Complex[] _smoothed;
+        private readonly bool[] _initialized;
+
+        public PilotGroupAgcState(int groupCount)
+        {
+            var size = Math.Max(1, groupCount);
+            _smoothed = new Complex[size];
+            _initialized = new bool[size];
+        }
+
+        public Complex Update(int groupIndex, Complex instantaneous)
+        {
+            if ((uint)groupIndex >= (uint)_smoothed.Length)
+            {
+                return instantaneous;
+            }
+
+            if (!_initialized[groupIndex])
+            {
+                _smoothed[groupIndex] = instantaneous;
+                _initialized[groupIndex] = true;
+                return instantaneous;
+            }
+
+            const double alpha = 0.30;
+            _smoothed[groupIndex] = (_smoothed[groupIndex] * (1.0 - alpha)) + (instantaneous * alpha);
+            return _smoothed[groupIndex];
+        }
     }
 
     private static Complex InterpolatePilotChannel(int bin, List<int> orderedPilots, Complex[] channels)

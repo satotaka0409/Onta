@@ -1,44 +1,61 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "build-onta-debug",
-      "command": "dotnet",
-      "type": "process",
-      "args": [
-        "build",
-        "C:/proj/Onta/Onta_core/Onta_core.csproj",
-        "-c",
-        "Debug",
-        "/property:GenerateFullPaths=true",
-        "/consoleloggerparameters:NoSummary"
-      ],
-      "options": {
-        "cwd": "C:/proj/Onta"
-      },
-      "problemMatcher": "$msCompile",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      }
-    },
-    {
-      "label": "build-testhost-debug",
-      "command": "dotnet",
-      "type": "process",
-      "args": [
-        "build",
-        "C:/proj/Onta/Onta_core/test_host/Onta_core.TestHost.csproj",
-        "-c",
-        "Debug",
-        "/property:GenerateFullPaths=true",
-        "/consoleloggerparameters:NoSummary"
-      ],
-      "options": {
-        "cwd": "C:/proj/Onta"
-      },
-      "problemMatcher": "$msCompile",
-      "group": "build"
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-onta-debug",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"build",
+				"C:/proj/Onta/Onta_core/Onta_core.csproj",
+				"-c",
+				"Debug",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": "$msCompile",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "build-testhost-debug",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"build",
+				"C:/proj/Onta/Onta_core/test_host/Onta_core.TestHost.csproj",
+				"-c",
+				"Debug",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": "$msCompile",
+			"group": "build"
+		},
+		{
+			"label": "test-onta-all",
+			"type": "shell",
+			"command": "C:\\Program Files\\dotnet\\dotnet.exe",
+			"args": [
+				"test",
+				"C:\\proj\\Onta\\Onta_core\\test\\Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--blame-hang",
+				"--blame-hang-timeout",
+				"3m",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"isBackground": false
+		}
+	]
 }

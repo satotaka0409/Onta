@@ -141,6 +141,7 @@ public sealed class FileWavCodec
                 }
 
                 var blockIndex = order[local];
+                // BH は FH と同じ変調方式（BPSK固定）で送出する。
                 AppendHeaderPackets(
                     leftPcm,
                     rightPcm,
@@ -646,24 +647,11 @@ public sealed class FileWavCodec
 
         try
         {
-            bool[] bits;
+            double[] llrs;
             if (perSymbolSearchRadius <= 0)
             {
-                bits = DemodulateDataBitsFixed(
-                    ofdm,
-                    leftSamples,
-                    rightSamples,
-                    start,
-                    channelBitCount,
-                    totalBitCount,
-                    stereoSplit,
-                    logicalOffset);
-                endCursor = start + sampleCount;
-            }
-            else
-            {
                 var cursor = start;
-                bits = DemodulateDataBitsFromStream(
+                llrs = DemodulateDataSoftLlrsFromStream(
                     ofdm,
                     leftSamples,
                     rightSamples,
@@ -672,11 +660,28 @@ public sealed class FileWavCodec
                     totalBitCount,
                     stereoSplit,
                     logicalOffset,
-                    perSymbolSearchRadius);
+                    searchRadius: Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
+                    noiseVariance: 0.05);
+                endCursor = cursor;
+            }
+            else
+            {
+                var cursor = start;
+                llrs = DemodulateDataSoftLlrsFromStream(
+                    ofdm,
+                    leftSamples,
+                    rightSamples,
+                    ref cursor,
+                    channelBitCount,
+                    totalBitCount,
+                    stereoSplit,
+                    logicalOffset,
+                    perSymbolSearchRadius,
+                    noiseVariance: 0.05);
                 endCursor = cursor;
             }
 
-            payload = DecodeHeaderBits(bits, payloadLength, rsByteLength);
+            payload = DecodeHeaderFromSoftLlrs(llrs, payloadLength, rsByteLength);
             if (expectedPilot is not null && !HeaderPilotMatches(payload, expectedPilot))
             {
                 return false;
@@ -690,10 +695,10 @@ public sealed class FileWavCodec
         }
     }
 
-    private static byte[] DecodeHeaderBits(bool[] bits, int payloadLength, int rsByteLength)
+    private static byte[] DecodeHeaderFromSoftLlrs(double[] llrs, int payloadLength, int rsByteLength)
     {
-        var convEncoded = BitsToBytesMsb(bits);
-        var rsEncoded = ConvolutionalCode.Decode(convEncoded, rsByteLength, terminated: true);
+        // 仕様: ヘッダー復号はソフト LLR を畳み込み BCJR に通し、中間ハード判定の情報落ちを避ける。
+        var rsEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(llrs, rsByteLength, out _, terminated: true);
         var paddedPayload = ApplyReedSolomonDecode(rsEncoded);
         var payload = new byte[payloadLength];
         Buffer.BlockCopy(paddedPayload, 0, payload, 0, payloadLength);
@@ -1615,6 +1620,159 @@ public sealed class FileWavCodec
         return slice;
     }
 
+    /// <summary>
+    /// 送信時の構成要素ごとの所要時間内訳です。
+    /// </summary>
+    public readonly record struct TransmissionDurationSegment(string Label, long Samples, double Seconds);
+
+    /// <summary>
+    /// 送信全体の所要時間見積りです。
+    /// </summary>
+    public sealed record TransmissionDurationEstimate(
+        int SampleRate,
+        long TotalSamples,
+        double TotalSeconds,
+        IReadOnlyList<TransmissionDurationSegment> Segments);
+
+    /// <summary>
+    /// ファイルサイズと送信プロファイルから、送信時間の内訳を見積もります。
+    /// 送出順は実際の実装（FH再送・インターリーブ順）に合わせます。
+    /// </summary>
+    public static TransmissionDurationEstimate EstimateTransmissionDuration(FileWavCodecProfile profile, long fileSizeBytes)
+    {
+        if (fileSizeBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(fileSizeBytes));
+        }
+
+        var codec = new FileWavCodec(profile);
+        var headerOfdm = codec.CreateHeaderOfdm();
+        var dataOfdm = codec.CreateDataOfdm();
+        var payloadLengths = BuildBlockPayloadLengths(fileSizeBytes);
+        var segments = new List<TransmissionDurationSegment>(payloadLengths.Length * Math.Max(1, profile.BlockInterleaveFactor) + 8);
+        var totalSamples = 0L;
+
+        var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
+        var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, profile.BlockHeaderUnmodulatedSamples);
+
+        AddSegment(segments, "LEAD", profile.LeadingSilenceSamples, profile.SampleRate, ref totalSamples);
+        AddSegment(segments, "PREAMBLE", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples);
+
+        for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
+        {
+            AddSegment(segments, "FH", fhPacketSamples, profile.SampleRate, ref totalSamples);
+            var order = GetBlockEmissionOrder(payloadLengths.Length, pass);
+            for (var local = 0; local < order.Length; local++)
+            {
+                if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
+                {
+                    AddSegment(segments, "FH", fhPacketSamples, profile.SampleRate, ref totalSamples);
+                }
+
+                var blockIndex = order[local];
+                var dataSamples = DataPacketSamples(dataOfdm, payloadLengths[blockIndex], profile.ChannelMode);
+                var blkSamples = bhPacketSamples + dataSamples;
+                var blkLabel = profile.BlockInterleaveFactor == 1
+                    ? $"BLK-{blockIndex}"
+                    : $"BLK-{blockIndex}(P{pass + 1})";
+                AddSegment(segments, blkLabel, blkSamples, profile.SampleRate, ref totalSamples);
+            }
+        }
+
+        AddSegment(segments, "FH", fhPacketSamples, profile.SampleRate, ref totalSamples);
+        AddSegment(segments, "TAIL", profile.TrailingSilenceSamples, profile.SampleRate, ref totalSamples);
+
+        return new TransmissionDurationEstimate(
+            profile.SampleRate,
+            totalSamples,
+            totalSamples / (double)profile.SampleRate,
+            segments);
+    }
+
+    /// <summary>
+    /// 内訳を画面表示しやすいテキストへ整形します。
+    /// </summary>
+    public static string FormatTransmissionDurationBreakdown(TransmissionDurationEstimate estimate, int digits = 3)
+    {
+        var sb = new StringBuilder(estimate.Segments.Count * 24);
+        var fmt = "F" + Math.Clamp(digits, 0, 6);
+        for (var i = 0; i < estimate.Segments.Count; i++)
+        {
+            var seg = estimate.Segments[i];
+            sb.Append(seg.Label)
+              .Append(':')
+              .Append(seg.Seconds.ToString(fmt))
+              .Append("秒")
+              .AppendLine();
+        }
+
+        sb.Append("合計:")
+          .Append(estimate.TotalSeconds.ToString(fmt))
+          .Append("秒");
+        return sb.ToString();
+    }
+
+    private static int[] BuildBlockPayloadLengths(long fileSizeBytes)
+    {
+        if (fileSizeBytes == 0)
+        {
+            return [0];
+        }
+
+        var blockCountLong = (fileSizeBytes + DataBlockBytes - 1) / DataBlockBytes;
+        if (blockCountLong > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(fileSizeBytes), "Block count exceeds supported range.");
+        }
+
+        var blockCount = (int)blockCountLong;
+        var lengths = new int[blockCount];
+        var remaining = fileSizeBytes;
+        for (var i = 0; i < blockCount; i++)
+        {
+            var len = (int)Math.Min(DataBlockBytes, remaining);
+            lengths[i] = len;
+            remaining -= len;
+        }
+
+        return lengths;
+    }
+
+    private static int HeaderPacketSamples(OfdmGenerator headerOfdm, int payloadLength, int unmodulatedSamples)
+    {
+        var rsLength = GetReedSolomonEncodedLength(payloadLength);
+        var convLength = GetConvolutionalEncodedLength(rsLength);
+        var totalBits = convLength * 8;
+        var channelBits = headerOfdm.ChannelMode == ChannelMode.Stereo
+            ? (totalBits + 1) / 2
+            : totalBits;
+        return unmodulatedSamples + headerOfdm.SampleCountForBitCount(channelBits);
+    }
+
+    private static int DataPacketSamples(OfdmGenerator dataOfdm, int payloadLength, ChannelMode channelMode)
+    {
+        var withCrcLength = payloadLength + CrcBytes;
+        var paddedLength = TurboPaddedLength(withCrcLength);
+        var turboLength = (paddedLength / TurboEcc1024.DataUnitBytes) * TurboEcc1024.EncodedBytes;
+        var convLength = GetConvolutionalEncodedLength(turboLength);
+        var totalBits = convLength * 8;
+        var channelBits = channelMode == ChannelMode.Stereo
+            ? (totalBits + 1) / 2
+            : totalBits;
+        return dataOfdm.SampleCountForBitCount(channelBits);
+    }
+
+    private static void AddSegment(
+        List<TransmissionDurationSegment> segments,
+        string label,
+        long samples,
+        int sampleRate,
+        ref long totalSamples)
+    {
+        totalSamples += samples;
+        segments.Add(new TransmissionDurationSegment(label, samples, samples / (double)sampleRate));
+    }
+
     private readonly record struct DataBlock(byte[] Payload, int PayloadLength);
 }
 
@@ -1863,3 +2021,4 @@ public static class WavReader
         return (left, right);
     }
 }
+
