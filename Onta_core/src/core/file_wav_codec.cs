@@ -88,6 +88,7 @@ public sealed class FileWavCodec
     private const int FileHeaderRepeatIntervalBlocks = 4;
     private const int InterleaveInitSeedFileHeader = unchecked((int)0x13579BDF);
     private const int InterleaveInitSeedBlock = unchecked((int)0x2468ACE1);
+    private static readonly ConvolutionalCode.PunctureRate HeaderPunctureRate = ConvolutionalCode.PunctureRate.Rate1_2;
 
     private readonly FileWavCodecProfile _profile;
 
@@ -158,6 +159,7 @@ public sealed class FileWavCodec
         var fileHeader = BuildFileHeader(fileInfo, fileBytes.Length, blocks.Count, fileHash);
         var headerOfdm = CreateHeaderOfdm();
         var dataOfdm = CreateDataOfdm();
+        var dataPunctureRate = ResolveDataPunctureRate(_profile.ModulationScheme);
         var leftPcm = new List<Complex>(1 << 20);
         var rightPcm = new List<Complex>(1 << 20);
 
@@ -194,7 +196,8 @@ public sealed class FileWavCodec
                     rightPcm,
                     dataOfdm,
                     blocks[blockIndex].Payload,
-                    InterleaveInitSeedBlock);
+                    InterleaveInitSeedBlock,
+                    dataPunctureRate);
                 onFrameTransmitted?.Invoke(TransmissionFrameKind.Bd);
             }
         }
@@ -365,6 +368,7 @@ public sealed class FileWavCodec
 
         var outputSlots = new byte[blockCount][];
         var slotAccepted = new bool[blockCount];
+        var dataPunctureRate = ResolveDataPunctureRate(_profile.ModulationScheme);
         var traceDataErrors = string.Equals(
             Environment.GetEnvironmentVariable(DataTraceEnvVar),
             "1",
@@ -459,6 +463,7 @@ public sealed class FileWavCodec
                     payloadLength: blockSize,
                     tuning,
                     InterleaveInitSeedBlock,
+                    dataPunctureRate,
                     out var diag);
                 if (traceDataErrors)
                 {
@@ -629,7 +634,11 @@ public sealed class FileWavCodec
             AppendPair(leftPcm, rightPcm, ofdm.GenerateUnmodulated(unmodulatedSamples));
         }
 
-        var leftBits = BytesToBitsMsb(ConvolutionalCode.Encode(ApplyReedSolomon(leftHeaderBytes), terminate: true));
+        var leftBits = BytesToBitsMsb(
+            ConvolutionalCode.Encode(
+                ApplyReedSolomon(leftHeaderBytes),
+                terminate: true,
+                punctureRate: HeaderPunctureRate));
         if (ofdm.ChannelMode == ChannelMode.Mono)
         {
             // モノラル: L のみ。R に同一データを載せない。
@@ -678,7 +687,7 @@ public sealed class FileWavCodec
         int interleaveInitSeed)
     {
         var rsByteLength = GetReedSolomonEncodedLength(payloadLength);
-        var convByteLength = GetConvolutionalEncodedLength(rsByteLength);
+        var convByteLength = GetConvolutionalEncodedLength(rsByteLength, HeaderPunctureRate);
         var bitCount = convByteLength * 8;
         var stereoSplit = ofdm.ChannelMode == ChannelMode.Stereo
             && rightSamples.Length == leftSamples.Length
@@ -849,7 +858,12 @@ public sealed class FileWavCodec
     private static byte[] DecodeHeaderFromSoftLlrs(double[] llrs, int payloadLength, int rsByteLength)
     {
         // 仕様: ヘッダー復号はソフト LLR を畳み込み BCJR に通し、中間ハード判定の情報落ちを避ける。
-        var rsEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(llrs, rsByteLength, out _, terminated: true);
+        var rsEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
+            llrs,
+            rsByteLength,
+            out _,
+            terminated: true,
+            punctureRate: HeaderPunctureRate);
         var paddedPayload = ApplyReedSolomonDecode(rsEncoded);
         var payload = new byte[payloadLength];
         Buffer.BlockCopy(paddedPayload, 0, payload, 0, payloadLength);
@@ -942,12 +956,13 @@ public sealed class FileWavCodec
         List<Complex> rightPcm,
         OfdmGenerator ofdm,
         byte[] payload,
-        int interleaveInitSeed)
+        int interleaveInitSeed,
+        ConvolutionalCode.PunctureRate punctureRate)
     {
         var packed = PackDataBlockWithCrc(payload);
         // データ部: ターボ → 畳み込み → QAM。ステレオ時はビット列を L/R に分割して SC 合計 2 倍相当にする。
         var turboEncoded = EncodeTurboBlock(packed);
-        var convEncoded = ConvolutionalCode.Encode(turboEncoded, terminate: true);
+        var convEncoded = ConvolutionalCode.Encode(turboEncoded, terminate: true, punctureRate: punctureRate);
         var bits = BytesToBitsMsb(convEncoded);
         if (ofdm.ChannelMode == ChannelMode.Stereo)
         {
@@ -1063,11 +1078,12 @@ public sealed class FileWavCodec
         int payloadLength,
         DecodeRuntimeTuning tuning,
         int interleaveInitSeed,
+        ConvolutionalCode.PunctureRate punctureRate,
         out DataDecodeDiag diag)
     {
         var paddedLen = TurboPaddedLength(payloadLength + CrcBytes);
         var turboEncodedLength = (paddedLen / TurboEcc1024.DataUnitBytes) * TurboEcc1024.EncodedBytes;
-        var convByteLength = GetConvolutionalEncodedLength(turboEncodedLength);
+        var convByteLength = GetConvolutionalEncodedLength(turboEncodedLength, punctureRate);
         var bitCount = convByteLength * 8;
         var useStereoSplit = ofdm.ChannelMode == ChannelMode.Stereo
             && rightSamples.Length == leftSamples.Length
@@ -1134,7 +1150,7 @@ public sealed class FileWavCodec
                         }
 
                         var turboEncoded = ConvolutionalCode.Decode(
-                            BitsToBytesMsb(bits), turboEncodedLength, terminated: true);
+                            BitsToBytesMsb(bits), turboEncodedLength, terminated: true, punctureRate: punctureRate);
                         candidate = DecodeTurboBlock(turboEncoded, paddedLen, tuning.TurboIterationsMax);
                     }
                     else
@@ -1156,7 +1172,7 @@ public sealed class FileWavCodec
                             interleaveInitSeed);
                         end = cursor;
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                            qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true);
+                            qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true, punctureRate: punctureRate);
                         ClampLlrsInPlace(infoLlrs, 16.0);
                         var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
                         var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
@@ -1244,7 +1260,7 @@ public sealed class FileWavCodec
             warpedCursor = cursor;
             logicalOffset += sampleCount;
             var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true);
+                qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true, punctureRate: punctureRate);
             ClampLlrsInPlace(infoLlrs, 16.0);
             _ = lastError;
             diag = new DataDecodeDiag(
@@ -1545,12 +1561,22 @@ public sealed class FileWavCodec
         return (paddedLength / RsEcc256.DataUnitSize) * RsEcc256.EncodedUnitSize;
     }
 
-    private static int GetConvolutionalEncodedLength(int inputByteLength)
+    private static int GetConvolutionalEncodedLength(int inputByteLength, ConvolutionalCode.PunctureRate punctureRate)
     {
-        var inputBits = inputByteLength * 8;
-        var totalInputBits = inputBits + (ConvolutionalCode.ConstraintLength - 1);
-        var encodedBits = totalInputBits * ConvolutionalCode.OutputBitsPerInputBit;
+        var encodedBits = ConvolutionalCode.GetEncodedBitLength(inputByteLength * 8, terminated: true, punctureRate: punctureRate);
         return (encodedBits + 7) / 8;
+    }
+
+    private static ConvolutionalCode.PunctureRate ResolveDataPunctureRate(ModulationScheme modulationScheme)
+    {
+        return modulationScheme switch
+        {
+            ModulationScheme.Bpsk => ConvolutionalCode.PunctureRate.Rate1_2,
+            ModulationScheme.Qpsk => ConvolutionalCode.PunctureRate.Rate1_2,
+            ModulationScheme.Qam16 => ConvolutionalCode.PunctureRate.Rate2_3,
+            ModulationScheme.Qam64 => ConvolutionalCode.PunctureRate.Rate3_4,
+            _ => throw new ArgumentOutOfRangeException(nameof(modulationScheme), modulationScheme, "Unsupported modulation scheme for puncture rate.")
+        };
     }
 
     private static byte[] ApplyReedSolomon(byte[] payload)
@@ -1864,7 +1890,11 @@ public sealed class FileWavCodec
                 }
 
                 var blockIndex = order[local];
-                var dataSamples = DataPacketSamples(dataOfdm, payloadLengths[blockIndex], profile.ChannelMode);
+                var dataSamples = DataPacketSamples(
+                    dataOfdm,
+                    payloadLengths[blockIndex],
+                    profile.ChannelMode,
+                    profile.ModulationScheme);
                 var blkSamples = bhPacketSamples + dataSamples;
                 var blkLabel = profile.BlockInterleaveFactor == 1
                     ? $"BLK-{blockIndex}"
@@ -1935,7 +1965,7 @@ public sealed class FileWavCodec
     private static int HeaderPacketSamples(OfdmGenerator headerOfdm, int payloadLength, int unmodulatedSamples)
     {
         var rsLength = GetReedSolomonEncodedLength(payloadLength);
-        var convLength = GetConvolutionalEncodedLength(rsLength);
+        var convLength = GetConvolutionalEncodedLength(rsLength, HeaderPunctureRate);
         var totalBits = convLength * 8;
         var channelBits = headerOfdm.ChannelMode == ChannelMode.Stereo
             ? (totalBits + 1) / 2
@@ -1943,12 +1973,16 @@ public sealed class FileWavCodec
         return unmodulatedSamples + headerOfdm.SampleCountForBitCount(channelBits);
     }
 
-    private static int DataPacketSamples(OfdmGenerator dataOfdm, int payloadLength, ChannelMode channelMode)
+    private static int DataPacketSamples(
+        OfdmGenerator dataOfdm,
+        int payloadLength,
+        ChannelMode channelMode,
+        ModulationScheme modulationScheme)
     {
         var withCrcLength = payloadLength + CrcBytes;
         var paddedLength = TurboPaddedLength(withCrcLength);
         var turboLength = (paddedLength / TurboEcc1024.DataUnitBytes) * TurboEcc1024.EncodedBytes;
-        var convLength = GetConvolutionalEncodedLength(turboLength);
+        var convLength = GetConvolutionalEncodedLength(turboLength, ResolveDataPunctureRate(modulationScheme));
         var totalBits = convLength * 8;
         var channelBits = channelMode == ChannelMode.Stereo
             ? (totalBits + 1) / 2
