@@ -15,8 +15,6 @@ public sealed class OntaTest3
     private const int ImpairmentSeed = 20260904;
 
     private static readonly FileWavCodecProfile Profile = new(
-        FftSize: 64,
-        CyclicPrefixLength: 16,
         ActiveSubcarriers: 18,
         ModulationScheme: ModulationScheme.Qam16);
 

@@ -9,8 +9,6 @@ namespace Onta.Core;
 /// ファイル ↔ WAV ラウンドトリップ用の OFDM プロファイルです。
 /// </summary>
 public sealed record FileWavCodecProfile(
-    int FftSize,
-    int CyclicPrefixLength,
     int ActiveSubcarriers,
     ModulationScheme ModulationScheme,
     int SampleRate = 44100,
@@ -39,6 +37,8 @@ public sealed record FileWavCodecProfile(
 /// </summary>
 public sealed class FileWavCodec
 {
+    private const int FixedFftSize = 128;
+    private const int FixedCyclicPrefixLength = FixedFftSize / 4;
     private const int FileHeaderBytes = 880;
     private const int FileNameBytes = 768;
     private const int BlockHeaderBytes = 124;
@@ -411,14 +411,12 @@ public sealed class FileWavCodec
 
     private OfdmGenerator CreateHeaderOfdm()
     {
-        // modulation.mdc: FH/BH は 9 SC/ch + BPSK。ステレオ時は L/R で合計 18 SC。
+        // modulation.mdc: FFT は 128 固定。FH/BH は 9 SC/ch + BPSK。
         var scPerChannel = 9;
-        var fftSize = _profile.ChannelMode == ChannelMode.Stereo ? 64 : 32;
-        var cp = fftSize / 4;
         var config = new OfdmConfig(
-            fftSize: fftSize,
+            fftSize: FixedFftSize,
             activeSubcarriers: scPerChannel,
-            cyclicPrefixLength: cp,
+            cyclicPrefixLength: FixedCyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: _profile.ChannelMode,
@@ -437,9 +435,9 @@ public sealed class FileWavCodec
         // ステレオ時は L/R 各 ActiveSubcarriers 本 → 合計 2 倍のスループット（ビット列を L/R 分割）。
         var scPerChannel = _profile.ActiveSubcarriers;
         var config = new OfdmConfig(
-            fftSize: _profile.FftSize,
+            fftSize: FixedFftSize,
             activeSubcarriers: scPerChannel,
-            cyclicPrefixLength: _profile.CyclicPrefixLength,
+            cyclicPrefixLength: FixedCyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: _profile.ModulationScheme,
             channelMode: _profile.ChannelMode,
