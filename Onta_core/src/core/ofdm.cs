@@ -311,10 +311,13 @@ public sealed class OfdmGenerator
             shift = _config.StereoFrequencyShiftBins;
         }
 
-        var bins = new List<int>(_config.ActiveSubcarriers);
-        for (var k = 1; k <= _config.ActiveSubcarriers; k++)
+        // modulation.mdc のグループ規約:
+        // SC-9=B, SC-18=A+B, SC-27=A+B+C, SC-36=A+B+C+D。
+        var baseBins = ResolveCarrierGroupBins(_config.ActiveSubcarriers);
+        var bins = new List<int>(baseBins.Count);
+        for (var i = 0; i < baseBins.Count; i++)
         {
-            var bin = k + shift;
+            var bin = baseBins[i] + shift;
             if (bin <= 0 || bin >= _config.FftSize / 2)
             {
                 throw new InvalidOperationException(
@@ -325,6 +328,18 @@ public sealed class OfdmGenerator
         }
 
         return bins;
+    }
+
+    private static List<int> ResolveCarrierGroupBins(int activeSubcarriers)
+    {
+        return activeSubcarriers switch
+        {
+            9 => Enumerable.Range(10, 9).ToList(),
+            18 => Enumerable.Range(1, 18).ToList(),
+            27 => Enumerable.Range(1, 27).ToList(),
+            36 => Enumerable.Range(1, 36).ToList(),
+            _ => Enumerable.Range(1, activeSubcarriers).ToList()
+        };
     }
 
     private static void ApplyHermitianSymmetry(Complex[] bins)
@@ -620,6 +635,78 @@ public sealed class OfdmGenerator
     {
         return MatchWowByPreambleCorrelationParams(
             samples, useRightChannel, analysisStartSample, analysisSampleCount);
+    }
+
+    /// <summary>
+    /// 診断用: 直前推定値の近傍のみを探索してワウパラメータを更新します。
+    /// </summary>
+    public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
+        RefineWowParametersNearHintForDiagnostics(
+            Complex[] samples,
+            bool useRightChannel,
+            int analysisStartSample,
+            int analysisSampleCount,
+            double hintAmount,
+            double hintWowPhase,
+            double hintFlutterPhase,
+            double phaseRangeRad = 0.3141592653589793,
+            double amountRange = 0.002)
+    {
+        analysisStartSample = Math.Clamp(analysisStartSample, 0, Math.Max(0, samples.Length - SamplesPerOfdmSymbol));
+        analysisSampleCount = Math.Clamp(analysisSampleCount, SamplesPerOfdmSymbol, samples.Length - analysisStartSample);
+        if (analysisSampleCount < SamplesPerOfdmSymbol * 8)
+        {
+            return null;
+        }
+
+        var baseline = ScoreWowParamsForDiagnostics(
+            samples,
+            useRightChannel,
+            analysisStartSample,
+            analysisSampleCount,
+            hintAmount,
+            hintWowPhase,
+            hintFlutterPhase);
+
+        var best = baseline;
+        var bestAmount = hintAmount;
+        var bestWow = hintWowPhase;
+        var bestFlutter = hintFlutterPhase;
+
+        var phaseStep = Math.Max(0.01, phaseRangeRad / 6.0);
+        var amountStep = Math.Max(0.0005, amountRange / 2.0);
+
+        for (var wow = hintWowPhase - phaseRangeRad; wow <= hintWowPhase + phaseRangeRad; wow += phaseStep)
+        {
+            for (var flutter = hintFlutterPhase - phaseRangeRad; flutter <= hintFlutterPhase + phaseRangeRad; flutter += phaseStep)
+            {
+                for (var amount = Math.Max(0.001, hintAmount - amountRange); amount <= hintAmount + amountRange; amount += amountStep)
+                {
+                    var score = ScoreWowParamsForDiagnostics(
+                        samples,
+                        useRightChannel,
+                        analysisStartSample,
+                        analysisSampleCount,
+                        amount,
+                        wow,
+                        flutter);
+                    if (score > best)
+                    {
+                        best = score;
+                        bestAmount = amount;
+                        bestWow = wow;
+                        bestFlutter = flutter;
+                    }
+                }
+            }
+        }
+
+        if (best <= baseline)
+        {
+            return null;
+        }
+
+        return (baseline, best, bestAmount, WrapPhase(bestWow), WrapPhase(bestFlutter));
     }
 
     /// <summary>

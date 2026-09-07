@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
+using NAudioWaveOut = NAudio.Wave.WaveOut;
 using Onta.Core;
 
 namespace Onta.View;
@@ -10,7 +11,10 @@ namespace Onta.View;
 /// </summary>
 public partial class SendPanel : UserControl
 {
+    private const int DefaultAudioDeviceNumber = -1;
+
     public event EventHandler? SettingsChanged;
+    public event EventHandler<SendSettingsSnapshot>? OutputRequested;
     public event EventHandler? StartRequested;
 
     public SendPanel()
@@ -18,6 +22,8 @@ public partial class SendPanel : UserControl
         InitializeComponent();
         StereoRadio.Checked += OnSettingsChanged;
         MonoRadio.Checked += OnSettingsChanged;
+        InitializeAudioDevices();
+        UpdateAudioDeviceEnabledState();
     }
 
     /// <summary>
@@ -26,14 +32,16 @@ public partial class SendPanel : UserControl
     public SendSettingsSnapshot CreateSnapshot()
     {
         return new SendSettingsSnapshot(
-            ChannelMode: MonoRadio.IsChecked == true ? ChannelMode.Mono : ChannelMode.Stereo,
-            ActiveSubcarriers: ReadSelectedInt("Subcarrier", 18),
+            ChannelMode: MonoRadio.IsChecked == true ? Onta.Core.ChannelMode.Mono : Onta.Core.ChannelMode.Stereo,
+            ActiveSubcarriers: ReadSelectedInt("Subcarrier", 9),
             ModulationScheme: ReadSelectedModulation(),
             BlockInterleaveFactor: ReadSelectedInt("Interleave", 1),
             InputFilePath: InputPathBox.Text,
             WriteWav: WriteWavCheck.IsChecked == true,
             WavOutputPath: WavPathBox.Text,
-            PlayAudio: PlayAudioCheck.IsChecked == true);
+                PlayAudio: PlayAudioCheck.IsChecked == true,
+                AudioDeviceNumber: ReadSelectedAudioDeviceNumber(),
+                AudioDeviceName: ReadSelectedAudioDeviceName());
     }
 
     private void OnSettingsChanged(object sender, RoutedEventArgs e)
@@ -43,12 +51,20 @@ public partial class SendPanel : UserControl
             return;
         }
 
+        UpdateAudioDeviceEnabledState();
+
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnStartClick(object sender, RoutedEventArgs e)
     {
+        OutputRequested?.Invoke(this, CreateSnapshot());
         StartRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnAudioDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnBrowseInput(object sender, RoutedEventArgs e)
@@ -71,6 +87,48 @@ public partial class SendPanel : UserControl
         }
 
         SettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void InitializeAudioDevices()
+    {
+        AudioDeviceComboBox.Items.Clear();
+        AudioDeviceComboBox.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, "既定デバイス"));
+
+        try
+        {
+            for (var i = 0; i < NAudioWaveOut.DeviceCount; i++)
+            {
+                var caps = NAudioWaveOut.GetCapabilities(i);
+                AudioDeviceComboBox.Items.Add(new AudioDeviceItem(i, caps.ProductName));
+            }
+        }
+        catch
+        {
+            // デバイス列挙失敗時は既定デバイスのみで継続。
+        }
+
+        AudioDeviceComboBox.SelectedIndex = 0;
+    }
+
+    private void UpdateAudioDeviceEnabledState()
+    {
+        var enabled = PlayAudioCheck.IsChecked == true;
+        AudioDeviceComboBox.IsEnabled = enabled;
+        AudioDeviceComboBox.Opacity = enabled ? 1.0 : 0.6;
+    }
+
+    private int ReadSelectedAudioDeviceNumber()
+    {
+        return AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
+            ? item.DeviceNumber
+            : DefaultAudioDeviceNumber;
+    }
+
+    private string ReadSelectedAudioDeviceName()
+    {
+        return AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
+            ? item.Name
+            : "既定デバイス";
     }
 
     private void OnBrowseWav(object sender, RoutedEventArgs e)
@@ -119,11 +177,11 @@ public partial class SendPanel : UserControl
                 "Qpsk" => ModulationScheme.Qpsk,
                 "Qam16" => ModulationScheme.Qam16,
                 "Qam64" => ModulationScheme.Qam64,
-                _ => ModulationScheme.Qpsk
+                _ => ModulationScheme.Bpsk
             };
         }
 
-        return ModulationScheme.Qpsk;
+        return ModulationScheme.Bpsk;
     }
 
     private static IEnumerable<RadioButton> FindRadios(DependencyObject root)
@@ -144,4 +202,6 @@ public partial class SendPanel : UserControl
             }
         }
     }
+
+    private sealed record AudioDeviceItem(int DeviceNumber, string Name);
 }

@@ -13,4 +13,6 @@ public sealed record SendSettingsSnapshot(
     string InputFilePath,
     bool WriteWav,
     string WavOutputPath,
-    bool PlayAudio);
+    bool PlayAudio,
+    int AudioDeviceNumber,
+    string AudioDeviceName);

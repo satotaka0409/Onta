@@ -3,31 +3,43 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Onta.View"
         Title="Onta"
-        Width="920" Height="840"
-        MinWidth="800" MinHeight="720"
+        Width="1280"
+    Height="1024"
+        MinWidth="1100"
+    MinHeight="860"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BrushBg}">
   <Grid Margin="10">
     <Grid.RowDefinitions>
       <RowDefinition Height="260"/>
-      <RowDefinition Height="*" MinHeight="220"/>
-      <RowDefinition Height="0.8*" MinHeight="180"/>
+      <RowDefinition Height="*"
+          MinHeight="220"/>
+      <RowDefinition Height="0.8*"
+          MinHeight="180"/>
     </Grid.RowDefinitions>
 
-    <Border Grid.Row="0" Style="{StaticResource PanelBorder}" Margin="0,0,0,8">
+    <Border Grid.Row="0"
+        Style="{StaticResource PanelBorder}"
+        Margin="0,0,0,8">
       <local:SendPanel x:Name="SendPanel"/>
     </Border>
 
-    <Border Grid.Row="1" Style="{StaticResource PanelBorder}" Margin="0,0,0,8">
+    <Border Grid.Row="1"
+        Style="{StaticResource PanelBorder}"
+        Margin="0,0,0,8">
       <local:ReceivePanel x:Name="ReceivePanel"/>
     </Border>
 
-    <Border Grid.Row="2" Style="{StaticResource PanelBorder}" Padding="4">
-      <TabControl BorderThickness="0" Background="Transparent">
-        <TabItem Header="送信タブ">
-          <local:FileEstimatePanel x:Name="EstimatePanel" Margin="8"/>
+    <Border Grid.Row="2"
+        Style="{StaticResource PanelBorder}"
+        Padding="4">
+      <TabControl BorderThickness="0"
+          Background="Transparent">
+        <TabItem Header="見積">
+          <local:FileEstimatePanel x:Name="EstimatePanel"
+              Margin="8"/>
         </TabItem>
-        <TabItem Header="受信タブ">
+        <TabItem Header="受信詳細">
           <TextBlock Margin="12"
                      Foreground="{StaticResource BrushTextMuted}"
                      TextWrapping="Wrap"

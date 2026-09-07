@@ -9,6 +9,7 @@ namespace Onta.View;
 /// </summary>
 public partial class FileEstimatePanel : UserControl
 {
+    private const int DataBlockBytes = 4096;
     private readonly ObservableCollection<EstimateRow> _rows = [];
 
     public FileEstimatePanel()
@@ -18,48 +19,47 @@ public partial class FileEstimatePanel : UserControl
     }
 
     /// <summary>
-    /// 送信設定から見積行を更新します（プレースホルダ値）。
+    /// 送信設定から見積行を更新します（コア見積 API を利用）。
     /// </summary>
     public void UpdateEstimate(SendSettingsSnapshot settings)
     {
-        var rateFactor = settings.ActiveSubcarriers switch
-        {
-            9 => 1.4,
-            18 => 1.0,
-            27 => 0.8,
-            36 => 0.65,
-            _ => 1.0
-        };
-        rateFactor *= settings.ModulationScheme switch
-        {
-            ModulationScheme.Bpsk => 1.6,
-            ModulationScheme.Qpsk => 1.0,
-            ModulationScheme.Qam16 => 0.7,
-            ModulationScheme.Qam64 => 0.5,
-            _ => 1.0
-        };
+        var fileSizeBytes = ResolveInputSize(settings.InputFilePath);
+        var profile = new FileWavCodecProfile(
+            ActiveSubcarriers: settings.ActiveSubcarriers,
+            ModulationScheme: settings.ModulationScheme,
+            ChannelMode: settings.ChannelMode,
+            BlockInterleaveFactor: settings.BlockInterleaveFactor);
 
-        var headerSec = Math.Max(1, (int)Math.Round(10 * rateFactor));
-        var blockSec = Math.Max(1, (int)Math.Round(9 * rateFactor));
-        var blockCount = 4;
-        var interleave = Math.Clamp(settings.BlockInterleaveFactor, 1, 3);
-        var total = (headerSec * (interleave + 1)) + (blockSec * blockCount * interleave);
-        var maxBar = Math.Max(1, total);
+        var estimate = FileWavCodec.EstimateTransmissionDuration(profile, fileSizeBytes);
+        var maxSeconds = Math.Max(0.001, estimate.Segments.Max(s => s.Seconds));
 
         _rows.Clear();
-        _rows.Add(CreateRow("ヘッダー", headerSec * (interleave + 1), maxBar));
-        for (var i = 1; i <= blockCount; i++)
+        foreach (var seg in estimate.Segments)
         {
-            _rows.Add(CreateRow($"ブロック{i}×{interleave}", blockSec * interleave, maxBar));
+            _rows.Add(CreateRow(seg.Label, seg.Seconds, maxSeconds));
         }
 
-        _rows.Add(CreateRow("合計", total, maxBar));
+        var blockCount = Math.Max(1, (int)((fileSizeBytes + DataBlockBytes - 1) / DataBlockBytes));
+        _rows.Add(new EstimateRow("入力サイズ", $"{fileSizeBytes:N0} bytes", ""));
+        _rows.Add(new EstimateRow("ブロック数", blockCount.ToString(), ""));
+        _rows.Add(CreateRow("合計", estimate.TotalSeconds, Math.Max(maxSeconds, estimate.TotalSeconds)));
     }
 
-    private static EstimateRow CreateRow(string name, int seconds, int maxBar)
+    private static long ResolveInputSize(string inputPath)
     {
-        var filled = Math.Clamp((int)Math.Round(24.0 * seconds / maxBar), 1, 24);
-        return new EstimateRow(name, seconds.ToString(), new string('■', filled));
+        if (string.IsNullOrWhiteSpace(inputPath) || !File.Exists(inputPath))
+        {
+            return 0;
+        }
+
+        return new FileInfo(inputPath).Length;
+    }
+
+    private static EstimateRow CreateRow(string name, double seconds, double maxSeconds)
+    {
+        var clampedMax = Math.Max(0.001, maxSeconds);
+        var filled = Math.Clamp((int)Math.Round(24.0 * seconds / clampedMax), 1, 24);
+        return new EstimateRow(name, seconds.ToString("0.###"), new string('■', filled));
     }
 
     private sealed record EstimateRow(string Name, string Seconds, string Meter);

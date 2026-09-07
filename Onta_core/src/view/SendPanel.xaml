@@ -9,7 +9,10 @@
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <TextBlock Text="送信" FontSize="18" FontWeight="Bold" Margin="4,0,0,8"/>
+    <TextBlock Text="送信"
+               FontSize="18"
+               FontWeight="Bold"
+               Margin="4,0,0,8"/>
 
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
@@ -19,60 +22,165 @@
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <GroupBox Header="チャンネル" Margin="4">
+      <GroupBox Header="チャンネル"
+                Margin="4">
         <StackPanel Margin="8">
-          <RadioButton x:Name="StereoRadio" Content="ステレオ" GroupName="Channel" IsChecked="True" Margin="0,0,0,8"/>
-          <RadioButton x:Name="MonoRadio" Content="モノラル" GroupName="Channel"/>
+          <RadioButton x:Name="StereoRadio"
+                       Content="ステレオ"
+                       GroupName="Channel"
+                       IsChecked="True"
+                       Margin="0,0,0,8"/>
+          <RadioButton x:Name="MonoRadio"
+                       Content="モノラル"
+                       GroupName="Channel"/>
         </StackPanel>
       </GroupBox>
 
-      <GroupBox Grid.Column="1" Header="サブキャリア" Margin="4">
+      <GroupBox Grid.Column="1"
+                Header="サブキャリア"
+                Margin="4">
         <StackPanel Margin="8">
-          <RadioButton Content="9-SC" Tag="9" GroupName="Subcarrier" Checked="OnSettingsChanged"/>
-          <RadioButton Content="18-SC" Tag="18" GroupName="Subcarrier" IsChecked="True" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
-          <RadioButton Content="27-SC" Tag="27" GroupName="Subcarrier" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
-          <RadioButton Content="36-SC" Tag="36" GroupName="Subcarrier" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+          <RadioButton Content="9-SC"
+                       Tag="9"
+                       GroupName="Subcarrier"
+                       IsChecked="True"
+                       Checked="OnSettingsChanged"/>
+          <RadioButton Content="18-SC"
+                       Tag="18"
+                       GroupName="Subcarrier"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
+          <RadioButton Content="27-SC"
+                       Tag="27"
+                       GroupName="Subcarrier"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
+          <RadioButton Content="36-SC"
+                       Tag="36"
+                       GroupName="Subcarrier"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
         </StackPanel>
       </GroupBox>
 
-      <GroupBox Grid.Column="2" Header="変調" Margin="4">
+      <GroupBox Grid.Column="2"
+                Header="変調"
+                Margin="4">
         <StackPanel Margin="8">
-          <RadioButton Content="BPSK" Tag="Bpsk" GroupName="Modulation" Checked="OnSettingsChanged"/>
-          <RadioButton Content="QPSK" Tag="Qpsk" GroupName="Modulation" IsChecked="True" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
-          <RadioButton Content="16QAM" Tag="Qam16" GroupName="Modulation" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
-          <RadioButton Content="64QAM" Tag="Qam64" GroupName="Modulation" Checked="OnSettingsChanged" Margin="0,6,0,0"/>
+          <RadioButton Content="BPSK"
+                       Tag="Bpsk"
+                       GroupName="Modulation"
+                       IsChecked="True"
+                       Checked="OnSettingsChanged"/>
+          <RadioButton Content="QPSK"
+                       Tag="Qpsk"
+                       GroupName="Modulation"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
+          <RadioButton Content="16QAM"
+                       Tag="Qam16"
+                       GroupName="Modulation"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
+          <RadioButton Content="64QAM"
+                       Tag="Qam64"
+                       GroupName="Modulation"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
         </StackPanel>
       </GroupBox>
 
-      <GroupBox Grid.Column="3" Header="入出力" Margin="4">
+      <GroupBox Grid.Column="3"
+                Header="入出力"
+                Margin="4">
         <Grid Margin="8">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
-          <Button Content="ファイル選択" Width="100" HorizontalAlignment="Left" Click="OnBrowseInput"/>
-          <TextBox x:Name="InputPathBox" Grid.Row="1" Margin="0,8,0,0" IsReadOnly="True"/>
-          <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
-            <CheckBox x:Name="WriteWavCheck" Content="WAV出力" IsChecked="True" VerticalAlignment="Center" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged"/>
-            <Button Content="…" Width="36" Margin="12,0,0,0" Click="OnBrowseWav"/>
-            <CheckBox x:Name="PlayAudioCheck" Content="音声出力" Margin="16,0,0,0" VerticalAlignment="Center" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged"/>
+          <Button Content="ファイル選択"
+                  Width="100"
+                  HorizontalAlignment="Left"
+                  Click="OnBrowseInput"/>
+          <TextBox x:Name="InputPathBox"
+                   Grid.Row="1"
+                   Margin="0,8,0,0"
+                   IsReadOnly="True"/>
+          <StackPanel Grid.Row="2"
+                      Orientation="Horizontal"
+                      Margin="0,8,0,0">
+            <CheckBox x:Name="WriteWavCheck"
+                      Content="WAV出力"
+                      IsChecked="True"
+                      VerticalAlignment="Center"
+                      Checked="OnSettingsChanged"
+                      Unchecked="OnSettingsChanged"/>
+            <Button Content="…"
+                    Width="36"
+                    Margin="12,0,0,0"
+                    Click="OnBrowseWav"/>
+            <CheckBox x:Name="PlayAudioCheck"
+                      Content="音声出力"
+                      Margin="16,0,0,0"
+                      VerticalAlignment="Center"
+                      Checked="OnSettingsChanged"
+                      Unchecked="OnSettingsChanged"/>
           </StackPanel>
-          <TextBox x:Name="WavPathBox" Grid.Row="3" Margin="0,8,0,0" IsReadOnly="True"/>
+          <TextBox x:Name="WavPathBox"
+                   Grid.Row="3"
+                   Margin="0,8,0,0"
+                   IsReadOnly="True"/>
+          <StackPanel Grid.Row="4"
+                      Orientation="Horizontal"
+                      Margin="0,8,0,0"
+                      VerticalAlignment="Center">
+            <TextBlock Text="出力デバイス"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource BrushTextMuted}"/>
+            <ComboBox x:Name="AudioDeviceComboBox"
+                      Width="220"
+                      Margin="10,0,0,0"
+                      DisplayMemberPath="Name"
+                      SelectedValuePath="DeviceNumber"
+                      SelectionChanged="OnAudioDeviceSelectionChanged"/>
+          </StackPanel>
         </Grid>
       </GroupBox>
     </Grid>
 
-    <GroupBox Grid.Row="2" Header="ブロックインターリーブ" Margin="4,8,4,0" HorizontalAlignment="Left">
-      <StackPanel Orientation="Horizontal" Margin="8,4">
-        <RadioButton Content="×1" Tag="1" GroupName="Interleave" IsChecked="True" Checked="OnSettingsChanged" Margin="0,0,16,0"/>
-        <RadioButton Content="×2" Tag="2" GroupName="Interleave" Checked="OnSettingsChanged" Margin="0,0,16,0"/>
-        <RadioButton Content="×3" Tag="3" GroupName="Interleave" Checked="OnSettingsChanged"/>
+    <GroupBox Grid.Row="2"
+              Header="ブロックインターリーブ"
+              Margin="4,8,4,0"
+              HorizontalAlignment="Left">
+      <StackPanel Orientation="Horizontal"
+                  Margin="8,4">
+        <RadioButton Content="×1"
+                     Tag="1"
+                     GroupName="Interleave"
+                     IsChecked="True"
+                     Checked="OnSettingsChanged"
+                     Margin="0,0,16,0"/>
+        <RadioButton Content="×2"
+                     Tag="2"
+                     GroupName="Interleave"
+                     Checked="OnSettingsChanged"
+                     Margin="0,0,16,0"/>
+        <RadioButton Content="×3"
+                     Tag="3"
+                     GroupName="Interleave"
+                     Checked="OnSettingsChanged"/>
       </StackPanel>
     </GroupBox>
 
-    <Button Grid.Row="3" Content="スタート" Width="120" Height="34"
-            HorizontalAlignment="Right" Margin="0,8,4,0" Click="OnStartClick"/>
+    <Button Grid.Row="3"
+            Content="スタート"
+            Width="120"
+            Height="34"
+            HorizontalAlignment="Right"
+            Margin="0,8,4,0"
+            Click="OnStartClick"/>
   </Grid>
 </UserControl>

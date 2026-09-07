@@ -6,6 +6,16 @@ using System.Text;
 namespace Onta.Core;
 
 /// <summary>
+/// 送信フレーム種別です（ヘッダー FH / ブロックヘッダー BH / ブロックデータ BD）。
+/// </summary>
+public enum TransmissionFrameKind
+{
+    Fh,
+    Bh,
+    Bd
+}
+
+/// <summary>
 /// ファイル ↔ WAV ラウンドトリップ用の OFDM プロファイルです。
 /// </summary>
 public sealed record FileWavCodecProfile(
@@ -13,6 +23,10 @@ public sealed record FileWavCodecProfile(
     ModulationScheme ModulationScheme,
     int SampleRate = 44100,
     double SamplePeak = 0.8,
+    int HeaderFftSize = 128,
+    int DataFftSize = 128,
+    int HeaderCyclicPrefixLength = 32,
+    int DataCyclicPrefixLength = 16,
     int RandomSeed = 20260904,
     int StereoFrequencyShiftBins = 1,
     ChannelMode ChannelMode = ChannelMode.Stereo,
@@ -23,12 +37,30 @@ public sealed record FileWavCodecProfile(
     public byte ChannelModeByte => (byte)ChannelMode;
     public int LeadingSilenceSamples => SampleRate / 10;
     public int TrailingSilenceSamples => SampleRate / 10;
-    /// <summary>全体先頭の無変調プリアンブル（2 秒）。</summary>
-    public int UnmodulatedPreambleSamples => SampleRate * 2;
+    /// <summary>
+    /// 全体先頭の無変調プリアンブル（廃止）。
+    /// 互換のためプロパティは残すが、送受信処理では使用しません。
+    /// </summary>
+    public int UnmodulatedPreambleSamples => 0;
     /// <summary>ファイルヘッダー先頭の無変調区間（1 秒）。</summary>
     public int FileHeaderUnmodulatedSamples => SampleRate;
     /// <summary>ブロックヘッダー先頭の無変調区間（0.5 秒）。</summary>
     public int BlockHeaderUnmodulatedSamples => SampleRate / 2;
+}
+
+/// <summary>
+/// 復号処理の実行時チューニングです（リアルタイム入力向け）。
+/// </summary>
+public sealed record DecodeRuntimeTuning(
+    int TurboIterationsMin = 8,
+    int TurboIterationsMax = 12,
+    double TurboLowConfidenceLlr = 1.5,
+    double TurboHighConfidenceLlr = 4.0,
+    bool PreferLocalWowTracking = true,
+    double WowLocalPhaseRangeRad = 0.3141592653589793,
+    double WowLocalAmountRange = 0.002)
+{
+    public static DecodeRuntimeTuning Default { get; } = new();
 }
 
 /// <summary>
@@ -37,8 +69,8 @@ public sealed record FileWavCodecProfile(
 /// </summary>
 public sealed class FileWavCodec
 {
-    private const int FixedFftSize = 128;
-    private const int FixedCyclicPrefixLength = FixedFftSize / 4;
+    private const int FftSizeSc9Sc18 = 64;
+    private const int FftSizeSc27Sc36 = 128;
     private const int FileHeaderBytes = 880;
     private const int FileNameBytes = 768;
     private const int BlockHeaderBytes = 124;
@@ -99,7 +131,10 @@ public sealed class FileWavCodec
         return decodedBytes;
     }
 
-    public (Complex[] Left, Complex[] Right) EncodeFileToSamples(byte[] fileBytes, FileInfo fileInfo)
+    public (Complex[] Left, Complex[] Right) EncodeFileToSamples(
+        byte[] fileBytes,
+        FileInfo fileInfo,
+        Action<TransmissionFrameKind>? onFrameTransmitted = null)
     {
         var fileHash = Hash.ComputeSha512(fileBytes);
         var blocks = SplitDataBlocks(fileBytes);
@@ -125,19 +160,20 @@ public sealed class FileWavCodec
         var rightPcm = new List<Complex>(1 << 20);
 
         AppendSilence(leftPcm, rightPcm, _profile.LeadingSilenceSamples, stereo: _profile.ChannelMode == ChannelMode.Stereo);
-        AppendPair(leftPcm, rightPcm, headerOfdm.GenerateUnmodulated(_profile.UnmodulatedPreambleSamples));
 
         // data_struct.mdc: 各パス先頭に FH、(BH+BD)×N（パス内は4ブロックごとに FH）、最後に FH。
         // ×2 の第2パスは奇偶入れ替え、×3 の第3パスは第1パスと同順。
         for (var pass = 0; pass < _profile.BlockInterleaveFactor; pass++)
         {
             AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
+            onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
             var order = GetBlockEmissionOrder(blocks.Count, pass);
             for (var local = 0; local < order.Length; local++)
             {
                 if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                 {
                     AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
+                    onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
                 }
 
                 var blockIndex = order[local];
@@ -149,11 +185,14 @@ public sealed class FileWavCodec
                     blockHeaders[blockIndex],
                     blockHeaders[blockIndex],
                     _profile.BlockHeaderUnmodulatedSamples);
+                onFrameTransmitted?.Invoke(TransmissionFrameKind.Bh);
                 AppendModulatedDataBlock(leftPcm, rightPcm, dataOfdm, blocks[blockIndex].Payload);
+                onFrameTransmitted?.Invoke(TransmissionFrameKind.Bd);
             }
         }
 
         AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
+        onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
 
         AppendSilence(leftPcm, rightPcm, _profile.TrailingSilenceSamples, stereo: _profile.ChannelMode == ChannelMode.Stereo);
         return (leftPcm.ToArray(), rightPcm.ToArray());
@@ -162,9 +201,21 @@ public sealed class FileWavCodec
     public byte[] DecodeWavToFileBytes(
         string wavPath,
         bool correctWow = true,
-        (double Amount, double WowPhase, double FlutterPhase)? wowParams = null)
+        (double Amount, double WowPhase, double FlutterPhase)? wowParams = null,
+        DecodeRuntimeTuning? tuning = null)
     {
         var (leftSamples, rightSamples) = WavReader.ReadPcm16(wavPath);
+        return DecodePcmSamplesToFileBytes(leftSamples, rightSamples, correctWow, wowParams, tuning);
+    }
+
+    public byte[] DecodePcmSamplesToFileBytes(
+        Complex[] leftSamples,
+        Complex[] rightSamples,
+        bool correctWow = true,
+        (double Amount, double WowPhase, double FlutterPhase)? wowParams = null,
+        DecodeRuntimeTuning? tuning = null)
+    {
+        tuning ??= DecodeRuntimeTuning.Default;
         if (_profile.ChannelMode == ChannelMode.Mono && rightSamples.Length != 0)
         {
             throw new InvalidDataException("Mono profile expects a 1-channel WAV.");
@@ -177,7 +228,8 @@ public sealed class FileWavCodec
 
         var headerOfdm = CreateHeaderOfdm();
         var dataOfdm = CreateDataOfdm();
-        // ワウ検出時のみ、パイロット推定に基づく時間補正を適用する。
+        // 既知パラメータ指定時は全体へ一括適用。
+        // 自動補正時（correctWow=true）は、復号進行に合わせて都度解析して適用する。
         if (wowParams is { } known)
         {
             leftSamples = headerOfdm.CorrectWowFlutterWithParams(
@@ -194,38 +246,97 @@ public sealed class FileWavCodec
                     known.FlutterPhase);
             }
         }
-        else if (correctWow)
-        {
-            leftSamples = headerOfdm.CorrectWowFlutter(
-                leftSamples,
-                useRightChannel: false,
-                analysisStartSample: _profile.LeadingSilenceSamples,
-                analysisSampleCount: _profile.UnmodulatedPreambleSamples);
-            if (_profile.ChannelMode == ChannelMode.Stereo)
-            {
-                rightSamples = headerOfdm.CorrectWowFlutter(
-                    rightSamples,
-                    useRightChannel: true,
-                    analysisStartSample: _profile.LeadingSilenceSamples,
-                    analysisSampleCount: _profile.UnmodulatedPreambleSamples);
-            }
-        }
+
+        var adaptiveWow = wowParams is null && correctWow;
+        var trackedWow = (Amount: 0.01, WowPhase: 0.0, FlutterPhase: 0.0);
+        var hasTrackedWow = false;
 
         // warpedCursor: 実波形上の読み位置 / logicalOffset: 符号化時のサンプル時刻（インターリーブ用）
         var warpedCursor = 0;
         warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.LeadingSilenceSamples);
-        warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.UnmodulatedPreambleSamples);
         var logicalOffset = (long)warpedCursor;
 
         var coarseRadius = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 8, _profile.SampleRate / 50);
         var fineRadius = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200);
 
+        void ApplyAdaptiveWowCorrection(ref Complex[] channelSamples, bool useRightChannel)
+        {
+            if (!adaptiveWow)
+            {
+                return;
+            }
+
+            var remaining = channelSamples.Length - warpedCursor;
+            var minWindow = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 16, _profile.SampleRate / 4);
+            if (remaining < minWindow)
+            {
+                return;
+            }
+
+            var analysisStart = Math.Max(0, warpedCursor - (_profile.SampleRate / 8));
+            var analysisCount = Math.Min(remaining, Math.Max(minWindow, _profile.SampleRate / 2));
+            var diag = hasTrackedWow && tuning.PreferLocalWowTracking
+                ? headerOfdm.RefineWowParametersNearHintForDiagnostics(
+                    channelSamples,
+                    useRightChannel,
+                    analysisStart,
+                    analysisCount,
+                    trackedWow.Amount,
+                    trackedWow.WowPhase,
+                    trackedWow.FlutterPhase,
+                    phaseRangeRad: tuning.WowLocalPhaseRangeRad,
+                    amountRange: tuning.WowLocalAmountRange)
+                : headerOfdm.MatchWowParametersForDiagnostics(
+                    channelSamples,
+                    useRightChannel,
+                    analysisStart,
+                    analysisCount);
+            if (diag is null)
+            {
+                return;
+            }
+
+            var gain = diag.Value.BestScore - diag.Value.Baseline;
+            if (gain < 1e-5)
+            {
+                return;
+            }
+
+            var tailLength = channelSamples.Length - warpedCursor;
+            if (tailLength <= 0)
+            {
+                return;
+            }
+
+            var tail = new Complex[tailLength];
+            Array.Copy(channelSamples, warpedCursor, tail, 0, tailLength);
+            var correctedTail = headerOfdm.CorrectWowFlutterWithParams(
+                tail,
+                diag.Value.Amount,
+                diag.Value.WowPhase,
+                diag.Value.FlutterPhase);
+            Array.Copy(correctedTail, 0, channelSamples, warpedCursor, correctedTail.Length);
+            trackedWow = (diag.Value.Amount, diag.Value.WowPhase, diag.Value.FlutterPhase);
+            hasTrackedWow = true;
+        }
+
+        void ApplyAdaptiveWowCorrectionPair()
+        {
+            ApplyAdaptiveWowCorrection(ref leftSamples, useRightChannel: false);
+            if (_profile.ChannelMode == ChannelMode.Stereo)
+            {
+                ApplyAdaptiveWowCorrection(ref rightSamples, useRightChannel: true);
+            }
+        }
+
         // 復号は L チャンネルを基準に同期する。
+        ApplyAdaptiveWowCorrectionPair();
         SkipHeaderUnmodulatedPreamble(
             leftSamples,
             ref warpedCursor,
             ref logicalOffset,
             _profile.FileHeaderUnmodulatedSamples);
+        ApplyAdaptiveWowCorrectionPair();
         var fileHeader = DecodeHeaderPacketSynced(
             leftSamples,
             rightSamples,
@@ -259,6 +370,7 @@ public sealed class FileWavCodec
                     ref warpedCursor,
                     ref logicalOffset,
                     _profile.FileHeaderUnmodulatedSamples);
+                ApplyAdaptiveWowCorrectionPair();
                 var passFh = DecodeHeaderPacketSynced(
             leftSamples,
             rightSamples,
@@ -281,6 +393,7 @@ public sealed class FileWavCodec
                         ref warpedCursor,
                         ref logicalOffset,
                         _profile.FileHeaderUnmodulatedSamples);
+                    ApplyAdaptiveWowCorrectionPair();
                     var midFh = DecodeHeaderPacketSynced(
             leftSamples,
             rightSamples,
@@ -299,6 +412,7 @@ public sealed class FileWavCodec
                     ref warpedCursor,
                     ref logicalOffset,
                     _profile.BlockHeaderUnmodulatedSamples);
+                ApplyAdaptiveWowCorrectionPair();
                 var blockHeader = DecodeHeaderPacketSynced(
             leftSamples,
             rightSamples,
@@ -331,6 +445,7 @@ public sealed class FileWavCodec
                     Math.Max(dataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
                     expectedBlockHash: blockHeader.AsSpan(24, 32).ToArray(),
                     payloadLength: blockSize,
+                    tuning,
                     out var diag);
                 if (traceDataErrors)
                 {
@@ -365,6 +480,7 @@ public sealed class FileWavCodec
                     ref warpedCursor,
                     ref logicalOffset,
                     _profile.FileHeaderUnmodulatedSamples);
+                ApplyAdaptiveWowCorrectionPair();
                 var endFh = DecodeHeaderPacketSynced(
             leftSamples,
             rightSamples,
@@ -411,12 +527,14 @@ public sealed class FileWavCodec
 
     private OfdmGenerator CreateHeaderOfdm()
     {
-        // modulation.mdc: FFT は 128 固定。FH/BH は 9 SC/ch + BPSK。
+        // FH/BH は 9 SC/ch + BPSK。
+        var fftSize = ResolveFftSizeBySubcarrier(_profile.ActiveSubcarriers);
+        var cyclicPrefixLength = _profile.HeaderCyclicPrefixLength;
         var scPerChannel = 9;
         var config = new OfdmConfig(
-            fftSize: FixedFftSize,
+            fftSize: fftSize,
             activeSubcarriers: scPerChannel,
-            cyclicPrefixLength: FixedCyclicPrefixLength,
+            cyclicPrefixLength: cyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: _profile.ChannelMode,
@@ -432,12 +550,15 @@ public sealed class FileWavCodec
 
     private OfdmGenerator CreateDataOfdm()
     {
+        // modulation.mdc: SC-9/18 は FFT=64、SC-27/36 は FFT=128 固定。
         // ステレオ時は L/R 各 ActiveSubcarriers 本 → 合計 2 倍のスループット（ビット列を L/R 分割）。
+        var fftSize = ResolveFftSizeBySubcarrier(_profile.ActiveSubcarriers);
+        var cyclicPrefixLength = _profile.DataCyclicPrefixLength;
         var scPerChannel = _profile.ActiveSubcarriers;
         var config = new OfdmConfig(
-            fftSize: FixedFftSize,
+            fftSize: fftSize,
             activeSubcarriers: scPerChannel,
-            cyclicPrefixLength: FixedCyclicPrefixLength,
+            cyclicPrefixLength: cyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: _profile.ModulationScheme,
             channelMode: _profile.ChannelMode,
@@ -449,6 +570,16 @@ public sealed class FileWavCodec
             randomSeed: _profile.RandomSeed);
 
         return new OfdmGenerator(config);
+    }
+
+    private static int ResolveFftSizeBySubcarrier(int activeSubcarriers)
+    {
+        return activeSubcarriers switch
+        {
+            9 or 18 => FftSizeSc9Sc18,
+            27 or 36 => FftSizeSc27Sc36,
+            _ => throw new ArgumentOutOfRangeException(nameof(activeSubcarriers), activeSubcarriers, "Supported values are 9, 18, 27, or 36.")
+        };
     }
 
     private void AppendFileHeaderPacket(
@@ -907,6 +1038,7 @@ public sealed class FileWavCodec
         int searchRadius,
         byte[] expectedBlockHash,
         int payloadLength,
+        DecodeRuntimeTuning tuning,
         out DataDecodeDiag diag)
     {
         var paddedLen = TurboPaddedLength(payloadLength + CrcBytes);
@@ -978,7 +1110,7 @@ public sealed class FileWavCodec
 
                         var turboEncoded = ConvolutionalCode.Decode(
                             BitsToBytesMsb(bits), turboEncodedLength, terminated: true);
-                        candidate = DecodeTurboBlock(turboEncoded, paddedLen);
+                        candidate = DecodeTurboBlock(turboEncoded, paddedLen, tuning.TurboIterationsMax);
                     }
                     else
                     {
@@ -1000,8 +1132,9 @@ public sealed class FileWavCodec
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
                             qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true);
                         ClampLlrsInPlace(infoLlrs, 16.0);
-                        var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen);
-                        var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen);
+                        var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
+                        var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
+                        var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
                         candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                     }
 
@@ -1093,8 +1226,9 @@ public sealed class FileWavCodec
                 softMatchSucceeded,
                 fallbackUsed,
                 startDeltaSamples);
-            var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen);
-            var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen);
+            var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
+            var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
+            var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
             return PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
         }
 
@@ -1276,7 +1410,39 @@ public sealed class FileWavCodec
         return turboStream.ToArray();
     }
 
-    private static byte[] DecodeTurboBlock(byte[] turboEncoded, int paddedLength)
+    private static int ResolveTurboIterations(double[] infoLlrs, DecodeRuntimeTuning tuning)
+    {
+        var minIter = Math.Clamp(Math.Min(tuning.TurboIterationsMin, tuning.TurboIterationsMax), 1, 32);
+        var maxIter = Math.Clamp(Math.Max(tuning.TurboIterationsMin, tuning.TurboIterationsMax), minIter, 32);
+        if (infoLlrs.Length == 0)
+        {
+            return maxIter;
+        }
+
+        var sum = 0.0;
+        for (var i = 0; i < infoLlrs.Length; i++)
+        {
+            sum += Math.Abs(infoLlrs[i]);
+        }
+
+        var meanAbs = sum / infoLlrs.Length;
+        if (meanAbs <= tuning.TurboLowConfidenceLlr)
+        {
+            return maxIter;
+        }
+
+        if (meanAbs >= tuning.TurboHighConfidenceLlr)
+        {
+            return minIter;
+        }
+
+        var span = Math.Max(1e-9, tuning.TurboHighConfidenceLlr - tuning.TurboLowConfidenceLlr);
+        var t = (meanAbs - tuning.TurboLowConfidenceLlr) / span;
+        var value = maxIter - ((maxIter - minIter) * t);
+        return (int)Math.Round(Math.Clamp(value, minIter, maxIter));
+    }
+
+    private static byte[] DecodeTurboBlock(byte[] turboEncoded, int paddedLength, int iterations)
     {
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
@@ -1284,7 +1450,7 @@ public sealed class FileWavCodec
         {
             var encoded = new byte[TurboEcc1024.EncodedBytes];
             Buffer.BlockCopy(turboEncoded, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-            var decoded = TurboEcc1024.Decode(encoded, iterations: 12, channelReliability: 1.25);
+            var decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
             Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
         }
 
@@ -1294,7 +1460,7 @@ public sealed class FileWavCodec
     /// <summary>
     /// 畳み込みソフト出力 LLR をターボへ渡し、失敗時はハード復号へフォールバックします。
     /// </summary>
-    private static byte[] DecodeTurboBlockFromLlrs(double[] infoLlrs, byte[] turboEncodedHard, int paddedLength)
+    private static byte[] DecodeTurboBlockFromLlrs(double[] infoLlrs, byte[] turboEncodedHard, int paddedLength, int iterations)
     {
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
@@ -1308,20 +1474,20 @@ public sealed class FileWavCodec
                 var unitLlrs = infoLlrs.AsSpan(offset, bitsPerUnit).ToArray();
                 try
                 {
-                    decoded = TurboEcc1024.DecodeFromChannelLlrs(unitLlrs.AsSpan(), iterations: 12);
+                    decoded = TurboEcc1024.DecodeFromChannelLlrs(unitLlrs.AsSpan(), iterations: iterations);
                 }
                 catch
                 {
                     var encoded = new byte[TurboEcc1024.EncodedBytes];
                     Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-                    decoded = TurboEcc1024.Decode(encoded, iterations: 12, channelReliability: 1.25);
+                    decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
                 }
             }
             else
             {
                 var encoded = new byte[TurboEcc1024.EncodedBytes];
                 Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-                decoded = TurboEcc1024.Decode(encoded, iterations: 12, channelReliability: 1.25);
+                decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
             }
 
             Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
@@ -1654,7 +1820,6 @@ public sealed class FileWavCodec
         var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, profile.BlockHeaderUnmodulatedSamples);
 
         AddSegment(segments, "LEAD", profile.LeadingSilenceSamples, profile.SampleRate, ref totalSamples);
-        AddSegment(segments, "PREAMBLE", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples);
 
         for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
         {
