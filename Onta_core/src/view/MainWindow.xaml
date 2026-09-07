@@ -11,7 +11,7 @@
         Background="{StaticResource BrushBg}">
   <Grid Margin="10">
     <Grid.RowDefinitions>
-      <RowDefinition Height="260"/>
+      <RowDefinition Height="320"/>
       <RowDefinition Height="*"
           MinHeight="220"/>
       <RowDefinition Height="0.8*"

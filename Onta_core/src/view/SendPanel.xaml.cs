@@ -120,6 +120,12 @@ public partial class SendPanel : UserControl
 
     private void UpdateAudioDeviceEnabledState()
     {
+        // XAML 初期化中に Checked が先に飛ぶため、未生成コントロールは無視する。
+        if (PlayAudioCheck is null || AudioDeviceComboBox is null)
+        {
+            return;
+        }
+
         var enabled = PlayAudioCheck.IsChecked == true;
         AudioDeviceComboBox.IsEnabled = enabled;
         AudioDeviceComboBox.Opacity = enabled ? 1.0 : 0.6;

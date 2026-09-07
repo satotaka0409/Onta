@@ -23,6 +23,30 @@
 			}
 		},
 		{
+			"label": "run-onta",
+			"dependsOn": "build-onta-debug",
+			"dependsOrder": "sequence",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"run",
+				"--project",
+				"C:/proj/Onta/Onta_core/Onta_core.csproj",
+				"-c",
+				"Debug",
+				"--no-build"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"focus": false
+			}
+		},
+		{
 			"label": "build-testhost-debug",
 			"command": "dotnet",
 			"type": "process",

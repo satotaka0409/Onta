@@ -18,7 +18,8 @@
         <ColumnDefinition Width="110"/>
         <ColumnDefinition Width="110"/>
         <ColumnDefinition Width="110"/>
-        <ColumnDefinition Width="110"/>
+        <ColumnDefinition Width="150"/>
+        <ColumnDefinition Width="400"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
@@ -91,6 +92,28 @@
       </GroupBox>
 
       <GroupBox Grid.Column="3"
+                Header="ブロックインターリーブ"
+                Margin="4">
+        <StackPanel Margin="8">
+          <RadioButton Content="×1"
+                       Tag="1"
+                       GroupName="Interleave"
+                       IsChecked="True"
+                       Checked="OnSettingsChanged"/>
+          <RadioButton Content="×2"
+                       Tag="2"
+                       GroupName="Interleave"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
+          <RadioButton Content="×3"
+                       Tag="3"
+                       GroupName="Interleave"
+                       Checked="OnSettingsChanged"
+                       Margin="0,6,0,0"/>
+        </StackPanel>
+      </GroupBox>
+
+      <GroupBox Grid.Column="4"
                 Header="入出力"
                 Margin="4">
         <Grid Margin="8">
@@ -151,31 +174,7 @@
       </GroupBox>
     </Grid>
 
-    <GroupBox Grid.Row="2"
-              Header="ブロックインターリーブ"
-              Margin="4,8,4,0"
-              HorizontalAlignment="Left">
-      <StackPanel Orientation="Horizontal"
-                  Margin="8,4">
-        <RadioButton Content="×1"
-                     Tag="1"
-                     GroupName="Interleave"
-                     IsChecked="True"
-                     Checked="OnSettingsChanged"
-                     Margin="0,0,16,0"/>
-        <RadioButton Content="×2"
-                     Tag="2"
-                     GroupName="Interleave"
-                     Checked="OnSettingsChanged"
-                     Margin="0,0,16,0"/>
-        <RadioButton Content="×3"
-                     Tag="3"
-                     GroupName="Interleave"
-                     Checked="OnSettingsChanged"/>
-      </StackPanel>
-    </GroupBox>
-
-    <Button Grid.Row="3"
+    <Button Grid.Row="2"
             Content="スタート"
             Width="120"
             Height="34"

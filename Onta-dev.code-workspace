@@ -71,10 +71,9 @@
 			"mhutchie.git-graph",
 			"GitHub.copilot-chat",
 			"mattpocock.ts-error-translator",
-			"esbenp.prettier-vscode",
 			"usernamehw.errorlens",
-			"ms-dotnettools.csdevkit",
-			"ms-dotnettools.csharp",
+			"anysphere.csharp",
+			"ms-dotnettools.vscode-dotnet-runtime"
 		]
 	}
 }
