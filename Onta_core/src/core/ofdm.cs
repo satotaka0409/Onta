@@ -376,9 +376,12 @@ public sealed class OfdmGenerator
     private readonly List<int> _leftAllCarrierBins;
     private readonly List<int> _leftPilotBins;
     private readonly List<int> _leftDataCarrierBase;
+    private readonly Dictionary<int, ModulationScheme> _leftDataCarrierModulationByBin;
     private readonly List<int> _rightAllCarrierBins;
     private readonly List<int> _rightPilotBins;
     private readonly List<int> _rightDataCarrierBase;
+    private readonly Dictionary<int, ModulationScheme> _rightDataCarrierModulationByBin;
+    private readonly int _bitsPerOfdmSymbol;
     private static readonly int[] Qam16Levels = [-3, -1, 1, 3];
     private static readonly int[] Qam64Levels = [-7, -5, -3, -1, 1, 3, 5, 7];
     private static readonly Complex PilotSymbol = Complex.One;
@@ -398,9 +401,9 @@ public sealed class OfdmGenerator
         _config = config;
         _random = config.RandomSeed == 0 ? Random.Shared : new Random(config.RandomSeed);
 
-        (_leftAllCarrierBins, _leftPilotBins, _leftDataCarrierBase) =
+        (_leftAllCarrierBins, _leftPilotBins, _leftDataCarrierBase, _leftDataCarrierModulationByBin) =
             BuildChannelLayout(CarrierChannel.Left);
-        (_rightAllCarrierBins, _rightPilotBins, _rightDataCarrierBase) =
+        (_rightAllCarrierBins, _rightPilotBins, _rightDataCarrierBase, _rightDataCarrierModulationByBin) =
             BuildChannelLayout(CarrierChannel.Right);
 
         if (_leftDataCarrierBase.Count != _rightDataCarrierBase.Count)
@@ -408,9 +411,18 @@ public sealed class OfdmGenerator
             throw new InvalidOperationException(
                 $"L/R data carrier count mismatch: L={_leftDataCarrierBase.Count}, R={_rightDataCarrierBase.Count}.");
         }
+
+        _bitsPerOfdmSymbol = _leftDataCarrierBase.Sum(bin => BitsPerModulation(_leftDataCarrierModulationByBin[bin]));
+        var rightBitsPerOfdmSymbol = _rightDataCarrierBase.Sum(bin => BitsPerModulation(_rightDataCarrierModulationByBin[bin]));
+        if (_bitsPerOfdmSymbol != rightBitsPerOfdmSymbol)
+        {
+            throw new InvalidOperationException(
+                $"L/R bits-per-OFDM mismatch: L={_bitsPerOfdmSymbol}, R={rightBitsPerOfdmSymbol}.");
+        }
     }
 
-    private (List<int> All, List<int> Pilots, List<int> DataBase) BuildChannelLayout(CarrierChannel channel)
+    private (List<int> All, List<int> Pilots, List<int> DataBase, Dictionary<int, ModulationScheme> DataModulationByBin)
+        BuildChannelLayout(CarrierChannel channel)
     {
         // 2ch 実信号 WAV 向け: 正周波数側に ActiveSubcarriers 本を配置し、
         // 負周波数は共役対称で埋めて IFFT 結果を実数化する。
@@ -421,11 +433,57 @@ public sealed class OfdmGenerator
                 $"Expected {_config.ActiveSubcarriers} positive carriers, got {all.Count}.");
         }
 
-        var pilots = SelectPilotBins(all, _config.PilotSpacing).OrderBy(x => x).ToList();
+        var pilotSet = SelectPilotBins(all, _config.PilotSpacing);
+        var pilots = pilotSet.OrderBy(x => x).ToList();
         // データ順のベース（未シャッフル）。FrequencyInterleaveIntervalSymbols ごとに並べ替える。
-        var data = all.Where(bin => !pilots.Contains(bin)).ToList();
-        return (all, pilots, data);
+        var data = new List<int>(all.Count);
+        var dataModulationByBin = new Dictionary<int, ModulationScheme>(all.Count);
+        for (var i = 0; i < all.Count; i++)
+        {
+            var bin = all[i];
+            if (pilotSet.Contains(bin))
+            {
+                continue;
+            }
+
+            data.Add(bin);
+            var conceptualLeftBin = _config.ConceptualLeftBins[i];
+            dataModulationByBin[bin] = ResolveEffectiveCarrierModulation(_config.ModulationScheme, conceptualLeftBin);
+        }
+
+        return (all, pilots, data, dataModulationByBin);
     }
+
+    private static bool IsGroupDConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 28 and <= 36;
+
+    private static ModulationScheme ResolveEffectiveCarrierModulation(
+        ModulationScheme configuredScheme,
+        int conceptualLeftBin)
+    {
+        if (!IsGroupDConceptualLeftBin(conceptualLeftBin))
+        {
+            return configuredScheme;
+        }
+
+        // modulation.mdc: GROUP D は 1 段階ダウンで送受信する。
+        return configuredScheme switch
+        {
+            ModulationScheme.Qam64 => ModulationScheme.Qam16,
+            ModulationScheme.Qam16 => ModulationScheme.Qpsk,
+            ModulationScheme.Qpsk => ModulationScheme.Bpsk,
+            ModulationScheme.Bpsk => ModulationScheme.Bpsk,
+            _ => configuredScheme
+        };
+    }
+
+    private static int BitsPerModulation(ModulationScheme modulationScheme) => modulationScheme switch
+    {
+        ModulationScheme.Bpsk => 1,
+        ModulationScheme.Qpsk => 2,
+        ModulationScheme.Qam16 => 4,
+        ModulationScheme.Qam64 => 6,
+        _ => throw new InvalidOperationException("Unsupported modulation scheme.")
+    };
 
     private int InterleaveIntervalSymbols =>
         Math.Max(1, _config.FrequencyInterleaveIntervalSymbols);
@@ -631,7 +689,7 @@ public sealed class OfdmGenerator
     /// <summary>
     /// 1 OFDM シンボルあたりに載せるデータビット数です。
     /// </summary>
-    public int BitsPerOfdmSymbol => _leftDataCarrierBase.Count * BitsPerModulationSymbol;
+    public int BitsPerOfdmSymbol => _bitsPerOfdmSymbol;
 
     /// <summary>
     /// データ用サブキャリア本数です。
@@ -797,6 +855,9 @@ public sealed class OfdmGenerator
         int interleaveInitSeed)
     {
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var dataModulationByBin = useRightChannel
+            ? _rightDataCarrierModulationByBin
+            : _leftDataCarrierModulationByBin;
         var symbolCount = (bits.Length + BitsPerOfdmSymbol - 1) / BitsPerOfdmSymbol;
         if (symbolCount == 0)
         {
@@ -820,7 +881,10 @@ public sealed class OfdmGenerator
 
             foreach (var dataBin in dataCarrierOrder)
             {
-                freqBins[dataBin] = ConsumeModulatedSymbol(ref bitIndex, bits);
+                freqBins[dataBin] = ConsumeModulatedSymbol(
+                    dataModulationByBin[dataBin],
+                    ref bitIndex,
+                    bits);
             }
 
             var timeSymbol = ToRealTimeSymbol(freqBins);
@@ -2273,6 +2337,9 @@ public sealed class OfdmGenerator
 
         ArgumentNullException.ThrowIfNull(samples);
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var dataModulationByBin = useRightChannel
+            ? _rightDataCarrierModulationByBin
+            : _leftDataCarrierModulationByBin;
         var symbolLength = SamplesPerOfdmSymbol;
         var symbolCount = bitCount == 0
             ? 1
@@ -2308,7 +2375,11 @@ public sealed class OfdmGenerator
                     break;
                 }
 
-                EmitSymbolBits(freqBins[dataBin] * equalizers[dataBin], ref bitIndex, bits);
+                EmitSymbolBits(
+                    freqBins[dataBin] * equalizers[dataBin],
+                    dataModulationByBin[dataBin],
+                    ref bitIndex,
+                    bits);
             }
 
             position = start + symbolLength;
@@ -2542,6 +2613,9 @@ public sealed class OfdmGenerator
         var freqBins = ForwardFftMatchingInverse(time);
         var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
         var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
+        var dataModulationByBin = useRightChannel
+            ? _rightDataCarrierModulationByBin
+            : _leftDataCarrierModulationByBin;
         foreach (var dataBin in dataOrder)
         {
             if (bitIndex >= llrs.Length)
@@ -2551,9 +2625,14 @@ public sealed class OfdmGenerator
 
             if (addToExisting)
             {
-                var tmp = new double[BitsPerModulationSymbol];
+                var tmp = new double[6];
                 var tmpIndex = 0;
-                EmitSymbolSoftLlrs(freqBins[dataBin] * equalizers[dataBin], ref tmpIndex, tmp, noiseVariance);
+                EmitSymbolSoftLlrs(
+                    freqBins[dataBin] * equalizers[dataBin],
+                    dataModulationByBin[dataBin],
+                    ref tmpIndex,
+                    tmp,
+                    noiseVariance);
                 for (var i = 0; i < tmpIndex && (bitIndex + i) < llrs.Length; i++)
                 {
                     llrs[bitIndex + i] += tmp[i];
@@ -2563,7 +2642,12 @@ public sealed class OfdmGenerator
             }
             else
             {
-                EmitSymbolSoftLlrs(freqBins[dataBin] * equalizers[dataBin], ref bitIndex, llrs, noiseVariance);
+                EmitSymbolSoftLlrs(
+                    freqBins[dataBin] * equalizers[dataBin],
+                    dataModulationByBin[dataBin],
+                    ref bitIndex,
+                    llrs,
+                    noiseVariance);
             }
         }
     }
@@ -2641,6 +2725,9 @@ public sealed class OfdmGenerator
         }
 
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var dataModulationByBin = useRightChannel
+            ? _rightDataCarrierModulationByBin
+            : _leftDataCarrierModulationByBin;
 
         var symbolLength = SamplesPerOfdmSymbol;
         if (samples.Length % symbolLength != 0)
@@ -2671,7 +2758,11 @@ public sealed class OfdmGenerator
                     break;
                 }
 
-                EmitSymbolBits(freqBins[dataBin] * equalizers[dataBin], ref bitIndex, bits);
+                EmitSymbolBits(
+                    freqBins[dataBin] * equalizers[dataBin],
+                    dataModulationByBin[dataBin],
+                    ref bitIndex,
+                    bits);
             }
         }
 
@@ -2945,9 +3036,13 @@ public sealed class OfdmGenerator
         return Complex.One / average;
     }
 
-    private void EmitSymbolBits(Complex symbol, ref int bitIndex, bool[] bits)
+    private static void EmitSymbolBits(
+        Complex symbol,
+        ModulationScheme modulationScheme,
+        ref int bitIndex,
+        bool[] bits)
     {
-        switch (_config.ModulationScheme)
+        switch (modulationScheme)
         {
             case ModulationScheme.Bpsk:
                 WriteBit(ref bitIndex, bits, symbol.Real >= 0.0);
@@ -2969,10 +3064,15 @@ public sealed class OfdmGenerator
         }
     }
 
-    private void EmitSymbolSoftLlrs(Complex symbol, ref int bitIndex, double[] llrs, double noiseVariance)
+    private static void EmitSymbolSoftLlrs(
+        Complex symbol,
+        ModulationScheme modulationScheme,
+        ref int bitIndex,
+        double[] llrs,
+        double noiseVariance)
     {
         var invVar = 1.0 / Math.Max(1e-6, noiseVariance);
-        switch (_config.ModulationScheme)
+        switch (modulationScheme)
         {
             case ModulationScheme.Bpsk:
                 // 単位エネルギー BPSK: s = ±1。LLR>0 ⇒ bit1。
@@ -3127,6 +3227,9 @@ public sealed class OfdmGenerator
         var carrierBins = GetActiveCarrierBins(channel);
         var pilotBins = SelectPilotBins(carrierBins, _config.PilotSpacing);
         var dataBins = carrierBins.Where(bin => !pilotBins.Contains(bin)).ToList();
+        var dataModulationByBin = channel == CarrierChannel.Right
+            ? _rightDataCarrierModulationByBin
+            : _leftDataCarrierModulationByBin;
 
         if (_config.EnableFrequencyInterleaving)
         {
@@ -3140,15 +3243,18 @@ public sealed class OfdmGenerator
 
         foreach (var dataBin in dataBins)
         {
-            bins[dataBin] = GenerateModulatedSymbol();
+            bins[dataBin] = GenerateModulatedSymbol(dataModulationByBin[dataBin]);
         }
 
         return bins;
     }
 
-    private Complex ConsumeModulatedSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
+    private static Complex ConsumeModulatedSymbol(
+        ModulationScheme modulationScheme,
+        ref int bitIndex,
+        ReadOnlySpan<bool> bits)
     {
-        return _config.ModulationScheme switch
+        return modulationScheme switch
         {
             ModulationScheme.Bpsk => ConsumeBpskSymbol(ref bitIndex, bits),
             ModulationScheme.Qpsk => ConsumeQpskSymbol(ref bitIndex, bits),
@@ -3180,14 +3286,14 @@ public sealed class OfdmGenerator
         return value;
     }
 
-    private Complex ConsumeBpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
+    private static Complex ConsumeBpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var bit = ReadBitOrZero(ref bitIndex, bits);
         // bit1 → +1、bit0 → -1（単位エネルギー、Imag=0）
         return new Complex(bit ? 1.0 : -1.0, 0.0);
     }
 
-    private Complex ConsumeQpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
+    private static Complex ConsumeQpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var iBit = ReadBitOrZero(ref bitIndex, bits);
         var qBit = ReadBitOrZero(ref bitIndex, bits);
@@ -3196,14 +3302,14 @@ public sealed class OfdmGenerator
         return new Complex(real, imag) / Math.Sqrt(2.0);
     }
 
-    private Complex ConsumeQam16Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
+    private static Complex ConsumeQam16Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 2), bitsPerAxis: 2, Qam16Levels);
         var imag = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 2), bitsPerAxis: 2, Qam16Levels);
         return new Complex(real, imag) / Math.Sqrt(10.0);
     }
 
-    private Complex ConsumeQam64Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
+    private static Complex ConsumeQam64Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 3), bitsPerAxis: 3, Qam64Levels);
         var imag = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 3), bitsPerAxis: 3, Qam64Levels);
@@ -3260,9 +3366,9 @@ public sealed class OfdmGenerator
         }
     }
 
-    private Complex GenerateModulatedSymbol()
+    private Complex GenerateModulatedSymbol(ModulationScheme modulationScheme)
     {
-        return _config.ModulationScheme switch
+        return modulationScheme switch
         {
             ModulationScheme.Bpsk => GenerateBpskSymbol(),
             ModulationScheme.Qpsk => GenerateQpskSymbol(),

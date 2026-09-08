@@ -84,6 +84,8 @@ alwaysApply: true
 - **SC-9 / SC-18**: SampleRate=44.1kHz, FFT=128（モノラル／ステレオとも）。搬送波間隔は SC-27/36 の **1.3 倍**（$\Delta f_9 = 1.3\cdot\Delta f_{27} = 447.890625\,\mathrm{Hz}$）。L の先頭（GROUP A CH0）は **440 Hz** から開始。$f_L(i)=440 + i\cdot\Delta f_9$。実装は目標周波数を FFT=128 の正周波数ビンへ最近傍割当（R も同様に $f_R=f_L+\Delta f_9/2$）
 - ヘッダー部（FH/BH）は常に GROUP B・9 SC・BPSK。周波数グリッドはデータ部の SC 族に合わせる（SC-9/18 族 / SC-27/36 族）
 - ヘッダー部の場合は CP=32 データ部の場合は CP=16
+- グループD のサブキャリアにおいては、変調を1段階落として変調する
+  - 64QAM->16QAM 16QAM->QPSK QPSK->BPSK BPSK->BPSK
 
 | サブチャンネル選択 | グループ構成 |
 | :----------------- | :----------- |

@@ -11,6 +11,48 @@ namespace Onta.Core.Tests;
 public sealed class OntaTest6
 {
     [Fact]
+    public void GroupD_Downgrade_AdjustsBitsPerOfdmSymbol_For36Sc64Qam()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(36, ChannelMode.Mono),
+            activeSubcarriers: 36,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qam64,
+            channelMode: ChannelMode.Mono,
+            enableFrequencyInterleaving: false,
+            pilotSpacing: 9,
+            randomSeed: 7,
+            carrierGrid: OfdmCarrierGrid.Sc27Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 36 SC は 4 pilot + 32 data。A/B/C の 24 data は 64QAM(6bit)、D の 8 data は 16QAM(4bit)。
+        Assert.Equal(176, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
+    public void SampleCountForBitCount_UsesDowngradedGroupDCapacity()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(36, ChannelMode.Mono),
+            activeSubcarriers: 36,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qam64,
+            channelMode: ChannelMode.Mono,
+            enableFrequencyInterleaving: false,
+            pilotSpacing: 9,
+            randomSeed: 8,
+            carrierGrid: OfdmCarrierGrid.Sc27Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 353bit は 176bit/symbol なら 3 symbol 必要（旧 192bit/symbol のままなら 2 symbol で誤る）。
+        Assert.Equal(3 * ofdm.SamplesPerOfdmSymbol, ofdm.SampleCountForBitCount(353));
+    }
+
+    [Fact]
     public void PilotEqualizer_IsClosedWithinEachSubcarrierGroup()
     {
         var config = new OfdmConfig(
