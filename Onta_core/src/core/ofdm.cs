@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 
 namespace Onta.Core;
@@ -2001,6 +2002,26 @@ public sealed class OfdmGenerator
             return scoreSimd;
         }
 
+        if (AdvSimd.Arm64.IsSupported && cp >= 1)
+        {
+            var scoreSimd = 0.0;
+            ReadOnlySpan<double> doubles = MemoryMarshal.Cast<Complex, double>(window);
+            ref var baseRef = ref MemoryMarshal.GetReference(doubles);
+            for (var i = 0; i < cp; i++)
+            {
+                var aOffset = (offset + i) * 2;
+                var bOffset = (offset + fftSize + i) * 2;
+                var a = Unsafe.ReadUnaligned<Vector128<double>>(
+                    ref Unsafe.As<double, byte>(ref Unsafe.Add(ref baseRef, aOffset)));
+                var b = Unsafe.ReadUnaligned<Vector128<double>>(
+                    ref Unsafe.As<double, byte>(ref Unsafe.Add(ref baseRef, bOffset)));
+                var prod = AdvSimd.Arm64.Multiply(a, b);
+                scoreSimd += prod.GetElement(0);
+            }
+
+            return scoreSimd;
+        }
+
         var score = 0.0;
         for (var i = 0; i < cp; i++)
         {
@@ -3382,9 +3403,21 @@ public sealed class OfdmGenerator
             return;
         }
 
+        if (AdvSimd.Arm64.IsSupported && bitsPerAxis == 2 && levels.Length == 4)
+        {
+            EmitPamAxisSoftLlrsQam16Arm64(amplitude, invVariance, ref bitIndex, llrs);
+            return;
+        }
+
         if (Avx.IsSupported && bitsPerAxis == 3 && levels.Length == 8)
         {
             EmitPamAxisSoftLlrsQam64Avx(amplitude, invVariance, ref bitIndex, llrs);
+            return;
+        }
+
+        if (AdvSimd.Arm64.IsSupported && bitsPerAxis == 3 && levels.Length == 8)
+        {
+            EmitPamAxisSoftLlrsQam64Arm64(amplitude, invVariance, ref bitIndex, llrs);
             return;
         }
 
@@ -3487,6 +3520,82 @@ public sealed class OfdmGenerator
         WriteLlr(ref bitIndex, llrs, 0.5 * (min10 - min11) * invVariance);
 
         // bit0 (LSB): 0,2,4,6 vs 1,3,5,7
+        var min00 = Math.Min(Math.Min(d0, d2), Math.Min(d4, d6));
+        var min01 = Math.Min(Math.Min(d1, d3), Math.Min(d5, d7));
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
+    }
+
+    private static void EmitPamAxisSoftLlrsQam16Arm64(
+        double amplitude,
+        double invVariance,
+        ref int bitIndex,
+        double[] llrs)
+    {
+        var amp = Vector128.Create(amplitude);
+        var levels01 = Vector128.Create(Qam16PamByBinary[0], Qam16PamByBinary[1]);
+        var levels23 = Vector128.Create(Qam16PamByBinary[2], Qam16PamByBinary[3]);
+        var diff01 = AdvSimd.Arm64.Subtract(amp, levels01);
+        var diff23 = AdvSimd.Arm64.Subtract(amp, levels23);
+        var dist01 = AdvSimd.Arm64.Multiply(diff01, diff01);
+        var dist23 = AdvSimd.Arm64.Multiply(diff23, diff23);
+
+        var d0 = dist01.GetElement(0);
+        var d1 = dist01.GetElement(1);
+        var d2 = dist23.GetElement(0);
+        var d3 = dist23.GetElement(1);
+
+        var min10 = Math.Min(d0, d1);
+        var min11 = Math.Min(d2, d3);
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min10 - min11) * invVariance);
+
+        var min00 = Math.Min(d0, d2);
+        var min01 = Math.Min(d1, d3);
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
+    }
+
+    private static void EmitPamAxisSoftLlrsQam64Arm64(
+        double amplitude,
+        double invVariance,
+        ref int bitIndex,
+        double[] llrs)
+    {
+        var amp = Vector128.Create(amplitude);
+
+        var levels01 = Vector128.Create(Qam64PamByBinary[0], Qam64PamByBinary[1]);
+        var levels23 = Vector128.Create(Qam64PamByBinary[2], Qam64PamByBinary[3]);
+        var levels45 = Vector128.Create(Qam64PamByBinary[4], Qam64PamByBinary[5]);
+        var levels67 = Vector128.Create(Qam64PamByBinary[6], Qam64PamByBinary[7]);
+
+        var dist01 = AdvSimd.Arm64.Multiply(
+            AdvSimd.Arm64.Subtract(amp, levels01),
+            AdvSimd.Arm64.Subtract(amp, levels01));
+        var dist23 = AdvSimd.Arm64.Multiply(
+            AdvSimd.Arm64.Subtract(amp, levels23),
+            AdvSimd.Arm64.Subtract(amp, levels23));
+        var dist45 = AdvSimd.Arm64.Multiply(
+            AdvSimd.Arm64.Subtract(amp, levels45),
+            AdvSimd.Arm64.Subtract(amp, levels45));
+        var dist67 = AdvSimd.Arm64.Multiply(
+            AdvSimd.Arm64.Subtract(amp, levels67),
+            AdvSimd.Arm64.Subtract(amp, levels67));
+
+        var d0 = dist01.GetElement(0);
+        var d1 = dist01.GetElement(1);
+        var d2 = dist23.GetElement(0);
+        var d3 = dist23.GetElement(1);
+        var d4 = dist45.GetElement(0);
+        var d5 = dist45.GetElement(1);
+        var d6 = dist67.GetElement(0);
+        var d7 = dist67.GetElement(1);
+
+        var min20 = Math.Min(Math.Min(d0, d1), Math.Min(d2, d3));
+        var min21 = Math.Min(Math.Min(d4, d5), Math.Min(d6, d7));
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min20 - min21) * invVariance);
+
+        var min10 = Math.Min(Math.Min(d0, d1), Math.Min(d4, d5));
+        var min11 = Math.Min(Math.Min(d2, d3), Math.Min(d6, d7));
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min10 - min11) * invVariance);
+
         var min00 = Math.Min(Math.Min(d0, d2), Math.Min(d4, d6));
         var min01 = Math.Min(Math.Min(d1, d3), Math.Min(d5, d7));
         WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
@@ -3930,6 +4039,7 @@ public sealed class OfdmGenerator
             var angle = -2.0 * Math.PI / len;
             var wLen = Complex.FromPolarCoordinates(1.0, angle);
             var useAvx = Avx.IsSupported && len >= 4;
+            var useArm64Simd = AdvSimd.Arm64.IsSupported && len >= 4;
 
             for (var i = 0; i < n; i += len)
             {
@@ -3974,6 +4084,49 @@ public sealed class OfdmGenerator
                         output[lowerIndex] = new Complex(diff.GetElement(0), diff.GetElement(1));
                         output[upperIndex2] = new Complex(sum.GetElement(2), sum.GetElement(3));
                         output[lowerIndex2] = new Complex(diff.GetElement(2), diff.GetElement(3));
+
+                        j++;
+                        w = w2;
+                    }
+                    else if (useArm64Simd && (j + 1) < halfLen)
+                    {
+                        var upperIndex2 = upperIndex + 1;
+                        var lowerIndex2 = lowerIndex + 1;
+
+                        var lower1 = Unsafe.ReadUnaligned<Vector128<double>>(
+                            ref Unsafe.As<Complex, byte>(ref output[lowerIndex]));
+                        var lower2 = Unsafe.ReadUnaligned<Vector128<double>>(
+                            ref Unsafe.As<Complex, byte>(ref output[lowerIndex2]));
+
+                        var w2 = w * wLen;
+                        var wr1 = Vector128.Create(w.Real);
+                        var wi1 = Vector128.Create(w.Imaginary);
+                        var wr2 = Vector128.Create(w2.Real);
+                        var wi2 = Vector128.Create(w2.Imaginary);
+
+                        var swappedSigned1 = Vector128.Create(-lower1.GetElement(1), lower1.GetElement(0));
+                        var swappedSigned2 = Vector128.Create(-lower2.GetElement(1), lower2.GetElement(0));
+                        var twiddled1 = AdvSimd.Arm64.Add(
+                            AdvSimd.Arm64.Multiply(lower1, wr1),
+                            AdvSimd.Arm64.Multiply(swappedSigned1, wi1));
+                        var twiddled2 = AdvSimd.Arm64.Add(
+                            AdvSimd.Arm64.Multiply(lower2, wr2),
+                            AdvSimd.Arm64.Multiply(swappedSigned2, wi2));
+
+                        var upper1 = Unsafe.ReadUnaligned<Vector128<double>>(
+                            ref Unsafe.As<Complex, byte>(ref output[upperIndex]));
+                        var upper2 = Unsafe.ReadUnaligned<Vector128<double>>(
+                            ref Unsafe.As<Complex, byte>(ref output[upperIndex2]));
+
+                        var sum1 = AdvSimd.Arm64.Add(upper1, twiddled1);
+                        var diff1 = AdvSimd.Arm64.Subtract(upper1, twiddled1);
+                        var sum2 = AdvSimd.Arm64.Add(upper2, twiddled2);
+                        var diff2 = AdvSimd.Arm64.Subtract(upper2, twiddled2);
+
+                        output[upperIndex] = new Complex(sum1.GetElement(0), sum1.GetElement(1));
+                        output[lowerIndex] = new Complex(diff1.GetElement(0), diff1.GetElement(1));
+                        output[upperIndex2] = new Complex(sum2.GetElement(0), sum2.GetElement(1));
+                        output[lowerIndex2] = new Complex(diff2.GetElement(0), diff2.GetElement(1));
 
                         j++;
                         w = w2;

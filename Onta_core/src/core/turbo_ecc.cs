@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 
 namespace Onta.Core;
@@ -666,6 +667,8 @@ public static class TurboEcc1024
     {
         var length = left.Length;
         var different = 0;
+        ref var leftRef = ref MemoryMarshal.GetReference(left);
+        ref var rightRef = ref MemoryMarshal.GetReference(right);
 
         if (Avx2.IsSupported)
         {
@@ -673,19 +676,44 @@ public static class TurboEcc1024
             const int width = 32;
             for (; i <= length - width; i += width)
             {
-                var a = Vector256.Create(
-                    left[i], left[i + 1], left[i + 2], left[i + 3], left[i + 4], left[i + 5], left[i + 6], left[i + 7],
-                    left[i + 8], left[i + 9], left[i + 10], left[i + 11], left[i + 12], left[i + 13], left[i + 14], left[i + 15],
-                    left[i + 16], left[i + 17], left[i + 18], left[i + 19], left[i + 20], left[i + 21], left[i + 22], left[i + 23],
-                    left[i + 24], left[i + 25], left[i + 26], left[i + 27], left[i + 28], left[i + 29], left[i + 30], left[i + 31]);
-                var b = Vector256.Create(
-                    right[i], right[i + 1], right[i + 2], right[i + 3], right[i + 4], right[i + 5], right[i + 6], right[i + 7],
-                    right[i + 8], right[i + 9], right[i + 10], right[i + 11], right[i + 12], right[i + 13], right[i + 14], right[i + 15],
-                    right[i + 16], right[i + 17], right[i + 18], right[i + 19], right[i + 20], right[i + 21], right[i + 22], right[i + 23],
-                    right[i + 24], right[i + 25], right[i + 26], right[i + 27], right[i + 28], right[i + 29], right[i + 30], right[i + 31]);
+                var a = Vector256.LoadUnsafe(ref leftRef, (nuint)i);
+                var b = Vector256.LoadUnsafe(ref rightRef, (nuint)i);
                 var eq = Avx2.CompareEqual(a, b);
                 var equalMask = (uint)Avx2.MoveMask(eq);
                 different += width - BitOperations.PopCount(equalMask);
+            }
+
+            for (; i < length; i++)
+            {
+                if (left[i] != right[i])
+                {
+                    different++;
+                }
+            }
+
+            return different;
+        }
+        else if (AdvSimd.IsSupported)
+        {
+            var i = 0;
+            const int width = 16;
+            Span<byte> equalLanes = stackalloc byte[width];
+            for (; i <= length - width; i += width)
+            {
+                var a = Vector128.LoadUnsafe(ref leftRef, (nuint)i);
+                var b = Vector128.LoadUnsafe(ref rightRef, (nuint)i);
+                var eq = AdvSimd.CompareEqual(a, b);
+                // 0xFF/0x00 を 1/0 に正規化してから lane 合計で一致数を得る。
+                var normalizedEq = AdvSimd.ShiftRightLogical(eq, 7);
+                normalizedEq.CopyTo(equalLanes);
+
+                var equalCount = 0;
+                for (var lane = 0; lane < width; lane++)
+                {
+                    equalCount += equalLanes[lane];
+                }
+
+                different += width - equalCount;
             }
 
             for (; i < length; i++)
