@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -129,25 +130,40 @@ public static class TurboEcc1024
             throw new ArgumentException("Channel reliability must be > 0.", nameof(channelReliability));
         }
 
-        // 直列化された 3 要素組を、系統ビット・パリティ1・パリティ2へ分離する。
-        var triples = UnpackBits(encoded, EncodedBits);
         var sysBits = new bool[DataUnitBits];
-        var p1Bits = new bool[DataUnitBits];
-        var p2Bits = new bool[DataUnitBits];
+        var systematic = ArrayPool<double>.Shared.Rent(DataUnitBits);
+        var parity1 = ArrayPool<double>.Shared.Rent(DataUnitBits);
+        var parity2 = ArrayPool<double>.Shared.Rent(DataUnitBits);
 
-        for (var i = 0; i < DataUnitBits; i++)
+        try
         {
-            var baseIndex = i * 3;
-            sysBits[i] = triples[baseIndex];
-            p1Bits[i] = triples[baseIndex + 1];
-            p2Bits[i] = triples[baseIndex + 2];
-        }
+            // 直列化 3 要素組を直接読み、bool[] や LLR 中間配列の生成を避ける。
+            for (var i = 0; i < DataUnitBits; i++)
+            {
+                var baseIndex = i * 3;
+                var sys = ReadPackedBit(encoded, baseIndex);
+                var p1 = ReadPackedBit(encoded, baseIndex + 1);
+                var p2 = ReadPackedBit(encoded, baseIndex + 2);
+                sysBits[i] = sys;
+                systematic[i] = sys ? -channelReliability : channelReliability;
+                parity1[i] = p1 ? -channelReliability : channelReliability;
+                parity2[i] = p2 ? -channelReliability : channelReliability;
+            }
 
-        // ハード判定ビットを簡易チャネル LLR に変換する。正は 0 優勢、負は 1 優勢。
-        var systematic = BitsToLlr(sysBits, channelReliability);
-        var parity1 = BitsToLlr(p1Bits, channelReliability);
-        var parity2 = BitsToLlr(p2Bits, channelReliability);
-        return DecodeFromComponentLlrs(systematic, parity1, parity2, sysBits, iterations, out metrics);
+            return DecodeFromComponentLlrs(
+                systematic.AsSpan(0, DataUnitBits),
+                parity1.AsSpan(0, DataUnitBits),
+                parity2.AsSpan(0, DataUnitBits),
+                sysBits,
+                iterations,
+                out metrics);
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(systematic, clearArray: false);
+            ArrayPool<double>.Shared.Return(parity1, clearArray: false);
+            ArrayPool<double>.Shared.Return(parity2, clearArray: false);
+        }
     }
 
     /// <summary>
@@ -197,49 +213,73 @@ public static class TurboEcc1024
     }
 
     private static byte[] DecodeFromComponentLlrs(
-        double[] systematic,
-        double[] parity1,
-        double[] parity2,
-        bool[] sysBits,
+        ReadOnlySpan<double> systematic,
+        ReadOnlySpan<double> parity1,
+        ReadOnlySpan<double> parity2,
+        ReadOnlySpan<bool> sysBits,
         int iterations,
         out DecodeMetrics metrics)
     {
-        var systematicInterleaved = InterleaveDoubles(systematic, Interleaver);
-        var apriori1 = new double[DataUnitBits];
-
-        // 2 つの構成復号器間で外部情報を反復交換する。
-        for (var iter = 0; iter < iterations; iter++)
+        var n = systematic.Length;
+        if (parity1.Length != n || parity2.Length != n || sysBits.Length != n)
         {
-            var extrinsic1 = DecodeSisoMaxLogMap(systematic, parity1, apriori1);
-            var apriori2 = InterleaveDoubles(extrinsic1, Interleaver);
-            var extrinsic2 = DecodeSisoMaxLogMap(systematicInterleaved, parity2, apriori2);
-            apriori1 = DeinterleaveDoubles(extrinsic2, Deinterleaver);
+            throw new ArgumentException("Turbo decode input lengths must match.");
         }
 
-        var posterior = new double[DataUnitBits];
-        for (var i = 0; i < DataUnitBits; i++)
+        var systematicInterleaved = ArrayPool<double>.Shared.Rent(n);
+        var apriori1 = ArrayPool<double>.Shared.Rent(n);
+        var apriori2 = ArrayPool<double>.Shared.Rent(n);
+        var extrinsic1 = ArrayPool<double>.Shared.Rent(n);
+        var extrinsic2 = ArrayPool<double>.Shared.Rent(n);
+
+        try
         {
-            posterior[i] = systematic[i] + apriori1[i];
-        }
+            InterleaveDoublesInto(systematic, Interleaver, systematicInterleaved.AsSpan(0, n));
+            Array.Clear(apriori1, 0, n);
 
-        var decodedBits = new bool[DataUnitBits];
-        for (var i = 0; i < DataUnitBits; i++)
+            // 2 つの構成復号器間で外部情報を反復交換する。
+            for (var iter = 0; iter < iterations; iter++)
+            {
+                DecodeSisoMaxLogMapInto(
+                    systematic,
+                    parity1,
+                    apriori1.AsSpan(0, n),
+                    extrinsic1.AsSpan(0, n));
+                InterleaveDoublesInto(extrinsic1.AsSpan(0, n), Interleaver, apriori2.AsSpan(0, n));
+                DecodeSisoMaxLogMapInto(
+                    systematicInterleaved.AsSpan(0, n),
+                    parity2,
+                    apriori2.AsSpan(0, n),
+                    extrinsic2.AsSpan(0, n));
+                DeinterleaveDoublesInto(extrinsic2.AsSpan(0, n), Deinterleaver, apriori1.AsSpan(0, n));
+            }
+
+            var decodedBits = new bool[n];
+            for (var i = 0; i < n; i++)
+            {
+                decodedBits[i] = (systematic[i] + apriori1[i]) < 0.0;
+            }
+
+            var correctedBitCount = CountDifferentBits(decodedBits, sysBits);
+            var decodedBytes = BitsToBytes(decodedBits);
+            var correctedByteCount = CountDifferentBytesAgainstBits(decodedBytes, sysBits);
+
+            metrics = new DecodeMetrics(
+                CorrectedBitCount: correctedBitCount,
+                CorrectedByteCount: correctedByteCount,
+                PayloadBitLength: n,
+                CorrectionRate: (double)correctedBitCount / n);
+
+            return decodedBytes;
+        }
+        finally
         {
-            decodedBits[i] = posterior[i] < 0.0;
+            ArrayPool<double>.Shared.Return(systematicInterleaved, clearArray: false);
+            ArrayPool<double>.Shared.Return(apriori1, clearArray: false);
+            ArrayPool<double>.Shared.Return(apriori2, clearArray: false);
+            ArrayPool<double>.Shared.Return(extrinsic1, clearArray: false);
+            ArrayPool<double>.Shared.Return(extrinsic2, clearArray: false);
         }
-
-        var correctedBitCount = CountDifferentBits(decodedBits, sysBits);
-        var decodedBytes = BitsToBytes(decodedBits);
-        var systematicBytes = BitsToBytes(sysBits);
-        var correctedByteCount = CountDifferentBytes(decodedBytes, systematicBytes);
-
-        metrics = new DecodeMetrics(
-            CorrectedBitCount: correctedBitCount,
-            CorrectedByteCount: correctedByteCount,
-            PayloadBitLength: DataUnitBits,
-            CorrectionRate: (double)correctedBitCount / DataUnitBits);
-
-        return decodedBytes;
     }
 
     /// <summary>
@@ -302,121 +342,143 @@ public static class TurboEcc1024
         return parity;
     }
 
-    private static double[] DecodeSisoMaxLogMap(double[] systematic, double[] parity, double[] apriori)
+    private static void DecodeSisoMaxLogMapInto(
+        ReadOnlySpan<double> systematic,
+        ReadOnlySpan<double> parity,
+        ReadOnlySpan<double> apriori,
+        Span<double> extrinsic)
     {
         var n = systematic.Length;
-        var alpha = new double[n + 1, StateCount];
-        var beta = new double[n + 1, StateCount];
+        var rowWidth = StateCount;
+        var matrixLength = (n + 1) * rowWidth;
+        var alpha = ArrayPool<double>.Shared.Rent(matrixLength);
+        var beta = ArrayPool<double>.Shared.Rent(matrixLength);
 
-        // 前向き（alpha）および後ろ向き（beta）の状態メトリクス。
-        for (var s = 0; s < StateCount; s++)
+        try
         {
-            alpha[0, s] = s == 0 ? 0.0 : NegativeInfinity;
-            beta[n, s] = 0.0;
-        }
+            Array.Fill(alpha, NegativeInfinity, 0, matrixLength);
+            Array.Fill(beta, NegativeInfinity, 0, matrixLength);
 
-        for (var k = 0; k < n; k++)
-        {
-            for (var ns = 0; ns < StateCount; ns++)
-            {
-                alpha[k + 1, ns] = NegativeInfinity;
-            }
-
-            var su = systematic[k] + apriori[k];
-            var p = parity[k];
-            var u0p0 = 0.5 * (su + p);
-            var u0p1 = 0.5 * (su - p);
-            var u1p0 = 0.5 * (-su + p);
-            var u1p1 = 0.5 * (-su - p);
-
+            // 前向き（alpha）および後ろ向き（beta）の状態メトリクス。
             for (var s = 0; s < StateCount; s++)
             {
-                var a = alpha[k, s];
-                if (a <= NegativeInfinity / 2)
-                {
-                    continue;
-                }
-
-                var ns0 = NextStateWhenInput0[s];
-                var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
-                var candidate0 = a + branch0;
-                if (candidate0 > alpha[k + 1, ns0])
-                {
-                    alpha[k + 1, ns0] = candidate0;
-                }
-
-                var ns1 = NextStateWhenInput1[s];
-                var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
-                var candidate1 = a + branch1;
-                if (candidate1 > alpha[k + 1, ns1])
-                {
-                    alpha[k + 1, ns1] = candidate1;
-                }
+                alpha[s] = s == 0 ? 0.0 : NegativeInfinity;
+                beta[(n * rowWidth) + s] = 0.0;
             }
-        }
 
-        for (var k = n - 1; k >= 0; k--)
-        {
-            var su = systematic[k] + apriori[k];
-            var p = parity[k];
-            var u0p0 = 0.5 * (su + p);
-            var u0p1 = 0.5 * (su - p);
-            var u1p0 = 0.5 * (-su + p);
-            var u1p1 = 0.5 * (-su - p);
-
-            for (var s = 0; s < StateCount; s++)
+            for (var k = 0; k < n; k++)
             {
-                var ns0 = NextStateWhenInput0[s];
-                var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
-                var candidate0 = branch0 + beta[k + 1, ns0];
+                var rowBase = k * rowWidth;
+                var nextRowBase = (k + 1) * rowWidth;
+                for (var ns = 0; ns < StateCount; ns++)
+                {
+                    alpha[nextRowBase + ns] = NegativeInfinity;
+                }
 
-                var ns1 = NextStateWhenInput1[s];
-                var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
-                var candidate1 = branch1 + beta[k + 1, ns1];
+                var su = systematic[k] + apriori[k];
+                var p = parity[k];
+                var u0p0 = 0.5 * (su + p);
+                var u0p1 = 0.5 * (su - p);
+                var u1p0 = 0.5 * (-su + p);
+                var u1p1 = 0.5 * (-su - p);
 
-                beta[k, s] = candidate0 > candidate1 ? candidate0 : candidate1;
+                for (var s = 0; s < StateCount; s++)
+                {
+                    var a = alpha[rowBase + s];
+                    if (a <= NegativeInfinity / 2)
+                    {
+                        continue;
+                    }
+
+                    var ns0 = NextStateWhenInput0[s];
+                    var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
+                    var candidate0 = a + branch0;
+                    var idx0 = nextRowBase + ns0;
+                    if (candidate0 > alpha[idx0])
+                    {
+                        alpha[idx0] = candidate0;
+                    }
+
+                    var ns1 = NextStateWhenInput1[s];
+                    var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
+                    var candidate1 = a + branch1;
+                    var idx1 = nextRowBase + ns1;
+                    if (candidate1 > alpha[idx1])
+                    {
+                        alpha[idx1] = candidate1;
+                    }
+                }
             }
-        }
 
-        // 各ビット位置の Max-Log-MAP LLR と外部情報を算出する。
-        var extrinsic = new double[n];
-        for (var k = 0; k < n; k++)
-        {
-            var maxOne = NegativeInfinity;
-            var maxZero = NegativeInfinity;
-            var su = systematic[k] + apriori[k];
-            var p = parity[k];
-            var u0p0 = 0.5 * (su + p);
-            var u0p1 = 0.5 * (su - p);
-            var u1p0 = 0.5 * (-su + p);
-            var u1p1 = 0.5 * (-su - p);
-
-            for (var s = 0; s < StateCount; s++)
+            for (var k = n - 1; k >= 0; k--)
             {
-                var a = alpha[k, s];
+                var rowBase = k * rowWidth;
+                var nextRowBase = (k + 1) * rowWidth;
+                var su = systematic[k] + apriori[k];
+                var p = parity[k];
+                var u0p0 = 0.5 * (su + p);
+                var u0p1 = 0.5 * (su - p);
+                var u1p0 = 0.5 * (-su + p);
+                var u1p1 = 0.5 * (-su - p);
 
-                var ns0 = NextStateWhenInput0[s];
-                var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
-                var metric0 = a + branch0 + beta[k + 1, ns0];
-                if (metric0 > maxZero)
+                for (var s = 0; s < StateCount; s++)
                 {
-                    maxZero = metric0;
-                }
+                    var ns0 = NextStateWhenInput0[s];
+                    var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
+                    var candidate0 = branch0 + beta[nextRowBase + ns0];
 
-                var ns1 = NextStateWhenInput1[s];
-                var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
-                var metric1 = a + branch1 + beta[k + 1, ns1];
-                if (metric1 > maxOne)
-                {
-                    maxOne = metric1;
+                    var ns1 = NextStateWhenInput1[s];
+                    var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
+                    var candidate1 = branch1 + beta[nextRowBase + ns1];
+
+                    beta[rowBase + s] = candidate0 > candidate1 ? candidate0 : candidate1;
                 }
             }
 
-            var llr = maxOne - maxZero;
-            extrinsic[k] = llr - systematic[k] - apriori[k];
-        }
+            // 各ビット位置の Max-Log-MAP LLR と外部情報を算出する。
+            for (var k = 0; k < n; k++)
+            {
+                var rowBase = k * rowWidth;
+                var nextRowBase = (k + 1) * rowWidth;
+                var maxOne = NegativeInfinity;
+                var maxZero = NegativeInfinity;
+                var su = systematic[k] + apriori[k];
+                var p = parity[k];
+                var u0p0 = 0.5 * (su + p);
+                var u0p1 = 0.5 * (su - p);
+                var u1p0 = 0.5 * (-su + p);
+                var u1p1 = 0.5 * (-su - p);
 
-        return extrinsic;
+                for (var s = 0; s < StateCount; s++)
+                {
+                    var a = alpha[rowBase + s];
+
+                    var ns0 = NextStateWhenInput0[s];
+                    var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
+                    var metric0 = a + branch0 + beta[nextRowBase + ns0];
+                    if (metric0 > maxZero)
+                    {
+                        maxZero = metric0;
+                    }
+
+                    var ns1 = NextStateWhenInput1[s];
+                    var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
+                    var metric1 = a + branch1 + beta[nextRowBase + ns1];
+                    if (metric1 > maxOne)
+                    {
+                        maxOne = metric1;
+                    }
+                }
+
+                var llr = maxOne - maxZero;
+                extrinsic[k] = llr - systematic[k] - apriori[k];
+            }
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(alpha, clearArray: false);
+            ArrayPool<double>.Shared.Return(beta, clearArray: false);
+        }
     }
 
     private static double BranchMetric(double systematic, double parity, double apriori, int informationBit, int parityBit)
@@ -506,10 +568,7 @@ public static class TurboEcc1024
     private static double[] InterleaveDoubles(double[] input, int[] permutation)
     {
         var output = new double[input.Length];
-        for (var i = 0; i < input.Length; i++)
-        {
-            output[i] = input[permutation[i]];
-        }
+        InterleaveDoublesInto(input, permutation, output);
 
         return output;
     }
@@ -517,12 +576,25 @@ public static class TurboEcc1024
     private static double[] DeinterleaveDoubles(double[] input, int[] deinterleaver)
     {
         var output = new double[input.Length];
-        for (var i = 0; i < input.Length; i++)
+        DeinterleaveDoublesInto(input, deinterleaver, output);
+
+        return output;
+    }
+
+    private static void InterleaveDoublesInto(ReadOnlySpan<double> input, int[] permutation, Span<double> output)
+    {
+        for (var i = 0; i < permutation.Length; i++)
+        {
+            output[i] = input[permutation[i]];
+        }
+    }
+
+    private static void DeinterleaveDoublesInto(ReadOnlySpan<double> input, int[] deinterleaver, Span<double> output)
+    {
+        for (var i = 0; i < deinterleaver.Length; i++)
         {
             output[i] = input[deinterleaver[i]];
         }
-
-        return output;
     }
 
     private static double[] BitsToLlr(bool[] bits, double reliability)
@@ -661,6 +733,39 @@ public static class TurboEcc1024
         ReadOnlySpan<byte> leftBytes = MemoryMarshal.AsBytes(left.AsSpan());
         ReadOnlySpan<byte> rightBytes = MemoryMarshal.AsBytes(right.AsSpan());
         return CountDifferentByteSpans(leftBytes, rightBytes);
+    }
+
+    private static int CountDifferentBits(bool[] left, ReadOnlySpan<bool> right)
+    {
+        ReadOnlySpan<byte> leftBytes = MemoryMarshal.AsBytes(left.AsSpan());
+        ReadOnlySpan<byte> rightBytes = MemoryMarshal.AsBytes(right);
+        return CountDifferentByteSpans(leftBytes, rightBytes);
+    }
+
+    private static int CountDifferentBytesAgainstBits(ReadOnlySpan<byte> bytes, ReadOnlySpan<bool> bits)
+    {
+        var different = 0;
+        var bitIndex = 0;
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            var value = bytes[i];
+            for (var b = 0; b < 8; b++)
+            {
+                var bit = ((value >> (7 - b)) & 1) != 0;
+                if (bit != bits[bitIndex++])
+                {
+                    different++;
+                }
+            }
+        }
+
+        return different;
+    }
+
+    private static bool ReadPackedBit(ReadOnlySpan<byte> packed, int bitIndex)
+    {
+        var b = packed[bitIndex >> 3];
+        return ((b >> (7 - (bitIndex & 7))) & 1) != 0;
     }
 
     private static int CountDifferentByteSpans(ReadOnlySpan<byte> left, ReadOnlySpan<byte> right)

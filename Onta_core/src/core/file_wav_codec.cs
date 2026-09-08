@@ -1472,7 +1472,7 @@ public sealed class FileWavCodec
             return false;
         }
 
-        var hash = Hash.ComputeSha256(candidate.AsSpan(0, actualLen).ToArray());
+        var hash = Hash.ComputeSha256(candidate.AsSpan(0, actualLen));
         if (!hash.AsSpan().SequenceEqual(expectedBlockHash))
         {
             return false;
@@ -1492,16 +1492,19 @@ public sealed class FileWavCodec
                 nameof(padded));
         }
 
-        using var turboStream = new MemoryStream((padded.Length / TurboEcc1024.DataUnitBytes) * TurboEcc1024.EncodedBytes);
+        var unitCount = padded.Length / TurboEcc1024.DataUnitBytes;
+        var output = new byte[unitCount * TurboEcc1024.EncodedBytes];
+        var unit = new byte[TurboEcc1024.DataUnitBytes];
+        var writeOffset = 0;
         for (var offset = 0; offset < padded.Length; offset += TurboEcc1024.DataUnitBytes)
         {
-            var unit = new byte[TurboEcc1024.DataUnitBytes];
             Buffer.BlockCopy(padded, offset, unit, 0, TurboEcc1024.DataUnitBytes);
             var encoded = TurboEcc1024.Encode(unit);
-            turboStream.Write(encoded, 0, encoded.Length);
+            Buffer.BlockCopy(encoded, 0, output, writeOffset, encoded.Length);
+            writeOffset += encoded.Length;
         }
 
-        return turboStream.ToArray();
+        return output;
     }
 
     private static int ResolveTurboIterations(double[] infoLlrs, DecodeRuntimeTuning tuning)
@@ -1540,9 +1543,9 @@ public sealed class FileWavCodec
     {
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
+        var encoded = new byte[TurboEcc1024.EncodedBytes];
         for (var i = 0; i < unitCount; i++)
         {
-            var encoded = new byte[TurboEcc1024.EncodedBytes];
             Buffer.BlockCopy(turboEncoded, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
             var decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
             Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
@@ -1559,27 +1562,25 @@ public sealed class FileWavCodec
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
         var bitsPerUnit = TurboEcc1024.EncodedBits;
+        var encoded = new byte[TurboEcc1024.EncodedBytes];
         for (var i = 0; i < unitCount; i++)
         {
             var offset = i * bitsPerUnit;
             byte[] decoded;
             if (infoLlrs.Length >= offset + bitsPerUnit)
             {
-                var unitLlrs = infoLlrs.AsSpan(offset, bitsPerUnit).ToArray();
                 try
                 {
-                    decoded = TurboEcc1024.DecodeFromChannelLlrs(unitLlrs.AsSpan(), iterations: iterations);
+                    decoded = TurboEcc1024.DecodeFromChannelLlrs(infoLlrs.AsSpan(offset, bitsPerUnit), iterations: iterations);
                 }
                 catch
                 {
-                    var encoded = new byte[TurboEcc1024.EncodedBytes];
                     Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
                     decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
                 }
             }
             else
             {
-                var encoded = new byte[TurboEcc1024.EncodedBytes];
                 Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
                 decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
             }
@@ -1654,16 +1655,19 @@ public sealed class FileWavCodec
         var padded = new byte[paddedLength];
         Buffer.BlockCopy(payload, 0, padded, 0, payload.Length);
 
-        using var output = new MemoryStream((paddedLength / RsEcc256.DataUnitSize) * RsEcc256.EncodedUnitSize);
+        var unitCount = paddedLength / RsEcc256.DataUnitSize;
+        var output = new byte[unitCount * RsEcc256.EncodedUnitSize];
+        var unit = new byte[RsEcc256.DataUnitSize];
+        var writeOffset = 0;
         for (var offset = 0; offset < padded.Length; offset += RsEcc256.DataUnitSize)
         {
-            var unit = new byte[RsEcc256.DataUnitSize];
             Buffer.BlockCopy(padded, offset, unit, 0, RsEcc256.DataUnitSize);
             var encoded = RsEcc256.Encode(unit);
-            output.Write(encoded, 0, encoded.Length);
+            Buffer.BlockCopy(encoded, 0, output, writeOffset, encoded.Length);
+            writeOffset += encoded.Length;
         }
 
-        return output.ToArray();
+        return output;
     }
 
     private static byte[] ApplyReedSolomonDecode(byte[] encoded)
@@ -1673,16 +1677,19 @@ public sealed class FileWavCodec
             throw new ArgumentException("RS encoded length is invalid.", nameof(encoded));
         }
 
-        using var output = new MemoryStream((encoded.Length / RsEcc256.EncodedUnitSize) * RsEcc256.DataUnitSize);
+        var unitCount = encoded.Length / RsEcc256.EncodedUnitSize;
+        var output = new byte[unitCount * RsEcc256.DataUnitSize];
+        var unit = new byte[RsEcc256.EncodedUnitSize];
+        var writeOffset = 0;
         for (var offset = 0; offset < encoded.Length; offset += RsEcc256.EncodedUnitSize)
         {
-            var unit = new byte[RsEcc256.EncodedUnitSize];
             Buffer.BlockCopy(encoded, offset, unit, 0, RsEcc256.EncodedUnitSize);
             var decoded = RsEcc256.Decode(unit);
-            output.Write(decoded, 0, decoded.Length);
+            Buffer.BlockCopy(decoded, 0, output, writeOffset, decoded.Length);
+            writeOffset += decoded.Length;
         }
 
-        return output.ToArray();
+        return output;
     }
 
     private static byte[] BuildFileHeader(FileInfo fileInfo, long fileSize, int blockCount, byte[] fileHash)

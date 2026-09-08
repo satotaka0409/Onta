@@ -9,12 +9,14 @@ public sealed class RealtimeDecodeSession : IDisposable
 {
     private readonly FileWavCodec _codec;
     private readonly object _sync = new();
-    private readonly List<Complex> _left = [];
-    private readonly List<Complex> _right = [];
+    private readonly ComplexRingBuffer _left;
+    private readonly ComplexRingBuffer _right;
     private readonly int _sampleRate;
     private readonly DecodeRuntimeTuning _tuning;
     private readonly TimeSpan _pollInterval;
     private readonly int _minAttemptSamples;
+    private Complex[] _leftSnapshot = Array.Empty<Complex>();
+    private Complex[] _rightSnapshot = Array.Empty<Complex>();
 
     private CancellationTokenSource? _cts;
     private Task? _worker;
@@ -28,13 +30,17 @@ public sealed class RealtimeDecodeSession : IDisposable
         int sampleRate,
         DecodeRuntimeTuning? tuning = null,
         TimeSpan? pollInterval = null,
-        int minAttemptSeconds = 2)
+        int minAttemptSeconds = 2,
+        int maxBufferSeconds = 30)
     {
         _codec = codec ?? throw new ArgumentNullException(nameof(codec));
         _sampleRate = Math.Max(1, sampleRate);
         _tuning = tuning ?? DecodeRuntimeTuning.Default;
         _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(500);
         _minAttemptSamples = _sampleRate * Math.Max(1, minAttemptSeconds);
+        var maxBufferedSamples = _sampleRate * Math.Max(Math.Max(1, maxBufferSeconds), Math.Max(1, minAttemptSeconds));
+        _left = new ComplexRingBuffer(maxBufferedSamples);
+        _right = new ComplexRingBuffer(maxBufferedSamples);
     }
 
     public void Start()
@@ -94,19 +100,13 @@ public sealed class RealtimeDecodeSession : IDisposable
         ThrowIfDisposed();
         lock (_sync)
         {
-            for (var i = 0; i < left.Length; i++)
-            {
-                _left.Add(left[i]);
-            }
-
-            for (var i = 0; i < right.Length; i++)
-            {
-                _right.Add(right[i]);
-            }
+            _left.Write(left);
+            _right.Write(right);
+            var buffered = Math.Min(_left.Count, _right.Count);
 
             _snapshot = _snapshot with
             {
-                BufferedSamples = _left.Count,
+                BufferedSamples = buffered,
                 LastError = null
             };
         }
@@ -142,26 +142,37 @@ public sealed class RealtimeDecodeSession : IDisposable
         {
             try
             {
-                Complex[] left;
-                Complex[] right;
+                Complex[]? left = null;
+                Complex[]? right = null;
                 var shouldTry = false;
                 lock (_sync)
                 {
-                    if (_left.Count >= _minAttemptSamples && _left.Count >= _lastAttemptSamples + (_sampleRate / 2))
+                    var buffered = Math.Min(_left.Count, _right.Count);
+                    if (buffered >= _minAttemptSamples && buffered >= _lastAttemptSamples + (_sampleRate / 2))
                     {
-                        left = _left.ToArray();
-                        right = _right.ToArray();
-                        _lastAttemptSamples = _left.Count;
+                        if (_left.TryGetContiguousWindow(out var leftWindow, out var leftCount)
+                            && _right.TryGetContiguousWindow(out var rightWindow, out var rightCount)
+                            && leftCount == rightCount)
+                        {
+                            left = leftWindow;
+                            right = rightWindow;
+                            buffered = leftCount;
+                        }
+                        else
+                        {
+                            EnsureSnapshotCapacity(buffered);
+                            _left.CopyTo(_leftSnapshot.AsSpan(0, buffered));
+                            _right.CopyTo(_rightSnapshot.AsSpan(0, buffered));
+                            left = _leftSnapshot;
+                            right = _rightSnapshot;
+                        }
+
+                        _lastAttemptSamples = buffered;
                         shouldTry = true;
-                    }
-                    else
-                    {
-                        left = Array.Empty<Complex>();
-                        right = Array.Empty<Complex>();
                     }
                 }
 
-                if (shouldTry)
+                if (shouldTry && left is not null && right is not null)
                 {
                     var decoded = _codec.DecodePcmSamplesToFileBytes(left, right, correctWow: true, wowParams: null, tuning: _tuning);
                     lock (_sync)
@@ -209,6 +220,91 @@ public sealed class RealtimeDecodeSession : IDisposable
 
         Stop();
         _disposed = true;
+    }
+
+    private void EnsureSnapshotCapacity(int sampleCount)
+    {
+        if (_leftSnapshot.Length != sampleCount)
+        {
+            _leftSnapshot = new Complex[sampleCount];
+        }
+
+        if (_rightSnapshot.Length != sampleCount)
+        {
+            _rightSnapshot = new Complex[sampleCount];
+        }
+    }
+
+    private sealed class ComplexRingBuffer
+    {
+        private readonly Complex[] _buffer;
+        private int _head;
+        private int _count;
+
+        public ComplexRingBuffer(int capacity)
+        {
+            if (capacity <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(capacity));
+            }
+
+            _buffer = new Complex[capacity];
+        }
+
+        public int Count => _count;
+
+        public void Write(ReadOnlySpan<Complex> source)
+        {
+            var capacity = _buffer.Length;
+            for (var i = 0; i < source.Length; i++)
+            {
+                var tail = (_head + _count) % capacity;
+                _buffer[tail] = source[i];
+                if (_count < capacity)
+                {
+                    _count++;
+                }
+                else
+                {
+                    _head = (_head + 1) % capacity;
+                }
+            }
+        }
+
+        public void CopyTo(Span<Complex> destination)
+        {
+            if (destination.Length < _count)
+            {
+                throw new ArgumentException("Destination span is smaller than buffered sample count.", nameof(destination));
+            }
+
+            if (_count == 0)
+            {
+                return;
+            }
+
+            var firstLength = Math.Min(_count, _buffer.Length - _head);
+            _buffer.AsSpan(_head, firstLength).CopyTo(destination);
+            var secondLength = _count - firstLength;
+            if (secondLength > 0)
+            {
+                _buffer.AsSpan(0, secondLength).CopyTo(destination.Slice(firstLength));
+            }
+        }
+
+        public bool TryGetContiguousWindow(out Complex[] buffer, out int count)
+        {
+            if (_head == 0 && _count == _buffer.Length)
+            {
+                buffer = _buffer;
+                count = _count;
+                return true;
+            }
+
+            buffer = Array.Empty<Complex>();
+            count = 0;
+            return false;
+        }
     }
 }
 

@@ -384,12 +384,16 @@ public sealed class OfdmGenerator
     private readonly Dictionary<int, ModulationScheme> _leftDataCarrierModulationByBin;
     private readonly int[] _leftDataCarrierNoInterleaveOrder;
     private readonly Dictionary<(long Epoch, int Seed), int[]> _leftInterleavedOrderCache;
+    private readonly int[][] _leftPilotGroupedCarriers;
     private readonly List<int> _rightAllCarrierBins;
     private readonly List<int> _rightPilotBins;
     private readonly List<int> _rightDataCarrierBase;
     private readonly Dictionary<int, ModulationScheme> _rightDataCarrierModulationByBin;
     private readonly int[] _rightDataCarrierNoInterleaveOrder;
     private readonly Dictionary<(long Epoch, int Seed), int[]> _rightInterleavedOrderCache;
+    private readonly int[][] _rightPilotGroupedCarriers;
+    private readonly Complex[] _scoreTimeNoCpScratch;
+    private readonly Complex[] _scoreFreqBinsScratch;
     private readonly int _bitsPerOfdmSymbol;
     private ulong _randomBitPool;
     private int _randomBitCount;
@@ -424,6 +428,10 @@ public sealed class OfdmGenerator
         _rightDataCarrierNoInterleaveOrder = _rightDataCarrierBase.ToArray();
         _leftInterleavedOrderCache = new Dictionary<(long Epoch, int Seed), int[]>();
         _rightInterleavedOrderCache = new Dictionary<(long Epoch, int Seed), int[]>();
+        _leftPilotGroupedCarriers = BuildPilotGroupedCarriers(_leftAllCarrierBins, _leftPilotBins);
+        _rightPilotGroupedCarriers = BuildPilotGroupedCarriers(_rightAllCarrierBins, _rightPilotBins);
+        _scoreTimeNoCpScratch = new Complex[_config.FftSize];
+        _scoreFreqBinsScratch = new Complex[_config.FftSize];
 
         if (_leftDataCarrierBase.Count != _rightDataCarrierBase.Count)
         {
@@ -471,6 +479,34 @@ public sealed class OfdmGenerator
         }
 
         return (all, pilots, data, dataModulationByBin);
+    }
+
+    private static int[][] BuildPilotGroupedCarriers(List<int> allCarriers, List<int> orderedPilots)
+    {
+        if (orderedPilots.Count == 0)
+        {
+            return [];
+        }
+
+        var grouped = new List<int>[orderedPilots.Count];
+        for (var i = 0; i < grouped.Length; i++)
+        {
+            grouped[i] = new List<int>();
+        }
+
+        foreach (var carrier in allCarriers)
+        {
+            var groupIndex = ResolvePilotGroupIndex(carrier, orderedPilots);
+            grouped[groupIndex].Add(carrier);
+        }
+
+        var result = new int[grouped.Length][];
+        for (var i = 0; i < grouped.Length; i++)
+        {
+            result[i] = grouped[i].ToArray();
+        }
+
+        return result;
     }
 
     private static bool IsGroupDConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 28 and <= 36;
@@ -2417,11 +2453,13 @@ public sealed class OfdmGenerator
         }
 
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var timeNoCp = _scoreTimeNoCpScratch;
+        var freqBins = _scoreFreqBinsScratch;
         var score = 0.0;
         for (var s = 0; s < symbolCount; s++)
         {
             var symbolStart = start + (s * symbolLength);
-            score += ScoreSingleSymbolLock(samples.AsSpan(symbolStart, symbolLength), pilotBins);
+            score += ScoreSingleSymbolLock(samples.AsSpan(symbolStart, symbolLength), pilotBins, timeNoCp, freqBins);
         }
 
         return score / symbolCount;
@@ -2446,10 +2484,12 @@ public sealed class OfdmGenerator
         }
 
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var timeNoCp = _scoreTimeNoCpScratch;
+        var freqBins = _scoreFreqBinsScratch;
         var back = Math.Min(searchRadius, expectedStart);
         var forward = Math.Min(searchRadius, samples.Length - symbolLength - expectedStart);
         var cpAtExpected = ScoreSingleSymbolCpLock(samples.AsSpan(expectedStart, symbolLength));
-        var scoreAtExpected = ScoreSingleSymbolLock(samples.AsSpan(expectedStart, symbolLength), pilotBins);
+        var scoreAtExpected = ScoreSingleSymbolLock(samples.AsSpan(expectedStart, symbolLength), pilotBins, timeNoCp, freqBins);
         var bestDelta = 0;
         var bestScore = scoreAtExpected;
         var candidateCount = back + forward + 1;
@@ -2464,7 +2504,7 @@ public sealed class OfdmGenerator
                     continue;
                 }
 
-                var score = ScoreSingleSymbolLock(samples.AsSpan(expectedStart + delta, symbolLength), pilotBins);
+                var score = ScoreSingleSymbolLock(samples.AsSpan(expectedStart + delta, symbolLength), pilotBins, timeNoCp, freqBins);
                 if (score > bestScore)
                 {
                     bestScore = score;
@@ -2528,7 +2568,7 @@ public sealed class OfdmGenerator
                 continue;
             }
 
-            var score = ScoreSingleSymbolLock(samples.AsSpan(expectedStart + delta, symbolLength), pilotBins);
+            var score = ScoreSingleSymbolLock(samples.AsSpan(expectedStart + delta, symbolLength), pilotBins, timeNoCp, freqBins);
             if (score > bestScore)
             {
                 bestScore = score;
@@ -2574,14 +2614,25 @@ public sealed class OfdmGenerator
 
     private double ScoreSingleSymbolLock(ReadOnlySpan<Complex> symbolWithCp, List<int> pilotBins)
     {
+        var timeNoCp = _scoreTimeNoCpScratch;
+        var freqBins = _scoreFreqBinsScratch;
+        return ScoreSingleSymbolLock(symbolWithCp, pilotBins, timeNoCp, freqBins);
+    }
+
+    private double ScoreSingleSymbolLock(
+        ReadOnlySpan<Complex> symbolWithCp,
+        List<int> pilotBins,
+        Complex[] timeNoCp,
+        Complex[] freqBins)
+    {
         var normalizedCp = ScoreSingleSymbolCpLock(symbolWithCp);
         if (double.IsNegativeInfinity(normalizedCp))
         {
             return double.NegativeInfinity;
         }
 
-        var time = RemoveCyclicPrefix(symbolWithCp, _config.CyclicPrefixLength);
-        var freqBins = ForwardFftMatchingInverse(time);
+        symbolWithCp.Slice(_config.CyclicPrefixLength, _config.FftSize).CopyTo(timeNoCp);
+        ForwardFftMatchingInverseInto(timeNoCp, freqBins);
         var pilotPower = 0.0;
         var pilotCount = 0;
         foreach (var pilotBin in pilotBins)
@@ -2643,6 +2694,10 @@ public sealed class OfdmGenerator
         var bitIndex = 0;
         _ = logicalSampleOffset;
         var agcState = new PilotGroupAgcState(pilotBins.Count);
+        var fftSize = _config.FftSize;
+        var timeNoCp = new Complex[fftSize];
+        var freqBins = new Complex[fftSize];
+        var equalizers = new Complex[fftSize];
         // シンボルごとに CP/パイロットで追従し、ワウによる累積ずれを吸収する。
         var followRadius = Math.Max(searchRadius, 2);
         var position = cursor;
@@ -2656,9 +2711,14 @@ public sealed class OfdmGenerator
             }
 
             var symbol = samples.AsSpan(start, symbolLength);
-            var time = RemoveCyclicPrefix(symbol, _config.CyclicPrefixLength);
-            var freqBins = ForwardFftMatchingInverse(time);
-            var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
+            PrepareSymbolFrequency(
+                symbol,
+                pilotBins,
+                useRightChannel,
+                agcState,
+                timeNoCp,
+                freqBins,
+                equalizers);
             var symbolOffset = (long)s * symbolLength;
             var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
 
@@ -2798,6 +2858,13 @@ public sealed class OfdmGenerator
         _ = logicalSampleOffset;
         var primaryAgcState = new PilotGroupAgcState(pilotBins.Count);
         var secondaryAgcState = new PilotGroupAgcState(secondaryPilotBins.Count);
+        var fftSize = _config.FftSize;
+        var primaryTimeNoCp = new Complex[fftSize];
+        var primaryFreqBins = new Complex[fftSize];
+        var primaryEqualizers = new Complex[fftSize];
+        var secondaryTimeNoCp = new Complex[fftSize];
+        var secondaryFreqBins = new Complex[fftSize];
+        var secondaryEqualizers = new Complex[fftSize];
         var followRadius = Math.Max(searchRadius, 2);
         var position = cursor;
         var noiseAccum = 0.0;
@@ -2820,6 +2887,9 @@ public sealed class OfdmGenerator
                     samples.AsSpan(start, symbolLength),
                     pilotBins,
                     useRightChannel,
+                    primaryTimeNoCp,
+                    primaryFreqBins,
+                    primaryEqualizers,
                     ref noiseAccum,
                     ref noiseCount);
                 if (secondarySamples is not null && start + symbolLength <= secondarySamples.Length)
@@ -2828,6 +2898,9 @@ public sealed class OfdmGenerator
                         secondarySamples.AsSpan(start, symbolLength),
                         secondaryPilotBins,
                         secondaryUseRightChannel,
+                        secondaryTimeNoCp,
+                        secondaryFreqBins,
+                        secondaryEqualizers,
                         ref noiseAccum,
                         ref noiseCount);
                 }
@@ -2857,6 +2930,9 @@ public sealed class OfdmGenerator
                 useRightChannel,
                 primaryAgcState,
                 (long)s * symbolLength,
+                primaryTimeNoCp,
+                primaryFreqBins,
+                primaryEqualizers,
                 ref bitIndex,
                 llrs,
                 effectiveVariance,
@@ -2877,6 +2953,9 @@ public sealed class OfdmGenerator
                     secondaryUseRightChannel,
                     secondaryAgcState,
                     (long)s * symbolLength,
+                    secondaryTimeNoCp,
+                    secondaryFreqBins,
+                    secondaryEqualizers,
                     ref secondaryBitIndex,
                     llrs,
                     effectiveVariance,
@@ -2897,19 +2976,28 @@ public sealed class OfdmGenerator
         bool useRightChannel,
         PilotGroupAgcState agcState,
         long logical,
+        Complex[] timeNoCp,
+        Complex[] freqBins,
+        Complex[] equalizers,
         ref int bitIndex,
         double[] llrs,
         double noiseVariance,
         bool addToExisting,
         int interleaveInitSeed)
     {
-        var time = RemoveCyclicPrefix(symbolWithCp, _config.CyclicPrefixLength);
-        var freqBins = ForwardFftMatchingInverse(time);
-        var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
+        PrepareSymbolFrequency(
+            symbolWithCp,
+            pilotBins,
+            useRightChannel,
+            agcState,
+            timeNoCp,
+            freqBins,
+            equalizers);
         var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
         var dataModulationByBin = useRightChannel
             ? _rightDataCarrierModulationByBin
             : _leftDataCarrierModulationByBin;
+        Span<double> softLlrScratch = stackalloc double[6];
         foreach (var dataBin in dataOrder)
         {
             if (bitIndex >= llrs.Length)
@@ -2919,17 +3007,16 @@ public sealed class OfdmGenerator
 
             if (addToExisting)
             {
-                var tmp = new double[6];
                 var tmpIndex = 0;
                 EmitSymbolSoftLlrs(
                     freqBins[dataBin] * equalizers[dataBin],
                     dataModulationByBin[dataBin],
                     ref tmpIndex,
-                    tmp,
+                    softLlrScratch,
                     noiseVariance);
                 for (var i = 0; i < tmpIndex && (bitIndex + i) < llrs.Length; i++)
                 {
-                    llrs[bitIndex + i] += tmp[i];
+                    llrs[bitIndex + i] += softLlrScratch[i];
                 }
 
                 bitIndex += tmpIndex;
@@ -2950,12 +3037,20 @@ public sealed class OfdmGenerator
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
         bool useRightChannel,
+        Complex[] timeNoCp,
+        Complex[] freqBins,
+        Complex[] equalizers,
         ref double noiseAccum,
         ref int noiseCount)
     {
-        var time = RemoveCyclicPrefix(symbolWithCp, _config.CyclicPrefixLength);
-        var freqBins = ForwardFftMatchingInverse(time);
-        var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel);
+        PrepareSymbolFrequency(
+            symbolWithCp,
+            pilotBins,
+            useRightChannel,
+            agcState: null,
+            timeNoCp,
+            freqBins,
+            equalizers);
         foreach (var pilotBin in pilotBins)
         {
             var eq = freqBins[pilotBin] * equalizers[pilotBin];
@@ -3033,6 +3128,10 @@ public sealed class OfdmGenerator
         var bitIndex = 0;
         var symbolCount = samples.Length / symbolLength;
         var agcState = new PilotGroupAgcState(pilotBins.Count);
+        var fftSize = _config.FftSize;
+        var timeNoCp = new Complex[fftSize];
+        var freqBins = new Complex[fftSize];
+        var equalizers = new Complex[fftSize];
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
@@ -3041,9 +3140,14 @@ public sealed class OfdmGenerator
             var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
 
             var symbol = samples.Slice(s * symbolLength, symbolLength);
-            var time = RemoveCyclicPrefix(symbol, _config.CyclicPrefixLength);
-            var freqBins = ForwardFftMatchingInverse(time);
-            var equalizers = EstimatePilotEqualizers(freqBins, pilotBins, useRightChannel, agcState);
+            PrepareSymbolFrequency(
+                symbol,
+                pilotBins,
+                useRightChannel,
+                agcState,
+                timeNoCp,
+                freqBins,
+                equalizers);
 
             foreach (var dataBin in dataOrder)
             {
@@ -3074,38 +3178,37 @@ public sealed class OfdmGenerator
         PilotGroupAgcState? agcState = null)
     {
         var equalizers = new Complex[freqBins.Length];
+        EstimatePilotEqualizersInto(freqBins, pilotBins, useRightChannel, equalizers, agcState);
+        return equalizers;
+    }
+
+    private void EstimatePilotEqualizersInto(
+        Complex[] freqBins,
+        List<int> pilotBins,
+        bool useRightChannel,
+        Complex[] equalizers,
+        PilotGroupAgcState? agcState = null)
+    {
+        if (equalizers.Length < freqBins.Length)
+        {
+            throw new ArgumentException("Equalizer buffer is smaller than FFT bins.", nameof(equalizers));
+        }
+
         Array.Fill(equalizers, Complex.One);
         if (pilotBins.Count == 0)
         {
-            return equalizers;
+            return;
         }
 
-        var orderedPilots = pilotBins.OrderBy(b => b).ToList();
-        var channels = new Complex[orderedPilots.Count];
-        for (var i = 0; i < orderedPilots.Count; i++)
-        {
-            channels[i] = freqBins[orderedPilots[i]];
-        }
-
+        var orderedPilots = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var groupedCarriers = useRightChannel ? _rightPilotGroupedCarriers : _leftPilotGroupedCarriers;
         var allCarriers = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var noisePower = EstimateNoisePower(freqBins, orderedPilots, allCarriers);
         var regularization = Math.Max(noisePower * 0.10, 1e-4);
 
-        var groupedCarriers = new List<int>[orderedPilots.Count];
-        for (var i = 0; i < groupedCarriers.Length; i++)
-        {
-            groupedCarriers[i] = new List<int>();
-        }
-
-        foreach (var carrier in allCarriers)
-        {
-            var groupIndex = ResolvePilotGroupIndex(carrier, orderedPilots);
-            groupedCarriers[groupIndex].Add(carrier);
-        }
-
         for (var i = 0; i < orderedPilots.Count; i++)
         {
-            var h = channels[i];
+            var h = freqBins[orderedPilots[i]];
             var mag2 = (h.Real * h.Real) + (h.Imaginary * h.Imaginary);
             if (mag2 < 1e-18)
             {
@@ -3131,8 +3234,6 @@ public sealed class OfdmGenerator
                 equalizers[carrier] = groupEq;
             }
         }
-
-        return equalizers;
     }
 
     private static int ResolvePilotGroupIndex(int carrierBin, List<int> orderedPilots)
@@ -3362,7 +3463,7 @@ public sealed class OfdmGenerator
         Complex symbol,
         ModulationScheme modulationScheme,
         ref int bitIndex,
-        double[] llrs,
+        Span<double> llrs,
         double noiseVariance)
     {
         var invVar = 1.0 / Math.Max(1e-6, noiseVariance);
@@ -3377,12 +3478,12 @@ public sealed class OfdmGenerator
                 WriteLlr(ref bitIndex, llrs, 2.0 * symbol.Imaginary * Math.Sqrt(2.0) * invVar);
                 break;
             case ModulationScheme.Qam16:
-                EmitPamAxisSoftLlrs(symbol.Real * Math.Sqrt(10.0), bitsPerAxis: 2, Qam16Levels, invVar, ref bitIndex, llrs);
-                EmitPamAxisSoftLlrs(symbol.Imaginary * Math.Sqrt(10.0), bitsPerAxis: 2, Qam16Levels, invVar, ref bitIndex, llrs);
+                EmitPamAxisSoftLlrsCore(symbol.Real * Math.Sqrt(10.0), bitsPerAxis: 2, Qam16Levels, invVar, ref bitIndex, llrs);
+                EmitPamAxisSoftLlrsCore(symbol.Imaginary * Math.Sqrt(10.0), bitsPerAxis: 2, Qam16Levels, invVar, ref bitIndex, llrs);
                 break;
             case ModulationScheme.Qam64:
-                EmitPamAxisSoftLlrs(symbol.Real * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, invVar, ref bitIndex, llrs);
-                EmitPamAxisSoftLlrs(symbol.Imaginary * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, invVar, ref bitIndex, llrs);
+                EmitPamAxisSoftLlrsCore(symbol.Real * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, invVar, ref bitIndex, llrs);
+                EmitPamAxisSoftLlrsCore(symbol.Imaginary * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, invVar, ref bitIndex, llrs);
                 break;
             default:
                 throw new NotSupportedException("Soft demodulation for this scheme is not implemented yet.");
@@ -3396,6 +3497,17 @@ public sealed class OfdmGenerator
         double invVariance,
         ref int bitIndex,
         double[] llrs)
+    {
+        EmitPamAxisSoftLlrsCore(amplitude, bitsPerAxis, levels, invVariance, ref bitIndex, llrs.AsSpan());
+    }
+
+    private static void EmitPamAxisSoftLlrsCore(
+        double amplitude,
+        int bitsPerAxis,
+        int[] levels,
+        double invVariance,
+        ref int bitIndex,
+        Span<double> llrs)
     {
         if (Avx.IsSupported && bitsPerAxis == 2 && levels.Length == 4)
         {
@@ -3451,7 +3563,7 @@ public sealed class OfdmGenerator
         double amplitude,
         double invVariance,
         ref int bitIndex,
-        double[] llrs)
+        Span<double> llrs)
     {
         var amp = Vector256.Create(amplitude);
         var levels = Vector256.Create(
@@ -3482,7 +3594,7 @@ public sealed class OfdmGenerator
         double amplitude,
         double invVariance,
         ref int bitIndex,
-        double[] llrs)
+        Span<double> llrs)
     {
         var amp = Vector256.Create(amplitude);
         var levelsLo = Vector256.Create(
@@ -3529,7 +3641,7 @@ public sealed class OfdmGenerator
         double amplitude,
         double invVariance,
         ref int bitIndex,
-        double[] llrs)
+        Span<double> llrs)
     {
         var amp = Vector128.Create(amplitude);
         var levels01 = Vector128.Create(Qam16PamByBinary[0], Qam16PamByBinary[1]);
@@ -3557,7 +3669,7 @@ public sealed class OfdmGenerator
         double amplitude,
         double invVariance,
         ref int bitIndex,
-        double[] llrs)
+        Span<double> llrs)
     {
         var amp = Vector128.Create(amplitude);
 
@@ -3615,7 +3727,7 @@ public sealed class OfdmGenerator
         return mapped;
     }
 
-    private static void WriteLlr(ref int bitIndex, double[] llrs, double value)
+    private static void WriteLlr(ref int bitIndex, Span<double> llrs, double value)
     {
         if (bitIndex >= llrs.Length)
         {
@@ -3678,6 +3790,20 @@ public sealed class OfdmGenerator
         bits[bitIndex++] = value;
     }
 
+    private void PrepareSymbolFrequency(
+        ReadOnlySpan<Complex> symbolWithCp,
+        List<int> pilotBins,
+        bool useRightChannel,
+        PilotGroupAgcState? agcState,
+        Complex[] timeNoCp,
+        Complex[] freqBins,
+        Complex[] equalizers)
+    {
+        symbolWithCp.Slice(_config.CyclicPrefixLength, _config.FftSize).CopyTo(timeNoCp);
+        ForwardFftMatchingInverseInto(timeNoCp, freqBins);
+        EstimatePilotEqualizersInto(freqBins, pilotBins, useRightChannel, equalizers, agcState);
+    }
+
     private static Complex[] RemoveCyclicPrefix(ReadOnlySpan<Complex> withCp, int cpLength)
     {
         var result = new Complex[withCp.Length - cpLength];
@@ -3690,16 +3816,20 @@ public sealed class OfdmGenerator
     /// </summary>
     private static Complex[] ForwardFftMatchingInverse(Complex[] time)
     {
-        var n = time.Length;
-        var input = new Complex[n];
-        Array.Copy(time, input, n);
-        ConjugateAndScaleInPlace(input, n);
-
-        var u = InverseFft(input);
-        var freq = new Complex[n];
-        ConjugateInto(u, freq);
-
+        var freq = new Complex[time.Length];
+        ForwardFftMatchingInverseInto(time, freq);
         return freq;
+    }
+
+    private static void ForwardFftMatchingInverseInto(ReadOnlySpan<Complex> time, Complex[] destination)
+    {
+        if (destination.Length < time.Length)
+        {
+            throw new ArgumentException("FFT destination buffer is smaller than input.", nameof(destination));
+        }
+
+        time.CopyTo(destination);
+        FftInPlace(destination);
     }
 
     private Complex[] BuildFrequencyDomainSymbol(CarrierChannel channel)
@@ -4017,9 +4147,15 @@ public sealed class OfdmGenerator
 
     private static Complex[] Fft(Complex[] input)
     {
-        var n = input.Length;
-        var output = new Complex[n];
-        Array.Copy(input, output, n);
+        var output = new Complex[input.Length];
+        Array.Copy(input, output, input.Length);
+        FftInPlace(output);
+        return output;
+    }
+
+    private static void FftInPlace(Complex[] output)
+    {
+        var n = output.Length;
 
         // ビット反転並べ替えを伴う反復型 radix-2 Cooley-Tukey FFT。
         var bits = (int)Math.Log2(n);
@@ -4143,8 +4279,6 @@ public sealed class OfdmGenerator
                 }
             }
         }
-
-        return output;
     }
 
     private static int ReverseBits(int value, int bitCount)

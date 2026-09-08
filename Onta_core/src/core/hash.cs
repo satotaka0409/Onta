@@ -19,6 +19,11 @@ public static class Hash
         return SHA256.HashData(data);
     }
 
+    public static byte[] ComputeSha256(ReadOnlySpan<byte> data)
+    {
+        return SHA256.HashData(data);
+    }
+
     /// <summary>
     /// 入力バイト列の SHA-512 ハッシュ値を計算します。
     /// </summary>
@@ -28,6 +33,11 @@ public static class Hash
     public static byte[] ComputeSha512(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
+        return SHA512.HashData(data);
+    }
+
+    public static byte[] ComputeSha512(ReadOnlySpan<byte> data)
+    {
         return SHA512.HashData(data);
     }
 }

@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace Onta.Core;
 
 /// <summary>
@@ -139,120 +141,134 @@ public static class ConvolutionalCode
         var expectedInputBits = originalBitLength + (terminated ? TailBits : 0);
         var expectedCodeBitLength = expectedInputBits * OutputBitsPerInputBit;
         var expectedPuncturedBitLength = GetPuncturedBitLength(expectedCodeBitLength, punctureRate);
-        var puncturedBits = UnpackBits(encoded, expectedPuncturedBitLength);
-        DepunctureHard(
-            puncturedBits,
+        var encodedBits = ArrayPool<bool>.Shared.Rent(expectedCodeBitLength);
+        var presentMask = ArrayPool<bool>.Shared.Rent(expectedCodeBitLength);
+        DepunctureHardFromPacked(
+            encoded,
+            expectedPuncturedBitLength,
             expectedCodeBitLength,
             punctureRate,
-            out var encodedBits,
-            out var presentMask);
+            encodedBits.AsSpan(0, expectedCodeBitLength),
+            presentMask.AsSpan(0, expectedCodeBitLength));
 
         var inputSymbolCount = expectedCodeBitLength / OutputBitsPerInputBit;
         var prevMetric = new int[StateCount];
         var nextMetric = new int[StateCount];
-        var predecessorState = new int[inputSymbolCount, StateCount];
-        var decidedInputBit = new byte[inputSymbolCount, StateCount];
+        var traceLength = inputSymbolCount * StateCount;
+        var predecessorState = ArrayPool<int>.Shared.Rent(traceLength);
+        var decidedInputBit = ArrayPool<byte>.Shared.Rent(traceLength);
+        var decidedBits = ArrayPool<bool>.Shared.Rent(inputSymbolCount);
 
-        for (var s = 0; s < StateCount; s++)
+        try
         {
-            prevMetric[s] = LargeMetric;
-            nextMetric[s] = LargeMetric;
-        }
 
-        prevMetric[0] = 0;
-
-        // 各時刻ごとに、全遷移の中から最小ハミング距離となる経路を更新する。
-        for (var t = 0; t < inputSymbolCount; t++)
-        {
             for (var s = 0; s < StateCount; s++)
             {
+                prevMetric[s] = LargeMetric;
                 nextMetric[s] = LargeMetric;
             }
 
-            var rx0 = encodedBits[t * 2] ? 1 : 0;
-            var rx1 = encodedBits[(t * 2) + 1] ? 1 : 0;
-            var hasRx0 = presentMask[t * 2];
-            var hasRx1 = presentMask[(t * 2) + 1];
+            prevMetric[0] = 0;
 
-            for (var state = 0; state < StateCount; state++)
+            // 各時刻ごとに、全遷移の中から最小ハミング距離となる経路を更新する。
+            for (var t = 0; t < inputSymbolCount; t++)
             {
-                var baseMetric = prevMetric[state];
-                if (baseMetric >= LargeMetric)
+                for (var s = 0; s < StateCount; s++)
                 {
-                    continue;
+                    nextMetric[s] = LargeMetric;
                 }
 
-                var nextState0 = NextStateWhenInput0[state];
-                var branchDistance0 = 0;
-                if (hasRx0)
+                var rx0 = encodedBits[t * 2] ? 1 : 0;
+                var rx1 = encodedBits[(t * 2) + 1] ? 1 : 0;
+                var hasRx0 = presentMask[t * 2];
+                var hasRx1 = presentMask[(t * 2) + 1];
+                var traceRowBase = t * StateCount;
+
+                for (var state = 0; state < StateCount; state++)
                 {
-                    branchDistance0 += Output0WhenInput0[state] ^ rx0;
+                    var baseMetric = prevMetric[state];
+                    if (baseMetric >= LargeMetric)
+                    {
+                        continue;
+                    }
+
+                    var nextState0 = NextStateWhenInput0[state];
+                    var branchDistance0 = 0;
+                    if (hasRx0)
+                    {
+                        branchDistance0 += Output0WhenInput0[state] ^ rx0;
+                    }
+
+                    if (hasRx1)
+                    {
+                        branchDistance0 += Output1WhenInput0[state] ^ rx1;
+                    }
+
+                    var candidate0 = baseMetric + branchDistance0;
+                    if (candidate0 < nextMetric[nextState0])
+                    {
+                        nextMetric[nextState0] = candidate0;
+                        predecessorState[traceRowBase + nextState0] = state;
+                        decidedInputBit[traceRowBase + nextState0] = 0;
+                    }
+
+                    var nextState1 = NextStateWhenInput1[state];
+                    var branchDistance1 = 0;
+                    if (hasRx0)
+                    {
+                        branchDistance1 += Output0WhenInput1[state] ^ rx0;
+                    }
+
+                    if (hasRx1)
+                    {
+                        branchDistance1 += Output1WhenInput1[state] ^ rx1;
+                    }
+
+                    var candidate1 = baseMetric + branchDistance1;
+                    if (candidate1 < nextMetric[nextState1])
+                    {
+                        nextMetric[nextState1] = candidate1;
+                        predecessorState[traceRowBase + nextState1] = state;
+                        decidedInputBit[traceRowBase + nextState1] = 1;
+                    }
                 }
 
-                if (hasRx1)
-                {
-                    branchDistance0 += Output1WhenInput0[state] ^ rx1;
-                }
-
-                var candidate0 = baseMetric + branchDistance0;
-                if (candidate0 < nextMetric[nextState0])
-                {
-                    nextMetric[nextState0] = candidate0;
-                    predecessorState[t, nextState0] = state;
-                    decidedInputBit[t, nextState0] = 0;
-                }
-
-                var nextState1 = NextStateWhenInput1[state];
-                var branchDistance1 = 0;
-                if (hasRx0)
-                {
-                    branchDistance1 += Output0WhenInput1[state] ^ rx0;
-                }
-
-                if (hasRx1)
-                {
-                    branchDistance1 += Output1WhenInput1[state] ^ rx1;
-                }
-
-                var candidate1 = baseMetric + branchDistance1;
-                if (candidate1 < nextMetric[nextState1])
-                {
-                    nextMetric[nextState1] = candidate1;
-                    predecessorState[t, nextState1] = state;
-                    decidedInputBit[t, nextState1] = 1;
-                }
+                (prevMetric, nextMetric) = (nextMetric, prevMetric);
             }
 
-            (prevMetric, nextMetric) = (nextMetric, prevMetric);
-        }
+            var finalState = terminated ? 0 : FindMinMetricState(prevMetric);
+            var bestMetric = prevMetric[finalState];
+            if (bestMetric >= LargeMetric)
+            {
+                throw new ArgumentException("Failed to decode: no valid Viterbi path.", nameof(encoded));
+            }
 
-        var finalState = terminated ? 0 : FindMinMetricState(prevMetric);
-        var bestMetric = prevMetric[finalState];
-        if (bestMetric >= LargeMetric)
+            var traceState = finalState;
+            for (var t = inputSymbolCount - 1; t >= 0; t--)
+            {
+                var rowBase = t * StateCount;
+                decidedBits[t] = decidedInputBit[rowBase + traceState] == 1;
+                traceState = predecessorState[rowBase + traceState];
+            }
+
+            var decoded = BitsToBytes(decidedBits.AsSpan(0, originalBitLength));
+            var correctedCodeBits = bestMetric;
+            metrics = new DecodeMetrics(
+                PathHammingDistance: bestMetric,
+                ComparedCodeBitCount: expectedPuncturedBitLength,
+                CorrectedCodeBitCount: correctedCodeBits,
+                CorrectionRate: expectedPuncturedBitLength == 0 ? 0.0 : (double)correctedCodeBits / expectedPuncturedBitLength);
+
+            return decoded;
+        }
+        finally
         {
-            throw new ArgumentException("Failed to decode: no valid Viterbi path.", nameof(encoded));
+            ArrayPool<bool>.Shared.Return(encodedBits, clearArray: false);
+            ArrayPool<bool>.Shared.Return(presentMask, clearArray: false);
+            ArrayPool<int>.Shared.Return(predecessorState, clearArray: false);
+            ArrayPool<byte>.Shared.Return(decidedInputBit, clearArray: false);
+            ArrayPool<bool>.Shared.Return(decidedBits, clearArray: false);
         }
-
-        var decidedBits = new bool[inputSymbolCount];
-        var traceState = finalState;
-        for (var t = inputSymbolCount - 1; t >= 0; t--)
-        {
-            decidedBits[t] = decidedInputBit[t, traceState] == 1;
-            traceState = predecessorState[t, traceState];
-        }
-
-        var payloadBits = new bool[originalBitLength];
-        Array.Copy(decidedBits, 0, payloadBits, 0, originalBitLength);
-
-        var decoded = BitsToBytes(payloadBits);
-        var correctedCodeBits = bestMetric;
-        metrics = new DecodeMetrics(
-            PathHammingDistance: bestMetric,
-            ComparedCodeBitCount: expectedPuncturedBitLength,
-            CorrectedCodeBitCount: correctedCodeBits,
-            CorrectionRate: expectedPuncturedBitLength == 0 ? 0.0 : (double)correctedCodeBits / expectedPuncturedBitLength);
-
-        return decoded;
     }
 
     /// <summary>
@@ -295,141 +311,154 @@ public static class ConvolutionalCode
                 nameof(codeLlrs));
         }
 
-        var fullCodeLlrs = DepunctureSoft(codeLlrs, expectedCodeBitLength, punctureRate);
+        var fullCodeLlrsBuffer = ArrayPool<double>.Shared.Rent(expectedCodeBitLength);
+        var fullCodeLlrs = fullCodeLlrsBuffer.AsSpan(0, expectedCodeBitLength);
+        DepunctureSoftInto(codeLlrs, expectedCodeBitLength, punctureRate, fullCodeLlrs);
 
         var tCount = expectedCodeBitLength / OutputBitsPerInputBit;
         const double negInf = -1e300;
 
         // alpha[t, s]: 時刻 t で状態 s にいる前向きメトリック（t=0..tCount）
-        var alpha = new double[tCount + 1, StateCount];
-        for (var t = 0; t <= tCount; t++)
+        var alphaLength = (tCount + 1) * StateCount;
+        var alpha = ArrayPool<double>.Shared.Rent(alphaLength);
+        var payloadBitsBuffer = ArrayPool<bool>.Shared.Rent(originalBitLength);
+        try
         {
-            for (var s = 0; s < StateCount; s++)
+            Array.Fill(alpha, negInf, 0, alphaLength);
+
+            alpha[0] = 0.0;
+            for (var t = 0; t < tCount; t++)
             {
-                alpha[t, s] = negInf;
-            }
-        }
-
-        alpha[0, 0] = 0.0;
-        for (var t = 0; t < tCount; t++)
-        {
-            var llr0 = fullCodeLlrs[t * 2];
-            var llr1 = fullCodeLlrs[(t * 2) + 1];
-            for (var state = 0; state < StateCount; state++)
-            {
-                var a = alpha[t, state];
-                if (a <= negInf / 2)
+                var llr0 = fullCodeLlrs[t * 2];
+                var llr1 = fullCodeLlrs[(t * 2) + 1];
+                var rowBase = t * StateCount;
+                var nextRowBase = (t + 1) * StateCount;
+                for (var state = 0; state < StateCount; state++)
                 {
-                    continue;
-                }
-
-                var nextState0 = NextStateWhenInput0[state];
-                var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
-                    + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
-                var candidate0 = a + gamma0;
-                if (candidate0 > alpha[t + 1, nextState0])
-                {
-                    alpha[t + 1, nextState0] = candidate0;
-                }
-
-                var nextState1 = NextStateWhenInput1[state];
-                var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
-                    + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
-                var candidate1 = a + gamma1;
-                if (candidate1 > alpha[t + 1, nextState1])
-                {
-                    alpha[t + 1, nextState1] = candidate1;
-                }
-            }
-        }
-
-        var decidedBits = new bool[tCount];
-        var infoSoft = new double[tCount];
-        var betaNext = new double[StateCount];
-        var betaCurr = new double[StateCount];
-        if (terminated)
-        {
-            for (var state = 0; state < StateCount; state++)
-            {
-                betaNext[state] = negInf;
-            }
-            betaNext[0] = 0.0;
-        }
-        else
-        {
-            for (var state = 0; state < StateCount; state++)
-            {
-                betaNext[state] = 0.0;
-            }
-        }
-
-        for (var t = tCount - 1; t >= 0; t--)
-        {
-            var llr0 = fullCodeLlrs[t * 2];
-            var llr1 = fullCodeLlrs[(t * 2) + 1];
-            var best0 = negInf;
-            var best1 = negInf;
-
-            for (var state = 0; state < StateCount; state++)
-            {
-                var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
-                    + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
-                var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
-                    + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
-
-                var nextState0 = NextStateWhenInput0[state];
-                var b0 = betaNext[nextState0];
-                var candidate0 = b0 > negInf / 2 ? b0 + gamma0 : negInf;
-
-                var nextState1 = NextStateWhenInput1[state];
-                var b1 = betaNext[nextState1];
-                var candidate1 = b1 > negInf / 2 ? b1 + gamma1 : negInf;
-
-                betaCurr[state] = candidate0 > candidate1 ? candidate0 : candidate1;
-
-                var a = alpha[t, state];
-                if (a <= negInf / 2)
-                {
-                    continue;
-                }
-
-                if (candidate0 > negInf / 2)
-                {
-                    var metric0 = a + candidate0;
-                    if (metric0 > best0)
+                    var a = alpha[rowBase + state];
+                    if (a <= negInf / 2)
                     {
-                        best0 = metric0;
+                        continue;
                     }
-                }
 
-                if (candidate1 > negInf / 2)
-                {
-                    var metric1 = a + candidate1;
-                    if (metric1 > best1)
+                    var nextState0 = NextStateWhenInput0[state];
+                    var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
+                        + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
+                    var candidate0 = a + gamma0;
+                    var index0 = nextRowBase + nextState0;
+                    if (candidate0 > alpha[index0])
                     {
-                        best1 = metric1;
+                        alpha[index0] = candidate0;
+                    }
+
+                    var nextState1 = NextStateWhenInput1[state];
+                    var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
+                        + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
+                    var candidate1 = a + gamma1;
+                    var index1 = nextRowBase + nextState1;
+                    if (candidate1 > alpha[index1])
+                    {
+                        alpha[index1] = candidate1;
                     }
                 }
             }
 
-            // ターボ極性: L = log P(u=0)/P(u=1) ≈ best0 - best1
-            var app = best0 - best1;
-            if (double.IsNaN(app) || double.IsInfinity(app))
+            var payloadBits = payloadBitsBuffer.AsSpan(0, originalBitLength);
+            infoLlrs = new double[originalBitLength];
+            Span<double> betaNext = stackalloc double[StateCount];
+            Span<double> betaCurr = stackalloc double[StateCount];
+            if (terminated)
             {
-                app = 0.0;
+                for (var state = 0; state < StateCount; state++)
+                {
+                    betaNext[state] = negInf;
+                }
+                betaNext[0] = 0.0;
+            }
+            else
+            {
+                for (var state = 0; state < StateCount; state++)
+                {
+                    betaNext[state] = 0.0;
+                }
             }
 
-            infoSoft[t] = app;
-            decidedBits[t] = app < 0.0;
+            for (var t = tCount - 1; t >= 0; t--)
+            {
+                var llr0 = fullCodeLlrs[t * 2];
+                var llr1 = fullCodeLlrs[(t * 2) + 1];
+                var best0 = negInf;
+                var best1 = negInf;
+                var rowBase = t * StateCount;
 
-            (betaNext, betaCurr) = (betaCurr, betaNext);
+                for (var state = 0; state < StateCount; state++)
+                {
+                    var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
+                        + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
+                    var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
+                        + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
+
+                    var nextState0 = NextStateWhenInput0[state];
+                    var b0 = betaNext[nextState0];
+                    var candidate0 = b0 > negInf / 2 ? b0 + gamma0 : negInf;
+
+                    var nextState1 = NextStateWhenInput1[state];
+                    var b1 = betaNext[nextState1];
+                    var candidate1 = b1 > negInf / 2 ? b1 + gamma1 : negInf;
+
+                    betaCurr[state] = candidate0 > candidate1 ? candidate0 : candidate1;
+
+                    var a = alpha[rowBase + state];
+                    if (a <= negInf / 2)
+                    {
+                        continue;
+                    }
+
+                    if (candidate0 > negInf / 2)
+                    {
+                        var metric0 = a + candidate0;
+                        if (metric0 > best0)
+                        {
+                            best0 = metric0;
+                        }
+                    }
+
+                    if (candidate1 > negInf / 2)
+                    {
+                        var metric1 = a + candidate1;
+                        if (metric1 > best1)
+                        {
+                            best1 = metric1;
+                        }
+                    }
+                }
+
+                // ターボ極性: L = log P(u=0)/P(u=1) ≈ best0 - best1
+                var app = best0 - best1;
+                if (double.IsNaN(app) || double.IsInfinity(app))
+                {
+                    app = 0.0;
+                }
+
+                if (t < originalBitLength)
+                {
+                    infoLlrs[t] = app;
+                    payloadBits[t] = app < 0.0;
+                }
+
+                var betaSwap = betaNext;
+                betaNext = betaCurr;
+                betaCurr = betaSwap;
+            }
+
+            return BitsToBytes(payloadBits);
         }
-
-        var payloadBits = new bool[originalBitLength];
-        Array.Copy(decidedBits, 0, payloadBits, 0, originalBitLength);
-        infoLlrs = new double[originalBitLength];
-        Array.Copy(infoSoft, 0, infoLlrs, 0, originalBitLength);
-        return BitsToBytes(payloadBits);
+        finally
+        {
+            ArrayPool<double>.Shared.Return(alpha, clearArray: false);
+            ArrayPool<double>.Shared.Return(fullCodeLlrsBuffer, clearArray: false);
+            ArrayPool<bool>.Shared.Return(payloadBitsBuffer, clearArray: false);
+        }
     }
 
     /// <summary>
@@ -617,6 +646,47 @@ public static class ConvolutionalCode
         }
     }
 
+    private static void DepunctureHardFromPacked(
+        ReadOnlySpan<byte> packedBits,
+        int puncturedBitLength,
+        int motherBitLength,
+        PunctureRate punctureRate,
+        Span<bool> fullBits,
+        Span<bool> presentMask)
+    {
+        var pattern = GetPuncturePattern(punctureRate);
+        var read = 0;
+        var p = 0;
+        var pLen = pattern.Length;
+        for (var i = 0; i < motherBitLength; i++)
+        {
+            if (!pattern[p])
+            {
+                fullBits[i] = false;
+                presentMask[i] = false;
+                p++;
+                if (p == pLen)
+                {
+                    p = 0;
+                }
+                continue;
+            }
+
+            if (read >= puncturedBitLength)
+            {
+                throw new ArgumentException("Punctured bit stream is shorter than expected.", nameof(packedBits));
+            }
+
+            fullBits[i] = ReadPackedBit(packedBits, read++);
+            presentMask[i] = true;
+            p++;
+            if (p == pLen)
+            {
+                p = 0;
+            }
+        }
+    }
+
     private static double[] DepunctureSoft(ReadOnlySpan<double> puncturedLlrs, int motherBitLength, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
@@ -651,6 +721,43 @@ public static class ConvolutionalCode
         }
 
         return full;
+    }
+
+    private static void DepunctureSoftInto(
+        ReadOnlySpan<double> puncturedLlrs,
+        int motherBitLength,
+        PunctureRate punctureRate,
+        Span<double> full)
+    {
+        var pattern = GetPuncturePattern(punctureRate);
+        var read = 0;
+        var p = 0;
+        var pLen = pattern.Length;
+        for (var i = 0; i < motherBitLength; i++)
+        {
+            if (!pattern[p])
+            {
+                full[i] = 0.0;
+                p++;
+                if (p == pLen)
+                {
+                    p = 0;
+                }
+                continue;
+            }
+
+            if (read >= puncturedLlrs.Length)
+            {
+                throw new ArgumentException("Punctured LLR stream is shorter than expected.", nameof(puncturedLlrs));
+            }
+
+            full[i] = puncturedLlrs[read++];
+            p++;
+            if (p == pLen)
+            {
+                p = 0;
+            }
+        }
     }
 
     private static bool[] GetPuncturePattern(PunctureRate punctureRate)
@@ -795,13 +902,18 @@ public static class ConvolutionalCode
 
     private static byte[] BitsToBytes(bool[] bits)
     {
+        return BitsToBytes(bits.AsSpan());
+    }
+
+    private static byte[] BitsToBytes(ReadOnlySpan<bool> bits)
+    {
         if (bits.Length % 8 != 0)
         {
             throw new ArgumentException("Bit length must be a multiple of 8.", nameof(bits));
         }
 
         var bytes = new byte[bits.Length / 8];
-        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits);
         for (var i = 0; i < bytes.Length; i++)
         {
             var srcOffset = i * 8;
@@ -811,6 +923,12 @@ public static class ConvolutionalCode
         }
 
         return bytes;
+    }
+
+    private static bool ReadPackedBit(ReadOnlySpan<byte> packed, int bitIndex)
+    {
+        var b = packed[bitIndex >> 3];
+        return ((b >> (7 - (bitIndex & 7))) & 1) != 0;
     }
 
     private static byte[] PackBits(bool[] bits)
