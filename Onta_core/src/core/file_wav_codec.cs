@@ -577,7 +577,7 @@ public sealed class FileWavCodec
             cyclicPrefixLength: _profile.HeaderCyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
-            channelMode: _profile.ChannelMode,
+            channelMode: ChannelMode.Mono,
             enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,

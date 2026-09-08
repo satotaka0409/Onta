@@ -11,6 +11,47 @@ namespace Onta.Core.Tests;
 public sealed class OntaTest6
 {
     [Fact]
+    public void HeaderOfdm_IsMonoEvenWhenProfileIsStereo()
+    {
+        var codec = new FileWavCodec(new FileWavCodecProfile(
+            ActiveSubcarriers: 36,
+            ModulationScheme: ModulationScheme.Qam64,
+            ChannelMode: ChannelMode.Stereo));
+
+        var method = typeof(FileWavCodec).GetMethod(
+            "CreateHeaderOfdm",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var headerOfdm = (OfdmGenerator?)method!.Invoke(codec, null);
+        Assert.NotNull(headerOfdm);
+        Assert.Equal(ChannelMode.Mono, headerOfdm!.ChannelMode);
+    }
+
+    [Fact]
+    public void StereoProfile_HeaderPreambleWaveform_IsIdenticalOnLeftAndRight()
+    {
+        var profile = new FileWavCodecProfile(
+            ActiveSubcarriers: 36,
+            ModulationScheme: ModulationScheme.Qam64,
+            ChannelMode: ChannelMode.Stereo,
+            BlockInterleaveFactor: 1);
+
+        var codec = new FileWavCodec(profile);
+        var inputInfo = new FileInfo(TestPaths.ResolveInputPng());
+        var (left, right) = codec.EncodeFileToSamples([0x5A], inputInfo);
+
+        var compareSamples = profile.LeadingSilenceSamples + profile.UnmodulatedPreambleSamples;
+        Assert.True(left.Length > compareSamples);
+        Assert.Equal(left.Length, right.Length);
+        for (var i = 0; i < compareSamples; i++)
+        {
+            Assert.InRange(Math.Abs(left[i].Real - right[i].Real), 0.0, 1e-12);
+            Assert.InRange(Math.Abs(left[i].Imaginary - right[i].Imaginary), 0.0, 1e-12);
+        }
+    }
+
+    [Fact]
     public void GroupD_Downgrade_AdjustsBitsPerOfdmSymbol_For36Sc64Qam()
     {
         var config = new OfdmConfig(
