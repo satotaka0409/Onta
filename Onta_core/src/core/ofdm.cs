@@ -1,5 +1,9 @@
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace Onta.Core;
 
@@ -377,14 +381,24 @@ public sealed class OfdmGenerator
     private readonly List<int> _leftPilotBins;
     private readonly List<int> _leftDataCarrierBase;
     private readonly Dictionary<int, ModulationScheme> _leftDataCarrierModulationByBin;
+    private readonly int[] _leftDataCarrierNoInterleaveOrder;
+    private readonly Dictionary<(long Epoch, int Seed), int[]> _leftInterleavedOrderCache;
     private readonly List<int> _rightAllCarrierBins;
     private readonly List<int> _rightPilotBins;
     private readonly List<int> _rightDataCarrierBase;
     private readonly Dictionary<int, ModulationScheme> _rightDataCarrierModulationByBin;
+    private readonly int[] _rightDataCarrierNoInterleaveOrder;
+    private readonly Dictionary<(long Epoch, int Seed), int[]> _rightInterleavedOrderCache;
     private readonly int _bitsPerOfdmSymbol;
+    private ulong _randomBitPool;
+    private int _randomBitCount;
     private static readonly int[] Qam16Levels = [-3, -1, 1, 3];
     private static readonly int[] Qam64Levels = [-7, -5, -3, -1, 1, 3, 5, 7];
+    private static readonly double[] Qam16PamByBinary = BuildPamByBinary(2, Qam16Levels);
+    private static readonly double[] Qam64PamByBinary = BuildPamByBinary(3, Qam64Levels);
     private static readonly Complex PilotSymbol = Complex.One;
+    private static readonly Vector256<double> RealLaneMask = Vector256.Create(1.0, 0.0, 1.0, 0.0);
+    private static readonly Vector<double> ConjugateSignMask = CreateConjugateSignMask();
 
     /// <summary>
     /// チャンネル構成（モノラル／ステレオ）を取得します。
@@ -405,6 +419,10 @@ public sealed class OfdmGenerator
             BuildChannelLayout(CarrierChannel.Left);
         (_rightAllCarrierBins, _rightPilotBins, _rightDataCarrierBase, _rightDataCarrierModulationByBin) =
             BuildChannelLayout(CarrierChannel.Right);
+        _leftDataCarrierNoInterleaveOrder = _leftDataCarrierBase.ToArray();
+        _rightDataCarrierNoInterleaveOrder = _rightDataCarrierBase.ToArray();
+        _leftInterleavedOrderCache = new Dictionary<(long Epoch, int Seed), int[]>();
+        _rightInterleavedOrderCache = new Dictionary<(long Epoch, int Seed), int[]>();
 
         if (_leftDataCarrierBase.Count != _rightDataCarrierBase.Count)
         {
@@ -491,16 +509,24 @@ public sealed class OfdmGenerator
     private int[] ResolveDataCarrierOrder(bool useRightChannel, long symbolLocalSamplePosition, int interleaveInitSeed)
     {
         var baseOrder = useRightChannel ? _rightDataCarrierBase : _leftDataCarrierBase;
+        var noInterleaveOrder = useRightChannel ? _rightDataCarrierNoInterleaveOrder : _leftDataCarrierNoInterleaveOrder;
         if (!_config.EnableFrequencyInterleaving)
         {
-            return baseOrder.ToArray();
+            return noInterleaveOrder;
         }
 
         var absoluteSymbolPosition = symbolLocalSamplePosition / SamplesPerOfdmSymbol;
         var epoch = absoluteSymbolPosition / InterleaveIntervalSymbols;
         if (baseOrder.Count <= 1)
         {
-            return baseOrder.ToArray();
+            return noInterleaveOrder;
+        }
+
+        var cache = useRightChannel ? _rightInterleavedOrderCache : _leftInterleavedOrderCache;
+        var cacheKey = (epoch, interleaveInitSeed);
+        if (cache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
         }
 
         var order = baseOrder.ToArray();
@@ -513,6 +539,13 @@ public sealed class OfdmGenerator
         }
 
         Array.Sort(keys, order);
+
+        if (cache.Count >= 4096)
+        {
+            cache.Clear();
+        }
+
+        cache[cacheKey] = order;
         return order;
     }
 
@@ -712,18 +745,19 @@ public sealed class OfdmGenerator
             throw new InvalidOperationException("Stereo mode requires GenerateStereoFrame().");
         }
 
-        // 出力フレームは、CP 付与後の OFDM シンボルを連結した配列。
-        var symbolsWithCp = new List<Complex>(_config.OfdmSymbolCount * (_config.FftSize + _config.CyclicPrefixLength));
+        var symbolLength = SamplesPerOfdmSymbol;
+        var frame = new Complex[_config.OfdmSymbolCount * symbolLength];
+        var write = 0;
 
         for (var i = 0; i < _config.OfdmSymbolCount; i++)
         {
             var freqBins = BuildFrequencyDomainSymbol(CarrierChannel.Left);
             var timeSymbol = InverseFft(freqBins);
-            var withCp = AddCyclicPrefix(timeSymbol, _config.CyclicPrefixLength);
-            symbolsWithCp.AddRange(withCp);
+            CopyWithCyclicPrefix(timeSymbol, _config.CyclicPrefixLength, frame.AsSpan(write, symbolLength));
+            write += symbolLength;
         }
 
-        return symbolsWithCp.ToArray();
+        return frame;
     }
 
     /// <summary>
@@ -738,20 +772,23 @@ public sealed class OfdmGenerator
             throw new InvalidOperationException("GenerateStereoFrame() requires stereo mode.");
         }
 
-        var frameLength = _config.OfdmSymbolCount * (_config.FftSize + _config.CyclicPrefixLength);
-        var left = new List<Complex>(frameLength);
-        var right = new List<Complex>(frameLength);
+        var symbolLength = SamplesPerOfdmSymbol;
+        var frameLength = _config.OfdmSymbolCount * symbolLength;
+        var left = new Complex[frameLength];
+        var right = new Complex[frameLength];
+        var write = 0;
 
         for (var i = 0; i < _config.OfdmSymbolCount; i++)
         {
             var leftBins = BuildFrequencyDomainSymbol(CarrierChannel.Left);
             var rightBins = BuildFrequencyDomainSymbol(CarrierChannel.Right);
 
-            left.AddRange(AddCyclicPrefix(InverseFft(leftBins), _config.CyclicPrefixLength));
-            right.AddRange(AddCyclicPrefix(InverseFft(rightBins), _config.CyclicPrefixLength));
+            CopyWithCyclicPrefix(InverseFft(leftBins), _config.CyclicPrefixLength, left.AsSpan(write, symbolLength));
+            CopyWithCyclicPrefix(InverseFft(rightBins), _config.CyclicPrefixLength, right.AsSpan(write, symbolLength));
+            write += symbolLength;
         }
 
-        return (left.ToArray(), right.ToArray());
+        return (left, right);
     }
 
     /// <summary>
@@ -781,26 +818,31 @@ public sealed class OfdmGenerator
     {
         var symbolLength = SamplesPerOfdmSymbol;
         var symbolCount = (sampleCount + symbolLength - 1) / symbolLength;
-        var samples = new List<Complex>(symbolCount * symbolLength);
+        var padded = new Complex[symbolCount * symbolLength];
+        var write = 0;
+        var freqBins = new Complex[_config.FftSize];
 
         for (var i = 0; i < symbolCount; i++)
         {
-            var freqBins = new Complex[_config.FftSize];
+            Array.Clear(freqBins);
             foreach (var carrierBin in carrierBins)
             {
                 freqBins[carrierBin] = UnmodulatedCarrierSymbol;
             }
 
             var timeSymbol = ToRealTimeSymbol(freqBins);
-            samples.AddRange(AddCyclicPrefix(timeSymbol, _config.CyclicPrefixLength));
+            CopyWithCyclicPrefix(timeSymbol, _config.CyclicPrefixLength, padded.AsSpan(write, symbolLength));
+            write += symbolLength;
         }
 
-        if (samples.Count > sampleCount)
+        if (padded.Length > sampleCount)
         {
-            return samples.GetRange(0, sampleCount).ToArray();
+            var trimmed = new Complex[sampleCount];
+            Array.Copy(padded, trimmed, sampleCount);
+            return trimmed;
         }
 
-        return samples.ToArray();
+        return padded;
     }
 
     /// <summary>
@@ -864,8 +906,11 @@ public sealed class OfdmGenerator
             symbolCount = 1;
         }
 
-        var samples = new List<Complex>(symbolCount * SamplesPerOfdmSymbol);
+        var symbolLength = SamplesPerOfdmSymbol;
+        var samples = new Complex[symbolCount * symbolLength];
+        var write = 0;
         var bitIndex = 0;
+        var freqBins = new Complex[_config.FftSize];
 
         for (var s = 0; s < symbolCount; s++)
         {
@@ -873,7 +918,7 @@ public sealed class OfdmGenerator
             var symbolOffset = (long)s * SamplesPerOfdmSymbol;
             var dataCarrierOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
 
-            var freqBins = new Complex[_config.FftSize];
+            Array.Clear(freqBins);
             foreach (var pilotBin in pilotBins)
             {
                 freqBins[pilotBin] = PilotSymbol;
@@ -888,10 +933,28 @@ public sealed class OfdmGenerator
             }
 
             var timeSymbol = ToRealTimeSymbol(freqBins);
-            samples.AddRange(AddCyclicPrefix(timeSymbol, _config.CyclicPrefixLength));
+            CopyWithCyclicPrefix(timeSymbol, _config.CyclicPrefixLength, samples.AsSpan(write, symbolLength));
+            write += symbolLength;
         }
 
-        return samples.ToArray();
+        return samples;
+    }
+
+    private static void CopyWithCyclicPrefix(ReadOnlySpan<Complex> symbol, int cpLength, Span<Complex> destination)
+    {
+        if (destination.Length < symbol.Length + cpLength)
+        {
+            throw new ArgumentException("Destination span is shorter than symbol + cyclic prefix.", nameof(destination));
+        }
+
+        if (cpLength == 0)
+        {
+            symbol.CopyTo(destination);
+            return;
+        }
+
+        symbol.Slice(symbol.Length - cpLength, cpLength).CopyTo(destination);
+        symbol.CopyTo(destination.Slice(cpLength));
     }
 
     /// <summary>
@@ -1161,10 +1224,76 @@ public sealed class OfdmGenerator
         var bestAmount = 0.01;
         var bestWowPhase = 0.0;
         var bestFlutterPhase = 0.0;
+        var correctedPreambleBuffer = new Complex[analysisSampleCount];
+
+        var refStride1 = BuildCorrelationReference(ideal, 1);
+        var refStride8 = BuildCorrelationReference(ideal, 8);
+        var refStride32 = BuildCorrelationReference(ideal, 32);
+
+        static (double Mean, double Energy, int Count) BuildCorrelationReference(Complex[] reference, int stride)
+        {
+            stride = Math.Max(1, stride);
+            var sum = 0.0;
+            var count = 0;
+            for (var i = 0; i < reference.Length; i += stride)
+            {
+                sum += reference[i].Real;
+                count++;
+            }
+
+            if (count <= 1)
+            {
+                return (0.0, 0.0, count);
+            }
+
+            var mean = sum / count;
+            var energy = 0.0;
+            for (var i = 0; i < reference.Length; i += stride)
+            {
+                var centered = reference[i].Real - mean;
+                energy += centered * centered;
+            }
+
+            return (mean, energy, count);
+        }
+
+        static double CorrelateRealStridedWithReference(
+            ReadOnlySpan<Complex> a,
+            ReadOnlySpan<Complex> b,
+            int stride,
+            double meanB,
+            double energyB,
+            int count)
+        {
+            if (count <= 1 || energyB <= 1e-18)
+            {
+                return double.NegativeInfinity;
+            }
+
+            stride = Math.Max(1, stride);
+            var sumA = 0.0;
+            for (var i = 0; i < a.Length; i += stride)
+            {
+                sumA += a[i].Real;
+            }
+
+            var meanA = sumA / count;
+            var num = 0.0;
+            var energyA = 0.0;
+            for (var i = 0; i < a.Length; i += stride)
+            {
+                var xa = a[i].Real - meanA;
+                var xb = b[i].Real - meanB;
+                num += xa * xb;
+                energyA += xa * xa;
+            }
+
+            return num / Math.Sqrt((energyA * energyB) + 1e-18);
+        }
 
         double Evaluate(double amount, double wowPhase, double flutterPhase, int corrStride = 1)
         {
-            var correctedPreamble = ResampleSegmentWithInverseSpeed(
+            ResampleSegmentWithInverseSpeed(
                 samples,
                 analysisStartSample,
                 analysisSampleCount,
@@ -1172,8 +1301,20 @@ public sealed class OfdmGenerator
                 amount,
                 wowPhase,
                 flutterPhase,
+                correctedPreambleBuffer,
                 corrStride);
-            var score = CorrelateRealStrided(correctedPreamble, ideal, corrStride);
+            var reference = corrStride <= 1
+                ? refStride1
+                : corrStride <= 8
+                    ? refStride8
+                    : refStride32;
+            var score = CorrelateRealStridedWithReference(
+                correctedPreambleBuffer,
+                ideal,
+                corrStride,
+                reference.Mean,
+                reference.Energy,
+                reference.Count);
             // 間引き相関は候補出し専用。best 更新はフル解像度のみ。
             if (corrStride <= 1 && score > bestScore)
             {
@@ -1832,6 +1973,34 @@ public sealed class OfdmGenerator
 
     private static double ScoreCpCorrelation(ReadOnlySpan<Complex> window, int offset, int fftSize, int cp)
     {
+        if (Avx.IsSupported && cp >= 2)
+        {
+            var scoreSimd = 0.0;
+            ReadOnlySpan<double> doubles = MemoryMarshal.Cast<Complex, double>(window);
+            ref var baseRef = ref MemoryMarshal.GetReference(doubles);
+            var i = 0;
+            for (; i <= cp - 2; i += 2)
+            {
+                var aOffset = (offset + i) * 2;
+                var bOffset = (offset + fftSize + i) * 2;
+                var a = Unsafe.ReadUnaligned<Vector256<double>>(
+                    ref Unsafe.As<double, byte>(ref Unsafe.Add(ref baseRef, aOffset)));
+                var b = Unsafe.ReadUnaligned<Vector256<double>>(
+                    ref Unsafe.As<double, byte>(ref Unsafe.Add(ref baseRef, bOffset)));
+                var masked = Avx.Multiply(Avx.Multiply(a, b), RealLaneMask);
+                scoreSimd += masked.GetElement(0) + masked.GetElement(2);
+            }
+
+            for (; i < cp; i++)
+            {
+                var a = window[offset + i].Real;
+                var b = window[offset + fftSize + i].Real;
+                scoreSimd += a * b;
+            }
+
+            return scoreSimd;
+        }
+
         var score = 0.0;
         for (var i = 0; i < cp; i++)
         {
@@ -1980,21 +2149,51 @@ public sealed class OfdmGenerator
         double flutterPhase,
         int stride = 1)
     {
+        var output = new Complex[segmentLength];
+        ResampleSegmentWithInverseSpeed(
+            samples,
+            segmentStart,
+            segmentLength,
+            sampleRate,
+            amount,
+            wowPhase,
+            flutterPhase,
+            output,
+            stride);
+        return output;
+    }
+
+    private void ResampleSegmentWithInverseSpeed(
+        Complex[] samples,
+        int segmentStart,
+        int segmentLength,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        Span<Complex> output,
+        int stride = 1)
+    {
         if (segmentLength <= 0)
         {
-            return [];
+            return;
+        }
+
+        if (output.Length < segmentLength)
+        {
+            throw new ArgumentException("Output span is shorter than segment length.", nameof(output));
         }
 
         stride = Math.Max(1, stride);
         var n = samples.Length;
         if (n <= 1)
         {
-            return new Complex[segmentLength];
+            output.Slice(0, segmentLength).Clear();
+            return;
         }
 
         var cumulEnd = CassetteCumulAt(n - 1, sampleRate, amount, wowPhase, flutterPhase);
         var scale = cumulEnd > 1e-12 ? (n - 1) / cumulEnd : 1.0;
-        var output = new Complex[segmentLength];
         for (var j = 0; j < segmentLength; j += stride)
         {
             var outputIndex = segmentStart + j;
@@ -2015,8 +2214,6 @@ public sealed class OfdmGenerator
             var b = samples[i + 1].Real;
             output[j] = new Complex(a + ((b - a) * frac), 0.0);
         }
-
-        return output;
     }
 
     /// <summary>
@@ -2230,12 +2427,81 @@ public sealed class OfdmGenerator
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
         var back = Math.Min(searchRadius, expectedStart);
         var forward = Math.Min(searchRadius, samples.Length - symbolLength - expectedStart);
+        var cpAtExpected = ScoreSingleSymbolCpLock(samples.AsSpan(expectedStart, symbolLength));
         var scoreAtExpected = ScoreSingleSymbolLock(samples.AsSpan(expectedStart, symbolLength), pilotBins);
         var bestDelta = 0;
         var bestScore = scoreAtExpected;
+        var candidateCount = back + forward + 1;
+
+        // 近傍が狭いときは従来どおり総当たりし、分岐コストを避ける。
+        if (candidateCount <= 7)
+        {
+            for (var delta = -back; delta <= forward; delta++)
+            {
+                if (delta == 0)
+                {
+                    continue;
+                }
+
+                var score = ScoreSingleSymbolLock(samples.AsSpan(expectedStart + delta, symbolLength), pilotBins);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestDelta = delta;
+                }
+            }
+
+            const double smallRangeLockMargin = 0.15;
+            if (bestDelta != 0 && bestScore < scoreAtExpected + smallRangeLockMargin)
+            {
+                return expectedStart;
+            }
+
+            return expectedStart + bestDelta;
+        }
+
+        var topCandidateCount = Math.Min(candidateCount - 1, 4);
+        Span<int> topDeltas = stackalloc int[topCandidateCount];
+        Span<double> topCpScores = stackalloc double[topCandidateCount];
+        for (var i = 0; i < topCandidateCount; i++)
+        {
+            topDeltas[i] = 0;
+            topCpScores[i] = double.NegativeInfinity;
+        }
 
         for (var delta = -back; delta <= forward; delta++)
         {
+            if (delta == 0)
+            {
+                continue;
+            }
+
+            var cpScore = ScoreSingleSymbolCpLock(samples.AsSpan(expectedStart + delta, symbolLength));
+            if (cpScore < cpAtExpected - 0.2)
+            {
+                continue;
+            }
+
+            if (cpScore <= topCpScores[^1])
+            {
+                continue;
+            }
+
+            var insertIndex = topCandidateCount - 1;
+            while (insertIndex > 0 && cpScore > topCpScores[insertIndex - 1])
+            {
+                topCpScores[insertIndex] = topCpScores[insertIndex - 1];
+                topDeltas[insertIndex] = topDeltas[insertIndex - 1];
+                insertIndex--;
+            }
+
+            topCpScores[insertIndex] = cpScore;
+            topDeltas[insertIndex] = delta;
+        }
+
+        for (var i = 0; i < topCandidateCount; i++)
+        {
+            var delta = topDeltas[i];
             if (delta == 0)
             {
                 continue;
@@ -2259,7 +2525,7 @@ public sealed class OfdmGenerator
         return expectedStart + bestDelta;
     }
 
-    private double ScoreSingleSymbolLock(ReadOnlySpan<Complex> symbolWithCp, List<int> pilotBins)
+    private double ScoreSingleSymbolCpLock(ReadOnlySpan<Complex> symbolWithCp)
     {
         var fftSize = _config.FftSize;
         var cp = _config.CyclicPrefixLength;
@@ -2268,13 +2534,12 @@ public sealed class OfdmGenerator
             return double.NegativeInfinity;
         }
 
-        var cpScore = 0.0;
+        var cpScore = ScoreCpCorrelation(symbolWithCp, 0, fftSize, cp);
         var energy = 0.0;
         for (var i = 0; i < cp; i++)
         {
             var a = symbolWithCp[i].Real;
             var b = symbolWithCp[fftSize + i].Real;
-            cpScore += a * b;
             energy += (a * a) + (b * b);
         }
 
@@ -2283,10 +2548,18 @@ public sealed class OfdmGenerator
             return double.NegativeInfinity;
         }
 
-        // 正規化 CP 相関（-1..1 程度）
-        var normalizedCp = cpScore / (energy * 0.5);
+        return cpScore / (energy * 0.5);
+    }
 
-        var time = RemoveCyclicPrefix(symbolWithCp, cp);
+    private double ScoreSingleSymbolLock(ReadOnlySpan<Complex> symbolWithCp, List<int> pilotBins)
+    {
+        var normalizedCp = ScoreSingleSymbolCpLock(symbolWithCp);
+        if (double.IsNegativeInfinity(normalizedCp))
+        {
+            return double.NegativeInfinity;
+        }
+
+        var time = RemoveCyclicPrefix(symbolWithCp, _config.CyclicPrefixLength);
         var freqBins = ForwardFftMatchingInverse(time);
         var pilotPower = 0.0;
         var pilotCount = 0;
@@ -3103,6 +3376,18 @@ public sealed class OfdmGenerator
         ref int bitIndex,
         double[] llrs)
     {
+        if (Avx.IsSupported && bitsPerAxis == 2 && levels.Length == 4)
+        {
+            EmitPamAxisSoftLlrsQam16Avx(amplitude, invVariance, ref bitIndex, llrs);
+            return;
+        }
+
+        if (Avx.IsSupported && bitsPerAxis == 3 && levels.Length == 8)
+        {
+            EmitPamAxisSoftLlrsQam64Avx(amplitude, invVariance, ref bitIndex, llrs);
+            return;
+        }
+
         var mask = (1 << bitsPerAxis) - 1;
         for (var bit = bitsPerAxis - 1; bit >= 0; bit--)
         {
@@ -3127,6 +3412,98 @@ public sealed class OfdmGenerator
             // LLR > 0 ⇒ ビット 1 寄り
             WriteLlr(ref bitIndex, llrs, 0.5 * (minDist0 - minDist1) * invVariance);
         }
+    }
+
+    private static void EmitPamAxisSoftLlrsQam16Avx(
+        double amplitude,
+        double invVariance,
+        ref int bitIndex,
+        double[] llrs)
+    {
+        var amp = Vector256.Create(amplitude);
+        var levels = Vector256.Create(
+            Qam16PamByBinary[0],
+            Qam16PamByBinary[1],
+            Qam16PamByBinary[2],
+            Qam16PamByBinary[3]);
+        var diff = Avx.Subtract(amp, levels);
+        var dist2 = Avx.Multiply(diff, diff);
+
+        var d0 = dist2.GetElement(0);
+        var d1 = dist2.GetElement(1);
+        var d2 = dist2.GetElement(2);
+        var d3 = dist2.GetElement(3);
+
+        // bit1 (MSB): 0/1 vs 2/3
+        var min10 = Math.Min(d0, d1);
+        var min11 = Math.Min(d2, d3);
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min10 - min11) * invVariance);
+
+        // bit0 (LSB): 0/2 vs 1/3
+        var min00 = Math.Min(d0, d2);
+        var min01 = Math.Min(d1, d3);
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
+    }
+
+    private static void EmitPamAxisSoftLlrsQam64Avx(
+        double amplitude,
+        double invVariance,
+        ref int bitIndex,
+        double[] llrs)
+    {
+        var amp = Vector256.Create(amplitude);
+        var levelsLo = Vector256.Create(
+            Qam64PamByBinary[0],
+            Qam64PamByBinary[1],
+            Qam64PamByBinary[2],
+            Qam64PamByBinary[3]);
+        var levelsHi = Vector256.Create(
+            Qam64PamByBinary[4],
+            Qam64PamByBinary[5],
+            Qam64PamByBinary[6],
+            Qam64PamByBinary[7]);
+        var diffLo = Avx.Subtract(amp, levelsLo);
+        var diffHi = Avx.Subtract(amp, levelsHi);
+        var distLo = Avx.Multiply(diffLo, diffLo);
+        var distHi = Avx.Multiply(diffHi, diffHi);
+
+        var d0 = distLo.GetElement(0);
+        var d1 = distLo.GetElement(1);
+        var d2 = distLo.GetElement(2);
+        var d3 = distLo.GetElement(3);
+        var d4 = distHi.GetElement(0);
+        var d5 = distHi.GetElement(1);
+        var d6 = distHi.GetElement(2);
+        var d7 = distHi.GetElement(3);
+
+        // bit2 (MSB): 0..3 vs 4..7
+        var min20 = Math.Min(Math.Min(d0, d1), Math.Min(d2, d3));
+        var min21 = Math.Min(Math.Min(d4, d5), Math.Min(d6, d7));
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min20 - min21) * invVariance);
+
+        // bit1: 0,1,4,5 vs 2,3,6,7
+        var min10 = Math.Min(Math.Min(d0, d1), Math.Min(d4, d5));
+        var min11 = Math.Min(Math.Min(d2, d3), Math.Min(d6, d7));
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min10 - min11) * invVariance);
+
+        // bit0 (LSB): 0,2,4,6 vs 1,3,5,7
+        var min00 = Math.Min(Math.Min(d0, d2), Math.Min(d4, d6));
+        var min01 = Math.Min(Math.Min(d1, d3), Math.Min(d5, d7));
+        WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
+    }
+
+    private static double[] BuildPamByBinary(int bitsPerAxis, int[] levels)
+    {
+        var count = 1 << bitsPerAxis;
+        var mapped = new double[count];
+        var mask = count - 1;
+        for (var binary = 0; binary < count; binary++)
+        {
+            var gray = (binary ^ (binary >> 1)) & mask;
+            mapped[binary] = levels[gray];
+        }
+
+        return mapped;
     }
 
     private static void WriteLlr(ref int bitIndex, double[] llrs, double value)
@@ -3206,17 +3583,12 @@ public sealed class OfdmGenerator
     {
         var n = time.Length;
         var input = new Complex[n];
-        for (var i = 0; i < n; i++)
-        {
-            input[i] = Complex.Conjugate(time[i] * n);
-        }
+        Array.Copy(time, input, n);
+        ConjugateAndScaleInPlace(input, n);
 
         var u = InverseFft(input);
         var freq = new Complex[n];
-        for (var i = 0; i < n; i++)
-        {
-            freq[i] = Complex.Conjugate(u[i]);
-        }
+        ConjugateInto(u, freq);
 
         return freq;
     }
@@ -3424,7 +3796,15 @@ public sealed class OfdmGenerator
         var value = 0;
         for (var i = 0; i < bitCount; i++)
         {
-            value = (value << 1) | _random.Next(2);
+            if (_randomBitCount == 0)
+            {
+                _randomBitPool = (ulong)_random.NextInt64();
+                _randomBitCount = 63;
+            }
+
+            value = (value << 1) | (int)(_randomBitPool & 1UL);
+            _randomBitPool >>= 1;
+            _randomBitCount--;
         }
 
         return value;
@@ -3446,17 +3826,84 @@ public sealed class OfdmGenerator
     private static Complex[] InverseFft(Complex[] frequency)
     {
         // 共役を用いた IFFT: IFFT(x) = conj( FFT(conj(x)) ) / N。
-        var conjugated = frequency.Select(Complex.Conjugate).ToArray();
+        var conjugated = new Complex[frequency.Length];
+        ConjugateInto(frequency, conjugated);
         var fft = Fft(conjugated);
         var n = frequency.Length;
         var scale = 1.0 / n;
 
-        for (var i = 0; i < n; i++)
-        {
-            fft[i] = Complex.Conjugate(fft[i]) * scale;
-        }
+        ConjugateAndScaleInPlace(fft, scale);
 
         return fft;
+    }
+
+    private static Vector<double> CreateConjugateSignMask()
+    {
+        var values = new double[Vector<double>.Count];
+        for (var i = 0; i < values.Length; i++)
+        {
+            values[i] = (i & 1) == 0 ? 1.0 : -1.0;
+        }
+
+        return new Vector<double>(values);
+    }
+
+    private static void ConjugateInto(Complex[] source, Complex[] destination)
+    {
+        ReadOnlySpan<double> src = MemoryMarshal.Cast<Complex, double>(source.AsSpan());
+        Span<double> dst = MemoryMarshal.Cast<Complex, double>(destination.AsSpan());
+        var width = Vector<double>.Count;
+        var i = 0;
+        for (; i <= src.Length - width; i += width)
+        {
+            var chunk = LoadVector(src, i);
+            StoreVector(dst, i, chunk * ConjugateSignMask);
+        }
+
+        for (; i < src.Length; i++)
+        {
+            dst[i] = (i & 1) == 0 ? src[i] : -src[i];
+        }
+    }
+
+    private static void ConjugateAndScaleInPlace(Complex[] values, double scale)
+    {
+        Span<double> data = MemoryMarshal.Cast<Complex, double>(values.AsSpan());
+        var mask = ConjugateSignMask * new Vector<double>(scale);
+        var width = Vector<double>.Count;
+        var i = 0;
+        for (; i <= data.Length - width; i += width)
+        {
+            var chunk = LoadVector(data, i);
+            StoreVector(data, i, chunk * mask);
+        }
+
+        for (; i < data.Length; i++)
+        {
+            var sign = (i & 1) == 0 ? 1.0 : -1.0;
+            data[i] *= sign * scale;
+        }
+    }
+
+    private static Vector<double> LoadVector(ReadOnlySpan<double> source, int index)
+    {
+        ref var first = ref MemoryMarshal.GetReference(source);
+        ref var at = ref Unsafe.Add(ref first, index);
+        return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
+    }
+
+    private static Vector<double> LoadVector(Span<double> source, int index)
+    {
+        ref var first = ref MemoryMarshal.GetReference(source);
+        ref var at = ref Unsafe.Add(ref first, index);
+        return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
+    }
+
+    private static void StoreVector(Span<double> destination, int index, Vector<double> value)
+    {
+        ref var first = ref MemoryMarshal.GetReference(destination);
+        ref var at = ref Unsafe.Add(ref first, index);
+        Unsafe.WriteUnaligned(ref Unsafe.As<double, byte>(ref at), value);
     }
 
     private static Complex[] Fft(Complex[] input)
@@ -3482,6 +3929,7 @@ public sealed class OfdmGenerator
             // 部分 DFT 長を段階的に増やすバタフライ演算。
             var angle = -2.0 * Math.PI / len;
             var wLen = Complex.FromPolarCoordinates(1.0, angle);
+            var useAvx = Avx.IsSupported && len >= 4;
 
             for (var i = 0; i < n; i += len)
             {
@@ -3489,10 +3937,55 @@ public sealed class OfdmGenerator
                 var halfLen = len >> 1;
                 for (var j = 0; j < halfLen; j++)
                 {
-                    var u = output[i + j];
-                    var v = output[i + j + halfLen] * w;
-                    output[i + j] = u + v;
-                    output[i + j + halfLen] = u - v;
+                    var upperIndex = i + j;
+                    var lowerIndex = upperIndex + halfLen;
+
+                    if (useAvx && (j + 1) < halfLen)
+                    {
+                        var upperIndex2 = upperIndex + 1;
+                        var lowerIndex2 = lowerIndex + 1;
+
+                        var lowerVec = Vector256.Create(
+                            output[lowerIndex].Real,
+                            output[lowerIndex].Imaginary,
+                            output[lowerIndex2].Real,
+                            output[lowerIndex2].Imaginary);
+
+                        var w2 = w * wLen;
+                        var wrVec = Vector256.Create(w.Real, w.Real, w2.Real, w2.Real);
+                        var wiVec = Vector256.Create(w.Imaginary, w.Imaginary, w2.Imaginary, w2.Imaginary);
+                        var swapped = Vector256.Create(
+                            lowerVec.GetElement(1),
+                            lowerVec.GetElement(0),
+                            lowerVec.GetElement(3),
+                            lowerVec.GetElement(2));
+                        var signedImag = Avx.Multiply(swapped, Vector256.Create(-1.0, 1.0, -1.0, 1.0));
+                        var twiddled = Avx.Add(Avx.Multiply(lowerVec, wrVec), Avx.Multiply(signedImag, wiVec));
+
+                        var upperVec = Vector256.Create(
+                            output[upperIndex].Real,
+                            output[upperIndex].Imaginary,
+                            output[upperIndex2].Real,
+                            output[upperIndex2].Imaginary);
+                        var sum = Avx.Add(upperVec, twiddled);
+                        var diff = Avx.Subtract(upperVec, twiddled);
+
+                        output[upperIndex] = new Complex(sum.GetElement(0), sum.GetElement(1));
+                        output[lowerIndex] = new Complex(diff.GetElement(0), diff.GetElement(1));
+                        output[upperIndex2] = new Complex(sum.GetElement(2), sum.GetElement(3));
+                        output[lowerIndex2] = new Complex(diff.GetElement(2), diff.GetElement(3));
+
+                        j++;
+                        w = w2;
+                    }
+                    else
+                    {
+                        var u = output[upperIndex];
+                        var v = output[lowerIndex] * w;
+                        output[upperIndex] = u + v;
+                        output[lowerIndex] = u - v;
+                    }
+
                     w *= wLen;
                 }
             }

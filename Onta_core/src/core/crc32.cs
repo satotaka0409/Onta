@@ -8,7 +8,7 @@ namespace Onta.Core;
 /// </summary>
 public static class Crc32
 {
-    private static readonly uint[] Table = BuildTable();
+    private static readonly uint[][] Tables = BuildTables();
 
     /// <summary>
     /// 指定範囲の CRC-32 を計算します。
@@ -16,9 +16,27 @@ public static class Crc32
     public static uint Compute(ReadOnlySpan<byte> data)
     {
         var crc = 0xFFFFFFFFu;
+        while (data.Length >= 8)
+        {
+            var first = BinaryPrimitives.ReadUInt32LittleEndian(data);
+            var second = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(4));
+
+            crc ^= first;
+            crc = Tables[7][crc & 0xFF]
+                ^ Tables[6][(crc >> 8) & 0xFF]
+                ^ Tables[5][(crc >> 16) & 0xFF]
+                ^ Tables[4][crc >> 24]
+                ^ Tables[3][second & 0xFF]
+                ^ Tables[2][(second >> 8) & 0xFF]
+                ^ Tables[1][(second >> 16) & 0xFF]
+                ^ Tables[0][second >> 24];
+
+            data = data.Slice(8);
+        }
+
         foreach (var b in data)
         {
-            crc = Table[(crc ^ b) & 0xFF] ^ (crc >> 8);
+            crc = Tables[0][(crc ^ b) & 0xFF] ^ (crc >> 8);
         }
 
         return crc ^ 0xFFFFFFFFu;
@@ -58,10 +76,11 @@ public static class Crc32
         return Compute(data) == ReadBigEndian(storedCrcBigEndian);
     }
 
-    private static uint[] BuildTable()
+    private static uint[][] BuildTables()
     {
         const uint poly = 0xEDB88320u;
-        var table = new uint[256];
+        var tables = new uint[8][];
+        var table0 = new uint[256];
         for (uint i = 0; i < 256; i++)
         {
             var crc = i;
@@ -70,9 +89,20 @@ public static class Crc32
                 crc = (crc & 1) != 0 ? (poly ^ (crc >> 1)) : (crc >> 1);
             }
 
-            table[i] = crc;
+            table0[i] = crc;
         }
 
-        return table;
+        tables[0] = table0;
+        for (var t = 1; t < tables.Length; t++)
+        {
+            tables[t] = new uint[256];
+            for (var i = 0; i < 256; i++)
+            {
+                var crc = tables[t - 1][i];
+                tables[t][i] = table0[crc & 0xFF] ^ (crc >> 8);
+            }
+        }
+
+        return tables;
     }
 }

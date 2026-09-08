@@ -37,14 +37,33 @@ public static class WowFlutterWarp
     {
         var profile = new double[sampleCount];
         var sr = Math.Max(1, sampleRate);
+        var wowStep = 2.0 * Math.PI * WowFrequencyHz / sr;
+        var flutterStep = 2.0 * Math.PI * FlutterFrequencyHz / sr;
+
+        var sinWow = Math.Sin(wowPhase);
+        var cosWow = Math.Cos(wowPhase);
+        var sinFlutter = Math.Sin(flutterPhase);
+        var cosFlutter = Math.Cos(flutterPhase);
+        var sinWowStep = Math.Sin(wowStep);
+        var cosWowStep = Math.Cos(wowStep);
+        var sinFlutterStep = Math.Sin(flutterStep);
+        var cosFlutterStep = Math.Cos(flutterStep);
+
         for (var i = 0; i < sampleCount; i++)
         {
-            var t = i / (double)sr;
-            var modulation =
-                (0.65 * Math.Sin((2.0 * Math.PI * WowFrequencyHz * t) + wowPhase)) +
-                (0.35 * Math.Sin((2.0 * Math.PI * FlutterFrequencyHz * t) + flutterPhase));
+            var modulation = (0.65 * sinWow) + (0.35 * sinFlutter);
             var speed = 1.0 + (amount * modulation);
             profile[i] = speed < 0.05 ? 0.05 : speed;
+
+            var nextSinWow = (sinWow * cosWowStep) + (cosWow * sinWowStep);
+            var nextCosWow = (cosWow * cosWowStep) - (sinWow * sinWowStep);
+            sinWow = nextSinWow;
+            cosWow = nextCosWow;
+
+            var nextSinFlutter = (sinFlutter * cosFlutterStep) + (cosFlutter * sinFlutterStep);
+            var nextCosFlutter = (cosFlutter * cosFlutterStep) - (sinFlutter * sinFlutterStep);
+            sinFlutter = nextSinFlutter;
+            cosFlutter = nextCosFlutter;
         }
 
         return profile;
@@ -99,7 +118,6 @@ public static class WowFlutterWarp
             }
         }
 
-        donors.Sort((a, b) => (cumul[a] * scale).CompareTo(cumul[b] * scale));
         missing.Sort();
 
         var donorCursor = 0;
@@ -215,7 +233,7 @@ public static class WowFlutterWarp
         for (var j = 0; j < n; j++)
         {
             // 全射写像なので count[j] >= 1 が保証される。
-            corrected[j] = count[j] > 0 ? sum[j] / count[j] : 0.0;
+            corrected[j] = sum[j] / count[j];
         }
 
         return corrected;
@@ -237,17 +255,11 @@ public static class WowFlutterWarp
             return (Complex[])source.Clone();
         }
 
-        var real = new double[source.Length];
-        for (var i = 0; i < source.Length; i++)
-        {
-            real[i] = source[i].Real;
-        }
-
-        var warped = Apply(real, sampleRate, amount, wowPhase, flutterPhase);
+        var map = BuildSourceIndexMap(source.Length, sampleRate, amount, wowPhase, flutterPhase);
         var dst = new Complex[source.Length];
         for (var i = 0; i < source.Length; i++)
         {
-            dst[i] = new Complex(warped[i], 0.0);
+            dst[i] = new Complex(source[map[i]].Real, 0.0);
         }
 
         return dst;
@@ -269,17 +281,21 @@ public static class WowFlutterWarp
             return (Complex[])warped.Clone();
         }
 
-        var real = new double[warped.Length];
-        for (var i = 0; i < warped.Length; i++)
+        var n = warped.Length;
+        var map = BuildSourceIndexMap(n, sampleRate, amount, wowPhase, flutterPhase);
+        var sum = new double[n];
+        var count = new int[n];
+        for (var i = 0; i < n; i++)
         {
-            real[i] = warped[i].Real;
+            var src = map[i];
+            sum[src] += warped[i].Real;
+            count[src]++;
         }
 
-        var corrected = Correct(real, sampleRate, amount, wowPhase, flutterPhase);
-        var dst = new Complex[warped.Length];
-        for (var i = 0; i < warped.Length; i++)
+        var dst = new Complex[n];
+        for (var i = 0; i < n; i++)
         {
-            dst[i] = new Complex(corrected[i], 0.0);
+            dst[i] = new Complex(sum[i] / count[i], 0.0);
         }
 
         return dst;
@@ -444,12 +460,52 @@ public static class WowFlutterWarp
             return [];
         }
 
+        factor = Math.Max(1, factor);
+        if (factor == 1)
+        {
+            return source.ToArray();
+        }
+
         var nUp = ((source.Length - 1) * factor) + 1;
         var up = new double[nUp];
-        for (var k = 0; k < nUp; k++)
+
+        var width = Vector<double>.Count;
+        Span<double> lane = stackalloc double[width];
+        for (var i = 0; i < width; i++)
         {
-            up[k] = SampleLinear(source, k / (double)factor);
+            lane[i] = i;
         }
+
+        var laneVec = new Vector<double>(lane);
+        var invFactor = 1.0 / factor;
+        var invFactorVec = new Vector<double>(invFactor);
+        var dstOffset = 0;
+
+        for (var segment = 0; segment < source.Length - 1; segment++)
+        {
+            var a = source[segment];
+            var delta = source[segment + 1] - a;
+            var aVec = new Vector<double>(a);
+            var deltaVec = new Vector<double>(delta);
+
+            var t = 0;
+            for (; t <= factor - width; t += width)
+            {
+                var tVec = laneVec + new Vector<double>((double)t);
+                var fracVec = tVec * invFactorVec;
+                var values = aVec + (deltaVec * fracVec);
+                values.CopyTo(up.AsSpan(dstOffset + t, width));
+            }
+
+            for (; t < factor; t++)
+            {
+                up[dstOffset + t] = a + (delta * (t * invFactor));
+            }
+
+            dstOffset += factor;
+        }
+
+        up[^1] = source[^1];
 
         return up;
     }
@@ -477,5 +533,6 @@ public static class WowFlutterWarp
         var b = samples[index + 1];
         return a + ((b - a) * frac);
     }
+
 }
 

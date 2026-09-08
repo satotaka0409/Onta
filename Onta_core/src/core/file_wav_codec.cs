@@ -257,7 +257,19 @@ public sealed class FileWavCodec
         }
 
         var headerOfdm = CreateHeaderOfdm();
-        var dataOfdm = CreateDataOfdm();
+        var dataOfdmCache = new Dictionary<ModulationScheme, OfdmGenerator>();
+
+        OfdmGenerator ResolveDataOfdmFor(ModulationScheme modulationScheme)
+        {
+            if (dataOfdmCache.TryGetValue(modulationScheme, out var cached))
+            {
+                return cached;
+            }
+
+            var created = CreateDataOfdm(modulationScheme);
+            dataOfdmCache[modulationScheme] = created;
+            return created;
+        }
         // 既知パラメータ指定時は全体へ一括適用。
         // 自動補正時（correctWow=true）は、復号進行に合わせて都度解析して適用する。
         if (wowParams is { } known)
@@ -388,7 +400,6 @@ public sealed class FileWavCodec
 
         var outputSlots = new byte[blockCount][];
         var slotAccepted = new bool[blockCount];
-        var dataPunctureRate = ResolveDataPunctureRate(_profile.ModulationScheme);
         var traceDataErrors = string.Equals(
             Environment.GetEnvironmentVariable(DataTraceEnvVar),
             "1",
@@ -472,18 +483,22 @@ public sealed class FileWavCodec
                     throw new InvalidDataException($"Invalid block size {blockSize}.");
                 }
 
+                var blockModulation = ReadBlockDataModulationScheme(blockHeader);
+                var blockDataOfdm = ResolveDataOfdmFor(blockModulation);
+                var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
+
                 var padded = DecodeDataBlockSynced(
                     leftSamples,
                     rightSamples,
                     ref warpedCursor,
                     ref logicalOffset,
-                    dataOfdm,
-                    Math.Max(dataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
+                    blockDataOfdm,
+                    Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
                     expectedBlockHash: blockHeader.AsSpan(24, 32).ToArray(),
                     payloadLength: blockSize,
                     tuning,
                     InterleaveInitSeedBlock,
-                    dataPunctureRate,
+                    blockDataPunctureRate,
                     out var diag);
                 if (traceDataErrors)
                 {
@@ -590,7 +605,9 @@ public sealed class FileWavCodec
         return new OfdmGenerator(config);
     }
 
-    private OfdmGenerator CreateDataOfdm()
+    private OfdmGenerator CreateDataOfdm() => CreateDataOfdm(_profile.ModulationScheme);
+
+    private OfdmGenerator CreateDataOfdm(ModulationScheme modulationScheme)
     {
         // SC-9/18: 440Hz 起点・1.3Δf・FFT=128。SC-27/36: FFT=128（ステレオ×2）。
         // CP はデータ部 16 固定。
@@ -602,7 +619,7 @@ public sealed class FileWavCodec
             activeSubcarriers: scPerChannel,
             cyclicPrefixLength: _profile.DataCyclicPrefixLength,
             ofdmSymbolCount: 1,
-            modulationScheme: _profile.ModulationScheme,
+            modulationScheme: modulationScheme,
             channelMode: _profile.ChannelMode,
             enableFrequencyInterleaving: true,
             pilotSpacing: 9,
@@ -1606,6 +1623,23 @@ public sealed class FileWavCodec
             ModulationScheme.Qam16 => ConvolutionalCode.PunctureRate.Rate2_3,
             ModulationScheme.Qam64 => ConvolutionalCode.PunctureRate.Rate3_4,
             _ => throw new ArgumentOutOfRangeException(nameof(modulationScheme), modulationScheme, "Unsupported modulation scheme for puncture rate.")
+        };
+    }
+
+    private static ModulationScheme ReadBlockDataModulationScheme(byte[] blockHeader)
+    {
+        if (blockHeader.Length <= 9)
+        {
+            throw new InvalidDataException("Invalid block header: missing modulation mode.");
+        }
+
+        return blockHeader[9] switch
+        {
+            1 => ModulationScheme.Bpsk,
+            2 => ModulationScheme.Qpsk,
+            3 => ModulationScheme.Qam16,
+            4 => ModulationScheme.Qam64,
+            _ => throw new InvalidDataException($"Invalid block header modulation mode: {blockHeader[9]}.")
         };
     }
 

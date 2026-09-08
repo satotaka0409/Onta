@@ -35,6 +35,16 @@ public static class ConvolutionalCode
     private static readonly bool[] PuncturePatternRate1_2 = [true, true];
     private static readonly bool[] PuncturePatternRate2_3 = [true, true, true, false];
     private static readonly bool[] PuncturePatternRate3_4 = [true, true, true, false, false, true];
+    private static readonly byte[] NextStateWhenInput0 = BuildNextStateTable(inputBit: 0);
+    private static readonly byte[] NextStateWhenInput1 = BuildNextStateTable(inputBit: 1);
+    private static readonly byte[] Output0WhenInput0 = BuildOutputBitTable(inputBit: 0, generatorIndex: 0);
+    private static readonly byte[] Output1WhenInput0 = BuildOutputBitTable(inputBit: 0, generatorIndex: 1);
+    private static readonly byte[] Output0WhenInput1 = BuildOutputBitTable(inputBit: 1, generatorIndex: 0);
+    private static readonly byte[] Output1WhenInput1 = BuildOutputBitTable(inputBit: 1, generatorIndex: 1);
+    private static readonly byte[] ByteToBitsLookup = BuildByteToBitsLookup();
+    private static readonly int PunctureRate1_2Ones = CountTrue(PuncturePatternRate1_2);
+    private static readonly int PunctureRate2_3Ones = CountTrue(PuncturePatternRate2_3);
+    private static readonly int PunctureRate3_4Ones = CountTrue(PuncturePatternRate3_4);
 
     /// <summary>
     /// 復号時の統計情報を表します。
@@ -172,30 +182,44 @@ public static class ConvolutionalCode
                     continue;
                 }
 
-                for (var inputBit = 0; inputBit <= 1; inputBit++)
+                var nextState0 = NextStateWhenInput0[state];
+                var branchDistance0 = 0;
+                if (hasRx0)
                 {
-                    var nextState = GetNextState(state, inputBit);
-                    var branch0 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]);
-                    var branch1 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[1]);
-                    var branchDistance = 0;
-                    if (hasRx0)
-                    {
-                        branchDistance += branch0 ^ rx0;
-                    }
+                    branchDistance0 += Output0WhenInput0[state] ^ rx0;
+                }
 
-                    if (hasRx1)
-                    {
-                        branchDistance += branch1 ^ rx1;
-                    }
+                if (hasRx1)
+                {
+                    branchDistance0 += Output1WhenInput0[state] ^ rx1;
+                }
 
-                    var candidate = baseMetric + branchDistance;
+                var candidate0 = baseMetric + branchDistance0;
+                if (candidate0 < nextMetric[nextState0])
+                {
+                    nextMetric[nextState0] = candidate0;
+                    predecessorState[t, nextState0] = state;
+                    decidedInputBit[t, nextState0] = 0;
+                }
 
-                    if (candidate < nextMetric[nextState])
-                    {
-                        nextMetric[nextState] = candidate;
-                        predecessorState[t, nextState] = state;
-                        decidedInputBit[t, nextState] = (byte)inputBit;
-                    }
+                var nextState1 = NextStateWhenInput1[state];
+                var branchDistance1 = 0;
+                if (hasRx0)
+                {
+                    branchDistance1 += Output0WhenInput1[state] ^ rx0;
+                }
+
+                if (hasRx1)
+                {
+                    branchDistance1 += Output1WhenInput1[state] ^ rx1;
+                }
+
+                var candidate1 = baseMetric + branchDistance1;
+                if (candidate1 < nextMetric[nextState1])
+                {
+                    nextMetric[nextState1] = candidate1;
+                    predecessorState[t, nextState1] = state;
+                    decidedInputBit[t, nextState1] = 1;
                 }
             }
 
@@ -278,13 +302,11 @@ public static class ConvolutionalCode
 
         // alpha[t, s]: 時刻 t で状態 s にいる前向きメトリック（t=0..tCount）
         var alpha = new double[tCount + 1, StateCount];
-        var beta = new double[tCount + 1, StateCount];
         for (var t = 0; t <= tCount; t++)
         {
             for (var s = 0; s < StateCount; s++)
             {
                 alpha[t, s] = negInf;
-                beta[t, s] = negInf;
             }
         }
 
@@ -301,28 +323,43 @@ public static class ConvolutionalCode
                     continue;
                 }
 
-                for (var inputBit = 0; inputBit <= 1; inputBit++)
+                var nextState0 = NextStateWhenInput0[state];
+                var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
+                    + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
+                var candidate0 = a + gamma0;
+                if (candidate0 > alpha[t + 1, nextState0])
                 {
-                    var nextState = GetNextState(state, inputBit);
-                    var gamma = BranchLogLikelihood(state, inputBit, llr0, llr1);
-                    var candidate = a + gamma;
-                    if (candidate > alpha[t + 1, nextState])
-                    {
-                        alpha[t + 1, nextState] = candidate;
-                    }
+                    alpha[t + 1, nextState0] = candidate0;
+                }
+
+                var nextState1 = NextStateWhenInput1[state];
+                var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
+                    + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
+                var candidate1 = a + gamma1;
+                if (candidate1 > alpha[t + 1, nextState1])
+                {
+                    alpha[t + 1, nextState1] = candidate1;
                 }
             }
         }
 
+        var decidedBits = new bool[tCount];
+        var infoSoft = new double[tCount];
+        var betaNext = new double[StateCount];
+        var betaCurr = new double[StateCount];
         if (terminated)
         {
-            beta[tCount, 0] = 0.0;
+            for (var state = 0; state < StateCount; state++)
+            {
+                betaNext[state] = negInf;
+            }
+            betaNext[0] = 0.0;
         }
         else
         {
-            for (var s = 0; s < StateCount; s++)
+            for (var state = 0; state < StateCount; state++)
             {
-                beta[tCount, s] = 0.0;
+                betaNext[state] = 0.0;
             }
         }
 
@@ -330,63 +367,47 @@ public static class ConvolutionalCode
         {
             var llr0 = fullCodeLlrs[t * 2];
             var llr1 = fullCodeLlrs[(t * 2) + 1];
-            for (var state = 0; state < StateCount; state++)
-            {
-                for (var inputBit = 0; inputBit <= 1; inputBit++)
-                {
-                    var nextState = GetNextState(state, inputBit);
-                    var b = beta[t + 1, nextState];
-                    if (b <= negInf / 2)
-                    {
-                        continue;
-                    }
-
-                    var gamma = BranchLogLikelihood(state, inputBit, llr0, llr1);
-                    var candidate = b + gamma;
-                    if (candidate > beta[t, state])
-                    {
-                        beta[t, state] = candidate;
-                    }
-                }
-            }
-        }
-
-        var decidedBits = new bool[tCount];
-        var infoSoft = new double[tCount];
-        for (var t = 0; t < tCount; t++)
-        {
-            var llr0 = fullCodeLlrs[t * 2];
-            var llr1 = fullCodeLlrs[(t * 2) + 1];
             var best0 = negInf;
             var best1 = negInf;
+
             for (var state = 0; state < StateCount; state++)
             {
+                var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
+                    + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
+                var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
+                    + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
+
+                var nextState0 = NextStateWhenInput0[state];
+                var b0 = betaNext[nextState0];
+                var candidate0 = b0 > negInf / 2 ? b0 + gamma0 : negInf;
+
+                var nextState1 = NextStateWhenInput1[state];
+                var b1 = betaNext[nextState1];
+                var candidate1 = b1 > negInf / 2 ? b1 + gamma1 : negInf;
+
+                betaCurr[state] = candidate0 > candidate1 ? candidate0 : candidate1;
+
                 var a = alpha[t, state];
                 if (a <= negInf / 2)
                 {
                     continue;
                 }
 
-                for (var inputBit = 0; inputBit <= 1; inputBit++)
+                if (candidate0 > negInf / 2)
                 {
-                    var nextState = GetNextState(state, inputBit);
-                    var b = beta[t + 1, nextState];
-                    if (b <= negInf / 2)
+                    var metric0 = a + candidate0;
+                    if (metric0 > best0)
                     {
-                        continue;
+                        best0 = metric0;
                     }
+                }
 
-                    var metric = a + BranchLogLikelihood(state, inputBit, llr0, llr1) + b;
-                    if (inputBit == 0)
+                if (candidate1 > negInf / 2)
+                {
+                    var metric1 = a + candidate1;
+                    if (metric1 > best1)
                     {
-                        if (metric > best0)
-                        {
-                            best0 = metric;
-                        }
-                    }
-                    else if (metric > best1)
-                    {
-                        best1 = metric;
+                        best1 = metric1;
                     }
                 }
             }
@@ -400,6 +421,8 @@ public static class ConvolutionalCode
 
             infoSoft[t] = app;
             decidedBits[t] = app < 0.0;
+
+            (betaNext, betaCurr) = (betaCurr, betaNext);
         }
 
         var payloadBits = new bool[originalBitLength];
@@ -500,10 +523,20 @@ public static class ConvolutionalCode
     private static int GetPuncturedBitLength(int motherBitLength, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
-        var count = 0;
-        for (var i = 0; i < motherBitLength; i++)
+        var onesPerPattern = punctureRate switch
         {
-            if (pattern[i % pattern.Length])
+            PunctureRate.Rate1_2 => PunctureRate1_2Ones,
+            PunctureRate.Rate2_3 => PunctureRate2_3Ones,
+            PunctureRate.Rate3_4 => PunctureRate3_4Ones,
+            _ => throw new ArgumentOutOfRangeException(nameof(punctureRate), punctureRate, "Unsupported puncture rate.")
+        };
+
+        var fullCycles = motherBitLength / pattern.Length;
+        var remainder = motherBitLength - (fullCycles * pattern.Length);
+        var count = fullCycles * onesPerPattern;
+        for (var i = 0; i < remainder; i++)
+        {
+            if (pattern[i])
             {
                 count++;
             }
@@ -517,14 +550,26 @@ public static class ConvolutionalCode
         var pattern = GetPuncturePattern(punctureRate);
         var output = new bool[GetPuncturedBitLength(motherBits.Length, punctureRate)];
         var write = 0;
+        var p = 0;
+        var pLen = pattern.Length;
         for (var i = 0; i < motherBits.Length; i++)
         {
-            if (!pattern[i % pattern.Length])
+            if (!pattern[p])
             {
+                p++;
+                if (p == pLen)
+                {
+                    p = 0;
+                }
                 continue;
             }
 
             output[write++] = motherBits[i];
+            p++;
+            if (p == pLen)
+            {
+                p = 0;
+            }
         }
 
         return output;
@@ -541,12 +586,19 @@ public static class ConvolutionalCode
         fullBits = new bool[motherBitLength];
         presentMask = new bool[motherBitLength];
         var read = 0;
+        var p = 0;
+        var pLen = pattern.Length;
         for (var i = 0; i < motherBitLength; i++)
         {
-            if (!pattern[i % pattern.Length])
+            if (!pattern[p])
             {
                 fullBits[i] = false;
                 presentMask[i] = false;
+                p++;
+                if (p == pLen)
+                {
+                    p = 0;
+                }
                 continue;
             }
 
@@ -557,6 +609,11 @@ public static class ConvolutionalCode
 
             fullBits[i] = puncturedBits[read++];
             presentMask[i] = true;
+            p++;
+            if (p == pLen)
+            {
+                p = 0;
+            }
         }
     }
 
@@ -565,11 +622,18 @@ public static class ConvolutionalCode
         var pattern = GetPuncturePattern(punctureRate);
         var full = new double[motherBitLength];
         var read = 0;
+        var p = 0;
+        var pLen = pattern.Length;
         for (var i = 0; i < motherBitLength; i++)
         {
-            if (!pattern[i % pattern.Length])
+            if (!pattern[p])
             {
                 full[i] = 0.0;
+                p++;
+                if (p == pLen)
+                {
+                    p = 0;
+                }
                 continue;
             }
 
@@ -579,6 +643,11 @@ public static class ConvolutionalCode
             }
 
             full[i] = puncturedLlrs[read++];
+            p++;
+            if (p == pLen)
+            {
+                p = 0;
+            }
         }
 
         return full;
@@ -597,15 +666,59 @@ public static class ConvolutionalCode
 
     private static void EncodeOneBit(int inputBit, ref int state, bool[] encodedBits, ref int writeIndex)
     {
-        encodedBits[writeIndex++] = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]) == 1;
-        encodedBits[writeIndex++] = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[1]) == 1;
-        state = GetNextState(state, inputBit);
+        if (inputBit == 0)
+        {
+            encodedBits[writeIndex++] = Output0WhenInput0[state] == 1;
+            encodedBits[writeIndex++] = Output1WhenInput0[state] == 1;
+            state = NextStateWhenInput0[state];
+            return;
+        }
+
+        encodedBits[writeIndex++] = Output0WhenInput1[state] == 1;
+        encodedBits[writeIndex++] = Output1WhenInput1[state] == 1;
+        state = NextStateWhenInput1[state];
+    }
+
+    private static int CountTrue(bool[] values)
+    {
+        var count = 0;
+        for (var i = 0; i < values.Length; i++)
+        {
+            if (values[i])
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private static int GetNextState(int state, int inputBit)
     {
         var register = (inputBit << MemoryBits) | state;
         return (register >> 1) & StateMask;
+    }
+
+    private static byte[] BuildNextStateTable(int inputBit)
+    {
+        var table = new byte[StateCount];
+        for (var state = 0; state < StateCount; state++)
+        {
+            table[state] = (byte)GetNextState(state, inputBit);
+        }
+
+        return table;
+    }
+
+    private static byte[] BuildOutputBitTable(int inputBit, int generatorIndex)
+    {
+        var table = new byte[StateCount];
+        for (var state = 0; state < StateCount; state++)
+        {
+            table[state] = (byte)GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[generatorIndex]);
+        }
+
+        return table;
     }
 
     private static int GetOutputBit(int state, int inputBit, int generator)
@@ -646,15 +759,38 @@ public static class ConvolutionalCode
     private static bool[] BytesToBits(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
         for (var i = 0; i < bytes.Length; i++)
         {
-            for (var b = 0; b < 8; b++)
-            {
-                bits[(i * 8) + b] = ((bytes[i] >> (7 - b)) & 1) == 1;
-            }
+            var srcOffset = bytes[i] * 8;
+            var dstOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(ByteToBitsLookup.AsSpan(srcOffset, 8));
+            ref var dst = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(dstOffset, 8));
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(
+                ref dst,
+                System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src));
         }
 
         return bits;
+    }
+
+    private static byte[] BuildByteToBitsLookup()
+    {
+        var lookup = new byte[256 * 8];
+        for (var value = 0; value < 256; value++)
+        {
+            var offset = value * 8;
+            lookup[offset] = (byte)((value >> 7) & 1);
+            lookup[offset + 1] = (byte)((value >> 6) & 1);
+            lookup[offset + 2] = (byte)((value >> 5) & 1);
+            lookup[offset + 3] = (byte)((value >> 4) & 1);
+            lookup[offset + 4] = (byte)((value >> 3) & 1);
+            lookup[offset + 5] = (byte)((value >> 2) & 1);
+            lookup[offset + 6] = (byte)((value >> 1) & 1);
+            lookup[offset + 7] = (byte)(value & 1);
+        }
+
+        return lookup;
     }
 
     private static byte[] BitsToBytes(bool[] bits)
@@ -665,18 +801,13 @@ public static class ConvolutionalCode
         }
 
         var bytes = new byte[bits.Length / 8];
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
         for (var i = 0; i < bytes.Length; i++)
         {
-            byte value = 0;
-            for (var b = 0; b < 8; b++)
-            {
-                if (bits[(i * 8) + b])
-                {
-                    value |= (byte)(1 << (7 - b));
-                }
-            }
-
-            bytes[i] = value;
+            var srcOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(srcOffset, 8));
+            var laneBits = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src) & 0x0101010101010101UL;
+            bytes[i] = (byte)((laneBits * 0x8040201008040201UL) >> 56);
         }
 
         return bytes;
@@ -685,16 +816,30 @@ public static class ConvolutionalCode
     private static byte[] PackBits(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
-        for (var i = 0; i < bits.Length; i++)
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
+        var fullByteCount = bits.Length / 8;
+        for (var i = 0; i < fullByteCount; i++)
         {
-            if (!bits[i])
+            var srcOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(srcOffset, 8));
+            var laneBits = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src) & 0x0101010101010101UL;
+            bytes[i] = (byte)((laneBits * 0x8040201008040201UL) >> 56);
+        }
+
+        var remaining = bits.Length - (fullByteCount * 8);
+        if (remaining > 0)
+        {
+            byte value = 0;
+            var baseBit = fullByteCount * 8;
+            for (var b = 0; b < remaining; b++)
             {
-                continue;
+                if (bits[baseBit + b])
+                {
+                    value |= (byte)(1 << (7 - b));
+                }
             }
 
-            var byteIndex = i / 8;
-            var bitIndex = 7 - (i % 8);
-            bytes[byteIndex] |= (byte)(1 << bitIndex);
+            bytes[fullByteCount] = value;
         }
 
         return bytes;
@@ -709,11 +854,28 @@ public static class ConvolutionalCode
         }
 
         var bits = new bool[bitCount];
-        for (var i = 0; i < bitCount; i++)
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
+        var fullByteCount = bitCount / 8;
+        for (var i = 0; i < fullByteCount; i++)
         {
-            var byteIndex = i / 8;
-            var bitIndex = 7 - (i % 8);
-            bits[i] = ((bytes[byteIndex] >> bitIndex) & 1) == 1;
+            var srcOffset = bytes[i] * 8;
+            var dstOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(ByteToBitsLookup.AsSpan(srcOffset, 8));
+            ref var dst = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(dstOffset, 8));
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(
+                ref dst,
+                System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src));
+        }
+
+        var remaining = bitCount - (fullByteCount * 8);
+        if (remaining > 0)
+        {
+            var srcOffset = bytes[fullByteCount] * 8;
+            var baseBit = fullByteCount * 8;
+            for (var b = 0; b < remaining; b++)
+            {
+                bits[baseBit + b] = ByteToBitsLookup[srcOffset + b] != 0;
+            }
         }
 
         return bits;

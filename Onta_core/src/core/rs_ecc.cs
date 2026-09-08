@@ -1,3 +1,9 @@
+using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+
 namespace Onta.Core;
 
 /// <summary>
@@ -140,10 +146,12 @@ internal static class ReedSolomonCodec
 
     private static readonly int[] ExpTable = new int[FieldSize * 2];
     private static readonly int[] LogTable = new int[FieldSize];
+    private static readonly byte[] MulTable = new byte[FieldSize * FieldSize];
 
     static ReedSolomonCodec()
     {
         InitializeTables();
+        InitializeMultiplicationTable();
     }
 
     public static byte[] EncodeBlock(byte[] data, int paritySymbols)
@@ -268,7 +276,44 @@ internal static class ReedSolomonCodec
     private static int CountDifferentBytes(byte[] left, byte[] right, int count)
     {
         var different = 0;
-        for (var i = 0; i < count; i++)
+        var i = 0;
+
+        if (Avx2.IsSupported)
+        {
+            const int width = 32;
+            for (; i <= count - width; i += width)
+            {
+                var a = Vector256.Create(
+                    left[i], left[i + 1], left[i + 2], left[i + 3], left[i + 4], left[i + 5], left[i + 6], left[i + 7],
+                    left[i + 8], left[i + 9], left[i + 10], left[i + 11], left[i + 12], left[i + 13], left[i + 14], left[i + 15],
+                    left[i + 16], left[i + 17], left[i + 18], left[i + 19], left[i + 20], left[i + 21], left[i + 22], left[i + 23],
+                    left[i + 24], left[i + 25], left[i + 26], left[i + 27], left[i + 28], left[i + 29], left[i + 30], left[i + 31]);
+                var b = Vector256.Create(
+                    right[i], right[i + 1], right[i + 2], right[i + 3], right[i + 4], right[i + 5], right[i + 6], right[i + 7],
+                    right[i + 8], right[i + 9], right[i + 10], right[i + 11], right[i + 12], right[i + 13], right[i + 14], right[i + 15],
+                    right[i + 16], right[i + 17], right[i + 18], right[i + 19], right[i + 20], right[i + 21], right[i + 22], right[i + 23],
+                    right[i + 24], right[i + 25], right[i + 26], right[i + 27], right[i + 28], right[i + 29], right[i + 30], right[i + 31]);
+
+                var eq = Avx2.CompareEqual(a, b);
+                var equalMask = (uint)Avx2.MoveMask(eq);
+                different += width - BitOperations.PopCount(equalMask);
+            }
+        }
+
+        for (; i <= count - 8; i += 8)
+        {
+            ulong x = Unsafe.ReadUnaligned<ulong>(
+                ref MemoryMarshal.GetReference(left.AsSpan(i, 8)));
+            ulong y = Unsafe.ReadUnaligned<ulong>(
+                ref MemoryMarshal.GetReference(right.AsSpan(i, 8)));
+
+            // 各バイトの一致判定をビット並列化し、不一致バイト数を一括加算する。
+            ulong neq = x ^ y;
+            ulong flags = ((neq | (0UL - neq)) >> 7) & 0x0101010101010101UL;
+            different += BitOperations.PopCount(flags);
+        }
+
+        for (; i < count; i++)
         {
             if (left[i] != right[i])
             {
@@ -282,24 +327,23 @@ internal static class ReedSolomonCodec
     private static int CountDifferentBits(byte[] left, byte[] right, int count)
     {
         var bitCount = 0;
-        for (var i = 0; i < count; i++)
+        var i = 0;
+
+        for (; i <= count - 8; i += 8)
         {
-            bitCount += CountBitsInByte(left[i] ^ right[i]);
+            ulong x = Unsafe.ReadUnaligned<ulong>(
+                ref MemoryMarshal.GetReference(left.AsSpan(i, 8)));
+            ulong y = Unsafe.ReadUnaligned<ulong>(
+                ref MemoryMarshal.GetReference(right.AsSpan(i, 8)));
+            bitCount += BitOperations.PopCount(x ^ y);
+        }
+
+        for (; i < count; i++)
+        {
+            bitCount += BitOperations.PopCount((uint)(left[i] ^ right[i]));
         }
 
         return bitCount;
-    }
-
-    private static int CountBitsInByte(int value)
-    {
-        var count = 0;
-        while (value != 0)
-        {
-            value &= value - 1;
-            count++;
-        }
-
-        return count;
     }
 
     private static void InitializeTables()
@@ -323,13 +367,30 @@ internal static class ReedSolomonCodec
         }
     }
 
+    private static void InitializeMultiplicationTable()
+    {
+        for (var a = 0; a < FieldSize; a++)
+        {
+            for (var b = 0; b < FieldSize; b++)
+            {
+                if (a == 0 || b == 0)
+                {
+                    MulTable[(a << 8) | b] = 0;
+                    continue;
+                }
+
+                MulTable[(a << 8) | b] = (byte)ExpTable[LogTable[a] + LogTable[b]];
+            }
+        }
+    }
+
     private static int[] BuildGeneratorPolynomial(int paritySymbols)
     {
         // 生成多項式 g(x) = Π_{i=0..parity-1}(x - a^i) を構築する。
         var gen = new[] { 1 };
         for (var i = 0; i < paritySymbols; i++)
         {
-            gen = MultiplyPolynomialsHighDegree(gen, new[] { 1, GfPower(2, i) });
+            gen = MultiplyPolynomialsHighDegree(gen, new[] { 1, GfPowAlpha(i) });
         }
 
         return gen;
@@ -340,7 +401,7 @@ internal static class ReedSolomonCodec
         var syndromes = new int[paritySymbols];
         for (var i = 0; i < paritySymbols; i++)
         {
-            syndromes[i] = EvaluatePolynomialHighDegree(data, GfPower(2, i));
+            syndromes[i] = EvaluatePolynomialHighDegree(data, GfPowAlpha(i));
         }
 
         return syndromes;
@@ -418,7 +479,7 @@ internal static class ReedSolomonCodec
         var positions = new List<int>(degree);
         for (var i = 0; i < messageLength; i++)
         {
-            var x = GfPower(2, 255 - i);
+            var x = GfPowAlpha(255 - i);
             if (EvaluatePolynomialLowDegree(errorLocatorLowDegree, x) == 0)
             {
                 positions.Add(messageLength - 1 - i);
@@ -441,15 +502,23 @@ internal static class ReedSolomonCodec
             return Array.Empty<int>();
         }
 
+        var basePowers = new int[count];
+        var rowPowers = new int[count];
+        for (var col = 0; col < count; col++)
+        {
+            var locatorExponent = messageLength - 1 - errorPositions[col];
+            basePowers[col] = GfPowAlpha(locatorExponent);
+            rowPowers[col] = 1; // row=0 のとき alpha^(locatorExponent*0)=1
+        }
+
         var matrix = new int[count, count + 1];
         for (var row = 0; row < count; row++)
         {
             matrix[row, count] = syndromes[row];
             for (var col = 0; col < count; col++)
             {
-                var locatorExponent = messageLength - 1 - errorPositions[col];
-                var exponent = (locatorExponent * row) % 255;
-                matrix[row, col] = GfPower(2, exponent);
+                matrix[row, col] = rowPowers[col];
+                rowPowers[col] = GfMultiply(rowPowers[col], basePowers[col]);
             }
         }
 
@@ -614,13 +683,18 @@ internal static class ReedSolomonCodec
 
     private static int GfMultiply(int a, int b)
     {
-        if (a == 0 || b == 0)
+        return MulTable[(a << 8) | b];
+    }
+
+    private static int GfPowAlpha(int power)
+    {
+        var exponent = power % 255;
+        if (exponent < 0)
         {
-            return 0;
+            exponent += 255;
         }
 
-        // log(a*b) = log(a) + log(b) (mod 255) を利用する。
-        return ExpTable[LogTable[a] + LogTable[b]];
+        return ExpTable[exponent];
     }
 
     private static int GfDivide(int a, int b)

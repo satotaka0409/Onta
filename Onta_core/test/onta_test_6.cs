@@ -11,6 +11,31 @@ namespace Onta.Core.Tests;
 public sealed class OntaTest6
 {
     [Fact]
+    public void Decode_UsesBlockHeaderModulationMode_InsteadOfReceiverProfile()
+    {
+        var txProfile = new FileWavCodecProfile(
+            ActiveSubcarriers: 36,
+            ModulationScheme: ModulationScheme.Qam16,
+            ChannelMode: ChannelMode.Stereo,
+            BlockInterleaveFactor: 1);
+        var rxProfile = txProfile with { ModulationScheme = ModulationScheme.Qam64 };
+
+        var txCodec = new FileWavCodec(txProfile);
+        var rxCodec = new FileWavCodec(rxProfile);
+        var inputInfo = new FileInfo(TestPaths.ResolveInputPng());
+        var payload = new byte[1024];
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)((i * 37) & 0xFF);
+        }
+
+        var (left, right) = txCodec.EncodeFileToSamples(payload, inputInfo);
+        var decoded = rxCodec.DecodePcmSamplesToFileBytes(left, right, correctWow: false);
+
+        Assert.Equal(payload, decoded);
+    }
+
+    [Fact]
     public void HeaderOfdm_IsMonoEvenWhenProfileIsStereo()
     {
         var codec = new FileWavCodec(new FileWavCodecProfile(

@@ -1,3 +1,8 @@
+using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+
 namespace Onta.Core;
 
 /// <summary>
@@ -39,8 +44,13 @@ public static class TurboEcc1024
 
     private static readonly int[] Interleaver = BuildInterleaver(DataUnitBits, seed: 20260903);
     private static readonly int[] Deinterleaver = BuildDeinterleaver(Interleaver);
-    private static readonly int[,] NextState = BuildNextStateTable();
-    private static readonly int[,] ParityBit = BuildParityTable();
+    private static readonly byte[] NextState = BuildNextStateTable();
+    private static readonly byte[] ParityBit = BuildParityTable();
+    private static readonly byte[] NextStateWhenInput0 = BuildNextStateByInput(inputBit: 0);
+    private static readonly byte[] NextStateWhenInput1 = BuildNextStateByInput(inputBit: 1);
+    private static readonly byte[] ParityWhenInput0 = BuildParityByInput(inputBit: 0);
+    private static readonly byte[] ParityWhenInput1 = BuildParityByInput(inputBit: 1);
+    private static readonly byte[] ByteToBitsLookup = BuildByteToBitsLookup();
 
     /// <summary>
     /// 1024 バイトのペイロードを符号化率 1/3 のターボ符号語へ変換します。
@@ -276,9 +286,16 @@ public static class TurboEcc1024
 
         for (var i = 0; i < inputBits.Length; i++)
         {
-            var u = inputBits[i] ? 1 : 0;
-            parity[i] = ParityBit[state, u] == 1;
-            state = NextState[state, u];
+            if (inputBits[i])
+            {
+                parity[i] = ParityWhenInput1[state] == 1;
+                state = NextStateWhenInput1[state];
+            }
+            else
+            {
+                parity[i] = ParityWhenInput0[state] == 1;
+                state = NextStateWhenInput0[state];
+            }
         }
 
         return parity;
@@ -304,6 +321,13 @@ public static class TurboEcc1024
                 alpha[k + 1, ns] = NegativeInfinity;
             }
 
+            var su = systematic[k] + apriori[k];
+            var p = parity[k];
+            var u0p0 = 0.5 * (su + p);
+            var u0p1 = 0.5 * (su - p);
+            var u1p0 = 0.5 * (-su + p);
+            var u1p1 = 0.5 * (-su - p);
+
             for (var s = 0; s < StateCount; s++)
             {
                 var a = alpha[k, s];
@@ -312,36 +336,44 @@ public static class TurboEcc1024
                     continue;
                 }
 
-                for (var u = 0; u <= 1; u++)
+                var ns0 = NextStateWhenInput0[s];
+                var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
+                var candidate0 = a + branch0;
+                if (candidate0 > alpha[k + 1, ns0])
                 {
-                    var ns = NextState[s, u];
-                    var branch = BranchMetric(systematic[k], parity[k], apriori[k], u, ParityBit[s, u]);
-                    var candidate = a + branch;
-                    if (candidate > alpha[k + 1, ns])
-                    {
-                        alpha[k + 1, ns] = candidate;
-                    }
+                    alpha[k + 1, ns0] = candidate0;
+                }
+
+                var ns1 = NextStateWhenInput1[s];
+                var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
+                var candidate1 = a + branch1;
+                if (candidate1 > alpha[k + 1, ns1])
+                {
+                    alpha[k + 1, ns1] = candidate1;
                 }
             }
         }
 
         for (var k = n - 1; k >= 0; k--)
         {
+            var su = systematic[k] + apriori[k];
+            var p = parity[k];
+            var u0p0 = 0.5 * (su + p);
+            var u0p1 = 0.5 * (su - p);
+            var u1p0 = 0.5 * (-su + p);
+            var u1p1 = 0.5 * (-su - p);
+
             for (var s = 0; s < StateCount; s++)
             {
-                var best = NegativeInfinity;
-                for (var u = 0; u <= 1; u++)
-                {
-                    var ns = NextState[s, u];
-                    var branch = BranchMetric(systematic[k], parity[k], apriori[k], u, ParityBit[s, u]);
-                    var candidate = branch + beta[k + 1, ns];
-                    if (candidate > best)
-                    {
-                        best = candidate;
-                    }
-                }
+                var ns0 = NextStateWhenInput0[s];
+                var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
+                var candidate0 = branch0 + beta[k + 1, ns0];
 
-                beta[k, s] = best;
+                var ns1 = NextStateWhenInput1[s];
+                var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
+                var candidate1 = branch1 + beta[k + 1, ns1];
+
+                beta[k, s] = candidate0 > candidate1 ? candidate0 : candidate1;
             }
         }
 
@@ -351,29 +383,31 @@ public static class TurboEcc1024
         {
             var maxOne = NegativeInfinity;
             var maxZero = NegativeInfinity;
+            var su = systematic[k] + apriori[k];
+            var p = parity[k];
+            var u0p0 = 0.5 * (su + p);
+            var u0p1 = 0.5 * (su - p);
+            var u1p0 = 0.5 * (-su + p);
+            var u1p1 = 0.5 * (-su - p);
 
             for (var s = 0; s < StateCount; s++)
             {
-                for (var u = 0; u <= 1; u++)
-                {
-                    var ns = NextState[s, u];
-                    var branch = BranchMetric(systematic[k], parity[k], apriori[k], u, ParityBit[s, u]);
-                    var metric = alpha[k, s] + branch + beta[k + 1, ns];
+                var a = alpha[k, s];
 
-                    if (u == 1)
-                    {
-                        if (metric > maxOne)
-                        {
-                            maxOne = metric;
-                        }
-                    }
-                    else
-                    {
-                        if (metric > maxZero)
-                        {
-                            maxZero = metric;
-                        }
-                    }
+                var ns0 = NextStateWhenInput0[s];
+                var branch0 = ParityWhenInput0[s] == 0 ? u0p0 : u0p1;
+                var metric0 = a + branch0 + beta[k + 1, ns0];
+                if (metric0 > maxZero)
+                {
+                    maxZero = metric0;
+                }
+
+                var ns1 = NextStateWhenInput1[s];
+                var branch1 = ParityWhenInput1[s] == 0 ? u1p0 : u1p1;
+                var metric1 = a + branch1 + beta[k + 1, ns1];
+                if (metric1 > maxOne)
+                {
+                    maxOne = metric1;
                 }
             }
 
@@ -391,46 +425,40 @@ public static class TurboEcc1024
         return 0.5 * ((systematic + apriori) * uSign + parity * pSign);
     }
 
-    private static int[,] BuildNextStateTable()
+    private static int TrellisIndex(int state, int inputBit) => (state << 1) | inputBit;
+
+    private static byte[] BuildNextStateByInput(int inputBit)
     {
-        // 記憶素子 3 段の RSC 符号器に対するトレリス遷移表。
-        var table = new int[StateCount, 2];
+        var table = new byte[StateCount];
         for (var state = 0; state < StateCount; state++)
         {
-            var d1 = state & 1;
-            var d2 = (state >> 1) & 1;
-            var d3 = (state >> 2) & 1;
-
-            for (var u = 0; u <= 1; u++)
-            {
-                var feedback = u ^ d1 ^ d3;
-                var next = feedback | (d1 << 1) | (d2 << 2);
-                table[state, u] = next;
-            }
+            table[state] = NextState[TrellisIndex(state, inputBit)];
         }
 
         return table;
     }
 
-    private static int[,] BuildParityTable()
+    private static byte[] BuildParityByInput(int inputBit)
     {
-        // 各（状態, 入力）ペアに対するトレリスのパリティ出力表。
-        var table = new int[StateCount, 2];
+        var table = new byte[StateCount];
         for (var state = 0; state < StateCount; state++)
         {
-            var d1 = state & 1;
-            var d2 = (state >> 1) & 1;
-            var d3 = (state >> 2) & 1;
-
-            for (var u = 0; u <= 1; u++)
-            {
-                var feedback = u ^ d1 ^ d3;
-                var parity = feedback ^ d2 ^ d3;
-                table[state, u] = parity;
-            }
+            table[state] = ParityBit[TrellisIndex(state, inputBit)];
         }
 
         return table;
+    }
+
+    private static byte[] BuildNextStateTable()
+    {
+        // 記憶素子 3 段の RSC 符号器に対するトレリス遷移表。
+        return [0, 1, 3, 2, 4, 5, 7, 6, 1, 0, 2, 3, 5, 4, 6, 7];
+    }
+
+    private static byte[] BuildParityTable()
+    {
+        // 各（状態, 入力）ペアに対するトレリスのパリティ出力表。
+        return [0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1];
     }
 
     private static int[] BuildInterleaver(int length, int seed)
@@ -511,32 +539,50 @@ public static class TurboEcc1024
     private static bool[] BytesToBits(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
         for (var i = 0; i < bytes.Length; i++)
         {
-            for (var b = 0; b < 8; b++)
-            {
-                bits[(i * 8) + b] = ((bytes[i] >> (7 - b)) & 1) == 1;
-            }
+            var srcOffset = bytes[i] * 8;
+            var dstOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(ByteToBitsLookup.AsSpan(srcOffset, 8));
+            ref var dst = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(dstOffset, 8));
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(
+                ref dst,
+                System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src));
         }
 
         return bits;
     }
 
+    private static byte[] BuildByteToBitsLookup()
+    {
+        var lookup = new byte[256 * 8];
+        for (var value = 0; value < 256; value++)
+        {
+            var offset = value * 8;
+            lookup[offset] = (byte)((value >> 7) & 1);
+            lookup[offset + 1] = (byte)((value >> 6) & 1);
+            lookup[offset + 2] = (byte)((value >> 5) & 1);
+            lookup[offset + 3] = (byte)((value >> 4) & 1);
+            lookup[offset + 4] = (byte)((value >> 3) & 1);
+            lookup[offset + 5] = (byte)((value >> 2) & 1);
+            lookup[offset + 6] = (byte)((value >> 1) & 1);
+            lookup[offset + 7] = (byte)(value & 1);
+        }
+
+        return lookup;
+    }
+
     private static byte[] BitsToBytes(bool[] bits)
     {
         var bytes = new byte[bits.Length / 8];
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
         for (var i = 0; i < bytes.Length; i++)
         {
-            byte value = 0;
-            for (var b = 0; b < 8; b++)
-            {
-                if (bits[(i * 8) + b])
-                {
-                    value |= (byte)(1 << (7 - b));
-                }
-            }
-
-            bytes[i] = value;
+            var srcOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(srcOffset, 8));
+            var laneBits = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src) & 0x0101010101010101UL;
+            bytes[i] = (byte)((laneBits * 0x8040201008040201UL) >> 56);
         }
 
         return bytes;
@@ -545,16 +591,30 @@ public static class TurboEcc1024
     private static byte[] PackBits(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
-        for (var i = 0; i < bits.Length; i++)
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
+        var fullByteCount = bits.Length / 8;
+        for (var i = 0; i < fullByteCount; i++)
         {
-            if (!bits[i])
+            var srcOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(srcOffset, 8));
+            var laneBits = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src) & 0x0101010101010101UL;
+            bytes[i] = (byte)((laneBits * 0x8040201008040201UL) >> 56);
+        }
+
+        var remaining = bits.Length - (fullByteCount * 8);
+        if (remaining > 0)
+        {
+            byte value = 0;
+            var baseBit = fullByteCount * 8;
+            for (var b = 0; b < remaining; b++)
             {
-                continue;
+                if (bits[baseBit + b])
+                {
+                    value |= (byte)(1 << (7 - b));
+                }
             }
 
-            var byteIndex = i / 8;
-            var bitIndex = 7 - (i % 8);
-            bytes[byteIndex] |= (byte)(1 << bitIndex);
+            bytes[fullByteCount] = value;
         }
 
         return bytes;
@@ -563,11 +623,28 @@ public static class TurboEcc1024
     private static bool[] UnpackBits(byte[] bytes, int bitCount)
     {
         var bits = new bool[bitCount];
-        for (var i = 0; i < bitCount; i++)
+        var bitBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(bits.AsSpan());
+        var fullByteCount = bitCount / 8;
+        for (var i = 0; i < fullByteCount; i++)
         {
-            var byteIndex = i / 8;
-            var bitIndex = 7 - (i % 8);
-            bits[i] = ((bytes[byteIndex] >> bitIndex) & 1) == 1;
+            var srcOffset = bytes[i] * 8;
+            var dstOffset = i * 8;
+            ref var src = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(ByteToBitsLookup.AsSpan(srcOffset, 8));
+            ref var dst = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bitBytes.Slice(dstOffset, 8));
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(
+                ref dst,
+                System.Runtime.CompilerServices.Unsafe.ReadUnaligned<ulong>(ref src));
+        }
+
+        var remaining = bitCount - (fullByteCount * 8);
+        if (remaining > 0)
+        {
+            var srcOffset = bytes[fullByteCount] * 8;
+            var baseBit = fullByteCount * 8;
+            for (var b = 0; b < remaining; b++)
+            {
+                bits[baseBit + b] = ByteToBitsLookup[srcOffset + b] != 0;
+            }
         }
 
         return bits;
@@ -575,22 +652,54 @@ public static class TurboEcc1024
 
     private static int CountDifferentBytes(byte[] left, byte[] right)
     {
-        var different = 0;
-        for (var i = 0; i < left.Length; i++)
-        {
-            if (left[i] != right[i])
-            {
-                different++;
-            }
-        }
-
-        return different;
+        return CountDifferentByteSpans(left, right);
     }
 
     private static int CountDifferentBits(bool[] left, bool[] right)
     {
+        ReadOnlySpan<byte> leftBytes = MemoryMarshal.AsBytes(left.AsSpan());
+        ReadOnlySpan<byte> rightBytes = MemoryMarshal.AsBytes(right.AsSpan());
+        return CountDifferentByteSpans(leftBytes, rightBytes);
+    }
+
+    private static int CountDifferentByteSpans(ReadOnlySpan<byte> left, ReadOnlySpan<byte> right)
+    {
+        var length = left.Length;
         var different = 0;
-        for (var i = 0; i < left.Length; i++)
+
+        if (Avx2.IsSupported)
+        {
+            var i = 0;
+            const int width = 32;
+            for (; i <= length - width; i += width)
+            {
+                var a = Vector256.Create(
+                    left[i], left[i + 1], left[i + 2], left[i + 3], left[i + 4], left[i + 5], left[i + 6], left[i + 7],
+                    left[i + 8], left[i + 9], left[i + 10], left[i + 11], left[i + 12], left[i + 13], left[i + 14], left[i + 15],
+                    left[i + 16], left[i + 17], left[i + 18], left[i + 19], left[i + 20], left[i + 21], left[i + 22], left[i + 23],
+                    left[i + 24], left[i + 25], left[i + 26], left[i + 27], left[i + 28], left[i + 29], left[i + 30], left[i + 31]);
+                var b = Vector256.Create(
+                    right[i], right[i + 1], right[i + 2], right[i + 3], right[i + 4], right[i + 5], right[i + 6], right[i + 7],
+                    right[i + 8], right[i + 9], right[i + 10], right[i + 11], right[i + 12], right[i + 13], right[i + 14], right[i + 15],
+                    right[i + 16], right[i + 17], right[i + 18], right[i + 19], right[i + 20], right[i + 21], right[i + 22], right[i + 23],
+                    right[i + 24], right[i + 25], right[i + 26], right[i + 27], right[i + 28], right[i + 29], right[i + 30], right[i + 31]);
+                var eq = Avx2.CompareEqual(a, b);
+                var equalMask = (uint)Avx2.MoveMask(eq);
+                different += width - BitOperations.PopCount(equalMask);
+            }
+
+            for (; i < length; i++)
+            {
+                if (left[i] != right[i])
+                {
+                    different++;
+                }
+            }
+
+            return different;
+        }
+
+        for (var i = 0; i < length; i++)
         {
             if (left[i] != right[i])
             {
