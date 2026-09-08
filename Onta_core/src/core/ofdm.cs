@@ -394,6 +394,10 @@ public sealed class OfdmGenerator
     private readonly int[][] _rightPilotGroupedCarriers;
     private readonly Complex[] _scoreTimeNoCpScratch;
     private readonly Complex[] _scoreFreqBinsScratch;
+    private Complex[]? _ifftConjugateScratch;
+    private Complex[]? _ifftWorkScratch;
+    private Complex[]? _unmodulatedLeftSymbol;
+    private Complex[]? _unmodulatedRightSymbol;
     private readonly int _bitsPerOfdmSymbol;
     private ulong _randomBitPool;
     private int _randomBitCount;
@@ -735,13 +739,32 @@ public sealed class OfdmGenerator
     private Complex[] ToRealTimeSymbol(Complex[] freqBins)
     {
         ApplyHermitianSymmetry(freqBins);
-        var time = InverseFft(freqBins);
+        EnsureIfftScratch(freqBins.Length);
+        InverseFftInto(freqBins, _ifftWorkScratch!);
+        var time = new Complex[freqBins.Length];
+        for (var i = 0; i < time.Length; i++)
+        {
+            time[i] = new Complex(_ifftWorkScratch![i].Real, 0.0);
+        }
+
+        return time;
+    }
+
+    /// <summary>
+    /// Hermitian 対称化 → IFFT → 実数化までを scratch 上で行い、CP 付きで destination へ書き込みます。
+    /// </summary>
+    private void EmitRealTimeSymbolWithCp(Complex[] freqBins, Span<Complex> destinationWithCp)
+    {
+        ApplyHermitianSymmetry(freqBins);
+        EnsureIfftScratch(freqBins.Length);
+        InverseFftInto(freqBins, _ifftWorkScratch!);
+        var time = _ifftWorkScratch!;
         for (var i = 0; i < time.Length; i++)
         {
             time[i] = new Complex(time[i].Real, 0.0);
         }
 
-        return time;
+        CopyWithCyclicPrefix(time, _config.CyclicPrefixLength, destinationWithCp);
     }
 
     /// <summary>
@@ -789,8 +812,7 @@ public sealed class OfdmGenerator
         for (var i = 0; i < _config.OfdmSymbolCount; i++)
         {
             var freqBins = BuildFrequencyDomainSymbol(CarrierChannel.Left);
-            var timeSymbol = InverseFft(freqBins);
-            CopyWithCyclicPrefix(timeSymbol, _config.CyclicPrefixLength, frame.AsSpan(write, symbolLength));
+            EmitRealTimeSymbolWithCp(freqBins, frame.AsSpan(write, symbolLength));
             write += symbolLength;
         }
 
@@ -820,8 +842,8 @@ public sealed class OfdmGenerator
             var leftBins = BuildFrequencyDomainSymbol(CarrierChannel.Left);
             var rightBins = BuildFrequencyDomainSymbol(CarrierChannel.Right);
 
-            CopyWithCyclicPrefix(InverseFft(leftBins), _config.CyclicPrefixLength, left.AsSpan(write, symbolLength));
-            CopyWithCyclicPrefix(InverseFft(rightBins), _config.CyclicPrefixLength, right.AsSpan(write, symbolLength));
+            EmitRealTimeSymbolWithCp(leftBins, left.AsSpan(write, symbolLength));
+            EmitRealTimeSymbolWithCp(rightBins, right.AsSpan(write, symbolLength));
             write += symbolLength;
         }
 
@@ -854,22 +876,12 @@ public sealed class OfdmGenerator
     private Complex[] GenerateUnmodulatedChannel(int sampleCount, List<int> carrierBins)
     {
         var symbolLength = SamplesPerOfdmSymbol;
+        var symbol = GetOrBuildUnmodulatedSymbol(carrierBins);
         var symbolCount = (sampleCount + symbolLength - 1) / symbolLength;
         var padded = new Complex[symbolCount * symbolLength];
-        var write = 0;
-        var freqBins = new Complex[_config.FftSize];
-
         for (var i = 0; i < symbolCount; i++)
         {
-            Array.Clear(freqBins);
-            foreach (var carrierBin in carrierBins)
-            {
-                freqBins[carrierBin] = UnmodulatedCarrierSymbol;
-            }
-
-            var timeSymbol = ToRealTimeSymbol(freqBins);
-            CopyWithCyclicPrefix(timeSymbol, _config.CyclicPrefixLength, padded.AsSpan(write, symbolLength));
-            write += symbolLength;
+            Array.Copy(symbol, 0, padded, i * symbolLength, symbolLength);
         }
 
         if (padded.Length > sampleCount)
@@ -880,6 +892,38 @@ public sealed class OfdmGenerator
         }
 
         return padded;
+    }
+
+    /// <summary>
+    /// 無変調 OFDM シンボルはキャリア固定なので 1 本キャッシュし、プリアンブル長ぶんタイルします。
+    /// </summary>
+    private Complex[] GetOrBuildUnmodulatedSymbol(List<int> carrierBins)
+    {
+        if (ReferenceEquals(carrierBins, _leftAllCarrierBins))
+        {
+            return _unmodulatedLeftSymbol ??= BuildUnmodulatedSymbol(carrierBins);
+        }
+
+        if (ReferenceEquals(carrierBins, _rightAllCarrierBins))
+        {
+            return _unmodulatedRightSymbol ??= BuildUnmodulatedSymbol(carrierBins);
+        }
+
+        return BuildUnmodulatedSymbol(carrierBins);
+    }
+
+    private Complex[] BuildUnmodulatedSymbol(List<int> carrierBins)
+    {
+        var symbolLength = SamplesPerOfdmSymbol;
+        var symbol = new Complex[symbolLength];
+        var freqBins = new Complex[_config.FftSize];
+        foreach (var carrierBin in carrierBins)
+        {
+            freqBins[carrierBin] = UnmodulatedCarrierSymbol;
+        }
+
+        EmitRealTimeSymbolWithCp(freqBins, symbol);
+        return symbol;
     }
 
     /// <summary>
@@ -969,8 +1013,7 @@ public sealed class OfdmGenerator
                     bits);
             }
 
-            var timeSymbol = ToRealTimeSymbol(freqBins);
-            CopyWithCyclicPrefix(timeSymbol, _config.CyclicPrefixLength, samples.AsSpan(write, symbolLength));
+            EmitRealTimeSymbolWithCp(freqBins, samples.AsSpan(write, symbolLength));
             write += symbolLength;
         }
 
@@ -1026,14 +1069,16 @@ public sealed class OfdmGenerator
         analysisSampleCount = Math.Clamp(analysisSampleCount, SamplesPerOfdmSymbol, samples.Length - analysisStartSample);
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
-        var corrected = ResampleSegmentWithInverseSpeed(
+        var corrected = new Complex[analysisSampleCount];
+        ResampleSegmentWithInverseSpeed(
             samples,
             analysisStartSample,
             analysisSampleCount,
             Math.Max(1, _config.SampleRate),
             amount,
             wowPhase,
-            flutterPhase);
+            flutterPhase,
+            corrected);
         return CorrelateReal(corrected, ideal);
     }
 
@@ -1053,6 +1098,7 @@ public sealed class OfdmGenerator
 
     /// <summary>
     /// 診断用: 直前推定値の近傍のみを探索してワウパラメータを更新します。
+    /// ideal / リサンプルバッファを探索全体で再利用します（MatchWow と同型）。
     /// </summary>
     public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         RefineWowParametersNearHintForDiagnostics(
@@ -1073,15 +1119,36 @@ public sealed class OfdmGenerator
             return null;
         }
 
-        var baseline = ScoreWowParamsForDiagnostics(
-            samples,
-            useRightChannel,
-            analysisStartSample,
-            analysisSampleCount,
-            hintAmount,
-            hintWowPhase,
-            hintFlutterPhase);
+        var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
+        var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
+        var sampleRate = Math.Max(1, _config.SampleRate);
+        var correctedPreambleBuffer = new Complex[analysisSampleCount];
+        var refStride1 = BuildCorrelationReference(ideal, 1);
+        var refStride8 = BuildCorrelationReference(ideal, 8);
 
+        double Evaluate(double amount, double wowPhase, double flutterPhase, int corrStride)
+        {
+            ResampleSegmentWithInverseSpeed(
+                samples,
+                analysisStartSample,
+                analysisSampleCount,
+                sampleRate,
+                amount,
+                wowPhase,
+                flutterPhase,
+                correctedPreambleBuffer,
+                corrStride);
+            var reference = corrStride <= 1 ? refStride1 : refStride8;
+            return CorrelateRealStridedWithReference(
+                correctedPreambleBuffer,
+                ideal,
+                corrStride,
+                reference.Mean,
+                reference.Energy,
+                reference.Count);
+        }
+
+        var baseline = Evaluate(hintAmount, hintWowPhase, hintFlutterPhase, corrStride: 1);
         var best = baseline;
         var bestAmount = hintAmount;
         var bestWow = hintWowPhase;
@@ -1089,29 +1156,42 @@ public sealed class OfdmGenerator
 
         var phaseStep = Math.Max(0.01, phaseRangeRad / 6.0);
         var amountStep = Math.Max(0.0005, amountRange / 2.0);
+        const int coarseStride = 8;
 
+        // 粗い間引き相関で近傍格子を走査し、上位のみフル解像度で確定する。
+        var coarseHits = new List<(double Score, double Amount, double Wow, double Flutter)>(64);
         for (var wow = hintWowPhase - phaseRangeRad; wow <= hintWowPhase + phaseRangeRad; wow += phaseStep)
         {
             for (var flutter = hintFlutterPhase - phaseRangeRad; flutter <= hintFlutterPhase + phaseRangeRad; flutter += phaseStep)
             {
                 for (var amount = Math.Max(0.001, hintAmount - amountRange); amount <= hintAmount + amountRange; amount += amountStep)
                 {
-                    var score = ScoreWowParamsForDiagnostics(
-                        samples,
-                        useRightChannel,
-                        analysisStartSample,
-                        analysisSampleCount,
-                        amount,
-                        wow,
-                        flutter);
-                    if (score > best)
+                    var score = Evaluate(amount, wow, flutter, coarseStride);
+                    if (score > baseline)
                     {
-                        best = score;
-                        bestAmount = amount;
-                        bestWow = wow;
-                        bestFlutter = flutter;
+                        coarseHits.Add((score, amount, wow, flutter));
                     }
                 }
+            }
+        }
+
+        if (coarseHits.Count == 0)
+        {
+            return null;
+        }
+
+        coarseHits.Sort((a, b) => b.Score.CompareTo(a.Score));
+        var polishCount = Math.Min(8, coarseHits.Count);
+        for (var i = 0; i < polishCount; i++)
+        {
+            var hit = coarseHits[i];
+            var score = Evaluate(hit.Amount, hit.Wow, hit.Flutter, corrStride: 1);
+            if (score > best)
+            {
+                best = score;
+                bestAmount = hit.Amount;
+                bestWow = hit.Wow;
+                bestFlutter = hit.Flutter;
             }
         }
 
@@ -1163,24 +1243,22 @@ public sealed class OfdmGenerator
         analysisStartSample = Math.Clamp(analysisStartSample, 0, Math.Max(0, samples.Length - SamplesPerOfdmSymbol));
         analysisSampleCount = Math.Clamp(analysisSampleCount, SamplesPerOfdmSymbol, samples.Length - analysisStartSample);
 
-        // 既知プリアンブルとの相関最大化でワウパラメータを同定する。
-        var matched = MatchWowByPreambleCorrelation(
-            samples, useRightChannel, analysisStartSample, analysisSampleCount);
-        if (matched is null)
-        {
-            return samples;
-        }
-
+        // 既知プリアンブルとの相関最大化でワウパラメータを同定し、全長速度プロファイルは作らない。
         var current = samples;
         for (var pass = 0; pass < passes; pass++)
         {
-            var speedProfile = pass == 0
-                ? matched
-                : MatchWowByPreambleCorrelation(
-                    current, useRightChannel, analysisStartSample, analysisSampleCount)
-                    ?? matched;
-            // matched はすでにファイル全長のシンボル速度。
-            current = ResampleWithInverseSpeed(current, (double[])speedProfile.Clone());
+            var matched = MatchWowByPreambleCorrelationParams(
+                current, useRightChannel, analysisStartSample, analysisSampleCount);
+            if (matched is null)
+            {
+                return current;
+            }
+
+            current = CorrectWowFlutterWithParams(
+                current,
+                matched.Value.Amount,
+                matched.Value.WowPhase,
+                matched.Value.FlutterPhase);
         }
 
         return current;
@@ -1203,6 +1281,43 @@ public sealed class OfdmGenerator
 
         return WowFlutterWarp.Correct(
             samples,
+            Math.Max(1, _config.SampleRate),
+            amount,
+            wowPhase,
+            flutterPhase);
+    }
+
+    /// <summary>
+    /// 既知パラメータによる逆補正を in-place で適用します（セグメント補正向け）。
+    /// </summary>
+    public void CorrectWowFlutterWithParamsInPlace(
+        Complex[] samples,
+        double amount,
+        double wowPhase,
+        double flutterPhase)
+    {
+        CorrectWowFlutterWithParamsInPlace(samples, samples.Length, amount, wowPhase, flutterPhase);
+    }
+
+    /// <summary>
+    /// 先頭 <paramref name="length"/> サンプルだけを in-place 補正します。
+    /// </summary>
+    public void CorrectWowFlutterWithParamsInPlace(
+        Complex[] samples,
+        int length,
+        double amount,
+        double wowPhase,
+        double flutterPhase)
+    {
+        ArgumentNullException.ThrowIfNull(samples);
+        if (length < SamplesPerOfdmSymbol || amount == 0.0)
+        {
+            return;
+        }
+
+        WowFlutterWarp.CorrectInPlace(
+            samples,
+            length,
             Math.Max(1, _config.SampleRate),
             amount,
             wowPhase,
@@ -1267,67 +1382,6 @@ public sealed class OfdmGenerator
         var refStride8 = BuildCorrelationReference(ideal, 8);
         var refStride32 = BuildCorrelationReference(ideal, 32);
 
-        static (double Mean, double Energy, int Count) BuildCorrelationReference(Complex[] reference, int stride)
-        {
-            stride = Math.Max(1, stride);
-            var sum = 0.0;
-            var count = 0;
-            for (var i = 0; i < reference.Length; i += stride)
-            {
-                sum += reference[i].Real;
-                count++;
-            }
-
-            if (count <= 1)
-            {
-                return (0.0, 0.0, count);
-            }
-
-            var mean = sum / count;
-            var energy = 0.0;
-            for (var i = 0; i < reference.Length; i += stride)
-            {
-                var centered = reference[i].Real - mean;
-                energy += centered * centered;
-            }
-
-            return (mean, energy, count);
-        }
-
-        static double CorrelateRealStridedWithReference(
-            ReadOnlySpan<Complex> a,
-            ReadOnlySpan<Complex> b,
-            int stride,
-            double meanB,
-            double energyB,
-            int count)
-        {
-            if (count <= 1 || energyB <= 1e-18)
-            {
-                return double.NegativeInfinity;
-            }
-
-            stride = Math.Max(1, stride);
-            var sumA = 0.0;
-            for (var i = 0; i < a.Length; i += stride)
-            {
-                sumA += a[i].Real;
-            }
-
-            var meanA = sumA / count;
-            var num = 0.0;
-            var energyA = 0.0;
-            for (var i = 0; i < a.Length; i += stride)
-            {
-                var xa = a[i].Real - meanA;
-                var xb = b[i].Real - meanB;
-                num += xa * xb;
-                energyA += xa * xa;
-            }
-
-            return num / Math.Sqrt((energyA * energyB) + 1e-18);
-        }
-
         double Evaluate(double amount, double wowPhase, double flutterPhase, int corrStride = 1)
         {
             ResampleSegmentWithInverseSpeed(
@@ -1364,15 +1418,17 @@ public sealed class OfdmGenerator
             return score;
         }
 
-        // 尖った相関面向け: 粗格子でシード → 座標降下で wow/flutter を交互に精密化。
+        // 尖った相関面向け: 粗い格子 → 近傍補完 → 少数シードの座標降下 → 局所研磨。
+        // 旧実装の 36×36 + 5 シード×360° 全走査より評価回数を大幅に削減する。
         const int coarseStride = 32;
+        const double earlyExitScore = 0.97;
         var coarseHits = new List<(double Score, double Wow, double Flutter)>(64);
-        for (var wi = 0; wi < 36; wi++)
+        for (var wi = 0; wi < 18; wi++)
         {
-            var wowPhase = wi * Math.PI / 18.0;
-            for (var fi = 0; fi < 36; fi++)
+            var wowPhase = wi * Math.PI / 9.0;
+            for (var fi = 0; fi < 18; fi++)
             {
-                var flutterPhase = fi * Math.PI / 18.0;
+                var flutterPhase = fi * Math.PI / 9.0;
                 var score = Evaluate(0.01, wowPhase, flutterPhase, coarseStride);
                 if (score > baseline + 0.02)
                 {
@@ -1387,8 +1443,33 @@ public sealed class OfdmGenerator
         }
 
         coarseHits.Sort((a, b) => b.Score.CompareTo(a.Score));
-        var seeds = new List<(double Wow, double Flutter)>(6);
-        for (var i = 0; i < coarseHits.Count && seeds.Count < 5; i++)
+        var expandCount = Math.Min(12, coarseHits.Count);
+        for (var i = 0; i < expandCount; i++)
+        {
+            var center = coarseHits[i];
+            for (var dW = -1; dW <= 1; dW++)
+            {
+                for (var dF = -1; dF <= 1; dF++)
+                {
+                    if (dW == 0 && dF == 0)
+                    {
+                        continue;
+                    }
+
+                    var wowPhase = WrapPhase(center.Wow + (dW * Math.PI / 18.0));
+                    var flutterPhase = WrapPhase(center.Flutter + (dF * Math.PI / 18.0));
+                    var score = Evaluate(0.01, wowPhase, flutterPhase, coarseStride);
+                    if (score > baseline + 0.02)
+                    {
+                        coarseHits.Add((score, wowPhase, flutterPhase));
+                    }
+                }
+            }
+        }
+
+        coarseHits.Sort((a, b) => b.Score.CompareTo(a.Score));
+        var seeds = new List<(double Wow, double Flutter)>(4);
+        for (var i = 0; i < coarseHits.Count && seeds.Count < 3; i++)
         {
             var candidate = (coarseHits[i].Wow, coarseHits[i].Flutter);
             var far = true;
@@ -1412,14 +1493,30 @@ public sealed class OfdmGenerator
         {
             var wow = seed.Wow;
             var flutter = seed.Flutter;
-            // 座標降下: flutter → wow → flutter → wow
+            // 座標降下: 2° 格子で flutter/wow を交互に精密化（旧 1°×360 の半分解像）。
             for (var pass = 0; pass < 2; pass++)
             {
                 var bestLocal = double.NegativeInfinity;
                 var bestFlutter = flutter;
-                for (var fi = 0; fi < 360; fi++)
+                for (var fi = 0; fi < 180; fi++)
                 {
-                    var trial = fi * Math.PI / 180.0;
+                    var trial = fi * Math.PI / 90.0;
+                    var score = Evaluate(0.01, wow, trial, corrStride: 8);
+                    if (score > bestLocal)
+                    {
+                        bestLocal = score;
+                        bestFlutter = trial;
+                    }
+                }
+
+                flutter = bestFlutter;
+
+                // 2° 近傍を 1° で研磨
+                bestLocal = double.NegativeInfinity;
+                bestFlutter = flutter;
+                for (var dF = -2; dF <= 2; dF++)
+                {
+                    var trial = WrapPhase(flutter + (dF * Math.PI / 180.0));
                     var score = Evaluate(0.01, wow, trial, corrStride: 8);
                     if (score > bestLocal)
                     {
@@ -1432,9 +1529,24 @@ public sealed class OfdmGenerator
 
                 bestLocal = double.NegativeInfinity;
                 var bestWow = wow;
-                for (var wi = 0; wi < 360; wi++)
+                for (var wi = 0; wi < 180; wi++)
                 {
-                    var trial = wi * Math.PI / 180.0;
+                    var trial = wi * Math.PI / 90.0;
+                    var score = Evaluate(0.01, trial, flutter, corrStride: 8);
+                    if (score > bestLocal)
+                    {
+                        bestLocal = score;
+                        bestWow = trial;
+                    }
+                }
+
+                wow = bestWow;
+
+                bestLocal = double.NegativeInfinity;
+                bestWow = wow;
+                for (var dW = -2; dW <= 2; dW++)
+                {
+                    var trial = WrapPhase(wow + (dW * Math.PI / 180.0));
                     var score = Evaluate(0.01, trial, flutter, corrStride: 8);
                     if (score > bestLocal)
                     {
@@ -1449,10 +1561,10 @@ public sealed class OfdmGenerator
             // シード結果をフル解像度で確定候補に
             Evaluate(0.01, wow, flutter, corrStride: 1);
 
-            // 局所の超精密研磨（幅 ±0.03 rad 程度）
-            for (var dW = -8; dW <= 8; dW++)
+            // 局所の超精密研磨（幅 ±0.013 rad 程度）
+            for (var dW = -5; dW <= 5; dW++)
             {
-                for (var dF = -8; dF <= 8; dF++)
+                for (var dF = -5; dF <= 5; dF++)
                 {
                     Evaluate(
                         0.01,
@@ -1460,6 +1572,11 @@ public sealed class OfdmGenerator
                         flutter + (dF * Math.PI / 1200.0),
                         corrStride: 1);
                 }
+            }
+
+            if (bestScore >= earlyExitScore)
+            {
+                break;
             }
         }
 
@@ -1509,6 +1626,67 @@ public sealed class OfdmGenerator
         }
 
         return phase;
+    }
+
+    private static (double Mean, double Energy, int Count) BuildCorrelationReference(Complex[] reference, int stride)
+    {
+        stride = Math.Max(1, stride);
+        var sum = 0.0;
+        var count = 0;
+        for (var i = 0; i < reference.Length; i += stride)
+        {
+            sum += reference[i].Real;
+            count++;
+        }
+
+        if (count <= 1)
+        {
+            return (0.0, 0.0, count);
+        }
+
+        var mean = sum / count;
+        var energy = 0.0;
+        for (var i = 0; i < reference.Length; i += stride)
+        {
+            var centered = reference[i].Real - mean;
+            energy += centered * centered;
+        }
+
+        return (mean, energy, count);
+    }
+
+    private static double CorrelateRealStridedWithReference(
+        ReadOnlySpan<Complex> a,
+        ReadOnlySpan<Complex> b,
+        int stride,
+        double meanB,
+        double energyB,
+        int count)
+    {
+        if (count <= 1 || energyB <= 1e-18)
+        {
+            return double.NegativeInfinity;
+        }
+
+        stride = Math.Max(1, stride);
+        var sumA = 0.0;
+        for (var i = 0; i < a.Length; i += stride)
+        {
+            sumA += a[i].Real;
+        }
+
+        var meanA = sumA / count;
+        var num = 0.0;
+        var energyA = 0.0;
+        for (var i = 0; i < a.Length; i += stride)
+        {
+            var xa = a[i].Real - meanA;
+            var xb = b[i].Real - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
     }
 
     private static double[] BuildCassetteSpeedProfilePerSample(
@@ -2249,21 +2427,61 @@ public sealed class OfdmGenerator
             return;
         }
 
-        var cumulEnd = CassetteCumulAt(n - 1, sampleRate, amount, wowPhase, flutterPhase);
+        const double wowHz = 0.5;
+        const double flutterHz = 6.0;
+        var wowOmega = 2.0 * Math.PI * wowHz / sampleRate;
+        var flutterOmega = 2.0 * Math.PI * flutterHz / sampleRate;
+        var wowGain = amount * 0.65;
+        var flutterGain = amount * 0.35;
+
+        double CumulAt(int i) =>
+            CassetteCumulAtCached(i, wowGain, flutterGain, wowPhase, wowOmega, flutterPhase, flutterOmega);
+
+        var cumulEnd = CumulAt(n - 1);
         var scale = cumulEnd > 1e-12 ? (n - 1) / cumulEnd : 1.0;
+
+        // 出力インデックスが増えるにつれ target も単調増加するので、累積位置は前進のみで追う。
+        var i = 0;
+        var c0 = 0.0;
+        var c1 = CumulAt(1);
         for (var j = 0; j < segmentLength; j += stride)
         {
-            var outputIndex = segmentStart + j;
-            var target = outputIndex / scale;
-            var i = FindCassetteCumulIndex(target, n, sampleRate, amount, wowPhase, flutterPhase);
+            var target = (segmentStart + j) / scale;
             if (i >= n - 1)
             {
                 output[j] = samples[^1];
                 continue;
             }
 
-            var c0 = CassetteCumulAt(i, sampleRate, amount, wowPhase, flutterPhase);
-            var c1 = CassetteCumulAt(i + 1, sampleRate, amount, wowPhase, flutterPhase);
+            // amount が小さいときは i≈target なので、大きく遅れている場合だけジャンプする。
+            var guess = (int)target;
+            if (guess > i + 8 && guess < n - 1)
+            {
+                i = guess;
+                c0 = CumulAt(i);
+                c1 = CumulAt(i + 1);
+            }
+
+            while (i < n - 2 && c1 <= target)
+            {
+                i++;
+                c0 = c1;
+                c1 = CumulAt(i + 1);
+            }
+
+            while (i > 0 && c0 > target)
+            {
+                i--;
+                c1 = c0;
+                c0 = CumulAt(i);
+            }
+
+            if (i >= n - 1)
+            {
+                output[j] = samples[^1];
+                continue;
+            }
+
             var span = c1 - c0;
             var frac = span > 1e-12 ? (target - c0) / span : 0.0;
             frac = Math.Clamp(frac, 0.0, 1.0);
@@ -2292,9 +2510,33 @@ public sealed class OfdmGenerator
         const double flutterHz = 6.0;
         var wowOmega = 2.0 * Math.PI * wowHz / sampleRate;
         var flutterOmega = 2.0 * Math.PI * flutterHz / sampleRate;
+        return CassetteCumulAtCached(
+            i,
+            amount * 0.65,
+            amount * 0.35,
+            wowPhase,
+            wowOmega,
+            flutterPhase,
+            flutterOmega);
+    }
+
+    private static double CassetteCumulAtCached(
+        int i,
+        double wowGain,
+        double flutterGain,
+        double wowPhase,
+        double wowOmega,
+        double flutterPhase,
+        double flutterOmega)
+    {
+        if (i <= 0)
+        {
+            return 0.0;
+        }
+
         return i
-            + (amount * 0.65 * SumOfSines(wowPhase, wowOmega, i))
-            + (amount * 0.35 * SumOfSines(flutterPhase, flutterOmega, i));
+            + (wowGain * SumOfSines(wowPhase, wowOmega, i))
+            + (flutterGain * SumOfSines(flutterPhase, flutterOmega, i));
     }
 
     private static double SumOfSines(double phase0, double omega, int count)
@@ -2766,7 +3008,7 @@ public sealed class OfdmGenerator
             logicalSampleOffset,
             searchRadius,
             noiseVariance,
-            estimateNoiseFromPilots: false,
+            estimateNoiseFromPilots: true,
             interleaveInitSeed);
     }
 
@@ -2870,50 +3112,8 @@ public sealed class OfdmGenerator
         var noiseAccum = 0.0;
         var noiseCount = 0;
 
-        // 1 パス目: パイロット残差から雑音分散を推定（任意）。
+        // パイロット残差は本復調パス内で蓄積する（別周回の sync/FFT はしない）。
         var effectiveVariance = Math.Max(1e-6, noiseVariance);
-        if (estimateNoiseFromPilots)
-        {
-            var probePosition = position;
-            for (var s = 0; s < symbolCount; s++)
-            {
-                var start = FindBestSymbolStart(samples, probePosition, followRadius, useRightChannel);
-                if (start + symbolLength > samples.Length)
-                {
-                    break;
-                }
-
-                AccumulatePilotNoise(
-                    samples.AsSpan(start, symbolLength),
-                    pilotBins,
-                    useRightChannel,
-                    primaryTimeNoCp,
-                    primaryFreqBins,
-                    primaryEqualizers,
-                    ref noiseAccum,
-                    ref noiseCount);
-                if (secondarySamples is not null && start + symbolLength <= secondarySamples.Length)
-                {
-                    AccumulatePilotNoise(
-                        secondarySamples.AsSpan(start, symbolLength),
-                        secondaryPilotBins,
-                        secondaryUseRightChannel,
-                        secondaryTimeNoCp,
-                        secondaryFreqBins,
-                        secondaryEqualizers,
-                        ref noiseAccum,
-                        ref noiseCount);
-                }
-
-                probePosition = start + symbolLength;
-            }
-
-            if (noiseCount > 0)
-            {
-                // 等化後パイロットの I/Q 分散。下限・上限で LLR スケールを安定化。
-                effectiveVariance = Math.Clamp(noiseAccum / noiseCount, 1e-4, 0.5);
-            }
-        }
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
@@ -2923,21 +3123,23 @@ public sealed class OfdmGenerator
                 throw new InvalidDataException("WAV ended while synchronizing OFDM symbol.");
             }
 
-            var symbolBitStart = bitIndex;
-            EmitSymbolSoftLlrsForChannel(
+            PrepareSymbolFrequency(
                 samples.AsSpan(start, symbolLength),
                 pilotBins,
                 useRightChannel,
                 primaryAgcState,
-                (long)s * symbolLength,
                 primaryTimeNoCp,
                 primaryFreqBins,
-                primaryEqualizers,
-                ref bitIndex,
-                llrs,
-                effectiveVariance,
-                addToExisting: false,
-                interleaveInitSeed);
+                primaryEqualizers);
+            if (estimateNoiseFromPilots)
+            {
+                AccumulatePilotNoiseFromPrepared(
+                    primaryFreqBins,
+                    primaryEqualizers,
+                    pilotBins,
+                    ref noiseAccum,
+                    ref noiseCount);
+            }
 
             if (secondarySamples is not null)
             {
@@ -2946,16 +3148,50 @@ public sealed class OfdmGenerator
                     throw new InvalidDataException("Secondary WAV ended while synchronizing OFDM symbol.");
                 }
 
-                var secondaryBitIndex = symbolBitStart;
-                EmitSymbolSoftLlrsForChannel(
+                PrepareSymbolFrequency(
                     secondarySamples.AsSpan(start, symbolLength),
                     secondaryPilotBins,
                     secondaryUseRightChannel,
                     secondaryAgcState,
-                    (long)s * symbolLength,
                     secondaryTimeNoCp,
                     secondaryFreqBins,
+                    secondaryEqualizers);
+                if (estimateNoiseFromPilots)
+                {
+                    AccumulatePilotNoiseFromPrepared(
+                        secondaryFreqBins,
+                        secondaryEqualizers,
+                        secondaryPilotBins,
+                        ref noiseAccum,
+                        ref noiseCount);
+                }
+            }
+
+            if (estimateNoiseFromPilots && noiseCount > 0)
+            {
+                effectiveVariance = Math.Clamp(noiseAccum / noiseCount, 1e-4, 0.5);
+            }
+
+            var symbolBitStart = bitIndex;
+            EmitSymbolSoftLlrsFromPrepared(
+                primaryFreqBins,
+                primaryEqualizers,
+                useRightChannel,
+                (long)s * symbolLength,
+                ref bitIndex,
+                llrs,
+                effectiveVariance,
+                addToExisting: false,
+                interleaveInitSeed);
+
+            if (secondarySamples is not null)
+            {
+                var secondaryBitIndex = symbolBitStart;
+                EmitSymbolSoftLlrsFromPrepared(
+                    secondaryFreqBins,
                     secondaryEqualizers,
+                    secondaryUseRightChannel,
+                    (long)s * symbolLength,
                     ref secondaryBitIndex,
                     llrs,
                     effectiveVariance,
@@ -2993,6 +3229,29 @@ public sealed class OfdmGenerator
             timeNoCp,
             freqBins,
             equalizers);
+        EmitSymbolSoftLlrsFromPrepared(
+            freqBins,
+            equalizers,
+            useRightChannel,
+            logical,
+            ref bitIndex,
+            llrs,
+            noiseVariance,
+            addToExisting,
+            interleaveInitSeed);
+    }
+
+    private void EmitSymbolSoftLlrsFromPrepared(
+        Complex[] freqBins,
+        Complex[] equalizers,
+        bool useRightChannel,
+        long logical,
+        ref int bitIndex,
+        double[] llrs,
+        double noiseVariance,
+        bool addToExisting,
+        int interleaveInitSeed)
+    {
         var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
         var dataModulationByBin = useRightChannel
             ? _rightDataCarrierModulationByBin
@@ -3051,6 +3310,16 @@ public sealed class OfdmGenerator
             timeNoCp,
             freqBins,
             equalizers);
+        AccumulatePilotNoiseFromPrepared(freqBins, equalizers, pilotBins, ref noiseAccum, ref noiseCount);
+    }
+
+    private static void AccumulatePilotNoiseFromPrepared(
+        Complex[] freqBins,
+        Complex[] equalizers,
+        List<int> pilotBins,
+        ref double noiseAccum,
+        ref int noiseCount)
+    {
         foreach (var pilotBin in pilotBins)
         {
             var eq = freqBins[pilotBin] * equalizers[pilotBin];
@@ -4062,18 +4331,39 @@ public sealed class OfdmGenerator
         return result;
     }
 
-    private static Complex[] InverseFft(Complex[] frequency)
+    private void EnsureIfftScratch(int n)
     {
-        // 共役を用いた IFFT: IFFT(x) = conj( FFT(conj(x)) ) / N。
-        var conjugated = new Complex[frequency.Length];
-        ConjugateInto(frequency, conjugated);
-        var fft = Fft(conjugated);
-        var n = frequency.Length;
-        var scale = 1.0 / n;
+        if (_ifftConjugateScratch is not null && _ifftConjugateScratch.Length == n)
+        {
+            return;
+        }
 
-        ConjugateAndScaleInPlace(fft, scale);
+        _ifftConjugateScratch = new Complex[n];
+        _ifftWorkScratch = new Complex[n];
+    }
 
-        return fft;
+    private void InverseFftInto(Complex[] frequency, Complex[] destination)
+    {
+        if (destination.Length < frequency.Length)
+        {
+            throw new ArgumentException("Destination is shorter than frequency bins.", nameof(destination));
+        }
+
+        EnsureIfftScratch(frequency.Length);
+        var scratch = _ifftConjugateScratch!;
+        ConjugateInto(frequency, scratch);
+        Array.Copy(scratch, destination, frequency.Length);
+        FftInPlace(destination);
+        ConjugateAndScaleInPlace(destination, 1.0 / frequency.Length);
+    }
+
+    private Complex[] InverseFft(Complex[] frequency)
+    {
+        EnsureIfftScratch(frequency.Length);
+        InverseFftInto(frequency, _ifftWorkScratch!);
+        var result = new Complex[frequency.Length];
+        Array.Copy(_ifftWorkScratch!, result, frequency.Length);
+        return result;
     }
 
     private static Vector<double> CreateConjugateSignMask()

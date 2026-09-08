@@ -30,7 +30,14 @@ public partial class MainWindow : Window
 
     private void RefreshEstimate()
     {
-        EstimatePanel.UpdateEstimate(SendPanel.CreateSnapshot());
+        var snap = SendPanel.CreateSnapshot();
+        EstimatePanel.UpdateEstimate(snap);
+
+        // 送信ファイル選択後は見積タブを前面に出す。
+        if (!string.IsNullOrWhiteSpace(snap.InputFilePath) && File.Exists(snap.InputFilePath))
+        {
+            BottomTabs.SelectedItem = EstimateTab;
+        }
     }
 
     private void OnOutputRequested(object? sender, SendSettingsSnapshot snap)
@@ -68,6 +75,7 @@ public partial class MainWindow : Window
             }
 
             ReceivePanel.StopDemoFeed();
+            ReceivePanel.SetWowFlutterPercent(0, 0);
             ReceivePanel.SetFileInfo(Path.GetFileName(snap.InputFilePath), "-", "-");
             if (!_progressPollTimer.IsEnabled)
             {
@@ -83,17 +91,9 @@ public partial class MainWindow : Window
     private void OnProgressPollTick(object? sender, EventArgs e)
     {
         var snapshot = _coreWorker.GetProgress();
-        var frameEvents = _coreWorker.ConsumeFrameEvents();
+        // 送信進捗ではファイル情報のみ更新（ワウ・フラッター／エラー率は受信用のため更新しない）。
+        _ = _coreWorker.ConsumeFrameEvents();
         ReceivePanel.SetFileInfo(snapshot.InputFileName, snapshot.FileSizeText, snapshot.BlockCountText);
-        ReceivePanel.SetWowFlutterPercent(snapshot.WowLeftPercent, snapshot.WowRightPercent);
-        if (frameEvents.Length == 0)
-        {
-            ReceivePanel.AddErrorRateSample(snapshot.ErrorRatePercent, snapshot.ErrorFrameKind);
-        }
-        else
-        {
-            ReceivePanel.AddErrorRateSamples(snapshot.ErrorRatePercent, frameEvents);
-        }
 
         if (!_coreWorker.TryConsumeCompletion(out var completion))
         {

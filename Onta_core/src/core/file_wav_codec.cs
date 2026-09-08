@@ -55,9 +55,78 @@ public sealed record DecodeRuntimeTuning(
     double TurboHighConfidenceLlr = 4.0,
     bool PreferLocalWowTracking = true,
     double WowLocalPhaseRangeRad = 0.3141592653589793,
-    double WowLocalAmountRange = 0.002)
+    double WowLocalAmountRange = 0.002,
+    /// <summary>BH ごとの適応 wow 再推定を抑止し、FH / 中間 FH 境界でのみ再適用する。</summary>
+    bool AdaptiveWowOnlyOnFileHeaderBoundaries = true,
+    /// <summary>ステレオ時は L 推定パラメータを R にも適用する。</summary>
+    bool ShareStereoWowFromLeft = true,
+    /// <summary>前回適用からのパラメータ変化が小さいときはテール再ワープを省略する。</summary>
+    double WowSkipRewarpAmountDelta = 0.00025,
+    double WowSkipRewarpPhaseDeltaRad = 0.02,
+    int DataSyncMaxFullAttempts = 12,
+    int DataSyncMaxSoftOnlyAttempts = 8,
+    int DataSyncMaxFullAttemptsWhenWowLocked = 4,
+    int DataSyncMaxSoftOnlyAttemptsWhenWowLocked = 2,
+    double SoftLlrAbortMeanAbs = 0.35,
+    double SoftLlrAbortMeanAbsWhenWowLocked = 0.55,
+    /// <summary>soft 失敗後の hard turbo を試す最小平均 |LLR|。</summary>
+    double SoftHardFallbackMinMeanAbsLlr = 1.0)
 {
     public static DecodeRuntimeTuning Default { get; } = new();
+}
+
+/// <summary>
+/// 増分復号の進行状態です。同じインスタンスを渡して続きから復号します。
+/// </summary>
+public sealed class ProgressiveDecodeState
+{
+    public bool HeaderReady { get; internal set; }
+    public bool Completed { get; internal set; }
+    public byte[]? CompletedFile { get; internal set; }
+    public string? LastError { get; internal set; }
+    public int AcceptedBlockCount { get; internal set; }
+    public int BlockCount { get; internal set; }
+    public long FileSize { get; internal set; }
+
+    internal int SourceLength;
+    internal int Pass;
+    internal int Local;
+    internal int WarpedCursor;
+    internal long LogicalOffset;
+    internal byte[]?[]? OutputSlots;
+    internal bool[]? SlotAccepted;
+    internal (double Amount, double WowPhase, double FlutterPhase)? TrackedWow;
+    internal bool HasTrackedWow;
+
+    public void Reset()
+    {
+        HeaderReady = false;
+        Completed = false;
+        CompletedFile = null;
+        LastError = null;
+        AcceptedBlockCount = 0;
+        BlockCount = 0;
+        FileSize = 0;
+        SourceLength = 0;
+        Pass = 0;
+        Local = 0;
+        WarpedCursor = 0;
+        LogicalOffset = 0;
+        OutputSlots = null;
+        SlotAccepted = null;
+        TrackedWow = null;
+        HasTrackedWow = false;
+    }
+}
+
+/// <summary>
+/// 増分復号の結果です。
+/// </summary>
+public enum ProgressiveDecodeStatus
+{
+    NeedMoreSamples,
+    Completed,
+    Failed
 }
 
 /// <summary>
@@ -245,16 +314,63 @@ public sealed class FileWavCodec
         (double Amount, double WowPhase, double FlutterPhase)? wowParams = null,
         DecodeRuntimeTuning? tuning = null)
     {
+        var state = new ProgressiveDecodeState();
+        var status = DecodePcmSamplesProgressive(
+            leftSamples,
+            rightSamples,
+            state,
+            correctWow,
+            wowParams,
+            tuning,
+            allowIncomplete: false);
+        if (status == ProgressiveDecodeStatus.Completed && state.CompletedFile is not null)
+        {
+            return state.CompletedFile;
+        }
+
+        throw new InvalidDataException(state.LastError ?? "Decode failed.");
+    }
+
+    /// <summary>
+    /// PCM を増分復号します。不足時は状態を保持して <see cref="ProgressiveDecodeStatus.NeedMoreSamples"/> を返します。
+    /// </summary>
+    public ProgressiveDecodeStatus DecodePcmSamplesProgressive(
+        Complex[] leftSamples,
+        Complex[] rightSamples,
+        ProgressiveDecodeState state,
+        bool correctWow = true,
+        (double Amount, double WowPhase, double FlutterPhase)? wowParams = null,
+        DecodeRuntimeTuning? tuning = null,
+        bool allowIncomplete = true)
+    {
+        ArgumentNullException.ThrowIfNull(state);
         tuning ??= DecodeRuntimeTuning.Default;
+        state.LastError = null;
+
+        if (state.Completed && state.CompletedFile is not null)
+        {
+            return ProgressiveDecodeStatus.Completed;
+        }
+
         if (_profile.ChannelMode == ChannelMode.Mono && rightSamples.Length != 0)
         {
-            throw new InvalidDataException("Mono profile expects a 1-channel WAV.");
+            state.LastError = "Mono profile expects a 1-channel WAV.";
+            return ProgressiveDecodeStatus.Failed;
         }
 
         if (_profile.ChannelMode == ChannelMode.Stereo && rightSamples.Length != leftSamples.Length)
         {
-            throw new InvalidDataException("Stereo profile expects a 2-channel WAV with equal L/R length.");
+            state.LastError = "Stereo profile expects a 2-channel WAV with equal L/R length.";
+            return ProgressiveDecodeStatus.Failed;
         }
+
+        if (leftSamples.Length < state.SourceLength)
+        {
+            // リングバッファ巻き戻りなどで先頭が欠けた場合はやり直す。
+            state.Reset();
+        }
+
+        state.SourceLength = leftSamples.Length;
 
         var headerOfdm = CreateHeaderOfdm();
         var dataOfdmCache = new Dictionary<ModulationScheme, OfdmGenerator>();
@@ -270,8 +386,12 @@ public sealed class FileWavCodec
             dataOfdmCache[modulationScheme] = created;
             return created;
         }
-        // 既知パラメータ指定時は全体へ一括適用。
-        // 自動補正時（correctWow=true）は、復号進行に合わせて都度解析して適用する。
+
+        var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, _profile.FileHeaderUnmodulatedSamples);
+        var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
+
+        // 作業用バッファ: wow 補正が新配列を返す／適応補正が in-place 書き込みする。
+        var adaptiveWow = wowParams is null && correctWow && !state.HasTrackedWow;
         if (wowParams is { } known)
         {
             leftSamples = headerOfdm.CorrectWowFlutterWithParams(
@@ -287,23 +407,71 @@ public sealed class FileWavCodec
                     known.WowPhase,
                     known.FlutterPhase);
             }
+
+            state.TrackedWow = known;
+            state.HasTrackedWow = true;
+        }
+        else if (state.HasTrackedWow && state.TrackedWow is { } tracked)
+        {
+            leftSamples = headerOfdm.CorrectWowFlutterWithParams(
+                leftSamples,
+                tracked.Amount,
+                tracked.WowPhase,
+                tracked.FlutterPhase);
+            if (_profile.ChannelMode == ChannelMode.Stereo)
+            {
+                rightSamples = headerOfdm.CorrectWowFlutterWithParams(
+                    rightSamples,
+                    tracked.Amount,
+                    tracked.WowPhase,
+                    tracked.FlutterPhase);
+            }
+        }
+        else if (adaptiveWow)
+        {
+            // ApplyAdaptiveWowCorrection が配列内容を書き換えるためコピーする。
+            leftSamples = (Complex[])leftSamples.Clone();
+            if (_profile.ChannelMode == ChannelMode.Stereo)
+            {
+                rightSamples = (Complex[])rightSamples.Clone();
+            }
         }
 
-        var adaptiveWow = wowParams is null && correctWow;
-        var trackedWow = (Amount: 0.01, WowPhase: 0.0, FlutterPhase: 0.0);
-        var hasTrackedWow = false;
+        var trackedWow = state.TrackedWow ?? (Amount: 0.01, WowPhase: 0.0, FlutterPhase: 0.0);
+        var hasTrackedWow = state.HasTrackedWow;
 
-        // warpedCursor: 実波形上の読み位置 / logicalOffset: 符号化時のサンプル時刻（インターリーブ用）
-        var warpedCursor = 0;
-        warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.LeadingSilenceSamples);
-        warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.UnmodulatedPreambleSamples);
-        var logicalOffset = (long)warpedCursor;
-
+        var warpedCursor = state.HeaderReady ? state.WarpedCursor : 0;
+        var logicalOffset = state.HeaderReady ? state.LogicalOffset : 0L;
         var coarseRadius = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 8, _profile.SampleRate / 50);
         var fineRadius = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200);
 
+        void PersistCursor()
+        {
+            state.WarpedCursor = warpedCursor;
+            state.LogicalOffset = logicalOffset;
+            state.TrackedWow = hasTrackedWow ? trackedWow : state.TrackedWow;
+            state.HasTrackedWow = hasTrackedWow;
+        }
+
+        ProgressiveDecodeStatus NeedMoreOrFail(string? detail = null)
+        {
+            PersistCursor();
+            if (allowIncomplete)
+            {
+                state.LastError = null;
+                return ProgressiveDecodeStatus.NeedMoreSamples;
+            }
+
+            state.LastError = detail ?? "Incomplete PCM stream for decode.";
+            return ProgressiveDecodeStatus.Failed;
+        }
+
+        // 適応 wow を適用したか（ステレオ R 共有の再ワープ判定用）。
+        var lastWowRewarpApplied = false;
+
         void ApplyAdaptiveWowCorrection(ref Complex[] channelSamples, bool useRightChannel)
         {
+            lastWowRewarpApplied = false;
             if (!adaptiveWow)
             {
                 return;
@@ -345,93 +513,337 @@ public sealed class FileWavCodec
                 return;
             }
 
+            var newParams = (diag.Value.Amount, diag.Value.WowPhase, diag.Value.FlutterPhase);
+            var skipRewarp = hasTrackedWow
+                && Math.Abs(newParams.Amount - trackedWow.Amount) < tuning.WowSkipRewarpAmountDelta
+                && Math.Abs(WrapPhaseDelta(newParams.WowPhase - trackedWow.WowPhase)) < tuning.WowSkipRewarpPhaseDeltaRad
+                && Math.Abs(WrapPhaseDelta(newParams.FlutterPhase - trackedWow.FlutterPhase)) < tuning.WowSkipRewarpPhaseDeltaRad;
+            trackedWow = newParams;
+            hasTrackedWow = true;
+            if (skipRewarp)
+            {
+                return;
+            }
+
             var tailLength = channelSamples.Length - warpedCursor;
             if (tailLength <= 0)
             {
                 return;
             }
 
-            var tail = new Complex[tailLength];
-            Array.Copy(channelSamples, warpedCursor, tail, 0, tailLength);
-            var correctedTail = headerOfdm.CorrectWowFlutterWithParams(
-                tail,
-                diag.Value.Amount,
-                diag.Value.WowPhase,
-                diag.Value.FlutterPhase);
-            Array.Copy(correctedTail, 0, channelSamples, warpedCursor, correctedTail.Length);
-            trackedWow = (diag.Value.Amount, diag.Value.WowPhase, diag.Value.FlutterPhase);
-            hasTrackedWow = true;
+            RewarpTailInPlace(ref channelSamples, warpedCursor, tailLength, newParams.Amount, newParams.WowPhase, newParams.FlutterPhase);
+            lastWowRewarpApplied = true;
+        }
+
+        void RewarpTailInPlace(
+            ref Complex[] channelSamples,
+            int start,
+            int length,
+            double amount,
+            double wowPhase,
+            double flutterPhase)
+        {
+            var rented = System.Buffers.ArrayPool<Complex>.Shared.Rent(length);
+            try
+            {
+                Array.Copy(channelSamples, start, rented, 0, length);
+                headerOfdm.CorrectWowFlutterWithParamsInPlace(rented, length, amount, wowPhase, flutterPhase);
+                Array.Copy(rented, 0, channelSamples, start, length);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<Complex>.Shared.Return(rented, clearArray: false);
+            }
         }
 
         void ApplyAdaptiveWowCorrectionPair()
         {
             ApplyAdaptiveWowCorrection(ref leftSamples, useRightChannel: false);
-            if (_profile.ChannelMode == ChannelMode.Stereo)
+            if (_profile.ChannelMode != ChannelMode.Stereo)
             {
-                ApplyAdaptiveWowCorrection(ref rightSamples, useRightChannel: true);
+                return;
             }
-        }
 
-        // 復号は L チャンネルを基準に同期する。
-        ApplyAdaptiveWowCorrectionPair();
-        SkipHeaderUnmodulatedPreamble(
-            leftSamples,
-            ref warpedCursor,
-            ref logicalOffset,
-            _profile.FileHeaderUnmodulatedSamples);
-        ApplyAdaptiveWowCorrectionPair();
-        var fileHeader = DecodeHeaderPacketSynced(
-            leftSamples,
-            rightSamples,
-            ref warpedCursor,
-            ref logicalOffset,
-            headerOfdm,
-            FileHeaderBytes,
-            FileHeaderPilot,
-            coarseRadius,
-            InterleaveInitSeedFileHeader);
-        EnsureHeaderCrc(fileHeader, "file header");
-        var fileSize = BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(860, 8));
-        var blockCount = (int)BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(868, 8));
-        if (fileSize < 0 || blockCount < 0)
-        {
-            throw new InvalidDataException("Invalid file header size/block count.");
-        }
-
-        var outputSlots = new byte[blockCount][];
-        var slotAccepted = new bool[blockCount];
-        var traceDataErrors = string.Equals(
-            Environment.GetEnvironmentVariable(DataTraceEnvVar),
-            "1",
-            StringComparison.Ordinal);
-
-        for (var pass = 0; pass < _profile.BlockInterleaveFactor; pass++)
-        {
-            if (pass > 0)
+            if (tuning.ShareStereoWowFromLeft)
             {
+                if (!hasTrackedWow || !lastWowRewarpApplied)
+                {
+                    return;
+                }
+
+                var remaining = rightSamples.Length - warpedCursor;
+                if (remaining <= 0)
+                {
+                    return;
+                }
+
+                RewarpTailInPlace(
+                    ref rightSamples,
+                    warpedCursor,
+                    remaining,
+                    trackedWow.Amount,
+                    trackedWow.WowPhase,
+                    trackedWow.FlutterPhase);
+                return;
+            }
+
+            ApplyAdaptiveWowCorrection(ref rightSamples, useRightChannel: true);
+        }
+
+        static double WrapPhaseDelta(double phase)
+        {
+            var twoPi = 2.0 * Math.PI;
+            phase %= twoPi;
+            if (phase > Math.PI)
+            {
+                phase -= twoPi;
+            }
+            else if (phase < -Math.PI)
+            {
+                phase += twoPi;
+            }
+
+            return phase;
+        }
+
+        try
+        {
+            if (!state.HeaderReady)
+            {
+                var minForFh = _profile.LeadingSilenceSamples
+                    + _profile.UnmodulatedPreambleSamples
+                    + fhPacketSamples
+                    + headerOfdm.SamplesPerOfdmSymbol;
+                if (leftSamples.Length < minForFh)
+                {
+                    return NeedMoreOrFail();
+                }
+
+                warpedCursor = SkipSamples(leftSamples, 0, _profile.LeadingSilenceSamples);
+                warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.UnmodulatedPreambleSamples);
+                logicalOffset = warpedCursor;
+
+                ApplyAdaptiveWowCorrectionPair();
                 SkipHeaderUnmodulatedPreamble(
                     leftSamples,
                     ref warpedCursor,
                     ref logicalOffset,
                     _profile.FileHeaderUnmodulatedSamples);
                 ApplyAdaptiveWowCorrectionPair();
-                var passFh = DecodeHeaderPacketSynced(
-            leftSamples,
-            rightSamples,
-            ref warpedCursor,
+                var fileHeader = DecodeHeaderPacketSynced(
+                    leftSamples,
+                    rightSamples,
+                    ref warpedCursor,
                     ref logicalOffset,
                     headerOfdm,
                     FileHeaderBytes,
                     FileHeaderPilot,
-                    fineRadius,
+                    coarseRadius,
                     InterleaveInitSeedFileHeader);
-                EnsureHeaderCrc(passFh, "pass file header");
+                EnsureHeaderCrc(fileHeader, "file header");
+                var fileSize = BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(860, 8));
+                var blockCount = (int)BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(868, 8));
+                if (fileSize < 0 || blockCount < 0)
+                {
+                    state.LastError = "Invalid file header size/block count.";
+                    return ProgressiveDecodeStatus.Failed;
+                }
+
+                state.FileSize = fileSize;
+                state.BlockCount = blockCount;
+                state.OutputSlots = new byte[blockCount][];
+                state.SlotAccepted = new bool[blockCount];
+                state.HeaderReady = true;
+                state.Pass = 0;
+                state.Local = 0;
+                PersistCursor();
             }
 
-            var order = GetBlockEmissionOrder(blockCount, pass);
-            for (var local = 0; local < order.Length; local++)
+            var outputSlots = state.OutputSlots ?? throw new InvalidOperationException("Output slots missing.");
+            var slotAccepted = state.SlotAccepted ?? throw new InvalidOperationException("Slot flags missing.");
+            var fileSizeReady = state.FileSize;
+            var blockCountReady = state.BlockCount;
+            var traceDataErrors = string.Equals(
+                Environment.GetEnvironmentVariable(DataTraceEnvVar),
+                "1",
+                StringComparison.Ordinal);
+
+            for (var pass = state.Pass; pass < _profile.BlockInterleaveFactor; pass++)
             {
-                if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
+                if (pass > 0 && state.Local == 0)
+                {
+                    if (leftSamples.Length - warpedCursor < fhPacketSamples + headerOfdm.SamplesPerOfdmSymbol)
+                    {
+                        state.Pass = pass;
+                        state.Local = 0;
+                        return NeedMoreOrFail();
+                    }
+
+                    SkipHeaderUnmodulatedPreamble(
+                        leftSamples,
+                        ref warpedCursor,
+                        ref logicalOffset,
+                        _profile.FileHeaderUnmodulatedSamples);
+                    ApplyAdaptiveWowCorrectionPair();
+                    var passFh = DecodeHeaderPacketSynced(
+                        leftSamples,
+                        rightSamples,
+                        ref warpedCursor,
+                        ref logicalOffset,
+                        headerOfdm,
+                        FileHeaderBytes,
+                        FileHeaderPilot,
+                        fineRadius,
+                        InterleaveInitSeedFileHeader);
+                    EnsureHeaderCrc(passFh, "pass file header");
+                }
+
+                var order = GetBlockEmissionOrder(blockCountReady, pass);
+                var localStart = pass == state.Pass ? state.Local : 0;
+                for (var local = localStart; local < order.Length; local++)
+                {
+                    // BH 分だけ先に足りるか見る。データ長は BH 読取後に確定する。
+                    var minForBlock = bhPacketSamples + headerOfdm.SamplesPerOfdmSymbol;
+                    if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
+                    {
+                        minForBlock += fhPacketSamples;
+                    }
+
+                    if (leftSamples.Length - warpedCursor < minForBlock)
+                    {
+                        state.Pass = pass;
+                        state.Local = local;
+                        return NeedMoreOrFail();
+                    }
+
+                    if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
+                    {
+                        SkipHeaderUnmodulatedPreamble(
+                            leftSamples,
+                            ref warpedCursor,
+                            ref logicalOffset,
+                            _profile.FileHeaderUnmodulatedSamples);
+                        ApplyAdaptiveWowCorrectionPair();
+                        var midFh = DecodeHeaderPacketSynced(
+                            leftSamples,
+                            rightSamples,
+                            ref warpedCursor,
+                            ref logicalOffset,
+                            headerOfdm,
+                            FileHeaderBytes,
+                            FileHeaderPilot,
+                            fineRadius,
+                            InterleaveInitSeedFileHeader);
+                        EnsureHeaderCrc(midFh, "mid file header");
+                    }
+
+                    var expectedBlockIndex = order[local];
+                    SkipHeaderUnmodulatedPreamble(
+                        leftSamples,
+                        ref warpedCursor,
+                        ref logicalOffset,
+                        _profile.BlockHeaderUnmodulatedSamples);
+                    if (!tuning.AdaptiveWowOnlyOnFileHeaderBoundaries)
+                    {
+                        ApplyAdaptiveWowCorrectionPair();
+                    }
+                    var blockHeader = DecodeHeaderPacketSynced(
+                        leftSamples,
+                        rightSamples,
+                        ref warpedCursor,
+                        ref logicalOffset,
+                        headerOfdm,
+                        BlockHeaderBytes,
+                        BlockHeaderPilot,
+                        fineRadius,
+                        InterleaveInitSeedBlock);
+                    EnsureHeaderCrc(blockHeader, "block header");
+                    var blockIndex = BinaryPrimitives.ReadInt64BigEndian(blockHeader.AsSpan(12, 8));
+                    var blockSize = BinaryPrimitives.ReadInt32BigEndian(blockHeader.AsSpan(20, 4));
+                    if (blockIndex != expectedBlockIndex)
+                    {
+                        state.LastError =
+                            $"Unexpected block index {blockIndex}, expected {expectedBlockIndex} (pass {pass}, local {local}).";
+                        return ProgressiveDecodeStatus.Failed;
+                    }
+
+                    if (blockSize < 0 || blockSize > DataBlockBytes)
+                    {
+                        state.LastError = $"Invalid block size {blockSize}.";
+                        return ProgressiveDecodeStatus.Failed;
+                    }
+
+                    var blockModulation = ReadBlockDataModulationScheme(blockHeader);
+                    var blockDataOfdm = ResolveDataOfdmFor(blockModulation);
+                    var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
+                    var dataSamplesNeeded = DataPacketSamples(
+                        blockDataOfdm,
+                        blockSize,
+                        _profile.ChannelMode,
+                        blockModulation);
+                    if (leftSamples.Length - warpedCursor < dataSamplesNeeded)
+                    {
+                        warpedCursor = Math.Max(0, warpedCursor - bhPacketSamples);
+                        logicalOffset = Math.Max(0, logicalOffset - bhPacketSamples);
+                        state.Pass = pass;
+                        state.Local = local;
+                        return NeedMoreOrFail();
+                    }
+
+                    var padded = DecodeDataBlockSynced(
+                        leftSamples,
+                        rightSamples,
+                        ref warpedCursor,
+                        ref logicalOffset,
+                        blockDataOfdm,
+                        Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
+                        expectedBlockHash: blockHeader.AsSpan(24, 32).ToArray(),
+                        payloadLength: blockSize,
+                        tuning,
+                        InterleaveInitSeedBlock,
+                        blockDataPunctureRate,
+                        hasTrackedWow,
+                        out var diag);
+                    if (traceDataErrors)
+                    {
+                        Console.WriteLine(
+                            $"[DATA-DIAG] pass={pass} block={expectedBlockIndex} size={blockSize} hardOK={diag.HardMatchSucceeded} softOK={diag.SoftMatchSucceeded} fallback={diag.FallbackUsed} startDelta={diag.StartDeltaSamples} attempts={diag.TotalAttempts}");
+                    }
+
+                    var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
+                    var acceptable = IsDataBlockAcceptable(padded, expectedHash, blockSize);
+                    if (!slotAccepted[expectedBlockIndex] || acceptable)
+                    {
+                        var payload = new byte[blockSize];
+                        Buffer.BlockCopy(padded, 0, payload, 0, blockSize);
+                        outputSlots[expectedBlockIndex] = payload;
+                        if (acceptable)
+                        {
+                            slotAccepted[expectedBlockIndex] = true;
+                        }
+                    }
+
+                    state.Pass = pass;
+                    state.Local = local + 1;
+                    PersistCursor();
+                    state.AcceptedBlockCount = 0;
+                    for (var i = 0; i < slotAccepted.Length; i++)
+                    {
+                        if (slotAccepted[i])
+                        {
+                            state.AcceptedBlockCount++;
+                        }
+                    }
+                }
+
+                state.Pass = pass + 1;
+                state.Local = 0;
+                PersistCursor();
+            }
+
+            try
+            {
+                if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol < leftSamples.Length)
                 {
                     SkipHeaderUnmodulatedPreamble(
                         leftSamples,
@@ -439,144 +851,80 @@ public sealed class FileWavCodec
                         ref logicalOffset,
                         _profile.FileHeaderUnmodulatedSamples);
                     ApplyAdaptiveWowCorrectionPair();
-                    var midFh = DecodeHeaderPacketSynced(
-            leftSamples,
-            rightSamples,
-            ref warpedCursor,
+                    var endFh = DecodeHeaderPacketSynced(
+                        leftSamples,
+                        rightSamples,
+                        ref warpedCursor,
                         ref logicalOffset,
                         headerOfdm,
                         FileHeaderBytes,
                         FileHeaderPilot,
                         fineRadius,
                         InterleaveInitSeedFileHeader);
-                    EnsureHeaderCrc(midFh, "mid file header");
-                }
-
-                var expectedBlockIndex = order[local];
-                SkipHeaderUnmodulatedPreamble(
-                    leftSamples,
-                    ref warpedCursor,
-                    ref logicalOffset,
-                    _profile.BlockHeaderUnmodulatedSamples);
-                ApplyAdaptiveWowCorrectionPair();
-                var blockHeader = DecodeHeaderPacketSynced(
-            leftSamples,
-            rightSamples,
-            ref warpedCursor,
-                    ref logicalOffset,
-                    headerOfdm,
-                    BlockHeaderBytes,
-                    BlockHeaderPilot,
-                    fineRadius,
-                    InterleaveInitSeedBlock);
-                EnsureHeaderCrc(blockHeader, "block header");
-                var blockIndex = BinaryPrimitives.ReadInt64BigEndian(blockHeader.AsSpan(12, 8));
-                var blockSize = BinaryPrimitives.ReadInt32BigEndian(blockHeader.AsSpan(20, 4));
-                if (blockIndex != expectedBlockIndex)
-                {
-                    throw new InvalidDataException(
-                        $"Unexpected block index {blockIndex}, expected {expectedBlockIndex} (pass {pass}, local {local}).");
-                }
-
-                if (blockSize < 0 || blockSize > DataBlockBytes)
-                {
-                    throw new InvalidDataException($"Invalid block size {blockSize}.");
-                }
-
-                var blockModulation = ReadBlockDataModulationScheme(blockHeader);
-                var blockDataOfdm = ResolveDataOfdmFor(blockModulation);
-                var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
-
-                var padded = DecodeDataBlockSynced(
-                    leftSamples,
-                    rightSamples,
-                    ref warpedCursor,
-                    ref logicalOffset,
-                    blockDataOfdm,
-                    Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
-                    expectedBlockHash: blockHeader.AsSpan(24, 32).ToArray(),
-                    payloadLength: blockSize,
-                    tuning,
-                    InterleaveInitSeedBlock,
-                    blockDataPunctureRate,
-                    out var diag);
-                if (traceDataErrors)
-                {
-                    Console.WriteLine(
-                        $"[DATA-DIAG] pass={pass} block={expectedBlockIndex} size={blockSize} hardOK={diag.HardMatchSucceeded} softOK={diag.SoftMatchSucceeded} fallback={diag.FallbackUsed} startDelta={diag.StartDeltaSamples} attempts={diag.TotalAttempts}");
-                }
-
-                var acceptable = IsDataBlockAcceptable(
-                    padded,
-                    blockHeader.AsSpan(24, 32).ToArray(),
-                    blockSize);
-                if (!slotAccepted[expectedBlockIndex] || acceptable)
-                {
-                    var payload = new byte[blockSize];
-                    Buffer.BlockCopy(padded, 0, payload, 0, blockSize);
-                    outputSlots[expectedBlockIndex] = payload;
-                    if (acceptable)
-                    {
-                        slotAccepted[expectedBlockIndex] = true;
-                    }
+                    EnsureHeaderCrc(endFh, "trailing file header");
                 }
             }
-        }
-
-        // 末尾 FH（存在すれば読み飛ばし／検証。ストリーム終端でも許容）
-        try
-        {
-            if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol < leftSamples.Length)
+            catch (InvalidDataException)
             {
-                SkipHeaderUnmodulatedPreamble(
-                    leftSamples,
-                    ref warpedCursor,
-                    ref logicalOffset,
-                    _profile.FileHeaderUnmodulatedSamples);
-                ApplyAdaptiveWowCorrectionPair();
-                var endFh = DecodeHeaderPacketSynced(
-            leftSamples,
-            rightSamples,
-            ref warpedCursor,
-                    ref logicalOffset,
-                    headerOfdm,
-                    FileHeaderBytes,
-                    FileHeaderPilot,
-                    fineRadius,
-                    InterleaveInitSeedFileHeader);
-                EnsureHeaderCrc(endFh, "trailing file header");
+                // 末尾 FH が欠ける場合でもデータが揃っていれば成功とする。
             }
-        }
-        catch (InvalidDataException)
-        {
-            // 末尾 FH が欠ける場合でもデータが揃っていれば成功とする。
-        }
 
-        var output = new byte[fileSize];
-        var writeOffset = 0;
-        for (var i = 0; i < blockCount; i++)
-        {
-            if (outputSlots[i] is null)
+            var output = new byte[fileSizeReady];
+            var writeOffset = 0;
+            for (var i = 0; i < blockCountReady; i++)
             {
-                throw new InvalidDataException($"Missing decoded block {i}.");
+                if (outputSlots[i] is null)
+                {
+                    state.LastError = $"Missing decoded block {i}.";
+                    PersistCursor();
+                    return ProgressiveDecodeStatus.Failed;
+                }
+
+                var payload = outputSlots[i]!;
+                if (writeOffset + payload.Length > output.Length)
+                {
+                    state.LastError = "Decoded payload exceeds file size.";
+                    return ProgressiveDecodeStatus.Failed;
+                }
+
+                Buffer.BlockCopy(payload, 0, output, writeOffset, payload.Length);
+                writeOffset += payload.Length;
             }
 
-            var payload = outputSlots[i]!;
-            if (writeOffset + payload.Length > output.Length)
+            if (writeOffset != fileSizeReady)
             {
-                throw new InvalidDataException("Decoded payload exceeds file size.");
+                state.LastError = $"Decoded size mismatch: got {writeOffset}, expected {fileSizeReady}.";
+                return ProgressiveDecodeStatus.Failed;
             }
 
-            Buffer.BlockCopy(payload, 0, output, writeOffset, payload.Length);
-            writeOffset += payload.Length;
+            state.CompletedFile = output;
+            state.Completed = true;
+            PersistCursor();
+            return ProgressiveDecodeStatus.Completed;
         }
-
-        if (writeOffset != fileSize)
+        catch (InvalidDataException ex)
         {
-            throw new InvalidDataException($"Decoded size mismatch: got {writeOffset}, expected {fileSize}.");
-        }
+            // 増分モードのみ、残りが明らかに短いときは継続待ちにする。
+            if (allowIncomplete)
+            {
+                var remaining = leftSamples.Length - warpedCursor;
+                var minContinue = Math.Min(fhPacketSamples, bhPacketSamples) + headerOfdm.SamplesPerOfdmSymbol;
+                if (remaining < minContinue)
+                {
+                    return NeedMoreOrFail();
+                }
+            }
 
-        return output;
+            state.LastError = ex.Message;
+            PersistCursor();
+            return ProgressiveDecodeStatus.Failed;
+        }
+        catch (Exception ex)
+        {
+            state.LastError = ex.Message;
+            PersistCursor();
+            return ProgressiveDecodeStatus.Failed;
+        }
     }
 
     private OfdmGenerator CreateHeaderOfdm()
@@ -1126,6 +1474,7 @@ public sealed class FileWavCodec
         DecodeRuntimeTuning tuning,
         int interleaveInitSeed,
         ConvolutionalCode.PunctureRate punctureRate,
+        bool wowLocked,
         out DataDecodeDiag diag)
     {
         var paddedLen = TurboPaddedLength(payloadLength + CrcBytes);
@@ -1148,8 +1497,17 @@ public sealed class FileWavCodec
         var logical = logicalOffset;
         Exception? lastError = null;
         var step = Math.Max(1, ofdm.SamplesPerOfdmSymbol / 8);
+        var softLlrAbortMeanAbs = wowLocked
+            ? tuning.SoftLlrAbortMeanAbsWhenWowLocked
+            : tuning.SoftLlrAbortMeanAbs;
+        var maxFullAttempts = wowLocked
+            ? tuning.DataSyncMaxFullAttemptsWhenWowLocked
+            : tuning.DataSyncMaxFullAttempts;
+        var maxSoftOnlyAttempts = wowLocked
+            ? tuning.DataSyncMaxSoftOnlyAttemptsWhenWowLocked
+            : tuning.DataSyncMaxSoftOnlyAttempts;
 
-        bool TryAt(int start, int perSymbolRadius, out byte[] padded, out int endCursor)
+        bool TryAt(int start, int perSymbolRadius, out byte[] padded, out int endCursor, bool allowHardFallback = true)
         {
             padded = Array.Empty<byte>();
             endCursor = start;
@@ -1160,7 +1518,7 @@ public sealed class FileWavCodec
 
             try
             {
-                foreach (var useSoft in new[] { true, false })
+                foreach (var useSoft in allowHardFallback ? new[] { true, false } : new[] { true })
                 {
                     totalAttempts++;
                     var cursor = start;
@@ -1221,10 +1579,29 @@ public sealed class FileWavCodec
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
                             qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true, punctureRate: punctureRate);
                         ClampLlrsInPlace(infoLlrs, 16.0);
+
+                        var meanAbs = MeanAbsLlrs(infoLlrs);
+                        // 同期ずれで LLR が潰れている位置は turbo まで進まない。
+                        if (meanAbs < softLlrAbortMeanAbs)
+                        {
+                            continue;
+                        }
+
                         var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
                         var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
-                        var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
-                        candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
+                        if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
+                        {
+                            candidate = softCandidate;
+                        }
+                        else if (meanAbs >= tuning.SoftHardFallbackMinMeanAbsLlr)
+                        {
+                            var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
+                            candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
+                        }
+                        else
+                        {
+                            candidate = softCandidate;
+                        }
                     }
 
                     if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
@@ -1267,24 +1644,65 @@ public sealed class FileWavCodec
             return hit;
         }
 
+        // 探索位置は ScoreLock で安い順位付けし、有望な候補から ECC を試す。
+        var rankedStarts = new List<(int Start, double Score)>(32);
         for (var delta = 0; delta <= searchRadius; delta += step)
         {
             foreach (var start in delta == 0
                          ? new[] { warpedCursor }
                          : new[] { warpedCursor - delta, warpedCursor + delta })
             {
-                if (TryAt(start, symbolSearchRadius, out hit, out hitEnd))
+                if (start < 0 || start + (ofdm.SamplesPerOfdmSymbol * 2) > leftSamples.Length)
                 {
-                    warpedCursor = hitEnd;
-                    logicalOffset += sampleCount;
-                    diag = new DataDecodeDiag(
-                        totalAttempts,
-                        hardMatchSucceeded,
-                        softMatchSucceeded,
-                        fallbackUsed,
-                        startDeltaSamples);
-                    return hit;
+                    continue;
                 }
+
+                if (delta == 0)
+                {
+                    // 直前の厳密試行で失敗済み。
+                    continue;
+                }
+
+                var score = ofdm.ScoreLock(leftSamples, start, symbolCount: 2, useRightChannel: false);
+                rankedStarts.Add((start, score));
+            }
+        }
+
+        rankedStarts.Sort((a, b) => b.Score.CompareTo(a.Score));
+        var fullAttempts = Math.Min(rankedStarts.Count, Math.Max(1, maxFullAttempts));
+        for (var i = 0; i < fullAttempts; i++)
+        {
+            // 上位は soft+hard、それ以外は soft のみ（hard 全復調の二重コストを避ける）。
+            var allowHard = i < Math.Min(4, fullAttempts);
+            if (TryAt(rankedStarts[i].Start, symbolSearchRadius, out hit, out hitEnd, allowHard))
+            {
+                warpedCursor = hitEnd;
+                logicalOffset += sampleCount;
+                diag = new DataDecodeDiag(
+                    totalAttempts,
+                    hardMatchSucceeded,
+                    softMatchSucceeded,
+                    fallbackUsed,
+                    startDeltaSamples);
+                return hit;
+            }
+        }
+
+        // スコア上位で落ちた場合、残りを soft のみで追加試行（上限付き）。
+        var softOnlyLimit = fullAttempts + Math.Max(0, maxSoftOnlyAttempts);
+        for (var i = fullAttempts; i < rankedStarts.Count && i < softOnlyLimit; i++)
+        {
+            if (TryAt(rankedStarts[i].Start, symbolSearchRadius, out hit, out hitEnd, allowHardFallback: false))
+            {
+                warpedCursor = hitEnd;
+                logicalOffset += sampleCount;
+                diag = new DataDecodeDiag(
+                    totalAttempts,
+                    hardMatchSucceeded,
+                    softMatchSucceeded,
+                    fallbackUsed,
+                    startDeltaSamples);
+                return hit;
             }
         }
 
@@ -1318,8 +1736,18 @@ public sealed class FileWavCodec
                 startDeltaSamples);
             var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
             var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
-            var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
-            return PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
+            if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
+            {
+                return softCandidate;
+            }
+
+            if (MeanAbsLlrs(infoLlrs) >= tuning.SoftHardFallbackMinMeanAbsLlr)
+            {
+                var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
+                return PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
+            }
+
+            return softCandidate;
         }
 
         diag = new DataDecodeDiag(
@@ -1442,6 +1870,22 @@ public sealed class FileWavCodec
                 llrs[i] = -maxAbs;
             }
         }
+    }
+
+    private static double MeanAbsLlrs(ReadOnlySpan<double> llrs)
+    {
+        if (llrs.Length == 0)
+        {
+            return 0.0;
+        }
+
+        var sum = 0.0;
+        for (var i = 0; i < llrs.Length; i++)
+        {
+            sum += Math.Abs(llrs[i]);
+        }
+
+        return sum / llrs.Length;
     }
 
     private static byte[] PreferHashMatch(

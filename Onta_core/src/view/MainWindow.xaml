@@ -11,7 +11,7 @@
         Background="{StaticResource BrushBg}">
   <Grid Margin="10">
     <Grid.RowDefinitions>
-      <RowDefinition Height="320"/>
+      <RowDefinition Height="270"/>
       <RowDefinition Height="*"
           MinHeight="220"/>
       <RowDefinition Height="0.8*"
@@ -33,9 +33,11 @@
     <Border Grid.Row="2"
         Style="{StaticResource PanelBorder}"
         Padding="4">
-      <TabControl BorderThickness="0"
+      <TabControl x:Name="BottomTabs"
+          BorderThickness="0"
           Background="Transparent">
-        <TabItem Header="見積">
+        <TabItem x:Name="EstimateTab"
+            Header="見積">
           <local:FileEstimatePanel x:Name="EstimatePanel"
               Margin="8"/>
         </TabItem>

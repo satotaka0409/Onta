@@ -62,25 +62,8 @@ internal sealed class OutputCoreWorker
             return raw;
         }
 
-        var elapsed = Math.Max(0.0, (DateTime.UtcNow - raw.StartedAtUtc).TotalSeconds);
-        var wowL = Math.Clamp(
-            1.2 * Math.Sin((2.0 * Math.PI * 0.55 * elapsed) + 0.4)
-            + 0.35 * Math.Sin((2.0 * Math.PI * 6.0 * elapsed) + 1.1),
-            -5.0,
-            5.0);
-        var wowR = Math.Clamp(
-            1.1 * Math.Sin((2.0 * Math.PI * 0.55 * elapsed) + 2.1)
-            + 0.4 * Math.Sin((2.0 * Math.PI * 6.0 * elapsed) + 0.2),
-            -5.0,
-            5.0);
-        var err = Math.Clamp((100.0 - raw.ProgressPercent) * 0.03 + (Math.Abs(wowL) + Math.Abs(wowR)) * 0.4, 0.0, 100.0);
-
-        return raw with
-        {
-            WowLeftPercent = wowL,
-            WowRightPercent = wowR,
-            ErrorRatePercent = err
-        };
+        // 送信中はワウ・フラッター／エラー率の擬似値を出さない（受信パネル用）。
+        return raw;
     }
 
     /// <summary>

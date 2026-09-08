@@ -24,6 +24,14 @@ public partial class FileEstimatePanel : UserControl
     public void UpdateEstimate(SendSettingsSnapshot settings)
     {
         var fileSizeBytes = ResolveInputSize(settings.InputFilePath);
+        _rows.Clear();
+
+        if (fileSizeBytes <= 0)
+        {
+            _rows.Add(new EstimateRow("入力ファイル", "未選択", ""));
+            return;
+        }
+
         var profile = new FileWavCodecProfile(
             ActiveSubcarriers: settings.ActiveSubcarriers,
             ModulationScheme: settings.ModulationScheme,
@@ -31,9 +39,10 @@ public partial class FileEstimatePanel : UserControl
             BlockInterleaveFactor: settings.BlockInterleaveFactor);
 
         var estimate = FileWavCodec.EstimateTransmissionDuration(profile, fileSizeBytes);
-        var maxSeconds = Math.Max(0.001, estimate.Segments.Max(s => s.Seconds));
+        var maxSeconds = estimate.Segments.Count == 0
+            ? 0.001
+            : Math.Max(0.001, estimate.Segments.Max(s => s.Seconds));
 
-        _rows.Clear();
         foreach (var seg in estimate.Segments)
         {
             _rows.Add(CreateRow(seg.Label, seg.Seconds, maxSeconds));

@@ -237,21 +237,55 @@ public static class TurboEcc1024
             InterleaveDoublesInto(systematic, Interleaver, systematicInterleaved.AsSpan(0, n));
             Array.Clear(apriori1, 0, n);
 
-            // 2 つの構成復号器間で外部情報を反復交換する。
-            for (var iter = 0; iter < iterations; iter++)
+            // 2 つの構成復号器間で外部情報を反復交換する。硬判定が連続安定したら早期終了。
+            var stableHardIters = 0;
+            var prevHard = ArrayPool<bool>.Shared.Rent(n);
+            try
             {
-                DecodeSisoMaxLogMapInto(
-                    systematic,
-                    parity1,
-                    apriori1.AsSpan(0, n),
-                    extrinsic1.AsSpan(0, n));
-                InterleaveDoublesInto(extrinsic1.AsSpan(0, n), Interleaver, apriori2.AsSpan(0, n));
-                DecodeSisoMaxLogMapInto(
-                    systematicInterleaved.AsSpan(0, n),
-                    parity2,
-                    apriori2.AsSpan(0, n),
-                    extrinsic2.AsSpan(0, n));
-                DeinterleaveDoublesInto(extrinsic2.AsSpan(0, n), Deinterleaver, apriori1.AsSpan(0, n));
+                for (var iter = 0; iter < iterations; iter++)
+                {
+                    DecodeSisoMaxLogMapInto(
+                        systematic,
+                        parity1,
+                        apriori1.AsSpan(0, n),
+                        extrinsic1.AsSpan(0, n));
+                    InterleaveDoublesInto(extrinsic1.AsSpan(0, n), Interleaver, apriori2.AsSpan(0, n));
+                    DecodeSisoMaxLogMapInto(
+                        systematicInterleaved.AsSpan(0, n),
+                        parity2,
+                        apriori2.AsSpan(0, n),
+                        extrinsic2.AsSpan(0, n));
+                    DeinterleaveDoublesInto(extrinsic2.AsSpan(0, n), Deinterleaver, apriori1.AsSpan(0, n));
+
+                    var hardChanged = false;
+                    for (var i = 0; i < n; i++)
+                    {
+                        var hard = (systematic[i] + apriori1[i]) < 0.0;
+                        if (iter > 0 && hard != prevHard[i])
+                        {
+                            hardChanged = true;
+                        }
+
+                        prevHard[i] = hard;
+                    }
+
+                    if (iter > 0 && !hardChanged)
+                    {
+                        stableHardIters++;
+                        if (stableHardIters >= 2)
+                        {
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        stableHardIters = 0;
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<bool>.Shared.Return(prevHard, clearArray: false);
             }
 
             var decodedBits = new bool[n];

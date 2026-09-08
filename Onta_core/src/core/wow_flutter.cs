@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Numerics;
 
 namespace Onta.Core;
@@ -36,6 +37,17 @@ public static class WowFlutterWarp
         double flutterPhase)
     {
         var profile = new double[sampleCount];
+        FillSpeedProfile(profile, sampleRate, amount, wowPhase, flutterPhase);
+        return profile;
+    }
+
+    private static void FillSpeedProfile(
+        Span<double> profile,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase)
+    {
         var sr = Math.Max(1, sampleRate);
         var wowStep = 2.0 * Math.PI * WowFrequencyHz / sr;
         var flutterStep = 2.0 * Math.PI * FlutterFrequencyHz / sr;
@@ -49,7 +61,7 @@ public static class WowFlutterWarp
         var sinFlutterStep = Math.Sin(flutterStep);
         var cosFlutterStep = Math.Cos(flutterStep);
 
-        for (var i = 0; i < sampleCount; i++)
+        for (var i = 0; i < profile.Length; i++)
         {
             var modulation = (0.65 * sinWow) + (0.35 * sinFlutter);
             var speed = 1.0 + (amount * modulation);
@@ -65,8 +77,6 @@ public static class WowFlutterWarp
             sinFlutter = nextSinFlutter;
             cosFlutter = nextCosFlutter;
         }
-
-        return profile;
     }
 
     /// <summary>
@@ -85,97 +95,104 @@ public static class WowFlutterWarp
             return [];
         }
 
-        var profile = BuildSpeedProfile(sampleCount, sampleRate, amount, wowPhase, flutterPhase);
-        BuildCumul(profile, out var cumul, out var scale);
-        var map = new int[sampleCount];
-        var last = sampleCount - 1;
-        var count = new int[sampleCount];
-        for (var i = 0; i < sampleCount; i++)
+        var profile = ArrayPool<double>.Shared.Rent(sampleCount);
+        var count = ArrayPool<int>.Shared.Rent(sampleCount);
+        try
         {
-            var srcPos = cumul[i] * scale;
-            var idx = (int)Math.Round(srcPos, MidpointRounding.AwayFromZero);
-            map[i] = Math.Clamp(idx, 0, last);
-            count[map[i]]++;
-        }
-
-        // 未参照ソースを、重複参照している出力スロットへ再割当て（全射化）。
-        // missing / donor を位置順に突き合わせ、O(n log n) で穴を埋める。
-        var missing = new List<int>();
-        var donors = new List<int>();
-        for (var j = 0; j < sampleCount; j++)
-        {
-            if (count[j] == 0)
+            FillSpeedProfile(profile.AsSpan(0, sampleCount), sampleRate, amount, wowPhase, flutterPhase);
+            BuildCumul(profile.AsSpan(0, sampleCount), out var cumul, out var scale);
+            var map = new int[sampleCount];
+            var last = sampleCount - 1;
+            Array.Clear(count, 0, sampleCount);
+            for (var i = 0; i < sampleCount; i++)
             {
-                missing.Add(j);
-            }
-        }
-
-        for (var i = 0; i < sampleCount; i++)
-        {
-            if (count[map[i]] > 1)
-            {
-                donors.Add(i);
-            }
-        }
-
-        missing.Sort();
-
-        var donorCursor = 0;
-        for (var m = 0; m < missing.Count; m++)
-        {
-            var target = missing[m];
-            while (donorCursor < donors.Count && count[map[donors[donorCursor]]] <= 1)
-            {
-                donorCursor++;
+                var srcPos = cumul[i] * scale;
+                var idx = (int)Math.Round(srcPos, MidpointRounding.AwayFromZero);
+                map[i] = Math.Clamp(idx, 0, last);
+                count[map[i]]++;
             }
 
-            var bestI = -1;
-            if (donorCursor < donors.Count)
+            // 未参照ソースを、重複参照している出力スロットへ再割当て（全射化）。
+            var missing = new List<int>();
+            var donors = new List<int>();
+            for (var j = 0; j < sampleCount; j++)
             {
-                bestI = donors[donorCursor];
-                // 近傍の donor を少し先読みして、位置が近い方を選ぶ
-                var bestScore = Math.Abs((cumul[bestI] * scale) - target);
-                for (var k = donorCursor + 1; k < donors.Count && k < donorCursor + 8; k++)
+                if (count[j] == 0)
                 {
-                    if (count[map[donors[k]]] <= 1)
-                    {
-                        continue;
-                    }
-
-                    var score = Math.Abs((cumul[donors[k]] * scale) - target);
-                    if (score < bestScore)
-                    {
-                        bestScore = score;
-                        bestI = donors[k];
-                    }
-                }
-            }
-            else
-            {
-                // donor が尽きた場合は最も近い出力を強制上書き
-                var bestScore = double.PositiveInfinity;
-                for (var i = 0; i < sampleCount; i++)
-                {
-                    var score = Math.Abs((cumul[i] * scale) - target);
-                    if (score < bestScore)
-                    {
-                        bestScore = score;
-                        bestI = i;
-                    }
+                    missing.Add(j);
                 }
             }
 
-            if (bestI < 0)
+            for (var i = 0; i < sampleCount; i++)
             {
-                continue;
+                if (count[map[i]] > 1)
+                {
+                    donors.Add(i);
+                }
             }
 
-            count[map[bestI]]--;
-            map[bestI] = target;
-            count[target]++;
-        }
+            missing.Sort();
 
-        return map;
+            var donorCursor = 0;
+            for (var m = 0; m < missing.Count; m++)
+            {
+                var target = missing[m];
+                while (donorCursor < donors.Count && count[map[donors[donorCursor]]] <= 1)
+                {
+                    donorCursor++;
+                }
+
+                var bestI = -1;
+                if (donorCursor < donors.Count)
+                {
+                    bestI = donors[donorCursor];
+                    var bestScore = Math.Abs((cumul[bestI] * scale) - target);
+                    for (var k = donorCursor + 1; k < donors.Count && k < donorCursor + 8; k++)
+                    {
+                        if (count[map[donors[k]]] <= 1)
+                        {
+                            continue;
+                        }
+
+                        var score = Math.Abs((cumul[donors[k]] * scale) - target);
+                        if (score < bestScore)
+                        {
+                            bestScore = score;
+                            bestI = donors[k];
+                        }
+                    }
+                }
+                else
+                {
+                    var bestScore = double.PositiveInfinity;
+                    for (var i = 0; i < sampleCount; i++)
+                    {
+                        var score = Math.Abs((cumul[i] * scale) - target);
+                        if (score < bestScore)
+                        {
+                            bestScore = score;
+                            bestI = i;
+                        }
+                    }
+                }
+
+                if (bestI < 0)
+                {
+                    continue;
+                }
+
+                count[map[bestI]]--;
+                map[bestI] = target;
+                count[target]++;
+            }
+
+            return map;
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(profile);
+            ArrayPool<int>.Shared.Return(count);
+        }
     }
 
     /// <summary>
@@ -220,23 +237,32 @@ public static class WowFlutterWarp
 
         var n = warped.Length;
         var map = BuildSourceIndexMap(n, sampleRate, amount, wowPhase, flutterPhase);
-        var sum = new double[n];
-        var count = new int[n];
-        for (var i = 0; i < n; i++)
+        var sum = ArrayPool<double>.Shared.Rent(n);
+        var count = ArrayPool<int>.Shared.Rent(n);
+        try
         {
-            var src = map[i];
-            sum[src] += warped[i];
-            count[src]++;
-        }
+            Array.Clear(sum, 0, n);
+            Array.Clear(count, 0, n);
+            for (var i = 0; i < n; i++)
+            {
+                var src = map[i];
+                sum[src] += warped[i];
+                count[src]++;
+            }
 
-        var corrected = new double[n];
-        for (var j = 0; j < n; j++)
+            var corrected = new double[n];
+            for (var j = 0; j < n; j++)
+            {
+                corrected[j] = sum[j] / count[j];
+            }
+
+            return corrected;
+        }
+        finally
         {
-            // 全射写像なので count[j] >= 1 が保証される。
-            corrected[j] = sum[j] / count[j];
+            ArrayPool<double>.Shared.Return(sum);
+            ArrayPool<int>.Shared.Return(count);
         }
-
-        return corrected;
     }
 
     /// <summary>
@@ -281,24 +307,101 @@ public static class WowFlutterWarp
             return (Complex[])warped.Clone();
         }
 
-        var n = warped.Length;
-        var map = BuildSourceIndexMap(n, sampleRate, amount, wowPhase, flutterPhase);
-        var sum = new double[n];
-        var count = new int[n];
-        for (var i = 0; i < n; i++)
-        {
-            var src = map[i];
-            sum[src] += warped[i].Real;
-            count[src]++;
-        }
-
-        var dst = new Complex[n];
-        for (var i = 0; i < n; i++)
-        {
-            dst[i] = new Complex(sum[i] / count[i], 0.0);
-        }
-
+        var dst = new Complex[warped.Length];
+        CorrectInto(warped, sampleRate, amount, wowPhase, flutterPhase, dst);
         return dst;
+    }
+
+    /// <summary>
+    /// 複素 OFDM 実信号の可逆ワウ逆補正を in-place で行います（一時バッファはプール）。
+    /// </summary>
+    public static void CorrectInPlace(
+        Complex[] warped,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase)
+    {
+        ArgumentNullException.ThrowIfNull(warped);
+        CorrectInPlace(warped, warped.Length, sampleRate, amount, wowPhase, flutterPhase);
+    }
+
+    /// <summary>
+    /// 先頭 <paramref name="length"/> サンプルだけを in-place 補正します（プール配列の部分利用向け）。
+    /// </summary>
+    public static void CorrectInPlace(
+        Complex[] warped,
+        int length,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase)
+    {
+        ArgumentNullException.ThrowIfNull(warped);
+        if (length <= 0 || amount == 0.0)
+        {
+            return;
+        }
+
+        if (length > warped.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length));
+        }
+
+        CorrectInto(warped, length, sampleRate, amount, wowPhase, flutterPhase, warped);
+    }
+
+    private static void CorrectInto(
+        Complex[] warped,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        Complex[] destination)
+    {
+        CorrectInto(warped, warped.Length, sampleRate, amount, wowPhase, flutterPhase, destination);
+    }
+
+    private static void CorrectInto(
+        Complex[] warped,
+        int length,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        Complex[] destination)
+    {
+        var n = length;
+        if (destination.Length < n || warped.Length < n)
+        {
+            throw new ArgumentException("Destination is shorter than source.", nameof(destination));
+        }
+
+        var map = BuildSourceIndexMap(n, sampleRate, amount, wowPhase, flutterPhase);
+        var sum = ArrayPool<double>.Shared.Rent(n);
+        var count = ArrayPool<int>.Shared.Rent(n);
+        try
+        {
+            Array.Clear(sum, 0, n);
+            Array.Clear(count, 0, n);
+            for (var i = 0; i < n; i++)
+            {
+                var src = map[i];
+                sum[src] += warped[i].Real;
+                count[src]++;
+            }
+
+            // destination == warped のときも安全なよう、先に sum へ集約済み。
+            for (var i = 0; i < n; i++)
+            {
+                destination[i] = new Complex(sum[i] / count[i], 0.0);
+            }
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(sum);
+            ArrayPool<int>.Shared.Return(count);
+        }
     }
 
     /// <summary>
@@ -428,7 +531,7 @@ public static class WowFlutterWarp
         return dst;
     }
 
-    private static void BuildCumul(double[] speedProfile, out double[] cumul, out double scale)
+    private static void BuildCumul(ReadOnlySpan<double> speedProfile, out double[] cumul, out double scale)
     {
         var n = speedProfile.Length;
         cumul = new double[n];
@@ -452,6 +555,9 @@ public static class WowFlutterWarp
 
         scale = cumul[^1] > 1e-12 ? (n - 1) / cumul[^1] : 1.0;
     }
+
+    private static void BuildCumul(double[] speedProfile, out double[] cumul, out double scale) =>
+        BuildCumul((ReadOnlySpan<double>)speedProfile, out cumul, out scale);
 
     private static double[] UpsampleLinear(ReadOnlySpan<double> source, int factor)
     {

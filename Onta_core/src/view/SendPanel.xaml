@@ -15,17 +15,17 @@
 
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="110"/>
-        <ColumnDefinition Width="110"/>
-        <ColumnDefinition Width="110"/>
-        <ColumnDefinition Width="150"/>
-        <ColumnDefinition Width="400"/>
+        <ColumnDefinition Width="100"/>
+        <ColumnDefinition Width="100"/>
+        <ColumnDefinition Width="100"/>
+        <ColumnDefinition Width="140"/>
+        <ColumnDefinition Width="500"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
       <GroupBox Header="チャンネル"
                 Margin="4">
-        <StackPanel Margin="8">
+        <StackPanel Margin="4">
           <RadioButton x:Name="StereoRadio"
                        Content="ステレオ"
                        GroupName="Channel"
@@ -40,7 +40,7 @@
       <GroupBox Grid.Column="1"
                 Header="サブキャリア"
                 Margin="4">
-        <StackPanel Margin="8">
+        <StackPanel Margin="4">
           <RadioButton Content="9-SC"
                        Tag="9"
                        GroupName="Subcarrier"
@@ -67,7 +67,7 @@
       <GroupBox Grid.Column="2"
                 Header="変調"
                 Margin="4">
-        <StackPanel Margin="8">
+        <StackPanel Margin="4">
           <RadioButton Content="BPSK"
                        Tag="Bpsk"
                        GroupName="Modulation"
@@ -94,7 +94,7 @@
       <GroupBox Grid.Column="3"
                 Header="ブロックインターリーブ"
                 Margin="4">
-        <StackPanel Margin="8">
+        <StackPanel Margin="4">
           <RadioButton Content="×1"
                        Tag="1"
                        GroupName="Interleave"
@@ -116,7 +116,7 @@
       <GroupBox Grid.Column="4"
                 Header="入出力"
                 Margin="4">
-        <Grid Margin="8">
+        <Grid Margin="4">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -166,20 +166,38 @@
             <ComboBox x:Name="AudioDeviceComboBox"
                       Width="220"
                       Margin="10,0,0,0"
-                      DisplayMemberPath="Name"
+                      Foreground="#FF1E2024"
                       SelectedValuePath="DeviceNumber"
-                      SelectionChanged="OnAudioDeviceSelectionChanged"/>
+                      SelectionChanged="OnAudioDeviceSelectionChanged">
+              <!-- DisplayMemberPath だと TextBlock 全体スタイル（明色）が乗り、白背景で文字が消える -->
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Name}"
+                             Foreground="#FF1E2024"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+              <ComboBox.ItemContainerStyle>
+                <Style TargetType="ComboBoxItem">
+                  <Setter Property="Foreground" Value="#FF1E2024"/>
+                  <Setter Property="Background" Value="White"/>
+                </Style>
+              </ComboBox.ItemContainerStyle>
+            </ComboBox>
           </StackPanel>
         </Grid>
       </GroupBox>
+      <GroupBox Grid.Column="5"
+                Header=""
+                Margin="4">
+        <Button Grid.Row="1"
+                Content="スタート"
+                Width="120"
+                Height="34"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,4,4"
+                Click="OnStartClick"/>
+      </GroupBox>
     </Grid>
-
-    <Button Grid.Row="2"
-            Content="スタート"
-            Width="120"
-            Height="34"
-            HorizontalAlignment="Right"
-            Margin="0,8,4,0"
-            Click="OnStartClick"/>
   </Grid>
 </UserControl>

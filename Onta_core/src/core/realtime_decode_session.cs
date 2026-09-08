@@ -3,7 +3,7 @@ using System.Numerics;
 namespace Onta.Core;
 
 /// <summary>
-/// 受信 PCM を逐次投入し、別スレッドで一定間隔ごとに復号を試みるセッションです。
+/// 受信 PCM を逐次投入し、別スレッドで一定間隔ごとに増分復号を試みるセッションです。
 /// </summary>
 public sealed class RealtimeDecodeSession : IDisposable
 {
@@ -15,6 +15,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     private readonly DecodeRuntimeTuning _tuning;
     private readonly TimeSpan _pollInterval;
     private readonly int _minAttemptSamples;
+    private readonly ProgressiveDecodeState _progressive = new();
     private Complex[] _leftSnapshot = Array.Empty<Complex>();
     private Complex[] _rightSnapshot = Array.Empty<Complex>();
 
@@ -147,43 +148,89 @@ public sealed class RealtimeDecodeSession : IDisposable
                 var shouldTry = false;
                 lock (_sync)
                 {
-                    var buffered = Math.Min(_left.Count, _right.Count);
-                    if (buffered >= _minAttemptSamples && buffered >= _lastAttemptSamples + (_sampleRate / 2))
+                    if (_progressive.Completed)
                     {
-                        if (_left.TryGetContiguousWindow(out var leftWindow, out var leftCount)
-                            && _right.TryGetContiguousWindow(out var rightWindow, out var rightCount)
-                            && leftCount == rightCount)
+                        shouldTry = false;
+                    }
+                    else
+                    {
+                        var buffered = Math.Min(_left.Count, _right.Count);
+                        if (buffered >= _minAttemptSamples && buffered >= _lastAttemptSamples + (_sampleRate / 2))
                         {
-                            left = leftWindow;
-                            right = rightWindow;
-                            buffered = leftCount;
-                        }
-                        else
-                        {
-                            EnsureSnapshotCapacity(buffered);
-                            _left.CopyTo(_leftSnapshot.AsSpan(0, buffered));
-                            _right.CopyTo(_rightSnapshot.AsSpan(0, buffered));
-                            left = _leftSnapshot;
-                            right = _rightSnapshot;
-                        }
+                            if (_left.TryGetContiguousWindow(out var leftWindow, out var leftCount)
+                                && _right.TryGetContiguousWindow(out var rightWindow, out var rightCount)
+                                && leftCount == rightCount)
+                            {
+                                left = leftWindow;
+                                right = rightWindow;
+                                buffered = leftCount;
+                            }
+                            else
+                            {
+                                EnsureSnapshotCapacity(buffered);
+                                _left.CopyTo(_leftSnapshot.AsSpan(0, buffered));
+                                _right.CopyTo(_rightSnapshot.AsSpan(0, buffered));
+                                left = _leftSnapshot;
+                                right = _rightSnapshot;
+                            }
 
-                        _lastAttemptSamples = buffered;
-                        shouldTry = true;
+                            _lastAttemptSamples = buffered;
+                            shouldTry = true;
+                        }
                     }
                 }
 
                 if (shouldTry && left is not null && right is not null)
                 {
-                    var decoded = _codec.DecodePcmSamplesToFileBytes(left, right, correctWow: true, wowParams: null, tuning: _tuning);
+                    ProgressiveDecodeState progressive;
                     lock (_sync)
                     {
-                        _snapshot = _snapshot with
+                        if (left.Length < _progressive.SourceLength)
                         {
-                            DecodedBytes = decoded,
-                            LastDecodedAtUtc = DateTime.UtcNow,
-                            DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
-                            LastError = null
-                        };
+                            _progressive.Reset();
+                        }
+
+                        progressive = _progressive;
+                    }
+
+                    var status = _codec.DecodePcmSamplesProgressive(
+                        left,
+                        right,
+                        progressive,
+                        correctWow: true,
+                        wowParams: null,
+                        tuning: _tuning);
+
+                    lock (_sync)
+                    {
+                        if (status == ProgressiveDecodeStatus.Completed && progressive.CompletedFile is not null)
+                        {
+                            _snapshot = _snapshot with
+                            {
+                                DecodedBytes = progressive.CompletedFile,
+                                LastDecodedAtUtc = DateTime.UtcNow,
+                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                                LastError = null
+                            };
+                        }
+                        else if (status == ProgressiveDecodeStatus.Failed)
+                        {
+                            _snapshot = _snapshot with
+                            {
+                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                                LastError = progressive.LastError
+                            };
+                            progressive.Reset();
+                            _lastAttemptSamples = 0;
+                        }
+                        else
+                        {
+                            _snapshot = _snapshot with
+                            {
+                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                                LastError = null
+                            };
+                        }
                     }
                 }
             }
@@ -191,6 +238,8 @@ public sealed class RealtimeDecodeSession : IDisposable
             {
                 lock (_sync)
                 {
+                    _progressive.Reset();
+                    _lastAttemptSamples = 0;
                     _snapshot = _snapshot with
                     {
                         DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
