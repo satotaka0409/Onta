@@ -69,12 +69,15 @@ public sealed class FileWavCodec
     private const int FileHeaderBytes = 880;
     private const int FileNameBytes = 768;
     private const int BlockHeaderBytes = 124;
-    private const int HeaderPilotBytes = 8;
+    private const int HeaderPilotBytes = 6;
+    private const int HeaderVersionBytes = 2;
+    private const int HeaderPrefixBytes = HeaderPilotBytes + HeaderVersionBytes;
     private const int CrcBytes = 4;
     /// <summary>FH/BH の CRC 対象はパイロット直後から CRC 直前まで。</summary>
-    private const int HeaderCrcDataOffset = 8;
-    private static readonly byte[] FileHeaderPilot = [0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5, 0x96, 0x87];
-    private static readonly byte[] BlockHeaderPilot = [0x0F, 0x1E, 0x2D, 0x3C, 0x4B, 0x5A, 0x69, 0x78];
+    private const int HeaderCrcDataOffset = HeaderPrefixBytes;
+    private static readonly byte[] HeaderVersion = [0x00, 0x01];
+    private static readonly byte[] FileHeaderPilot = [0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5];
+    private static readonly byte[] BlockHeaderPilot = [0x0F, 0x1E, 0x2D, 0x3C, 0x4B, 0x5A];
     private const int DataBlockBytes = 4096;
     /// <summary>データ部は最大 4096 バイト + CRC-32。</summary>
     private const int DataBlockWithCrcBytes = DataBlockBytes + CrcBytes;
@@ -158,10 +161,21 @@ public sealed class FileWavCodec
         var leftPcm = new List<Complex>(1 << 20);
         var rightPcm = new List<Complex>(1 << 20);
 
+        void EnsureStereoParity(string stage)
+        {
+            if (_profile.ChannelMode == ChannelMode.Stereo && leftPcm.Count != rightPcm.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Stereo stream length mismatch after {stage}: L={leftPcm.Count}, R={rightPcm.Count}");
+            }
+        }
+
         AppendSilence(leftPcm, rightPcm, _profile.LeadingSilenceSamples, stereo: _profile.ChannelMode == ChannelMode.Stereo);
+        EnsureStereoParity("leading silence");
         if (_profile.UnmodulatedPreambleSamples > 0)
         {
-            AppendPair(leftPcm, rightPcm, headerOfdm.GenerateUnmodulated(_profile.UnmodulatedPreambleSamples));
+            AppendHeaderPair(leftPcm, rightPcm, headerOfdm.GenerateUnmodulated(_profile.UnmodulatedPreambleSamples));
+            EnsureStereoParity("global preamble");
         }
 
         // data_struct.mdc: 各パス先頭に FH、(BH+BD)×N（パス内は4ブロックごとに FH）、最後に FH。
@@ -169,6 +183,7 @@ public sealed class FileWavCodec
         for (var pass = 0; pass < _profile.BlockInterleaveFactor; pass++)
         {
             AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
+            EnsureStereoParity("file header");
             onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
             var order = GetBlockEmissionOrder(blocks.Count, pass);
             for (var local = 0; local < order.Length; local++)
@@ -176,6 +191,7 @@ public sealed class FileWavCodec
                 if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                 {
                     AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
+                    EnsureStereoParity("file header repeat");
                     onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
                 }
 
@@ -189,6 +205,7 @@ public sealed class FileWavCodec
                     blockHeaders[blockIndex],
                     _profile.BlockHeaderUnmodulatedSamples,
                     InterleaveInitSeedBlock);
+                EnsureStereoParity("block header");
                 onFrameTransmitted?.Invoke(TransmissionFrameKind.Bh);
                 AppendModulatedDataBlock(
                     leftPcm,
@@ -197,14 +214,17 @@ public sealed class FileWavCodec
                     blocks[blockIndex].Payload,
                     InterleaveInitSeedBlock,
                     dataPunctureRate);
+                EnsureStereoParity("block data");
                 onFrameTransmitted?.Invoke(TransmissionFrameKind.Bd);
             }
         }
 
         AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
+        EnsureStereoParity("trailing file header");
         onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
 
         AppendSilence(leftPcm, rightPcm, _profile.TrailingSilenceSamples, stereo: _profile.ChannelMode == ChannelMode.Stereo);
+        EnsureStereoParity("trailing silence");
         return (leftPcm.ToArray(), rightPcm.ToArray());
     }
 
@@ -614,7 +634,7 @@ public sealed class FileWavCodec
     /// <summary>
     /// ファイルヘッダー（1 秒）／ブロックヘッダー（0.3 秒）の無変調区間を付けてから OFDM 変調します。
     /// </summary>
-    private static void AppendHeaderPackets(
+    private void AppendHeaderPackets(
         List<Complex> leftPcm,
         List<Complex> rightPcm,
         OfdmGenerator ofdm,
@@ -623,9 +643,11 @@ public sealed class FileWavCodec
         int unmodulatedSamples,
         int interleaveInitSeed)
     {
+        _ = rightHeaderBytes;
         if (unmodulatedSamples > 0)
         {
-            AppendPair(leftPcm, rightPcm, ofdm.GenerateUnmodulated(unmodulatedSamples));
+            var unmodulated = ofdm.GenerateUnmodulated(unmodulatedSamples);
+            AppendHeaderPair(leftPcm, rightPcm, unmodulated);
         }
 
         var leftBits = BytesToBitsMsb(
@@ -633,17 +655,19 @@ public sealed class FileWavCodec
                 ApplyReedSolomon(leftHeaderBytes),
                 terminate: true,
                 punctureRate: HeaderPunctureRate));
-        if (ofdm.ChannelMode == ChannelMode.Mono)
-        {
-            // モノラル: L のみ。R に同一データを載せない。
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(leftBits, leftPcm.Count, interleaveInitSeed));
-            return;
-        }
 
-        // ステレオ: L/R で別ビット列（ヘッダー本体を分割）し SC 合計 2 倍にする。
-        _ = rightHeaderBytes;
-        SplitBitsForStereo(leftBits, out var splitLeft, out var splitRight);
-        AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(splitLeft, splitRight, leftPcm.Count, interleaveInitSeed));
+        var modulated = ofdm.ModulateBits(leftBits, leftPcm.Count, interleaveInitSeed);
+        AppendHeaderPair(leftPcm, rightPcm, modulated);
+    }
+
+    private void AppendHeaderPair(List<Complex> leftPcm, List<Complex> rightPcm, (Complex[] Left, Complex[] Right) pair)
+    {
+        AppendPair(leftPcm, rightPcm, pair);
+        if (_profile.ChannelMode == ChannelMode.Stereo && pair.Right.Length == 0)
+        {
+            // 生成器がモノラル出力を返した場合のみ、ステレオ整合のため R を補う。
+            rightPcm.AddRange(pair.Left);
+        }
     }
 
     private int HeaderUnmodulatedSamplesFor(int packetLength) =>
@@ -665,7 +689,7 @@ public sealed class FileWavCodec
     }
 
     /// <summary>
-    /// CP/パイロットスコアで候補を絞り、ヘッダー先頭 8 バイトのパイロット一致で確定します。
+    /// CP/パイロットスコアで候補を絞り、ヘッダー先頭（パイロット6バイト+バージョン2バイト）一致で確定します。
     /// まず期待位置の厳密復調を試し、失敗時のみ近傍探索します。
     /// ステレオ時は L/R 分割ビットを結合してから復号します。
     /// </summary>
@@ -683,9 +707,8 @@ public sealed class FileWavCodec
         var rsByteLength = GetReedSolomonEncodedLength(payloadLength);
         var convByteLength = GetConvolutionalEncodedLength(rsByteLength, HeaderPunctureRate);
         var bitCount = convByteLength * 8;
-        var stereoSplit = ofdm.ChannelMode == ChannelMode.Stereo
-            && rightSamples.Length == leftSamples.Length
-            && rightSamples.Length > 0;
+        // ヘッダー復号は常に L 側のみ参照する。
+        var stereoSplit = false;
         var channelBitCount = stereoSplit ? (bitCount + 1) / 2 : bitCount;
         var sampleCount = ofdm.SampleCountForBitCount(channelBitCount);
         var symbolLength = ofdm.SamplesPerOfdmSymbol;
@@ -836,7 +859,7 @@ public sealed class FileWavCodec
             }
 
             payload = DecodeHeaderFromSoftLlrs(llrs, payloadLength, rsByteLength);
-            if (expectedPilot is not null && !HeaderPilotMatches(payload, expectedPilot))
+            if (expectedPilot is not null && !HeaderPrefixMatches(payload, expectedPilot))
             {
                 return false;
             }
@@ -927,9 +950,14 @@ public sealed class FileWavCodec
         return unique;
     }
 
-    private static bool HeaderPilotMatches(byte[] header, byte[] expectedPilot)
+    private static bool HeaderPrefixMatches(byte[] header, byte[] expectedPilot)
     {
-        if (header.Length < expectedPilot.Length)
+        if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)
+        {
+            return false;
+        }
+
+        if (header.Length < HeaderPrefixBytes)
         {
             return false;
         }
@@ -937,6 +965,14 @@ public sealed class FileWavCodec
         for (var i = 0; i < expectedPilot.Length; i++)
         {
             if (header[i] != expectedPilot[i])
+            {
+                return false;
+            }
+        }
+
+        for (var i = 0; i < HeaderVersionBytes; i++)
+        {
+            if (header[HeaderPilotBytes + i] != HeaderVersion[i])
             {
                 return false;
             }
@@ -1624,11 +1660,12 @@ public sealed class FileWavCodec
 
         var header = new byte[FileHeaderBytes];
         Buffer.BlockCopy(FileHeaderPilot, 0, header, 0, HeaderPilotBytes);
+        Buffer.BlockCopy(HeaderVersion, 0, header, HeaderPilotBytes, HeaderVersionBytes);
 
         var nameBytes = Encoding.UTF8.GetBytes(fileInfo.Name);
         var copyLen = Math.Min(nameBytes.Length, FileNameBytes);
-        Buffer.BlockCopy(nameBytes, 0, header, HeaderPilotBytes, copyLen);
-        Buffer.BlockCopy(fileHash, 0, header, HeaderPilotBytes + FileNameBytes, 64);
+        Buffer.BlockCopy(nameBytes, 0, header, HeaderPrefixBytes, copyLen);
+        Buffer.BlockCopy(fileHash, 0, header, HeaderPrefixBytes + FileNameBytes, 64);
 
         WriteFileAttributes(header.AsSpan(840, 20), fileInfo);
         BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(860, 8), fileSize);
@@ -1695,6 +1732,7 @@ public sealed class FileWavCodec
 
         var header = new byte[BlockHeaderBytes];
         Buffer.BlockCopy(BlockHeaderPilot, 0, header, 0, HeaderPilotBytes);
+        Buffer.BlockCopy(HeaderVersion, 0, header, HeaderPilotBytes, HeaderVersionBytes);
         header[8] = subcarriers;
         header[9] = modulationMode;
         header[10] = channelMode;
@@ -1724,7 +1762,12 @@ public sealed class FileWavCodec
 
     private static void EnsureHeaderPilot(byte[] header, byte[] expectedPilot, string headerName)
     {
-        if (header.Length < expectedPilot.Length)
+        if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)
+        {
+            throw new InvalidDataException($"Invalid {headerName}: pilot/version definition mismatch.");
+        }
+
+        if (header.Length < HeaderPrefixBytes)
         {
             throw new InvalidDataException($"Invalid {headerName}: too short for pilot.");
         }
@@ -1734,6 +1777,14 @@ public sealed class FileWavCodec
             if (header[i] != expectedPilot[i])
             {
                 throw new InvalidDataException($"Invalid {headerName} pilot at byte {i}.");
+            }
+        }
+
+        for (var i = 0; i < HeaderVersionBytes; i++)
+        {
+            if (header[HeaderPilotBytes + i] != HeaderVersion[i])
+            {
+                throw new InvalidDataException($"Invalid {headerName} version at byte {HeaderPilotBytes + i}.");
             }
         }
     }
