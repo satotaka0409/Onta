@@ -34,7 +34,7 @@ public static class ConvolutionalCode
     private const int LargeMetric = 1_000_000_000;
     private static readonly bool[] PuncturePatternRate1_2 = [true, true];
     private static readonly bool[] PuncturePatternRate2_3 = [true, true, true, false];
-    private static readonly bool[] PuncturePatternRate3_4 = [true, true, true, false, false, true, true, true];
+    private static readonly bool[] PuncturePatternRate3_4 = [true, true, true, false, false, true];
 
     /// <summary>
     /// 復号時の統計情報を表します。
