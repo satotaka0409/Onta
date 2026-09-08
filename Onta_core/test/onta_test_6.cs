@@ -48,7 +48,7 @@ public sealed class OntaTest6
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
 
-        var headerOfdm = (OfdmGenerator?)method!.Invoke(codec, null);
+        var headerOfdm = (OfdmGenerator?)method!.Invoke(codec, [36]);
         Assert.NotNull(headerOfdm);
         Assert.Equal(ChannelMode.Mono, headerOfdm!.ChannelMode);
     }

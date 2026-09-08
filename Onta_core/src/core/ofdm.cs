@@ -2996,7 +2996,8 @@ public sealed class OfdmGenerator
         long logicalSampleOffset,
         int searchRadius = 16,
         double noiseVariance = 0.05,
-        int interleaveInitSeed = 0)
+        int interleaveInitSeed = 0,
+        Action<Complex>? onEqualizedDataSymbol = null)
     {
         return DemodulateSoftLlrsFromStreamCore(
             samples,
@@ -3009,7 +3010,8 @@ public sealed class OfdmGenerator
             searchRadius,
             noiseVariance,
             estimateNoiseFromPilots: true,
-            interleaveInitSeed);
+            interleaveInitSeed,
+            onEqualizedDataSymbol);
     }
 
     /// <summary>
@@ -3042,7 +3044,8 @@ public sealed class OfdmGenerator
                 searchRadius,
                 noiseVariance,
                 estimateNoiseFromPilots,
-                interleaveInitSeed);
+                interleaveInitSeed,
+                onEqualizedDataSymbol: null);
         }
 
         if (leftSamples.Length != rightSamples.Length)
@@ -3061,7 +3064,8 @@ public sealed class OfdmGenerator
             searchRadius,
             noiseVariance,
             estimateNoiseFromPilots,
-            interleaveInitSeed);
+            interleaveInitSeed,
+            onEqualizedDataSymbol: null);
     }
 
     private double[] DemodulateSoftLlrsFromStreamCore(
@@ -3075,7 +3079,8 @@ public sealed class OfdmGenerator
         int searchRadius,
         double noiseVariance,
         bool estimateNoiseFromPilots,
-        int interleaveInitSeed)
+        int interleaveInitSeed,
+        Action<Complex>? onEqualizedDataSymbol)
     {
         if (bitCount < 0)
         {
@@ -3182,7 +3187,8 @@ public sealed class OfdmGenerator
                 llrs,
                 effectiveVariance,
                 addToExisting: false,
-                interleaveInitSeed);
+                interleaveInitSeed,
+                onEqualizedDataSymbol);
 
             if (secondarySamples is not null)
             {
@@ -3196,7 +3202,8 @@ public sealed class OfdmGenerator
                     llrs,
                     effectiveVariance,
                     addToExisting: true,
-                    interleaveInitSeed);
+                    interleaveInitSeed,
+                    onEqualizedDataSymbol);
             }
 
             position = start + symbolLength;
@@ -3238,7 +3245,8 @@ public sealed class OfdmGenerator
             llrs,
             noiseVariance,
             addToExisting,
-            interleaveInitSeed);
+            interleaveInitSeed,
+            onEqualizedDataSymbol: null);
     }
 
     private void EmitSymbolSoftLlrsFromPrepared(
@@ -3250,7 +3258,8 @@ public sealed class OfdmGenerator
         double[] llrs,
         double noiseVariance,
         bool addToExisting,
-        int interleaveInitSeed)
+        int interleaveInitSeed,
+        Action<Complex>? onEqualizedDataSymbol)
     {
         var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
         var dataModulationByBin = useRightChannel
@@ -3264,11 +3273,14 @@ public sealed class OfdmGenerator
                 break;
             }
 
+            var equalized = freqBins[dataBin] * equalizers[dataBin];
+            onEqualizedDataSymbol?.Invoke(equalized);
+
             if (addToExisting)
             {
                 var tmpIndex = 0;
                 EmitSymbolSoftLlrs(
-                    freqBins[dataBin] * equalizers[dataBin],
+                    equalized,
                     dataModulationByBin[dataBin],
                     ref tmpIndex,
                     softLlrScratch,
@@ -3283,7 +3295,7 @@ public sealed class OfdmGenerator
             else
             {
                 EmitSymbolSoftLlrs(
-                    freqBins[dataBin] * equalizers[dataBin],
+                    equalized,
                     dataModulationByBin[dataBin],
                     ref bitIndex,
                     llrs,

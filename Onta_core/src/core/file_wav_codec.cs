@@ -30,7 +30,7 @@ public sealed record FileWavCodecProfile(
     int RandomSeed = 20260904,
     int StereoFrequencyShiftBins = 1,
     ChannelMode ChannelMode = ChannelMode.Stereo,
-    /// <summary>ブロック時系列インターリーブ倍率（1 / 2 / 3）。data_struct.mdc。</summary>
+    /// <summary>ブロック時系列インターリーブ倍率（1 / 2）。data_struct.mdc。</summary>
     int BlockInterleaveFactor = 1)
 {
     public byte ModulationModeByte => (byte)ModulationScheme;
@@ -88,6 +88,9 @@ public sealed class ProgressiveDecodeState
     public int BlockCount { get; internal set; }
     public long FileSize { get; internal set; }
 
+    /// <summary>画面問い合わせ用の実行状況ボードです。</summary>
+    public CoreExecutionStatusBoard StatusBoard { get; } = new();
+
     internal int SourceLength;
     internal int Pass;
     internal int Local;
@@ -97,6 +100,8 @@ public sealed class ProgressiveDecodeState
     internal bool[]? SlotAccepted;
     internal (double Amount, double WowPhase, double FlutterPhase)? TrackedWow;
     internal bool HasTrackedWow;
+    internal CoreFrameKind CurrentFrame = CoreFrameKind.Fh;
+    internal int CurrentBlockIndex = -1;
 
     public void Reset()
     {
@@ -116,7 +121,13 @@ public sealed class ProgressiveDecodeState
         SlotAccepted = null;
         TrackedWow = null;
         HasTrackedWow = false;
+        CurrentFrame = CoreFrameKind.Fh;
+        CurrentBlockIndex = -1;
+        StatusBoard.Reset();
     }
+
+    /// <summary>画面からの進捗問い合わせです。</summary>
+    public CoreExecutionStatus QueryExecutionStatus() => StatusBoard.Query();
 }
 
 /// <summary>
@@ -152,7 +163,7 @@ public sealed class FileWavCodec
     private const int DataBlockWithCrcBytes = DataBlockBytes + CrcBytes;
     private const string DataTraceEnvVar = "ONTA_TRACE_DATA_ERRORS";
     /// <summary>ファイルヘッダーをデータ部の何ブロックごとに再送出するか。</summary>
-    private const int FileHeaderRepeatIntervalBlocks = 4;
+    private const int FileHeaderRepeatIntervalBlocks = 16;
     private const int InterleaveInitSeedFileHeader = unchecked((int)0x13579BDF);
     private const int InterleaveInitSeedBlock = unchecked((int)0x2468ACE1);
     private static readonly ConvolutionalCode.PunctureRate HeaderPunctureRate = ConvolutionalCode.PunctureRate.Rate1_2;
@@ -162,12 +173,12 @@ public sealed class FileWavCodec
     public FileWavCodec(FileWavCodecProfile profile)
     {
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
-        if (_profile.BlockInterleaveFactor is not (1 or 2 or 3))
+        if (_profile.BlockInterleaveFactor is not (1 or 2))
         {
             throw new ArgumentOutOfRangeException(
                 nameof(profile),
                 _profile.BlockInterleaveFactor,
-                "BlockInterleaveFactor must be 1, 2, or 3.");
+                "BlockInterleaveFactor must be 1 or 2.");
         }
     }
 
@@ -208,25 +219,13 @@ public sealed class FileWavCodec
     {
         var fileHash = Hash.ComputeSha512(fileBytes);
         var blocks = SplitDataBlocks(fileBytes);
-        var blockHeaders = new byte[blocks.Count][];
-
+        var blockHashes = new byte[blocks.Count][];
         for (var i = 0; i < blocks.Count; i++)
         {
-            // ブロックヘッダーの SC 数はチャンネルあたりの本数（ステレオ時も 9/18/27/36）。
-            blockHeaders[i] = BuildBlockHeader(
-                subcarriers: (byte)_profile.ActiveSubcarriers,
-                modulationMode: _profile.ModulationModeByte,
-                channelMode: _profile.ChannelModeByte,
-                blockIndex: i,
-                blockSize: blocks[i].PayloadLength,
-                blockHash: Hash.ComputeSha256(blocks[i].Payload),
-                fileHash: fileHash);
+            blockHashes[i] = Hash.ComputeSha256(blocks[i].Payload);
         }
 
         var fileHeader = BuildFileHeader(fileInfo, fileBytes.Length, blocks.Count, fileHash);
-        var headerOfdm = CreateHeaderOfdm();
-        var dataOfdm = CreateDataOfdm();
-        var dataPunctureRate = ResolveDataPunctureRate(_profile.ModulationScheme);
         var leftPcm = new List<Complex>(1 << 20);
         var rightPcm = new List<Complex>(1 << 20);
 
@@ -243,17 +242,30 @@ public sealed class FileWavCodec
         EnsureStereoParity("leading silence");
         if (_profile.UnmodulatedPreambleSamples > 0)
         {
-            AppendHeaderPair(leftPcm, rightPcm, headerOfdm.GenerateUnmodulated(_profile.UnmodulatedPreambleSamples));
+            // 先頭無変調はベース SC 族のヘッダー配置を使う。
+            var preambleOfdm = CreateHeaderOfdm(_profile.ActiveSubcarriers);
+            AppendHeaderPair(leftPcm, rightPcm, preambleOfdm.GenerateUnmodulated(_profile.UnmodulatedPreambleSamples));
             EnsureStereoParity("global preamble");
         }
 
-        // data_struct.mdc: 各パス先頭に FH、(BH+BD)×N（パス内は4ブロックごとに FH）、最後に FH。
-        // ×2 の第2パスは奇偶入れ替え、×3 の第3パスは第1パスと同順。
+        // data_struct.mdc: 先頭 FH → (BH+BD)×N（16ブロックごとに FH）×パス → 末尾 FH。
+        // ×2 の第2パスは奇偶入れ替え＋SC/変調ダウングレード。パス先頭の追加 FH は出さない。
+        var openingHeaderOfdm = CreateHeaderOfdm(_profile.ActiveSubcarriers);
+        AppendFileHeaderPacket(leftPcm, rightPcm, openingHeaderOfdm, fileHeader);
+        EnsureStereoParity("file header");
+        onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
+
+        OfdmGenerator? trailingHeaderOfdm = openingHeaderOfdm;
         for (var pass = 0; pass < _profile.BlockInterleaveFactor; pass++)
         {
-            AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
-            EnsureStereoParity("file header");
-            onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
+            var (passSc, passMod) = ResolveInterleavePassModulation(
+                pass,
+                _profile.ActiveSubcarriers,
+                _profile.ModulationScheme);
+            var headerOfdm = CreateHeaderOfdm(passSc);
+            var dataOfdm = CreateDataOfdm(passSc, passMod);
+            var dataPunctureRate = ResolveDataPunctureRate(passMod);
+            trailingHeaderOfdm = headerOfdm;
             var order = GetBlockEmissionOrder(blocks.Count, pass);
             for (var local = 0; local < order.Length; local++)
             {
@@ -265,13 +277,20 @@ public sealed class FileWavCodec
                 }
 
                 var blockIndex = order[local];
-                // BH は FH と同じ変調方式（BPSK固定）で送出する。
+                var blockHeader = BuildBlockHeader(
+                    subcarriers: (byte)passSc,
+                    modulationMode: (byte)passMod,
+                    channelMode: _profile.ChannelModeByte,
+                    blockIndex: blockIndex,
+                    blockSize: blocks[blockIndex].PayloadLength,
+                    blockHash: blockHashes[blockIndex],
+                    fileHash: fileHash);
                 AppendHeaderPackets(
                     leftPcm,
                     rightPcm,
                     headerOfdm,
-                    blockHeaders[blockIndex],
-                    blockHeaders[blockIndex],
+                    blockHeader,
+                    blockHeader,
                     _profile.BlockHeaderUnmodulatedSamples,
                     InterleaveInitSeedBlock);
                 EnsureStereoParity("block header");
@@ -288,7 +307,7 @@ public sealed class FileWavCodec
             }
         }
 
-        AppendFileHeaderPacket(leftPcm, rightPcm, headerOfdm, fileHeader);
+        AppendFileHeaderPacket(leftPcm, rightPcm, trailingHeaderOfdm!, fileHeader);
         EnsureStereoParity("trailing file header");
         onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
 
@@ -372,23 +391,40 @@ public sealed class FileWavCodec
 
         state.SourceLength = leftSamples.Length;
 
-        var headerOfdm = CreateHeaderOfdm();
-        var dataOfdmCache = new Dictionary<ModulationScheme, OfdmGenerator>();
-
-        OfdmGenerator ResolveDataOfdmFor(ModulationScheme modulationScheme)
+        var headerOfdm = CreateHeaderOfdm(_profile.ActiveSubcarriers);
+        var dataOfdmCache = new Dictionary<(int Sc, ModulationScheme Mod), OfdmGenerator>();
+        var headerOfdmCache = new Dictionary<int, OfdmGenerator>
         {
-            if (dataOfdmCache.TryGetValue(modulationScheme, out var cached))
+            [_profile.ActiveSubcarriers] = headerOfdm
+        };
+
+        OfdmGenerator ResolveHeaderOfdmFor(int dataSubcarriers)
+        {
+            if (headerOfdmCache.TryGetValue(dataSubcarriers, out var cached))
             {
                 return cached;
             }
 
-            var created = CreateDataOfdm(modulationScheme);
-            dataOfdmCache[modulationScheme] = created;
+            var created = CreateHeaderOfdm(dataSubcarriers);
+            headerOfdmCache[dataSubcarriers] = created;
+            return created;
+        }
+
+        OfdmGenerator ResolveDataOfdmFor(int activeSubcarriers, ModulationScheme modulationScheme)
+        {
+            var key = (activeSubcarriers, modulationScheme);
+            if (dataOfdmCache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            var created = CreateDataOfdm(activeSubcarriers, modulationScheme);
+            dataOfdmCache[key] = created;
             return created;
         }
 
         var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, _profile.FileHeaderUnmodulatedSamples);
-        var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
+        var bhPacketSamplesBase = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
 
         // 作業用バッファ: wow 補正が新配列を返す／適応補正が in-place 書き込みする。
         var adaptiveWow = wowParams is null && correctWow && !state.HasTrackedWow;
@@ -451,6 +487,50 @@ public sealed class FileWavCodec
             state.LogicalOffset = logicalOffset;
             state.TrackedWow = hasTrackedWow ? trackedWow : state.TrackedWow;
             state.HasTrackedWow = hasTrackedWow;
+        }
+
+        void PublishStatus(CoreFrameKind frame, int blockIndex, double? errorRatePercent = null)
+        {
+            state.CurrentFrame = frame;
+            state.CurrentBlockIndex = blockIndex;
+            var blockCount = Math.Max(0, state.BlockCount);
+            var totalWork = Math.Max(1, Math.Max(1, blockCount) * Math.Max(1, _profile.BlockInterleaveFactor));
+            var doneWork = state.HeaderReady
+                ? (state.Pass * Math.Max(1, blockCount)) + state.Local
+                : 0;
+            var percent = state.Completed
+                ? 100.0
+                : !state.HeaderReady
+                    ? 2.0
+                    : Math.Clamp(5.0 + (90.0 * doneWork / totalWork), 0.0, 99.0);
+
+            state.StatusBoard.SetProgress(new CoreProgressInfo(
+                CurrentFrame: frame,
+                CurrentBlockIndex: blockIndex,
+                PassIndex: state.Pass,
+                AcceptedBlockCount: state.AcceptedBlockCount,
+                TotalBlockCount: blockCount,
+                ProgressPercent: percent));
+
+            if (errorRatePercent is { } err)
+            {
+                state.StatusBoard.SetErrorRate(err, frame);
+            }
+
+            if (hasTrackedWow)
+            {
+                // パイロット推定量を表示用 % に写像（中央0のバー向けに小さい値でも見えるようスケール）。
+                var wowDisplay = trackedWow.Amount * 200.0;
+                state.StatusBoard.SetWowFlutterPercent(wowDisplay, wowDisplay);
+            }
+
+            if (state.HeaderReady)
+            {
+                state.StatusBoard.SetFileInfo(
+                    state.StatusBoard.FileName,
+                    $"{state.FileSize:N0} bytes",
+                    blockCount.ToString());
+            }
         }
 
         ProgressiveDecodeStatus NeedMoreOrFail(string? detail = null)
@@ -646,6 +726,7 @@ public sealed class FileWavCodec
                 if (fileSize < 0 || blockCount < 0)
                 {
                     state.LastError = "Invalid file header size/block count.";
+                    state.StatusBoard.Complete(faulted: true, state.LastError);
                     return ProgressiveDecodeStatus.Failed;
                 }
 
@@ -657,6 +738,7 @@ public sealed class FileWavCodec
                 state.Pass = 0;
                 state.Local = 0;
                 PersistCursor();
+                PublishStatus(CoreFrameKind.Fh, blockIndex: -1, errorRatePercent: 0.0);
             }
 
             var outputSlots = state.OutputSlots ?? throw new InvalidOperationException("Output slots missing.");
@@ -670,43 +752,25 @@ public sealed class FileWavCodec
 
             for (var pass = state.Pass; pass < _profile.BlockInterleaveFactor; pass++)
             {
-                if (pass > 0 && state.Local == 0)
-                {
-                    if (leftSamples.Length - warpedCursor < fhPacketSamples + headerOfdm.SamplesPerOfdmSymbol)
-                    {
-                        state.Pass = pass;
-                        state.Local = 0;
-                        return NeedMoreOrFail();
-                    }
-
-                    SkipHeaderUnmodulatedPreamble(
-                        leftSamples,
-                        ref warpedCursor,
-                        ref logicalOffset,
-                        _profile.FileHeaderUnmodulatedSamples);
-                    ApplyAdaptiveWowCorrectionPair();
-                    var passFh = DecodeHeaderPacketSynced(
-                        leftSamples,
-                        rightSamples,
-                        ref warpedCursor,
-                        ref logicalOffset,
-                        headerOfdm,
-                        FileHeaderBytes,
-                        FileHeaderPilot,
-                        fineRadius,
-                        InterleaveInitSeedFileHeader);
-                    EnsureHeaderCrc(passFh, "pass file header");
-                }
+                var (passSc, _) = ResolveInterleavePassModulation(
+                    pass,
+                    _profile.ActiveSubcarriers,
+                    _profile.ModulationScheme);
+                var passHeaderOfdm = ResolveHeaderOfdmFor(passSc);
+                var passFhPacketSamples = HeaderPacketSamples(
+                    passHeaderOfdm, FileHeaderBytes, _profile.FileHeaderUnmodulatedSamples);
+                var passBhPacketSamples = HeaderPacketSamples(
+                    passHeaderOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
 
                 var order = GetBlockEmissionOrder(blockCountReady, pass);
                 var localStart = pass == state.Pass ? state.Local : 0;
                 for (var local = localStart; local < order.Length; local++)
                 {
                     // BH 分だけ先に足りるか見る。データ長は BH 読取後に確定する。
-                    var minForBlock = bhPacketSamples + headerOfdm.SamplesPerOfdmSymbol;
+                    var minForBlock = passBhPacketSamples + passHeaderOfdm.SamplesPerOfdmSymbol;
                     if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                     {
-                        minForBlock += fhPacketSamples;
+                        minForBlock += passFhPacketSamples;
                     }
 
                     if (leftSamples.Length - warpedCursor < minForBlock)
@@ -729,7 +793,7 @@ public sealed class FileWavCodec
                             rightSamples,
                             ref warpedCursor,
                             ref logicalOffset,
-                            headerOfdm,
+                            passHeaderOfdm,
                             FileHeaderBytes,
                             FileHeaderPilot,
                             fineRadius,
@@ -752,30 +816,35 @@ public sealed class FileWavCodec
                         rightSamples,
                         ref warpedCursor,
                         ref logicalOffset,
-                        headerOfdm,
+                        passHeaderOfdm,
                         BlockHeaderBytes,
                         BlockHeaderPilot,
                         fineRadius,
                         InterleaveInitSeedBlock);
                     EnsureHeaderCrc(blockHeader, "block header");
+                    PublishStatus(CoreFrameKind.Bh, expectedBlockIndex, errorRatePercent: 0.0);
                     var blockIndex = BinaryPrimitives.ReadInt64BigEndian(blockHeader.AsSpan(12, 8));
                     var blockSize = BinaryPrimitives.ReadInt32BigEndian(blockHeader.AsSpan(20, 4));
                     if (blockIndex != expectedBlockIndex)
                     {
                         state.LastError =
                             $"Unexpected block index {blockIndex}, expected {expectedBlockIndex} (pass {pass}, local {local}).";
+                        state.StatusBoard.Complete(faulted: true, state.LastError);
                         return ProgressiveDecodeStatus.Failed;
                     }
 
                     if (blockSize < 0 || blockSize > DataBlockBytes)
                     {
                         state.LastError = $"Invalid block size {blockSize}.";
+                        state.StatusBoard.Complete(faulted: true, state.LastError);
                         return ProgressiveDecodeStatus.Failed;
                     }
 
-                    var blockModulation = ReadBlockDataModulationScheme(blockHeader);
-                    var blockDataOfdm = ResolveDataOfdmFor(blockModulation);
+                    // データ部の SC/変調は BH 記載を正とする（受信プロファイルの変調設定は使わない）。
+                    var (blockSc, blockModulation) = ReadBlockDataModulation(blockHeader);
+                    var blockDataOfdm = ResolveDataOfdmFor(blockSc, blockModulation);
                     var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
+                    PublishStatus(CoreFrameKind.Bd, expectedBlockIndex);
                     var dataSamplesNeeded = DataPacketSamples(
                         blockDataOfdm,
                         blockSize,
@@ -783,8 +852,8 @@ public sealed class FileWavCodec
                         blockModulation);
                     if (leftSamples.Length - warpedCursor < dataSamplesNeeded)
                     {
-                        warpedCursor = Math.Max(0, warpedCursor - bhPacketSamples);
-                        logicalOffset = Math.Max(0, logicalOffset - bhPacketSamples);
+                        warpedCursor = Math.Max(0, warpedCursor - passBhPacketSamples);
+                        logicalOffset = Math.Max(0, logicalOffset - passBhPacketSamples);
                         state.Pass = pass;
                         state.Local = local;
                         return NeedMoreOrFail();
@@ -803,6 +872,7 @@ public sealed class FileWavCodec
                         InterleaveInitSeedBlock,
                         blockDataPunctureRate,
                         hasTrackedWow,
+                        state.StatusBoard,
                         out var diag);
                     if (traceDataErrors)
                     {
@@ -834,6 +904,12 @@ public sealed class FileWavCodec
                             state.AcceptedBlockCount++;
                         }
                     }
+
+                    // ハッシュ一致なら 0%、不一致は高エラーとして画面へ返す。
+                    PublishStatus(
+                        CoreFrameKind.Bd,
+                        expectedBlockIndex,
+                        errorRatePercent: acceptable ? 0.0 : 100.0);
                 }
 
                 state.Pass = pass + 1;
@@ -851,12 +927,17 @@ public sealed class FileWavCodec
                         ref logicalOffset,
                         _profile.FileHeaderUnmodulatedSamples);
                     ApplyAdaptiveWowCorrectionPair();
+                    var trailingPass = Math.Max(0, _profile.BlockInterleaveFactor - 1);
+                    var (trailingSc, _) = ResolveInterleavePassModulation(
+                        trailingPass,
+                        _profile.ActiveSubcarriers,
+                        _profile.ModulationScheme);
                     var endFh = DecodeHeaderPacketSynced(
                         leftSamples,
                         rightSamples,
                         ref warpedCursor,
                         ref logicalOffset,
-                        headerOfdm,
+                        ResolveHeaderOfdmFor(trailingSc),
                         FileHeaderBytes,
                         FileHeaderPilot,
                         fineRadius,
@@ -900,6 +981,8 @@ public sealed class FileWavCodec
             state.CompletedFile = output;
             state.Completed = true;
             PersistCursor();
+            PublishStatus(CoreFrameKind.Fh, blockIndex: -1, errorRatePercent: 0.0);
+            state.StatusBoard.Complete(faulted: false);
             return ProgressiveDecodeStatus.Completed;
         }
         catch (InvalidDataException ex)
@@ -908,7 +991,7 @@ public sealed class FileWavCodec
             if (allowIncomplete)
             {
                 var remaining = leftSamples.Length - warpedCursor;
-                var minContinue = Math.Min(fhPacketSamples, bhPacketSamples) + headerOfdm.SamplesPerOfdmSymbol;
+                var minContinue = Math.Min(fhPacketSamples, bhPacketSamplesBase) + headerOfdm.SamplesPerOfdmSymbol;
                 if (remaining < minContinue)
                 {
                     return NeedMoreOrFail();
@@ -927,13 +1010,13 @@ public sealed class FileWavCodec
         }
     }
 
-    private OfdmGenerator CreateHeaderOfdm()
+    private OfdmGenerator CreateHeaderOfdm(int dataSubcarriers)
     {
         // modulation.mdc: FH/BH は GROUP B（概念 10–18）9 SC + BPSK。
         // 周波数グリッドはデータ部 SC 族に合わせる（SC-9/18 族 or SC-27/36 族）。
         var groupB = OfdmConfig.ResolveGroupBLeftBins();
-        var grid = OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
-        var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
+        var grid = OfdmConfig.ResolveCarrierGrid(dataSubcarriers);
+        var fftSize = OfdmConfig.ResolveFftSize(dataSubcarriers, _profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
             activeSubcarriers: groupB.Length,
@@ -953,18 +1036,15 @@ public sealed class FileWavCodec
         return new OfdmGenerator(config);
     }
 
-    private OfdmGenerator CreateDataOfdm() => CreateDataOfdm(_profile.ModulationScheme);
-
-    private OfdmGenerator CreateDataOfdm(ModulationScheme modulationScheme)
+    private OfdmGenerator CreateDataOfdm(int activeSubcarriers, ModulationScheme modulationScheme)
     {
         // SC-9/18: 440Hz 起点・1.3Δf・FFT=128。SC-27/36: FFT=128（ステレオ×2）。
         // CP はデータ部 16 固定。
-        var grid = OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
-        var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
-        var scPerChannel = _profile.ActiveSubcarriers;
+        var grid = OfdmConfig.ResolveCarrierGrid(activeSubcarriers);
+        var fftSize = OfdmConfig.ResolveFftSize(activeSubcarriers, _profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
-            activeSubcarriers: scPerChannel,
+            activeSubcarriers: activeSubcarriers,
             cyclicPrefixLength: _profile.DataCyclicPrefixLength,
             ofdmSymbolCount: 1,
             modulationScheme: modulationScheme,
@@ -1436,6 +1516,40 @@ public sealed class FileWavCodec
         return order;
     }
 
+    /// <summary>
+    /// インターリーブパスごとのデータ部 SC / 変調を返します（data_struct.mdc）。
+    /// パス0は指定どおり。パス1以降は SC・変調を1段階下げます（ステレオ/モノラルは不変）。
+    /// </summary>
+    public static (int Subcarriers, ModulationScheme Modulation) ResolveInterleavePassModulation(
+        int passIndex,
+        int baseSubcarriers,
+        ModulationScheme baseModulation)
+    {
+        if (passIndex < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(passIndex));
+        }
+
+        if (passIndex == 0)
+        {
+            return (baseSubcarriers, baseModulation);
+        }
+
+        var sc = baseSubcarriers switch
+        {
+            36 or 27 => 18,
+            18 or 9 => 9,
+            _ => throw new ArgumentOutOfRangeException(nameof(baseSubcarriers), baseSubcarriers, "Unsupported subcarrier count.")
+        };
+        var mod = baseModulation switch
+        {
+            ModulationScheme.Qam64 or ModulationScheme.Qam16 => ModulationScheme.Qpsk,
+            ModulationScheme.Qpsk or ModulationScheme.Bpsk => ModulationScheme.Bpsk,
+            _ => throw new ArgumentOutOfRangeException(nameof(baseModulation), baseModulation, "Unsupported modulation scheme.")
+        };
+        return (sc, mod);
+    }
+
     private static void SplitBitsForStereo(bool[] bits, out bool[] leftBits, out bool[] rightBits)
     {
         var half = (bits.Length + 1) / 2;
@@ -1475,6 +1589,7 @@ public sealed class FileWavCodec
         int interleaveInitSeed,
         ConvolutionalCode.PunctureRate punctureRate,
         bool wowLocked,
+        CoreExecutionStatusBoard? statusBoard,
         out DataDecodeDiag diag)
     {
         var paddedLen = TurboPaddedLength(payloadLength + CrcBytes);
@@ -1574,7 +1689,8 @@ public sealed class FileWavCodec
                             logical,
                             radius,
                             noiseVariance: 0.05,
-                            interleaveInitSeed);
+                            interleaveInitSeed,
+                            statusBoard);
                         end = cursor;
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
                             qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true, punctureRate: punctureRate);
@@ -1721,7 +1837,8 @@ public sealed class FileWavCodec
                 logicalOffset,
                 Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
                 noiseVariance: 0.08,
-                interleaveInitSeed);
+                interleaveInitSeed,
+                statusBoard);
             warpedCursor = cursor;
             logicalOffset += sampleCount;
             var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
@@ -1823,8 +1940,13 @@ public sealed class FileWavCodec
         long logical,
         int searchRadius,
         double noiseVariance,
-        int interleaveInitSeed)
+        int interleaveInitSeed,
+        CoreExecutionStatusBoard? statusBoard = null)
     {
+        Action<Complex>? onIq = statusBoard is null
+            ? null
+            : symbol => statusBoard.PushIq(symbol);
+
         if (!stereoSplit)
         {
             return ofdm.DemodulateSoftLlrsFromStream(
@@ -1835,15 +1957,16 @@ public sealed class FileWavCodec
                 logical,
                 searchRadius,
                 noiseVariance,
-                interleaveInitSeed);
+                interleaveInitSeed,
+                onIq);
         }
 
         var leftCursor = cursor;
         var rightCursor = cursor;
         var leftLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, noiseVariance, interleaveInitSeed);
+            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, noiseVariance, interleaveInitSeed, onIq);
         var rightLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, noiseVariance, interleaveInitSeed);
+            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, noiseVariance, interleaveInitSeed, onIq);
         cursor = leftCursor;
         var joined = new double[totalBitCount];
         var half = (totalBitCount + 1) / 2;
@@ -2071,14 +2194,20 @@ public sealed class FileWavCodec
         };
     }
 
-    private static ModulationScheme ReadBlockDataModulationScheme(byte[] blockHeader)
+    private static (int Subcarriers, ModulationScheme Modulation) ReadBlockDataModulation(byte[] blockHeader)
     {
         if (blockHeader.Length <= 9)
         {
-            throw new InvalidDataException("Invalid block header: missing modulation mode.");
+            throw new InvalidDataException("Invalid block header: missing modulation fields.");
         }
 
-        return blockHeader[9] switch
+        var subcarriers = blockHeader[8];
+        if (subcarriers is not (9 or 18 or 27 or 36))
+        {
+            throw new InvalidDataException($"Invalid block header subcarrier count: {subcarriers}.");
+        }
+
+        var modulation = blockHeader[9] switch
         {
             1 => ModulationScheme.Bpsk,
             2 => ModulationScheme.Qpsk,
@@ -2086,6 +2215,7 @@ public sealed class FileWavCodec
             4 => ModulationScheme.Qam64,
             _ => throw new InvalidDataException($"Invalid block header modulation mode: {blockHeader[9]}.")
         };
+        return (subcarriers, modulation);
     }
 
     private static byte[] ApplyReedSolomon(byte[] payload)
@@ -2397,21 +2527,29 @@ public sealed class FileWavCodec
         }
 
         var codec = new FileWavCodec(profile);
-        var headerOfdm = codec.CreateHeaderOfdm();
-        var dataOfdm = codec.CreateDataOfdm();
         var payloadLengths = BuildBlockPayloadLengths(fileSizeBytes);
         var segments = new List<TransmissionDurationSegment>(payloadLengths.Length * Math.Max(1, profile.BlockInterleaveFactor) + 8);
         var totalSamples = 0L;
 
-        var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
-        var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, profile.BlockHeaderUnmodulatedSamples);
-
         AddSegment(segments, "LEAD", profile.LeadingSilenceSamples, profile.SampleRate, ref totalSamples);
         AddSegment(segments, "PREAMBLE", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples);
 
+        var openingHeaderOfdm = codec.CreateHeaderOfdm(profile.ActiveSubcarriers);
+        var openingFhSamples = HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
+        AddSegment(segments, "FH", openingFhSamples, profile.SampleRate, ref totalSamples);
+
+        OfdmGenerator? trailingHeaderOfdm = openingHeaderOfdm;
         for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
         {
-            AddSegment(segments, "FH", fhPacketSamples, profile.SampleRate, ref totalSamples);
+            var (passSc, passMod) = ResolveInterleavePassModulation(
+                pass,
+                profile.ActiveSubcarriers,
+                profile.ModulationScheme);
+            var headerOfdm = codec.CreateHeaderOfdm(passSc);
+            var dataOfdm = codec.CreateDataOfdm(passSc, passMod);
+            trailingHeaderOfdm = headerOfdm;
+            var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
+            var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, profile.BlockHeaderUnmodulatedSamples);
             var order = GetBlockEmissionOrder(payloadLengths.Length, pass);
             for (var local = 0; local < order.Length; local++)
             {
@@ -2425,7 +2563,7 @@ public sealed class FileWavCodec
                     dataOfdm,
                     payloadLengths[blockIndex],
                     profile.ChannelMode,
-                    profile.ModulationScheme);
+                    passMod);
                 var blkSamples = bhPacketSamples + dataSamples;
                 var blkLabel = profile.BlockInterleaveFactor == 1
                     ? $"BLK-{blockIndex}"
@@ -2434,7 +2572,12 @@ public sealed class FileWavCodec
             }
         }
 
-        AddSegment(segments, "FH", fhPacketSamples, profile.SampleRate, ref totalSamples);
+        AddSegment(
+            segments,
+            "FH",
+            HeaderPacketSamples(trailingHeaderOfdm!, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples),
+            profile.SampleRate,
+            ref totalSamples);
         AddSegment(segments, "TAIL", profile.TrailingSilenceSamples, profile.SampleRate, ref totalSamples);
 
         return new TransmissionDurationEstimate(

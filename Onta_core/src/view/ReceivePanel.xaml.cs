@@ -2,26 +2,32 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using Onta.Core;
 
 namespace Onta.View;
 
 /// <summary>
-/// 受信パネルです（ファイル情報・L/R ワウフラッター・LiveCharts2 エラー率グラフ）。
+/// 受信パネルです（ファイル情報・L/R ワウフラッター・エラー率 / I-Q グラフ）。
 /// </summary>
 public partial class ReceivePanel : UserControl
 {
     private readonly ErrorRateChartModel _errorChart = new();
+    private readonly IqChartModel _iqChart = new();
     private readonly DispatcherTimer _demoTimer;
     private readonly Random _rng = new();
     private bool _demoRunning;
     private double _demoBias;
     private double _demoTimeSec;
     private string _receiveSource = "WAV入力";
+    private string? _selectedWavPath;
+    private CoreFrameKind _lastErrorFrame = CoreFrameKind.Fh;
+    private double _lastErrorPercent = -1;
 
     public ReceivePanel()
     {
         InitializeComponent();
         ErrorChart.DataContext = _errorChart;
+        IqChart.DataContext = _iqChart;
 
         // ワウフラッター／デモは 0.2 秒間隔のスナップショット。
         _demoTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
@@ -32,12 +38,22 @@ public partial class ReceivePanel : UserControl
             StopDemoFeed();
             SetWowFlutterPercent(0, 0);
             ErrorGraph.Clear();
+            _iqChart.Clear();
             SetFileInfo("(未受信)", "-", "-");
+            ProgressBox.Text = "-";
         };
         Unloaded += (_, _) => StopDemoFeed();
     }
 
+    public event EventHandler? ReceiveStartRequested;
+
+    public string ReceiveSource => _receiveSource;
+
+    public string? SelectedWavPath => _selectedWavPath;
+
     public ErrorRateChartModel ErrorGraph => _errorChart;
+
+    public IqChartModel IqGraph => _iqChart;
 
     public double WowFlutterLeftPercent => WowLeft.ValuePercent;
 
@@ -48,6 +64,42 @@ public partial class ReceivePanel : UserControl
         FileNameBox.Text = fileName;
         FileSizeBox.Text = fileSizeText;
         BlockCountBox.Text = blockCountText;
+    }
+
+    /// <summary>
+    /// コア問い合わせ結果（進捗 / エラー率 / I-Q）を画面へ反映します。
+    /// </summary>
+    public void ApplyExecutionStatus(CoreExecutionStatus status)
+    {
+        SetFileInfo(status.FileName, status.FileSizeText, status.BlockCountText);
+
+        var frameLabel = status.Progress.CurrentFrame switch
+        {
+            CoreFrameKind.Fh => "FH",
+            CoreFrameKind.Bh => $"BH#{Math.Max(0, status.Progress.CurrentBlockIndex)}",
+            _ => $"BD#{Math.Max(0, status.Progress.CurrentBlockIndex)}"
+        };
+        ProgressBox.Text =
+            $"{frameLabel} {status.Progress.ProgressPercent:0.0}% " +
+            $"({status.Progress.AcceptedBlockCount}/{Math.Max(status.Progress.TotalBlockCount, 0)})";
+
+        SetWowFlutterPercent(status.WowLeftPercent, status.WowRightPercent);
+
+        var err = status.ErrorRate.LatestPercent;
+        var errFrame = status.ErrorRate.FrameKind;
+        if (Math.Abs(err - _lastErrorPercent) > 1e-6 || errFrame != _lastErrorFrame)
+        {
+            _lastErrorPercent = err;
+            _lastErrorFrame = errFrame;
+            _errorChart.AddSample(err, errFrame switch
+            {
+                CoreFrameKind.Fh => ErrorRateFrameKind.Fh,
+                CoreFrameKind.Bh => ErrorRateFrameKind.Bh,
+                _ => ErrorRateFrameKind.Bd
+            });
+        }
+
+        _iqChart.ReplacePoints(status.IqGraph.Points);
     }
 
     public void SetWowFlutterFromPilots(double leftSpeedRatio, double rightSpeedRatio)
@@ -65,19 +117,6 @@ public partial class ReceivePanel : UserControl
     public void AddErrorRateSample(double errorRatePercent, ErrorRateFrameKind frameKind)
     {
         _errorChart.AddSample(errorRatePercent, frameKind);
-    }
-
-    public void AddErrorRateSamples(double errorRatePercent, IReadOnlyList<ErrorRateFrameKind> frameKinds)
-    {
-        if (frameKinds.Count == 0)
-        {
-            return;
-        }
-
-        for (var i = 0; i < frameKinds.Count; i++)
-        {
-            _errorChart.AddSample(errorRatePercent, frameKinds[i]);
-        }
     }
 
     public void StartDemoFeed()
@@ -108,19 +147,23 @@ public partial class ReceivePanel : UserControl
         }
 
         _receiveSource = "WAV入力";
+        _selectedWavPath = dlg.FileName;
         var fileInfo = new FileInfo(dlg.FileName);
         SetFileInfo(fileInfo.Name, $"{fileInfo.Length:N0} bytes", "-");
+        ProgressBox.Text = "-";
     }
 
     private void OnUseAudioInput(object sender, RoutedEventArgs e)
     {
         _receiveSource = "音声入力";
+        _selectedWavPath = null;
         SetFileInfo("(音声入力)", "-", "-");
+        ProgressBox.Text = "-";
     }
 
     private void OnReceiveStartClick(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show($"受信スタート（たたき台）\n入力元: {_receiveSource}", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+        ReceiveStartRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnDemoTick(object? sender, EventArgs e)

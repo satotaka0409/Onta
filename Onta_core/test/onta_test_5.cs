@@ -4,7 +4,7 @@ using Xunit;
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ブロック時系列インターリーブ ×2 / ×3 の送出順とラウンドトリップ試験です（data_struct.mdc）。
+/// ブロック時系列インターリーブ ×2 の送出順・変調ダウングレードとラウンドトリップ試験です（data_struct.mdc）。
 /// </summary>
 public sealed class OntaTest5
 {
@@ -18,7 +18,16 @@ public sealed class OntaTest5
     {
         Assert.Equal([0, 1, 2, 3], FileWavCodec.GetBlockEmissionOrder(4, passIndex: 0));
         Assert.Equal([1, 0, 3, 2], FileWavCodec.GetBlockEmissionOrder(4, passIndex: 1));
-        Assert.Equal([0, 1, 2, 3], FileWavCodec.GetBlockEmissionOrder(4, passIndex: 2));
+    }
+
+    [Fact]
+    public void InterleavePassModulation_DowngradesOnSecondPass()
+    {
+        Assert.Equal((9, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(0, 9, ModulationScheme.Qpsk));
+        Assert.Equal((9, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 9, ModulationScheme.Qpsk));
+        Assert.Equal((9, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 18, ModulationScheme.Bpsk));
+        Assert.Equal((18, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 27, ModulationScheme.Qam16));
+        Assert.Equal((18, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 36, ModulationScheme.Qam64));
     }
 
     [Fact]
@@ -69,12 +78,6 @@ public sealed class OntaTest5
     public void EncodeDecode_QrPng_MatchesOriginal_Mono9ScQpsk_InterleaveX2()
     {
         RoundTrip(BaseProfile with { BlockInterleaveFactor = 2 }, "QR_326213_test5_x2.wav", "QR_326213_test5_x2.png");
-    }
-
-    [Fact]
-    public void EncodeDecode_QrPng_MatchesOriginal_Mono9ScQpsk_InterleaveX3()
-    {
-        RoundTrip(BaseProfile with { BlockInterleaveFactor = 3 }, "QR_326213_test5_x3.wav", "QR_326213_test5_x3.png");
     }
 
     private static void RoundTrip(FileWavCodecProfile profile, string wavName, string restoredName)

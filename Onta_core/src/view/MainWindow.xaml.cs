@@ -13,15 +13,18 @@ namespace Onta.View;
 public partial class MainWindow : Window
 {
     private readonly OutputCoreWorker _coreWorker = new();
+    private readonly InputCoreWorker _inputCoreWorker = new();
     private readonly DispatcherTimer _progressPollTimer;
     private WaveOutEvent? _activeWaveOut;
     private AudioFileReader? _activeAudioReader;
+    private bool _pollingReceive;
 
     public MainWindow()
     {
         InitializeComponent();
         SendPanel.SettingsChanged += (_, _) => RefreshEstimate();
         SendPanel.OutputRequested += OnOutputRequested;
+        ReceivePanel.ReceiveStartRequested += OnReceiveStartRequested;
         _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _progressPollTimer.Tick += OnProgressPollTick;
         Closed += (_, _) => StopAudioPlayback();
@@ -77,6 +80,7 @@ public partial class MainWindow : Window
             ReceivePanel.StopDemoFeed();
             ReceivePanel.SetWowFlutterPercent(0, 0);
             ReceivePanel.SetFileInfo(Path.GetFileName(snap.InputFilePath), "-", "-");
+            _pollingReceive = false;
             if (!_progressPollTimer.IsEnabled)
             {
                 _progressPollTimer.Start();
@@ -88,8 +92,73 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnReceiveStartRequested(object? sender, EventArgs e)
+    {
+        if (ReceivePanel.ReceiveSource != "WAV入力" || string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
+        {
+            MessageBox.Show(this, "WAV入力ファイルを選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!File.Exists(ReceivePanel.SelectedWavPath))
+        {
+            MessageBox.Show(this, "WAV ファイルが見つかりません。", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var snap = SendPanel.CreateSnapshot();
+        var profile = CodecProfileFactory.FromSnapshot(snap);
+        ReceivePanel.StopDemoFeed();
+        ReceivePanel.ErrorGraph.Clear();
+        ReceivePanel.IqGraph.Clear();
+
+        if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile))
+        {
+            MessageBox.Show(this, "受信コアが実行中です。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _pollingReceive = true;
+        if (!_progressPollTimer.IsEnabled)
+        {
+            _progressPollTimer.Start();
+        }
+    }
+
     private void OnProgressPollTick(object? sender, EventArgs e)
     {
+        if (_pollingReceive)
+        {
+            // 画面 → コア問い合わせ（0.5 秒間隔）: 進捗 / エラー率 / I-Q。
+            var status = _inputCoreWorker.QueryExecutionStatus();
+            ReceivePanel.ApplyExecutionStatus(status);
+
+            if (_inputCoreWorker.TryConsumeCompletion(out var success, out var message, out var outputPath))
+            {
+                _pollingReceive = false;
+                if (!_coreWorker.GetProgress().IsRunning)
+                {
+                    _progressPollTimer.Stop();
+                }
+
+                if (success)
+                {
+                    MessageBox.Show(
+                        this,
+                        $"{message}\n出力: {outputPath}",
+                        "Onta",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                else
+                {
+                    MessageBox.Show(this, message, "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+
+            return;
+        }
+
         var snapshot = _coreWorker.GetProgress();
         // 送信進捗ではファイル情報のみ更新（ワウ・フラッター／エラー率は受信用のため更新しない）。
         _ = _coreWorker.ConsumeFrameEvents();

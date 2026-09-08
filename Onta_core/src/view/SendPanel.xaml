@@ -105,11 +105,6 @@
                        GroupName="Interleave"
                        Checked="OnSettingsChanged"
                        Margin="0,6,0,0"/>
-          <RadioButton Content="×3"
-                       Tag="3"
-                       GroupName="Interleave"
-                       Checked="OnSettingsChanged"
-                       Margin="0,6,0,0"/>
         </StackPanel>
       </GroupBox>
 

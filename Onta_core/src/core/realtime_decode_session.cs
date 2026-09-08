@@ -56,6 +56,7 @@ public sealed class RealtimeDecodeSession : IDisposable
 
             _cts = new CancellationTokenSource();
             _worker = Task.Run(() => WorkerLoop(_cts.Token), _cts.Token);
+            _progressive.StatusBoard.BeginRun("(リアルタイム受信)");
             _snapshot = _snapshot with
             {
                 IsRunning = true,
@@ -118,6 +119,17 @@ public sealed class RealtimeDecodeSession : IDisposable
         lock (_sync)
         {
             return _snapshot;
+        }
+    }
+
+    /// <summary>
+    /// 画面から実行状況（進捗 / エラー率 / I-Q）を問い合わせます。
+    /// </summary>
+    public CoreExecutionStatus QueryExecutionStatus()
+    {
+        lock (_sync)
+        {
+            return _progressive.QueryExecutionStatus();
         }
     }
 

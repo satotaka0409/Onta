@@ -45,11 +45,11 @@ public partial class SendPanel : UserControl
     }
 
     /// <summary>
-    /// 繰り返し回数（×1=1 / ×2=2 / ×3=3）。data_struct.mdc のブロックインターリーブ倍率。
+    /// 繰り返し回数（×1=1 / ×2=2）。data_struct.mdc のブロックインターリーブ倍率。
     /// </summary>
     private int ReadRepeatCount()
     {
-        return ReadSelectedInt("Interleave", 1);
+        return Math.Clamp(ReadSelectedInt("Interleave", 1), 1, 2);
     }
 
     private void OnSettingsChanged(object sender, RoutedEventArgs e)

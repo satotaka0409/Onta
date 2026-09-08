@@ -19,6 +19,6 @@ internal static class CodecProfileFactory
             ChannelMode: snap.ChannelMode,
             HeaderFftSize: fft,
             DataFftSize: fft,
-            BlockInterleaveFactor: Math.Clamp(snap.BlockInterleaveFactor, 1, 3));
+            BlockInterleaveFactor: Math.Clamp(snap.BlockInterleaveFactor, 1, 2));
     }
 }
