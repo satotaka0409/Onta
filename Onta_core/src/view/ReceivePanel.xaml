@@ -3,159 +3,185 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              xmlns:local="clr-namespace:Onta.View">
-  <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"
-          MinHeight="100"/>
-      <RowDefinition Height="*"
-          MinHeight="100"/>
-    </Grid.RowDefinitions>
-
-    <TextBlock Text="受信"
-        FontSize="18"
-        FontWeight="Bold"
-        Margin="4,0,0,8"/>
-
-    <Grid Grid.Row="1"
-        Margin="4,0,4,8">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="2*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="0.7*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="0.8*"/>
-      </Grid.ColumnDefinitions>
-      <TextBlock Text="ファイル名"
-          VerticalAlignment="Center"
-          Margin="0,0,8,0"/>
-      <TextBox x:Name="FileNameBox"
-          Grid.Column="1"
-          IsReadOnly="True"
-          Margin="0,0,12,0"/>
-      <TextBlock Grid.Column="2"
-          Text="ファイルサイズ"
-          VerticalAlignment="Center"
-          Margin="0,0,8,0"/>
-      <TextBox x:Name="FileSizeBox"
-          Grid.Column="3"
-          IsReadOnly="True"
-          Margin="0,0,12,0"/>
-      <TextBlock Grid.Column="4"
-          Text="ブロック数"
-          VerticalAlignment="Center"
-          Margin="0,0,8,0"/>
-      <TextBox x:Name="BlockCountBox"
-          Grid.Column="5"
-          IsReadOnly="True"
-          Margin="0,0,12,0"/>
-      <TextBlock Grid.Column="6"
-          Text="進捗"
-          VerticalAlignment="Center"
-          Margin="0,0,8,0"/>
-      <TextBox x:Name="ProgressBox"
-          Grid.Column="7"
-          IsReadOnly="True"/>
-    </Grid>
-
-    <Grid Grid.Row="2"
-        Margin="0,0,0,8">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-
-      <Grid Grid.Column="0"
-          Margin="0,0,10,0">
+    <Grid>
         <Grid.RowDefinitions>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"
+                           MinHeight="100"/>
+            <RowDefinition Height="*"
+                           MinHeight="100"/>
         </Grid.RowDefinitions>
-        <TextBlock Text="ワウフラッター"
-            Margin="4,0,0,6"
-            Foreground="{StaticResource BrushTextMuted}"/>
-        <Grid Grid.Row="1">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="*"/>
-          </Grid.ColumnDefinitions>
-          <local:WowFlutterMeter x:Name="WowLeft"
-              ChannelLabel="L"
-              Margin="0,0,6,0"/>
-          <local:WowFlutterMeter x:Name="WowRight"
-              Grid.Column="1"
-              ChannelLabel="R"
-              Margin="6,0,0,0"/>
+
+        <TextBlock Text="受信"
+                   FontSize="18"
+                   FontWeight="Bold"
+                   Margin="4,0,0,8"/>
+
+        <Grid Grid.Row="1"
+              Margin="4,0,4,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="0.7*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="0.8*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="ファイル名"
+                       VerticalAlignment="Center"
+                       Margin="0,0,8,0"/>
+            <TextBox x:Name="FileNameBox"
+                     Grid.Column="1"
+                     IsReadOnly="True"
+                     Margin="0,0,12,0"/>
+            <TextBlock Grid.Column="2"
+                       Text="ファイルサイズ"
+                       VerticalAlignment="Center"
+                       Margin="0,0,8,0"/>
+            <TextBox x:Name="FileSizeBox"
+                     Grid.Column="3"
+                     IsReadOnly="True"
+                     Margin="0,0,12,0"/>
+            <TextBlock Grid.Column="4"
+                       Text="ブロック数"
+                       VerticalAlignment="Center"
+                       Margin="0,0,8,0"/>
+            <TextBox x:Name="BlockCountBox"
+                     Grid.Column="5"
+                     IsReadOnly="True"
+                     Margin="0,0,12,0"/>
+            <TextBlock Grid.Column="6"
+                       Text="進捗"
+                       VerticalAlignment="Center"
+                       Margin="0,0,8,0"/>
+            <TextBox x:Name="ProgressBox"
+                     Grid.Column="7"
+                     IsReadOnly="True"/>
         </Grid>
-      </Grid>
 
-      <StackPanel Grid.Column="1"
-          Orientation="Vertical"
-          HorizontalAlignment="Right"
-          VerticalAlignment="Center">
-        <Button Content="WAV入力"
-            Width="110"
-            Margin="0,0,0,6"
-            Click="OnBrowseWavInput"/>
-        <Button Content="音声入力"
-            Width="110"
-            Margin="0,0,0,6"
-            Click="OnUseAudioInput"/>
-        <Button Content="スタート"
-            Width="110"
-            Click="OnReceiveStartClick"/>
-      </StackPanel>
-    </Grid>
+        <Grid Grid.Row="2"
+              Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
 
-    <TextBlock Grid.Row="3"
-        Text="エラー率"
-        Margin="4,0,0,4"
-        Foreground="{StaticResource BrushTextMuted}"/>
+            <Grid Grid.Column="0"
+                  Margin="0,0,10,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="ワウフラッター"
+                           Margin="4,0,0,6"
+                           Foreground="{StaticResource BrushTextMuted}"/>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <local:WowFlutterMeter x:Name="WowLeft"
+                                           ChannelLabel="L"
+                                           Margin="0,0,6,0"/>
+                    <local:WowFlutterMeter x:Name="WowRight"
+                                           Grid.Column="1"
+                                           ChannelLabel="R"
+                                           Margin="6,0,0,0"/>
+                </Grid>
+            </Grid>
 
-    <Border Grid.Row="4"
-        BorderBrush="{StaticResource BrushBorder}"
-        BorderThickness="1"
-            Background="{StaticResource BrushInput}"
-        CornerRadius="3"
-        Padding="4"
-        Margin="0,0,0,8">
-      <lvc:CartesianChart x:Name="ErrorChart"
-                          Background="{StaticResource BrushInput}"
-                          Series="{Binding Series}"
-                          XAxes="{Binding XAxes}"
-                          YAxes="{Binding YAxes}"
-                          AnimationsSpeed="0"
-                          TooltipPosition="Hidden"/>
-    </Border>
+            <StackPanel Grid.Column="1"
+                        Orientation="Vertical"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <Button Content="WAV入力"
+                        Width="110"
+                        Margin="0,0,0,6"
+                        Click="OnBrowseWavInput"/>
+                <Button Content="音声入力"
+                        Width="110"
+                        Margin="0,0,0,6"
+                        Click="OnUseAudioInput"/>
+                <Button Content="スタート"
+                        Width="110"
+                        Click="OnReceiveStartClick"/>
+            </StackPanel>
+        </Grid>
 
-    <Grid Grid.Row="5">
-      <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="*"/>
-      </Grid.RowDefinitions>
-      <TextBlock Text="I-Q"
-          Margin="4,0,0,4"
-          Foreground="{StaticResource BrushTextMuted}"/>
-      <Border Grid.Row="1"
-          BorderBrush="{StaticResource BrushBorder}"
-          BorderThickness="1"
-          Background="{StaticResource BrushInput}"
-          CornerRadius="3"
-          Padding="4">
-        <lvc:CartesianChart x:Name="IqChart"
+        <TabControl Grid.Row="3"
+                    Grid.RowSpan="2"
+                    Margin="0,0,0,8">
+            <TabItem Header="エラー率">
+                <Border BorderBrush="{StaticResource BrushBorder}"
+                        BorderThickness="1"
+                        Background="{StaticResource BrushInput}"
+                        CornerRadius="3"
+                        Padding="4">
+                    <lvc:CartesianChart x:Name="ErrorChart"
+                                        Background="{StaticResource BrushInput}"
+                                        Series="{Binding Series}"
+                                        XAxes="{Binding XAxes}"
+                                        YAxes="{Binding YAxes}"
+                                        AnimationsSpeed="0"
+                                        TooltipPosition="Hidden"/>
+                </Border>
+            </TabItem>
+            <TabItem Header="FFT">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="FftTitle"
+                               Text="FFT"
+                               Margin="4,0,0,4"
+                               Foreground="{StaticResource BrushTextMuted}"/>
+                    <Border Grid.Row="1"
+                            BorderBrush="{StaticResource BrushBorder}"
+                            BorderThickness="1"
                             Background="{StaticResource BrushInput}"
-                            Series="{Binding Series}"
-                            XAxes="{Binding XAxes}"
-                            YAxes="{Binding YAxes}"
-                            AnimationsSpeed="0"
-                            TooltipPosition="Hidden"/>
-      </Border>
+                            CornerRadius="3"
+                            Padding="4">
+                        <lvc:CartesianChart x:Name="FftChart"
+                                            Background="{StaticResource BrushInput}"
+                                            Series="{Binding Series}"
+                                            XAxes="{Binding XAxes}"
+                                            YAxes="{Binding YAxes}"
+                                            AnimationsSpeed="0"
+                                            TooltipPosition="Hidden"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <Grid Grid.Row="5">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="IqTitle"
+                       Text="I-Q"
+                       Margin="4,0,0,4"
+                       Foreground="{StaticResource BrushTextMuted}"/>
+            <Border Grid.Row="1"
+                    BorderBrush="{StaticResource BrushBorder}"
+                    BorderThickness="1"
+                    Background="{StaticResource BrushInput}"
+                    CornerRadius="3"
+                    Padding="4">
+                <lvc:CartesianChart x:Name="IqChart"
+                                    Background="{StaticResource BrushInput}"
+                                    Series="{Binding Series}"
+                                    XAxes="{Binding XAxes}"
+                                    YAxes="{Binding YAxes}"
+                                    AnimationsSpeed="0"
+                                    TooltipPosition="Hidden"/>
+            </Border>
+        </Grid>
     </Grid>
-  </Grid>
 </UserControl>

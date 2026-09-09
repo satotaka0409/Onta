@@ -110,6 +110,7 @@ public partial class MainWindow : Window
         var profile = CodecProfileFactory.FromSnapshot(snap);
         ReceivePanel.StopDemoFeed();
         ReceivePanel.ErrorGraph.Clear();
+        ReceivePanel.FftGraph.Clear();
         ReceivePanel.IqGraph.Clear();
 
         if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile))
@@ -129,7 +130,7 @@ public partial class MainWindow : Window
     {
         if (_pollingReceive)
         {
-            // 画面 → コア問い合わせ（0.5 秒間隔）: 進捗 / エラー率 / I-Q。
+            // 画面 → コア問い合わせ（0.5 秒間隔）: 進捗 / エラー率 / FFT / I-Q。
             var status = _inputCoreWorker.QueryExecutionStatus();
             ReceivePanel.ApplyExecutionStatus(status);
 

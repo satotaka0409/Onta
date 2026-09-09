@@ -512,6 +512,8 @@ public sealed class FileWavCodec
                 TotalBlockCount: blockCount,
                 ProgressPercent: percent));
 
+            state.StatusBoard.SetErrorFrameKind(frame);
+
             if (errorRatePercent is { } err)
             {
                 state.StatusBoard.SetErrorRate(err, frame);
@@ -868,11 +870,12 @@ public sealed class FileWavCodec
                         Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
                         expectedBlockHash: blockHeader.AsSpan(24, 32).ToArray(),
                         payloadLength: blockSize,
-                        tuning,
-                        InterleaveInitSeedBlock,
-                        blockDataPunctureRate,
-                        hasTrackedWow,
-                        state.StatusBoard,
+                        modulationScheme: blockModulation,
+                        tuning: tuning,
+                        interleaveInitSeed: InterleaveInitSeedBlock,
+                        punctureRate: blockDataPunctureRate,
+                        wowLocked: hasTrackedWow,
+                        statusBoard: state.StatusBoard,
                         out var diag);
                     if (traceDataErrors)
                     {
@@ -1282,7 +1285,8 @@ public sealed class FileWavCodec
                     logicalOffset,
                     searchRadius: Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
                     noiseVariance: 0.05,
-                    interleaveInitSeed);
+                    interleaveInitSeed,
+                    ModulationScheme.Bpsk);
                 endCursor = cursor;
             }
             else
@@ -1299,7 +1303,8 @@ public sealed class FileWavCodec
                     logicalOffset,
                     perSymbolSearchRadius,
                     noiseVariance: 0.05,
-                    interleaveInitSeed);
+                    interleaveInitSeed,
+                    ModulationScheme.Bpsk);
                 endCursor = cursor;
             }
 
@@ -1585,6 +1590,7 @@ public sealed class FileWavCodec
         int searchRadius,
         byte[] expectedBlockHash,
         int payloadLength,
+        ModulationScheme modulationScheme,
         DecodeRuntimeTuning tuning,
         int interleaveInitSeed,
         ConvolutionalCode.PunctureRate punctureRate,
@@ -1690,6 +1696,7 @@ public sealed class FileWavCodec
                             radius,
                             noiseVariance: 0.05,
                             interleaveInitSeed,
+                            modulationScheme,
                             statusBoard);
                         end = cursor;
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
@@ -1838,6 +1845,7 @@ public sealed class FileWavCodec
                 Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
                 noiseVariance: 0.08,
                 interleaveInitSeed,
+                modulationScheme,
                 statusBoard);
             warpedCursor = cursor;
             logicalOffset += sampleCount;
@@ -1941,11 +1949,20 @@ public sealed class FileWavCodec
         int searchRadius,
         double noiseVariance,
         int interleaveInitSeed,
+        ModulationScheme modulationScheme,
         CoreExecutionStatusBoard? statusBoard = null)
     {
-        Action<Complex>? onIq = statusBoard is null
+        statusBoard?.SetFftStereoMode(stereoSplit);
+
+        Action<Complex[], int>? onIqFrame = statusBoard is null
             ? null
-            : symbol => statusBoard.PushIq(symbol);
+            : (symbols, count) => statusBoard.SetIqFrame(symbols.AsSpan(0, count), modulationScheme);
+        Action<Complex[], int>? onFftLeftFrame = statusBoard is null
+            ? null
+            : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: false);
+        Action<Complex[], int>? onFftRightFrame = statusBoard is null
+            ? null
+            : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: true);
 
         if (!stereoSplit)
         {
@@ -1958,15 +1975,37 @@ public sealed class FileWavCodec
                 searchRadius,
                 noiseVariance,
                 interleaveInitSeed,
-                onIq);
+                onEqualizedDataSymbol: null,
+                onEqualizedDataSymbolFrame: onIqFrame,
+                onFftSymbolFrame: onFftLeftFrame);
         }
 
         var leftCursor = cursor;
         var rightCursor = cursor;
         var leftLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, noiseVariance, interleaveInitSeed, onIq);
+            leftSamples,
+            ref leftCursor,
+            channelBitCount,
+            useRightChannel: false,
+            logical,
+            searchRadius,
+            noiseVariance,
+            interleaveInitSeed,
+            onEqualizedDataSymbol: null,
+            onEqualizedDataSymbolFrame: onIqFrame,
+            onFftSymbolFrame: onFftLeftFrame);
         var rightLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, noiseVariance, interleaveInitSeed, onIq);
+            rightSamples,
+            ref rightCursor,
+            channelBitCount,
+            useRightChannel: true,
+            logical,
+            searchRadius,
+            noiseVariance,
+            interleaveInitSeed,
+            onEqualizedDataSymbol: null,
+            onEqualizedDataSymbolFrame: null,
+            onFftSymbolFrame: onFftRightFrame);
         cursor = leftCursor;
         var joined = new double[totalBitCount];
         var half = (totalBitCount + 1) / 2;

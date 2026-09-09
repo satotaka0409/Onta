@@ -12,6 +12,7 @@ namespace Onta.View;
 public partial class ReceivePanel : UserControl
 {
     private readonly ErrorRateChartModel _errorChart = new();
+    private readonly FftChartModel _fftChart = new();
     private readonly IqChartModel _iqChart = new();
     private readonly DispatcherTimer _demoTimer;
     private readonly Random _rng = new();
@@ -27,6 +28,7 @@ public partial class ReceivePanel : UserControl
     {
         InitializeComponent();
         ErrorChart.DataContext = _errorChart;
+        FftChart.DataContext = _fftChart;
         IqChart.DataContext = _iqChart;
 
         // ワウフラッター／デモは 0.2 秒間隔のスナップショット。
@@ -38,6 +40,7 @@ public partial class ReceivePanel : UserControl
             StopDemoFeed();
             SetWowFlutterPercent(0, 0);
             ErrorGraph.Clear();
+            _fftChart.Clear();
             _iqChart.Clear();
             SetFileInfo("(未受信)", "-", "-");
             ProgressBox.Text = "-";
@@ -52,6 +55,8 @@ public partial class ReceivePanel : UserControl
     public string? SelectedWavPath => _selectedWavPath;
 
     public ErrorRateChartModel ErrorGraph => _errorChart;
+
+    public FftChartModel FftGraph => _fftChart;
 
     public IqChartModel IqGraph => _iqChart;
 
@@ -100,6 +105,28 @@ public partial class ReceivePanel : UserControl
         }
 
         _iqChart.ReplacePoints(status.IqGraph.Points);
+        if (status.IqGraph.ActiveSubcarrierCount > 0)
+        {
+            IqTitle.Text = $"I-Q ({status.IqGraph.ModulationScheme} / SC={status.IqGraph.ActiveSubcarrierCount})";
+        }
+        else
+        {
+            IqTitle.Text = "I-Q";
+        }
+
+        _fftChart.ReplacePoints(
+            status.FftGraph.LeftPoints,
+            status.FftGraph.RightPoints,
+            status.FftGraph.IsStereo);
+        if (status.FftGraph.FftSize > 0)
+        {
+            var mode = status.FftGraph.IsStereo ? "Stereo" : "Mono";
+            FftTitle.Text = $"FFT ({mode} / N={status.FftGraph.FftSize})";
+        }
+        else
+        {
+            FftTitle.Text = "FFT";
+        }
     }
 
     public void SetWowFlutterFromPilots(double leftSpeedRatio, double rightSpeedRatio)

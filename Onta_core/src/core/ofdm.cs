@@ -2997,7 +2997,9 @@ public sealed class OfdmGenerator
         int searchRadius = 16,
         double noiseVariance = 0.05,
         int interleaveInitSeed = 0,
-        Action<Complex>? onEqualizedDataSymbol = null)
+        Action<Complex>? onEqualizedDataSymbol = null,
+        Action<Complex[], int>? onEqualizedDataSymbolFrame = null,
+        Action<Complex[], int>? onFftSymbolFrame = null)
     {
         return DemodulateSoftLlrsFromStreamCore(
             samples,
@@ -3011,7 +3013,9 @@ public sealed class OfdmGenerator
             noiseVariance,
             estimateNoiseFromPilots: true,
             interleaveInitSeed,
-            onEqualizedDataSymbol);
+            onEqualizedDataSymbol,
+            onEqualizedDataSymbolFrame,
+            onFftSymbolFrame);
     }
 
     /// <summary>
@@ -3045,7 +3049,9 @@ public sealed class OfdmGenerator
                 noiseVariance,
                 estimateNoiseFromPilots,
                 interleaveInitSeed,
-                onEqualizedDataSymbol: null);
+                onEqualizedDataSymbol: null,
+                onEqualizedDataSymbolFrame: null,
+                onFftSymbolFrame: null);
         }
 
         if (leftSamples.Length != rightSamples.Length)
@@ -3065,7 +3071,9 @@ public sealed class OfdmGenerator
             noiseVariance,
             estimateNoiseFromPilots,
             interleaveInitSeed,
-            onEqualizedDataSymbol: null);
+            onEqualizedDataSymbol: null,
+            onEqualizedDataSymbolFrame: null,
+            onFftSymbolFrame: null);
     }
 
     private double[] DemodulateSoftLlrsFromStreamCore(
@@ -3080,7 +3088,9 @@ public sealed class OfdmGenerator
         double noiseVariance,
         bool estimateNoiseFromPilots,
         int interleaveInitSeed,
-        Action<Complex>? onEqualizedDataSymbol)
+        Action<Complex>? onEqualizedDataSymbol,
+        Action<Complex[], int>? onEqualizedDataSymbolFrame,
+        Action<Complex[], int>? onFftSymbolFrame)
     {
         if (bitCount < 0)
         {
@@ -3136,6 +3146,7 @@ public sealed class OfdmGenerator
                 primaryTimeNoCp,
                 primaryFreqBins,
                 primaryEqualizers);
+            onFftSymbolFrame?.Invoke(primaryFreqBins, primaryFreqBins.Length);
             if (estimateNoiseFromPilots)
             {
                 AccumulatePilotNoiseFromPrepared(
@@ -3188,7 +3199,8 @@ public sealed class OfdmGenerator
                 effectiveVariance,
                 addToExisting: false,
                 interleaveInitSeed,
-                onEqualizedDataSymbol);
+                onEqualizedDataSymbol,
+                onEqualizedDataSymbolFrame);
 
             if (secondarySamples is not null)
             {
@@ -3203,7 +3215,8 @@ public sealed class OfdmGenerator
                     effectiveVariance,
                     addToExisting: true,
                     interleaveInitSeed,
-                    onEqualizedDataSymbol);
+                        onEqualizedDataSymbol,
+                        onEqualizedDataSymbolFrame: null);
             }
 
             position = start + symbolLength;
@@ -3246,7 +3259,8 @@ public sealed class OfdmGenerator
             noiseVariance,
             addToExisting,
             interleaveInitSeed,
-            onEqualizedDataSymbol: null);
+            onEqualizedDataSymbol: null,
+            onEqualizedDataSymbolFrame: null);
     }
 
     private void EmitSymbolSoftLlrsFromPrepared(
@@ -3259,13 +3273,16 @@ public sealed class OfdmGenerator
         double noiseVariance,
         bool addToExisting,
         int interleaveInitSeed,
-        Action<Complex>? onEqualizedDataSymbol)
+        Action<Complex>? onEqualizedDataSymbol,
+        Action<Complex[], int>? onEqualizedDataSymbolFrame)
     {
         var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
         var dataModulationByBin = useRightChannel
             ? _rightDataCarrierModulationByBin
             : _leftDataCarrierModulationByBin;
         Span<double> softLlrScratch = stackalloc double[6];
+        Complex[]? frameSnapshot = onEqualizedDataSymbolFrame is null ? null : new Complex[dataOrder.Length];
+        var frameCount = 0;
         foreach (var dataBin in dataOrder)
         {
             if (bitIndex >= llrs.Length)
@@ -3275,6 +3292,10 @@ public sealed class OfdmGenerator
 
             var equalized = freqBins[dataBin] * equalizers[dataBin];
             onEqualizedDataSymbol?.Invoke(equalized);
+            if (frameSnapshot is not null)
+            {
+                frameSnapshot[frameCount++] = equalized;
+            }
 
             if (addToExisting)
             {
@@ -3301,6 +3322,11 @@ public sealed class OfdmGenerator
                     llrs,
                     noiseVariance);
             }
+        }
+
+        if (frameSnapshot is not null && frameCount > 0)
+        {
+            onEqualizedDataSymbolFrame?.Invoke(frameSnapshot, frameCount);
         }
     }
 
