@@ -55,7 +55,7 @@ internal sealed class OutputCoreWorker
             _frameEvents.Clear();
         }
 
-        _ = Task.Run(() => RunCore(settings, outputWavPath, cts.Token));
+        _ = CoreBackgroundHost.RunAsync(_ => RunCore(settings, outputWavPath, cts.Token), cts.Token);
         return true;
     }
 

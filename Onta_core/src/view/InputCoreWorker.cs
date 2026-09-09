@@ -46,7 +46,7 @@ internal sealed class InputCoreWorker
             _lastDecodedPath = null;
             _lastError = null;
             _completionPending = false;
-            _worker = Task.Run(() => RunWavDecode(wavPath, profile, state));
+            _worker = CoreBackgroundHost.RunAsync(_ => RunWavDecode(wavPath, profile, state));
             return true;
         }
     }
