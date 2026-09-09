@@ -19,6 +19,11 @@ public static class Hash
         return SHA256.HashData(data);
     }
 
+    /// <summary>
+    /// 入力スパンの SHA-256 ハッシュ値を計算します。
+    /// </summary>
+    /// <param name="data">ハッシュ化対象のバイト列。</param>
+    /// <returns>32 バイトの SHA-256 ハッシュ値。</returns>
     public static byte[] ComputeSha256(ReadOnlySpan<byte> data)
     {
         return SHA256.HashData(data);
@@ -36,6 +41,11 @@ public static class Hash
         return SHA512.HashData(data);
     }
 
+    /// <summary>
+    /// 入力スパンの SHA-512 ハッシュ値を計算します。
+    /// </summary>
+    /// <param name="data">ハッシュ化対象のバイト列。</param>
+    /// <returns>64 バイトの SHA-512 ハッシュ値。</returns>
     public static byte[] ComputeSha512(ReadOnlySpan<byte> data)
     {
         return SHA512.HashData(data);

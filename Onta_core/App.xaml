@@ -168,6 +168,14 @@
       </Setter>
     </Style>
 
+    <Style TargetType="ProgressBar">
+      <Setter Property="Height" Value="14"/>
+      <Setter Property="Background" Value="{StaticResource BrushTrack}"/>
+      <Setter Property="Foreground" Value="{StaticResource BrushAccent}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
     <Style TargetType="DataGrid">
       <Setter Property="Background" Value="{StaticResource BrushInput}"/>
       <Setter Property="Foreground" Value="{StaticResource BrushText}"/>

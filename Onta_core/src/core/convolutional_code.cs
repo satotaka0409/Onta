@@ -62,6 +62,7 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="data">符号化対象の入力データ。</param>
     /// <param name="terminate">true の場合、末尾にテールビット（0）を追加して終端状態へ収束させます。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
     /// <returns>符号化ビット列（MSB-first）をパックしたバイト列。</returns>
     /// <exception cref="ArgumentNullException"><paramref name="data"/> が null の場合にスローされます。</exception>
     public static byte[] Encode(byte[] data, bool terminate = true, PunctureRate punctureRate = PunctureRate.Rate1_2)
@@ -100,6 +101,7 @@ public static class ConvolutionalCode
     /// <param name="encoded">符号化データ（ビットパック済み）。</param>
     /// <param name="originalByteLength">復号後に期待する元データ長（バイト）。</param>
     /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
+    /// <param name="punctureRate">符号化時のパンクチャレート。</param>
     /// <returns>復号データ。</returns>
     /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="originalByteLength"/> が負値の場合にスローされます。</exception>
@@ -120,6 +122,7 @@ public static class ConvolutionalCode
     /// <param name="originalByteLength">復号後に期待する元データ長（バイト）。</param>
     /// <param name="metrics">復号統計。訂正率は符号語ビットに対する差分率です。</param>
     /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
+    /// <param name="punctureRate">符号化時のパンクチャレート。</param>
     /// <returns>復号データ。</returns>
     /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="originalByteLength"/> が負値の場合にスローされます。</exception>
@@ -274,6 +277,11 @@ public static class ConvolutionalCode
     /// <summary>
     /// ソフト LLR 入力の復号です。LLR&gt;0 をビット 1 寄りと解釈します。
     /// </summary>
+    /// <param name="codeLlrs">パンクチャ済み符号ビットのソフト LLR。</param>
+    /// <param name="originalByteLength">復号後に期待する元データ長（バイト）。</param>
+    /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
+    /// <param name="punctureRate">符号化時のパンクチャレート。</param>
+    /// <returns>復号データ。</returns>
     public static byte[] DecodeSoft(
         ReadOnlySpan<double> codeLlrs,
         int originalByteLength,
@@ -288,6 +296,12 @@ public static class ConvolutionalCode
     /// 情報ビット LLR はターボと同じ極性（正=ビット0優勢、負=ビット1優勢）です。
     /// QAM チャネル LLR の柔らかさをターボへ直接渡せます。
     /// </summary>
+    /// <param name="codeLlrs">パンクチャ済み符号ビットのソフト LLR。</param>
+    /// <param name="originalByteLength">復号後に期待する元データ長（バイト）。</param>
+    /// <param name="infoLlrs">情報ビット LLR（正=ビット0優勢）。</param>
+    /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
+    /// <param name="punctureRate">符号化時のパンクチャレート。</param>
+    /// <returns>復号データ（ハード判定）。</returns>
     public static byte[] DecodeSoftToInfoLlrs(
         ReadOnlySpan<double> codeLlrs,
         int originalByteLength,
@@ -464,6 +478,11 @@ public static class ConvolutionalCode
     /// <summary>
     /// 符号ビット LLR（正=bit1）に対する枝の対数尤度です。
     /// </summary>
+    /// <param name="state">現在状態。</param>
+    /// <param name="inputBit">入力ビット（0/1）。</param>
+    /// <param name="llr0">第1出力ビットの LLR。</param>
+    /// <param name="llr1">第2出力ビットの LLR。</param>
+    /// <returns>枝の対数尤度。</returns>
     private static double BranchLogLikelihood(int state, int inputBit, double llr0, double llr1)
     {
         var branch0 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]);
@@ -472,6 +491,11 @@ public static class ConvolutionalCode
         return ((branch0 == 1) ? llr0 : 0.0) + ((branch1 == 1) ? llr1 : 0.0);
     }
 
+    /// <summary>
+    /// 最小メトリクスを持つ状態インデックスを返します。
+    /// </summary>
+    /// <param name="metrics">各状態のメトリクス。</param>
+    /// <returns>最小メトリクスの状態インデックス。</returns>
     private static int FindMinMetricState(double[] metrics)
     {
         var best = 0;
@@ -495,6 +519,7 @@ public static class ConvolutionalCode
     /// <param name="originalByteLength">復号後に期待する元データ長（バイト）。</param>
     /// <param name="decoded">成功時は復号結果、失敗時は空配列。</param>
     /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
+    /// <param name="punctureRate">符号化時のパンクチャレート。</param>
     /// <returns>成功時 true、失敗時 false。</returns>
     public static bool TryDecode(
         byte[] encoded,
@@ -514,6 +539,7 @@ public static class ConvolutionalCode
     /// <param name="decoded">成功時は復号結果、失敗時は空配列。</param>
     /// <param name="metrics">成功時は復号統計、失敗時は既定値。</param>
     /// <param name="terminated">符号化時にテール終端を付与したかどうか。</param>
+    /// <param name="punctureRate">符号化時のパンクチャレート。</param>
     /// <returns>成功時 true、失敗時 false。</returns>
     public static bool TryDecode(
         byte[] encoded,
@@ -537,6 +563,13 @@ public static class ConvolutionalCode
         }
     }
 
+    /// <summary>
+    /// 符号化後のパンクチャ済みビット長を計算します。
+    /// </summary>
+    /// <param name="originalBitLength">元データのビット長。</param>
+    /// <param name="terminated">テール終端を付与するかどうか。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <returns>パンクチャ済み符号化ビット長。</returns>
     public static int GetEncodedBitLength(int originalBitLength, bool terminated, PunctureRate punctureRate)
     {
         if (originalBitLength < 0)
@@ -549,6 +582,12 @@ public static class ConvolutionalCode
         return GetPuncturedBitLength(motherBits, punctureRate);
     }
 
+    /// <summary>
+    /// 母符号ビット長からパンクチャ後のビット長を求めます。
+    /// </summary>
+    /// <param name="motherBitLength">母符号のビット長。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <returns>パンクチャ後のビット長。</returns>
     private static int GetPuncturedBitLength(int motherBitLength, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
@@ -574,6 +613,12 @@ public static class ConvolutionalCode
         return count;
     }
 
+    /// <summary>
+    /// 母符号ビット列にパンクチャリングを適用します。
+    /// </summary>
+    /// <param name="motherBits">母符号ビット列。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <returns>パンクチャ済みビット列。</returns>
     private static bool[] Puncture(bool[] motherBits, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
@@ -604,6 +649,14 @@ public static class ConvolutionalCode
         return output;
     }
 
+    /// <summary>
+    /// ハード判定ビット列を母符号長へデパンクチャします。
+    /// </summary>
+    /// <param name="puncturedBits">パンクチャ済みビット列。</param>
+    /// <param name="motherBitLength">母符号ビット長。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <param name="fullBits">デパンクチャ後のビット列（欠落位置は false）。</param>
+    /// <param name="presentMask">各ビットが受信済みかどうかのマスク。</param>
     private static void DepunctureHard(
         bool[] puncturedBits,
         int motherBitLength,
@@ -646,6 +699,15 @@ public static class ConvolutionalCode
         }
     }
 
+    /// <summary>
+    /// パック済みパンクチャビットを母符号長へデパンクチャします。
+    /// </summary>
+    /// <param name="packedBits">パック済みパンクチャビット。</param>
+    /// <param name="puncturedBitLength">パンクチャ済みビット長。</param>
+    /// <param name="motherBitLength">母符号ビット長。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <param name="fullBits">デパンクチャ後ビットの出力先。</param>
+    /// <param name="presentMask">受信済みマスクの出力先。</param>
     private static void DepunctureHardFromPacked(
         ReadOnlySpan<byte> packedBits,
         int puncturedBitLength,
@@ -687,6 +749,13 @@ public static class ConvolutionalCode
         }
     }
 
+    /// <summary>
+    /// ソフト LLR を母符号長へデパンクチャした配列を返します。
+    /// </summary>
+    /// <param name="puncturedLlrs">パンクチャ済み LLR。</param>
+    /// <param name="motherBitLength">母符号ビット長。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <returns>デパンクチャ後の LLR（欠落位置は 0）。</returns>
     private static double[] DepunctureSoft(ReadOnlySpan<double> puncturedLlrs, int motherBitLength, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
@@ -723,6 +792,13 @@ public static class ConvolutionalCode
         return full;
     }
 
+    /// <summary>
+    /// ソフト LLR を母符号長バッファへデパンクチャします。
+    /// </summary>
+    /// <param name="puncturedLlrs">パンクチャ済み LLR。</param>
+    /// <param name="motherBitLength">母符号ビット長。</param>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <param name="full">デパンクチャ先バッファ。</param>
     private static void DepunctureSoftInto(
         ReadOnlySpan<double> puncturedLlrs,
         int motherBitLength,
@@ -760,6 +836,11 @@ public static class ConvolutionalCode
         }
     }
 
+    /// <summary>
+    /// 指定レートのパンクチャパターンを返します。
+    /// </summary>
+    /// <param name="punctureRate">パンクチャレート。</param>
+    /// <returns>パンクチャパターン（true=送信）。</returns>
     private static bool[] GetPuncturePattern(PunctureRate punctureRate)
     {
         return punctureRate switch
@@ -771,6 +852,13 @@ public static class ConvolutionalCode
         };
     }
 
+    /// <summary>
+    /// 1 入力ビットを符号化して状態を更新します。
+    /// </summary>
+    /// <param name="inputBit">入力ビット（0/1）。</param>
+    /// <param name="state">符号器状態（入出力）。</param>
+    /// <param name="encodedBits">符号化ビットの出力先。</param>
+    /// <param name="writeIndex">書き込み位置（入出力）。</param>
     private static void EncodeOneBit(int inputBit, ref int state, bool[] encodedBits, ref int writeIndex)
     {
         if (inputBit == 0)
@@ -786,6 +874,11 @@ public static class ConvolutionalCode
         state = NextStateWhenInput1[state];
     }
 
+    /// <summary>
+    /// 真の要素数を数えます。
+    /// </summary>
+    /// <param name="values">真偽値配列。</param>
+    /// <returns>true の個数。</returns>
     private static int CountTrue(bool[] values)
     {
         var count = 0;
@@ -800,12 +893,23 @@ public static class ConvolutionalCode
         return count;
     }
 
+    /// <summary>
+    /// 入力ビットに対する次状態を計算します。
+    /// </summary>
+    /// <param name="state">現在状態。</param>
+    /// <param name="inputBit">入力ビット（0/1）。</param>
+    /// <returns>次状態。</returns>
     private static int GetNextState(int state, int inputBit)
     {
         var register = (inputBit << MemoryBits) | state;
         return (register >> 1) & StateMask;
     }
 
+    /// <summary>
+    /// 指定入力ビットの次状態テーブルを構築します。
+    /// </summary>
+    /// <param name="inputBit">入力ビット（0/1）。</param>
+    /// <returns>状態→次状態のテーブル。</returns>
     private static byte[] BuildNextStateTable(int inputBit)
     {
         var table = new byte[StateCount];
@@ -817,6 +921,12 @@ public static class ConvolutionalCode
         return table;
     }
 
+    /// <summary>
+    /// 指定入力・生成多項式の出力ビットテーブルを構築します。
+    /// </summary>
+    /// <param name="inputBit">入力ビット（0/1）。</param>
+    /// <param name="generatorIndex">生成多項式インデックス（0/1）。</param>
+    /// <returns>状態→出力ビットのテーブル。</returns>
     private static byte[] BuildOutputBitTable(int inputBit, int generatorIndex)
     {
         var table = new byte[StateCount];
@@ -828,6 +938,13 @@ public static class ConvolutionalCode
         return table;
     }
 
+    /// <summary>
+    /// 生成多項式に基づく出力ビットを計算します。
+    /// </summary>
+    /// <param name="state">現在状態。</param>
+    /// <param name="inputBit">入力ビット（0/1）。</param>
+    /// <param name="generator">生成多項式（ビットマスク）。</param>
+    /// <returns>出力ビット（0/1）。</returns>
     private static int GetOutputBit(int state, int inputBit, int generator)
     {
         var register = (inputBit << MemoryBits) | state;
@@ -835,6 +952,11 @@ public static class ConvolutionalCode
         return Parity(masked);
     }
 
+    /// <summary>
+    /// 整数のパリティ（1 の個数の偶奇）を返します。
+    /// </summary>
+    /// <param name="value">対象整数。</param>
+    /// <returns>パリティ（0=偶数、1=奇数）。</returns>
     private static int Parity(int value)
     {
         var parity = 0;
@@ -847,6 +969,11 @@ public static class ConvolutionalCode
         return parity;
     }
 
+    /// <summary>
+    /// 最小メトリクスを持つ状態インデックスを返します。
+    /// </summary>
+    /// <param name="metrics">各状態のメトリクス。</param>
+    /// <returns>最小メトリクスの状態インデックス。</returns>
     private static int FindMinMetricState(int[] metrics)
     {
         var minState = 0;
@@ -863,6 +990,11 @@ public static class ConvolutionalCode
         return minState;
     }
 
+    /// <summary>
+    /// バイト列を MSB-first のビット列へ展開します。
+    /// </summary>
+    /// <param name="bytes">入力バイト列。</param>
+    /// <returns>MSB-first のビット列。</returns>
     private static bool[] BytesToBits(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
@@ -881,6 +1013,10 @@ public static class ConvolutionalCode
         return bits;
     }
 
+    /// <summary>
+    /// バイト→8 ビット展開用のルックアップ表を構築します。
+    /// </summary>
+    /// <returns>256×8 のビット展開ルックアップ。</returns>
     private static byte[] BuildByteToBitsLookup()
     {
         var lookup = new byte[256 * 8];
@@ -900,11 +1036,21 @@ public static class ConvolutionalCode
         return lookup;
     }
 
+    /// <summary>
+    /// ビット配列をバイト列へパックします。
+    /// </summary>
+    /// <param name="bits">入力ビット列（長さは 8 の倍数）。</param>
+    /// <returns>パック済みバイト列。</returns>
     private static byte[] BitsToBytes(bool[] bits)
     {
         return BitsToBytes(bits.AsSpan());
     }
 
+    /// <summary>
+    /// ビットスパンをバイト列へパックします。
+    /// </summary>
+    /// <param name="bits">入力ビットスパン（長さは 8 の倍数）。</param>
+    /// <returns>パック済みバイト列。</returns>
     private static byte[] BitsToBytes(ReadOnlySpan<bool> bits)
     {
         if (bits.Length % 8 != 0)
@@ -925,12 +1071,23 @@ public static class ConvolutionalCode
         return bytes;
     }
 
+    /// <summary>
+    /// パック済みバイト列から指定ビットを読み出します。
+    /// </summary>
+    /// <param name="packed">パック済みバイト列。</param>
+    /// <param name="bitIndex">読み出すビット位置（0 起点）。</param>
+    /// <returns>ビット値。</returns>
     private static bool ReadPackedBit(ReadOnlySpan<byte> packed, int bitIndex)
     {
         var b = packed[bitIndex >> 3];
         return ((b >> (7 - (bitIndex & 7))) & 1) != 0;
     }
 
+    /// <summary>
+    /// ビット列をバイト列へパックします（端数ビット対応）。
+    /// </summary>
+    /// <param name="bits">入力ビット列。</param>
+    /// <returns>パック済みバイト列。</returns>
     private static byte[] PackBits(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
@@ -963,6 +1120,12 @@ public static class ConvolutionalCode
         return bytes;
     }
 
+    /// <summary>
+    /// パック済みバイト列から指定ビット数を展開します。
+    /// </summary>
+    /// <param name="bytes">パック済みバイト列。</param>
+    /// <param name="bitCount">展開するビット数。</param>
+    /// <returns>展開後のビット列。</returns>
     private static bool[] UnpackBits(byte[] bytes, int bitCount)
     {
         var maxBits = bytes.Length * 8;

@@ -16,6 +16,9 @@ public partial class SendPanel : UserControl
     public event EventHandler? SettingsChanged;
     public event EventHandler<SendSettingsSnapshot>? OutputRequested;
     public event EventHandler? StartRequested;
+    public event EventHandler? StopRequested;
+
+    private bool _transmissionRunning;
 
     public SendPanel()
     {
@@ -70,6 +73,24 @@ public partial class SendPanel : UserControl
         StartRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    private void OnStopClick(object sender, RoutedEventArgs e)
+    {
+        StopRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>送信実行中はストップ以外（設定一式＋スタート）を無効化します。</summary>
+    public void SetTransmissionRunning(bool isRunning)
+    {
+        _transmissionRunning = isRunning;
+        SettingsHost.IsEnabled = !isRunning;
+        StartButton.IsEnabled = !isRunning;
+        StopButton.IsEnabled = isRunning;
+        if (!isRunning)
+        {
+            UpdateAudioDeviceEnabledState();
+        }
+    }
+
     private void OnAudioDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         SettingsChanged?.Invoke(this, EventArgs.Empty);
@@ -122,6 +143,11 @@ public partial class SendPanel : UserControl
     {
         // XAML 初期化中に Checked が先に飛ぶため、未生成コントロールは無視する。
         if (PlayAudioCheck is null || AudioDeviceComboBox is null)
+        {
+            return;
+        }
+
+        if (_transmissionRunning)
         {
             return;
         }

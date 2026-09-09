@@ -18,6 +18,8 @@ public static class WowFlutterWarp
     /// <summary>
     /// シードから wow / flutter 位相を生成します（NoisePlus と同じ順序）。
     /// </summary>
+    /// <param name="seed">乱数シード。0 のときは非シード Random。</param>
+    /// <returns>wow 位相と flutter 位相（ラジアン）の組。</returns>
     public static (double WowPhase, double FlutterPhase) CreatePhases(int seed)
     {
         var random = seed == 0 ? new Random() : new Random(seed);
@@ -29,6 +31,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// サンプル単位の速度プロファイルを構築します。
     /// </summary>
+    /// <param name="sampleCount">プロファイル長（サンプル数）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <returns>サンプルごとの相対速度配列。</returns>
     public static double[] BuildSpeedProfile(
         int sampleCount,
         int sampleRate,
@@ -41,6 +49,14 @@ public static class WowFlutterWarp
         return profile;
     }
 
+    /// <summary>
+    /// 速度プロファイル配列へ wow/flutter 変調を書き込みます。
+    /// </summary>
+    /// <param name="profile">書き込み先の速度プロファイル。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
     private static void FillSpeedProfile(
         Span<double> profile,
         int sampleRate,
@@ -83,6 +99,12 @@ public static class WowFlutterWarp
     /// 終端正規化付き累積と、出力→入力の最近傍インデックス写像を構築します。
     /// 写像は全ソース添え字を少なくとも1回含むよう補正し、gather 逆変換が穴なしで復元できるようにします。
     /// </summary>
+    /// <param name="sampleCount">サンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <returns>出力 index → 入力 index の写像。長さ 0 なら空配列。</returns>
     public static int[] BuildSourceIndexMap(
         int sampleCount,
         int sampleRate,
@@ -198,6 +220,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 可逆ワウ付与（最近傍写像）。double 精度の実信号向けです。
     /// </summary>
+    /// <param name="source">入力実信号。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <returns>ワウ付与後の実信号。</returns>
     public static double[] Apply(
         ReadOnlySpan<double> source,
         int sampleRate,
@@ -223,6 +251,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 可逆ワウ逆補正（同一写像の gather + 穴の線形埋め）。
     /// </summary>
+    /// <param name="warped">ワウ付与済み実信号。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <returns>逆補正後の実信号。</returns>
     public static double[] Correct(
         ReadOnlySpan<double> warped,
         int sampleRate,
@@ -268,6 +302,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 複素 OFDM 実信号（Imag≈0）へ可逆ワウを付与します。
     /// </summary>
+    /// <param name="source">入力複素サンプル（実部のみ使用）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <returns>ワウ付与後の複素サンプル（Imag=0）。</returns>
     public static Complex[] Apply(
         Complex[] source,
         int sampleRate,
@@ -294,6 +334,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 複素 OFDM 実信号の可逆ワウ逆補正です。
     /// </summary>
+    /// <param name="warped">ワウ付与済み複素サンプル。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <returns>逆補正後の複素サンプル（Imag=0）。</returns>
     public static Complex[] Correct(
         Complex[] warped,
         int sampleRate,
@@ -315,6 +361,11 @@ public static class WowFlutterWarp
     /// <summary>
     /// 複素 OFDM 実信号の可逆ワウ逆補正を in-place で行います（一時バッファはプール）。
     /// </summary>
+    /// <param name="warped">補正対象の複素配列（全体を in-place 更新）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
     public static void CorrectInPlace(
         Complex[] warped,
         int sampleRate,
@@ -329,6 +380,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 先頭 <paramref name="length"/> サンプルだけを in-place 補正します（プール配列の部分利用向け）。
     /// </summary>
+    /// <param name="warped">補正対象の複素配列。</param>
+    /// <param name="length">先頭から補正するサンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
     public static void CorrectInPlace(
         Complex[] warped,
         int length,
@@ -351,6 +408,15 @@ public static class WowFlutterWarp
         CorrectInto(warped, length, sampleRate, amount, wowPhase, flutterPhase, warped);
     }
 
+    /// <summary>
+    /// 複素配列全体を gather 逆補正して <paramref name="destination"/> へ書き込みます。
+    /// </summary>
+    /// <param name="warped">ワウ付与済み複素サンプル。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="destination">逆補正結果の書き込み先。</param>
     private static void CorrectInto(
         Complex[] warped,
         int sampleRate,
@@ -362,6 +428,16 @@ public static class WowFlutterWarp
         CorrectInto(warped, warped.Length, sampleRate, amount, wowPhase, flutterPhase, destination);
     }
 
+    /// <summary>
+    /// 先頭 <paramref name="length"/> サンプルを gather 逆補正して書き込みます。
+    /// </summary>
+    /// <param name="warped">ワウ付与済み複素サンプル。</param>
+    /// <param name="length">先頭から補正するサンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="destination">逆補正結果の書き込み先（in-place 可）。</param>
     private static void CorrectInto(
         Complex[] warped,
         int length,
@@ -408,6 +484,13 @@ public static class WowFlutterWarp
     /// 線形補間＋ソース側オーバーサンプルによる低残差ワウ付与です。
     /// 出力長は入力と同じで、読み出しだけを高分解能化します。
     /// </summary>
+    /// <param name="source">入力実信号。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="oversample">ソース側オーバーサンプル倍率。</param>
+    /// <returns>ワウ付与後の実信号。</returns>
     public static double[] ApplyOversampledLinear(
         ReadOnlySpan<double> source,
         int sampleRate,
@@ -438,6 +521,13 @@ public static class WowFlutterWarp
     /// <summary>
     /// 線形補間＋ワープ側オーバーサンプルによる低残差ワウ逆補正です。
     /// </summary>
+    /// <param name="warped">ワウ付与済み実信号。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="oversample">ワープ側オーバーサンプル倍率。</param>
+    /// <returns>逆補正後の実信号。</returns>
     public static double[] CorrectOversampledLinear(
         ReadOnlySpan<double> warped,
         int sampleRate,
@@ -481,6 +571,16 @@ public static class WowFlutterWarp
         return dst;
     }
 
+    /// <summary>
+    /// 複素 OFDM 実信号へ線形補間オーバーサンプルワウを付与します。
+    /// </summary>
+    /// <param name="source">入力複素サンプル（実部のみ使用）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="oversample">ソース側オーバーサンプル倍率。</param>
+    /// <returns>ワウ付与後の複素サンプル（Imag=0）。</returns>
     public static Complex[] ApplyOversampledLinear(
         Complex[] source,
         int sampleRate,
@@ -506,6 +606,16 @@ public static class WowFlutterWarp
         return dst;
     }
 
+    /// <summary>
+    /// 複素 OFDM 実信号の線形補間オーバーサンプルワウ逆補正です。
+    /// </summary>
+    /// <param name="warped">ワウ付与済み複素サンプル。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">速度変調の振幅。</param>
+    /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="oversample">ワープ側オーバーサンプル倍率。</param>
+    /// <returns>逆補正後の複素サンプル（Imag=0）。</returns>
     public static Complex[] CorrectOversampledLinear(
         Complex[] warped,
         int sampleRate,
@@ -531,6 +641,12 @@ public static class WowFlutterWarp
         return dst;
     }
 
+    /// <summary>
+    /// 速度プロファイルから終端正規化付き累積時間とスケールを構築します。
+    /// </summary>
+    /// <param name="speedProfile">サンプル単位の相対速度。</param>
+    /// <param name="cumul">終端正規化前の累積時間配列。</param>
+    /// <param name="scale">終端をサンプル長に合わせるスケール。</param>
     private static void BuildCumul(ReadOnlySpan<double> speedProfile, out double[] cumul, out double scale)
     {
         var n = speedProfile.Length;
@@ -556,9 +672,21 @@ public static class WowFlutterWarp
         scale = cumul[^1] > 1e-12 ? (n - 1) / cumul[^1] : 1.0;
     }
 
+    /// <summary>
+    /// <see cref="BuildCumul(ReadOnlySpan{double}, out double[], out double)"/> の配列引数版です。
+    /// </summary>
+    /// <param name="speedProfile">サンプル単位の相対速度。</param>
+    /// <param name="cumul">終端正規化前の累積時間配列。</param>
+    /// <param name="scale">終端をサンプル長に合わせるスケール。</param>
     private static void BuildCumul(double[] speedProfile, out double[] cumul, out double scale) =>
         BuildCumul((ReadOnlySpan<double>)speedProfile, out cumul, out scale);
 
+    /// <summary>
+    /// 線形補間で <paramref name="factor"/> 倍にアップサンプルします。
+    /// </summary>
+    /// <param name="source">入力実信号。</param>
+    /// <param name="factor">アップサンプル倍率。</param>
+    /// <returns>アップサンプル後の実信号。</returns>
     private static double[] UpsampleLinear(ReadOnlySpan<double> source, int factor)
     {
         if (source.Length == 0)
@@ -616,6 +744,12 @@ public static class WowFlutterWarp
         return up;
     }
 
+    /// <summary>
+    /// 連続位置での線形補間サンプル値を返します。
+    /// </summary>
+    /// <param name="samples">補間対象のサンプル列。</param>
+    /// <param name="position">連続位置（サンプル単位）。</param>
+    /// <returns>線形補間したサンプル値。</returns>
     private static double SampleLinear(ReadOnlySpan<double> samples, double position)
     {
         if (samples.Length == 0)

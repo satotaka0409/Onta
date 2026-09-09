@@ -138,8 +138,14 @@ public static class RsEcc256
     }
 }
 
+/// <summary>
+/// GF(256) Reed-Solomon の符号化／復号コア実装です。
+/// </summary>
 internal static class ReedSolomonCodec
 {
+    /// <summary>
+    /// 復号ペイロードと補正統計の組です。
+    /// </summary>
     internal readonly record struct DecodeResult(byte[] Decoded, RsEcc256.DecodeMetrics Metrics);
 
     private const int FieldSize = 256;
@@ -149,12 +155,21 @@ internal static class ReedSolomonCodec
     private static readonly int[] LogTable = new int[FieldSize];
     private static readonly byte[] MulTable = new byte[FieldSize * FieldSize];
 
+    /// <summary>
+    /// log/antilog と乗算テーブルを静的初期化します。
+    /// </summary>
     static ReedSolomonCodec()
     {
         InitializeTables();
         InitializeMultiplicationTable();
     }
 
+    /// <summary>
+    /// メッセージにパリティを付加した符号語を生成します。
+    /// </summary>
+    /// <param name="data">符号化対象メッセージ。</param>
+    /// <param name="paritySymbols">付加するパリティシンボル数。</param>
+    /// <returns>メッセージ＋パリティの符号語。</returns>
     public static byte[] EncodeBlock(byte[] data, int paritySymbols)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -200,11 +215,24 @@ internal static class ReedSolomonCodec
         return codeword;
     }
 
+    /// <summary>
+    /// 符号語を復号し、訂正後のペイロードのみを返します。
+    /// </summary>
+    /// <param name="received">受信符号語。</param>
+    /// <param name="paritySymbols">パリティシンボル数。</param>
+    /// <returns>訂正後ペイロード（パリティ除く）。</returns>
     public static byte[] DecodeBlock(byte[] received, int paritySymbols)
     {
         return DecodeBlockWithMetrics(received, paritySymbols, received.Length - paritySymbols).Decoded;
     }
 
+    /// <summary>
+    /// 符号語を復号し、訂正後ペイロードと補正統計を返します。
+    /// </summary>
+    /// <param name="received">受信符号語。</param>
+    /// <param name="paritySymbols">パリティシンボル数。</param>
+    /// <param name="payloadBytes">補正率計算に使うペイロード長（バイト）。</param>
+    /// <returns>復号ペイロードと補正統計の組。</returns>
     public static DecodeResult DecodeBlockWithMetrics(byte[] received, int paritySymbols, int payloadBytes)
     {
         ArgumentNullException.ThrowIfNull(received);
@@ -274,6 +302,13 @@ internal static class ReedSolomonCodec
         return new DecodeResult(decoded, metrics);
     }
 
+    /// <summary>
+    /// 先頭 <paramref name="count"/> バイトで値が異なるバイト数を数えます。
+    /// </summary>
+    /// <param name="left">比較元バイト列。</param>
+    /// <param name="right">比較先バイト列。</param>
+    /// <param name="count">先頭から比較するバイト数。</param>
+    /// <returns>値が異なるバイト数。</returns>
     private static int CountDifferentBytes(byte[] left, byte[] right, int count)
     {
         var different = 0;
@@ -341,6 +376,13 @@ internal static class ReedSolomonCodec
         return different;
     }
 
+    /// <summary>
+    /// 先頭 <paramref name="count"/> バイトで異なるビット数を数えます。
+    /// </summary>
+    /// <param name="left">比較元バイト列。</param>
+    /// <param name="right">比較先バイト列。</param>
+    /// <param name="count">先頭から比較するバイト数。</param>
+    /// <returns>異なるビット数。</returns>
     private static int CountDifferentBits(byte[] left, byte[] right, int count)
     {
         var bitCount = 0;
@@ -363,6 +405,9 @@ internal static class ReedSolomonCodec
         return bitCount;
     }
 
+    /// <summary>
+    /// GF(256) の exp/log テーブルを初期化します。
+    /// </summary>
     private static void InitializeTables()
     {
         // 乗除算を高速化するため、GF(256) の log/antilog テーブルを構築する。
@@ -384,6 +429,9 @@ internal static class ReedSolomonCodec
         }
     }
 
+    /// <summary>
+    /// GF(256) 乗算の全組み合わせテーブルを構築します。
+    /// </summary>
     private static void InitializeMultiplicationTable()
     {
         for (var a = 0; a < FieldSize; a++)
@@ -401,6 +449,11 @@ internal static class ReedSolomonCodec
         }
     }
 
+    /// <summary>
+    /// パリティ数に応じた生成多項式を構築します。
+    /// </summary>
+    /// <param name="paritySymbols">パリティシンボル数。</param>
+    /// <returns>高次係数先頭の生成多項式。</returns>
     private static int[] BuildGeneratorPolynomial(int paritySymbols)
     {
         // 生成多項式 g(x) = Π_{i=0..parity-1}(x - a^i) を構築する。
@@ -413,6 +466,12 @@ internal static class ReedSolomonCodec
         return gen;
     }
 
+    /// <summary>
+    /// 受信符号語のシンドロームを計算します。
+    /// </summary>
+    /// <param name="data">受信符号語。</param>
+    /// <param name="paritySymbols">パリティシンボル数（＝シンドローム長）。</param>
+    /// <returns>シンドローム配列。</returns>
     private static int[] CalculateSyndromes(byte[] data, int paritySymbols)
     {
         var syndromes = new int[paritySymbols];
@@ -424,6 +483,11 @@ internal static class ReedSolomonCodec
         return syndromes;
     }
 
+    /// <summary>
+    /// 整数配列がすべて 0 かどうかを判定します。
+    /// </summary>
+    /// <param name="values">判定対象の整数配列。</param>
+    /// <returns>全要素が 0 なら <see langword="true"/>。</returns>
     private static bool IsAllZero(int[] values)
     {
         for (var i = 0; i < values.Length; i++)
@@ -437,6 +501,12 @@ internal static class ReedSolomonCodec
         return true;
     }
 
+    /// <summary>
+    /// Berlekamp-Massey 法で誤り位置多項式を求めます。
+    /// </summary>
+    /// <param name="syndromes">シンドローム配列。</param>
+    /// <param name="paritySymbols">パリティシンボル数。</param>
+    /// <returns>低次係数先頭の誤り位置多項式。</returns>
     private static int[] FindErrorLocatorBerlekampMassey(int[] syndromes, int paritySymbols)
     {
         // 低次係数先頭の表現で Berlekamp-Massey の漸化式を適用する。
@@ -484,6 +554,12 @@ internal static class ReedSolomonCodec
         return c.ToArray();
     }
 
+    /// <summary>
+    /// Chien 探索で誤りシンボル位置を特定します。
+    /// </summary>
+    /// <param name="errorLocatorLowDegree">低次係数先頭の誤り位置多項式。</param>
+    /// <param name="messageLength">符号語長。</param>
+    /// <returns>誤りシンボル位置の一覧。</returns>
     private static List<int> FindErrorPositions(int[] errorLocatorLowDegree, int messageLength)
     {
         var degree = errorLocatorLowDegree.Length - 1;
@@ -511,6 +587,13 @@ internal static class ReedSolomonCodec
         return positions;
     }
 
+    /// <summary>
+    /// シンドロームと誤り位置から誤り値（マグニチュード）を解きます。
+    /// </summary>
+    /// <param name="syndromes">シンドローム配列。</param>
+    /// <param name="errorPositions">誤りシンボル位置一覧。</param>
+    /// <param name="messageLength">符号語長。</param>
+    /// <returns>各誤り位置に対応する誤り値。</returns>
     private static int[] SolveErrorMagnitudes(int[] syndromes, List<int> errorPositions, int messageLength)
     {
         var count = errorPositions.Count;
@@ -542,6 +625,12 @@ internal static class ReedSolomonCodec
         return SolveLinearSystemGf256(matrix, count);
     }
 
+    /// <summary>
+    /// GF(256) 上の拡大係数行列をガウス消去で解きます。
+    /// </summary>
+    /// <param name="augmentedMatrix">係数＋右辺の拡大行列。</param>
+    /// <param name="size">未知数の個数。</param>
+    /// <returns>解ベクトル。</returns>
     private static int[] SolveLinearSystemGf256(int[,] augmentedMatrix, int size)
     {
         // 誤り値算出のため、GF(256) 上でガウス消去を行う。
@@ -607,6 +696,13 @@ internal static class ReedSolomonCodec
         return solution;
     }
 
+    /// <summary>
+    /// 行列の 2 行を入れ替えます。
+    /// </summary>
+    /// <param name="matrix">対象行列。</param>
+    /// <param name="rowA">入れ替え元の行。</param>
+    /// <param name="rowB">入れ替え先の行。</param>
+    /// <param name="width">各行の列数。</param>
     private static void SwapRows(int[,] matrix, int rowA, int rowB, int width)
     {
         for (var j = 0; j < width; j++)
@@ -615,6 +711,12 @@ internal static class ReedSolomonCodec
         }
     }
 
+    /// <summary>
+    /// 低次係数先頭表現の多項式同士を加算（XOR）します。
+    /// </summary>
+    /// <param name="left">左辺多項式。</param>
+    /// <param name="right">右辺多項式。</param>
+    /// <returns>加算結果の多項式。</returns>
     private static List<int> AddPolynomialsLowDegree(List<int> left, List<int> right)
     {
         var size = Math.Max(left.Count, right.Count);
@@ -631,6 +733,12 @@ internal static class ReedSolomonCodec
         return result;
     }
 
+    /// <summary>
+    /// 低次係数先頭多項式の各係数をスカラー倍します。
+    /// </summary>
+    /// <param name="poly">対象多項式。</param>
+    /// <param name="scale">GF(256) スカラー。</param>
+    /// <returns>スカラー倍した多項式。</returns>
     private static List<int> ScalePolynomialLowDegree(List<int> poly, int scale)
     {
         var result = new List<int>(poly.Count);
@@ -643,6 +751,12 @@ internal static class ReedSolomonCodec
         return result;
     }
 
+    /// <summary>
+    /// 低次係数先頭多項式を次数方向にシフトします。
+    /// </summary>
+    /// <param name="poly">対象多項式。</param>
+    /// <param name="shift">低次側へ挿入するゼロ係数の個数。</param>
+    /// <returns>シフト後の多項式。</returns>
     private static List<int> ShiftPolynomialLowDegree(List<int> poly, int shift)
     {
         var result = new List<int>(new int[poly.Count + shift]);
@@ -654,6 +768,10 @@ internal static class ReedSolomonCodec
         return result;
     }
 
+    /// <summary>
+    /// 低次係数先頭多項式の末尾ゼロ係数を除去します。
+    /// </summary>
+    /// <param name="poly">正規化する多項式（in-place）。</param>
     private static void TrimTrailingZerosLowDegree(List<int> poly)
     {
         while (poly.Count > 1 && poly[poly.Count - 1] == 0)
@@ -662,6 +780,12 @@ internal static class ReedSolomonCodec
         }
     }
 
+    /// <summary>
+    /// 低次係数先頭多項式を点 <paramref name="x"/> で評価します。
+    /// </summary>
+    /// <param name="polynomial">低次係数先頭の多項式。</param>
+    /// <param name="x">評価点。</param>
+    /// <returns>多項式の値。</returns>
     private static int EvaluatePolynomialLowDegree(int[] polynomial, int x)
     {
         var result = 0;
@@ -673,6 +797,12 @@ internal static class ReedSolomonCodec
         return result;
     }
 
+    /// <summary>
+    /// 高次係数先頭（メッセージ先頭）多項式を点 <paramref name="x"/> で評価します。
+    /// </summary>
+    /// <param name="polynomial">高次係数先頭の多項式（バイト列）。</param>
+    /// <param name="x">評価点。</param>
+    /// <returns>多項式の値。</returns>
     private static int EvaluatePolynomialHighDegree(byte[] polynomial, int x)
     {
         var result = 0;
@@ -684,6 +814,12 @@ internal static class ReedSolomonCodec
         return result;
     }
 
+    /// <summary>
+    /// 高次係数先頭表現の多項式同士を乗算します。
+    /// </summary>
+    /// <param name="left">左辺多項式。</param>
+    /// <param name="right">右辺多項式。</param>
+    /// <returns>積の多項式。</returns>
     private static int[] MultiplyPolynomialsHighDegree(int[] left, int[] right)
     {
         var result = new int[left.Length + right.Length - 1];
@@ -698,11 +834,22 @@ internal static class ReedSolomonCodec
         return result;
     }
 
+    /// <summary>
+    /// GF(256) 乗算（テーブル参照）です。
+    /// </summary>
+    /// <param name="a">左辺。</param>
+    /// <param name="b">右辺。</param>
+    /// <returns>積 a·b。</returns>
     private static int GfMultiply(int a, int b)
     {
         return MulTable[(a << 8) | b];
     }
 
+    /// <summary>
+    /// 原始元 α のべき乗 α^power を返します。
+    /// </summary>
+    /// <param name="power">指数。</param>
+    /// <returns>α^power。</returns>
     private static int GfPowAlpha(int power)
     {
         var exponent = power % 255;
@@ -714,6 +861,12 @@ internal static class ReedSolomonCodec
         return ExpTable[exponent];
     }
 
+    /// <summary>
+    /// GF(256) 除算 a / b を行います。
+    /// </summary>
+    /// <param name="a">被除数。</param>
+    /// <param name="b">除数（0 不可）。</param>
+    /// <returns>商 a/b。</returns>
     private static int GfDivide(int a, int b)
     {
         if (b == 0)
@@ -735,6 +888,11 @@ internal static class ReedSolomonCodec
         return ExpTable[exponent];
     }
 
+    /// <summary>
+    /// GF(256) 乗法逆元を返します。
+    /// </summary>
+    /// <param name="value">逆元を求める値（0 不可）。</param>
+    /// <returns>乗法逆元。</returns>
     private static int GfInverse(int value)
     {
         if (value == 0)
@@ -745,6 +903,12 @@ internal static class ReedSolomonCodec
         return ExpTable[255 - LogTable[value]];
     }
 
+    /// <summary>
+    /// GF(256) べき乗 value^power を計算します。
+    /// </summary>
+    /// <param name="value">底。</param>
+    /// <param name="power">指数。</param>
+    /// <returns>value^power。</returns>
     private static int GfPower(int value, int power)
     {
         if (power == 0)

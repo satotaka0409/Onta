@@ -24,8 +24,9 @@ public partial class MainWindow : Window
         InitializeComponent();
         SendPanel.SettingsChanged += (_, _) => RefreshEstimate();
         SendPanel.OutputRequested += OnOutputRequested;
+        SendPanel.StopRequested += OnStopRequested;
         ReceivePanel.ReceiveStartRequested += OnReceiveStartRequested;
-        _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _progressPollTimer.Tick += OnProgressPollTick;
         Closed += (_, _) => StopAudioPlayback();
         RefreshEstimate();
@@ -77,9 +78,15 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // 前回のファイル再生が残っていれば止める（リアルタイム出力と競合しないように）。
+            StopAudioPlayback();
+
             ReceivePanel.StopDemoFeed();
             ReceivePanel.SetWowFlutterPercent(0, 0);
-            ReceivePanel.SetFileInfo(Path.GetFileName(snap.InputFilePath), "-", "-");
+            // 送信選択ファイルは受信パネルへ表示しない。
+            EstimatePanel.ResetProgress();
+            BottomTabs.SelectedItem = EstimateTab;
+            SendPanel.SetTransmissionRunning(true);
             _pollingReceive = false;
             if (!_progressPollTimer.IsEnabled)
             {
@@ -88,8 +95,14 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            SendPanel.SetTransmissionRunning(false);
             MessageBox.Show(this, $"出力に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void OnStopRequested(object? sender, EventArgs e)
+    {
+        _ = _coreWorker.RequestStop();
     }
 
     private void OnReceiveStartRequested(object? sender, EventArgs e)
@@ -160,10 +173,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var snapshot = _coreWorker.GetProgress();
-        // 送信進捗ではファイル情報のみ更新（ワウ・フラッター／エラー率は受信用のため更新しない）。
+        // 送信進捗: 見積メーターを 0.5 秒間隔で更新。
+        var progress = _coreWorker.GetProgress();
+        EstimatePanel.ApplyProgress(progress.ElapsedAudioSeconds, progress.IsRunning);
         _ = _coreWorker.ConsumeFrameEvents();
-        ReceivePanel.SetFileInfo(snapshot.InputFileName, snapshot.FileSizeText, snapshot.BlockCountText);
 
         if (!_coreWorker.TryConsumeCompletion(out var completion))
         {
@@ -171,10 +184,21 @@ public partial class MainWindow : Window
         }
 
         _progressPollTimer.Stop();
+        SendPanel.SetTransmissionRunning(false);
+        EstimatePanel.ApplyProgress(
+            completion.IsSuccess ? Math.Max(progress.TotalAudioSeconds, progress.ElapsedAudioSeconds) : progress.ElapsedAudioSeconds,
+            isRunning: false);
+
+        if (completion.WasCancelled)
+        {
+            MessageBox.Show(this, completion.Message, "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
 
         if (completion.IsSuccess)
         {
-            if (completion.Settings.PlayAudio)
+            // リアルタイム再生済みなら完了後に WAV を重ね再生しない。
+            if (completion.Settings.PlayAudio && !completion.PlayedRealtime)
             {
                 StartAudioPlayback(completion.OutputWavPath, completion.Settings.AudioDeviceNumber);
             }
@@ -188,7 +212,8 @@ public partial class MainWindow : Window
                 + $"サブキャリア: {completion.Settings.ActiveSubcarriers}\n"
                 + $"変調: {completion.Settings.ModulationScheme}\n"
                 + $"繰り返し: ×{completion.Settings.BlockInterleaveFactor}\n"
-                + $"デバイス: {completion.Settings.AudioDeviceName}",
+                + $"デバイス: {completion.Settings.AudioDeviceName}\n"
+                + (completion.PlayedRealtime ? "音声: リアルタイム出力\n" : string.Empty),
                 "Onta",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);

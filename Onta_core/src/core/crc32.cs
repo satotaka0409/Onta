@@ -13,6 +13,8 @@ public static class Crc32
     /// <summary>
     /// 指定範囲の CRC-32 を計算します。
     /// </summary>
+    /// <param name="data">CRC 計算対象のバイト列。</param>
+    /// <returns>CRC-32 値。</returns>
     public static uint Compute(ReadOnlySpan<byte> data)
     {
         var crc = 0xFFFFFFFFu;
@@ -45,6 +47,8 @@ public static class Crc32
     /// <summary>
     /// CRC-32 をビッグエンディアン 4 バイトで書き込みます。
     /// </summary>
+    /// <param name="dest4">書き込み先（4 バイト以上）。</param>
+    /// <param name="crc">書き込む CRC-32 値。</param>
     public static void WriteBigEndian(Span<byte> dest4, uint crc)
     {
         if (dest4.Length < 4)
@@ -58,6 +62,8 @@ public static class Crc32
     /// <summary>
     /// ビッグエンディアン 4 バイトから CRC-32 を読み取ります。
     /// </summary>
+    /// <param name="src4">読み取り元（4 バイト以上）。</param>
+    /// <returns>読み取った CRC-32 値。</returns>
     public static uint ReadBigEndian(ReadOnlySpan<byte> src4)
     {
         if (src4.Length < 4)
@@ -71,11 +77,18 @@ public static class Crc32
     /// <summary>
     /// 計算値と格納値が一致するか検証します。
     /// </summary>
+    /// <param name="data">CRC 計算対象のバイト列。</param>
+    /// <param name="storedCrcBigEndian">格納済み CRC（ビッグエンディアン 4 バイト）。</param>
+    /// <returns>一致すれば <see langword="true"/>。</returns>
     public static bool Matches(ReadOnlySpan<byte> data, ReadOnlySpan<byte> storedCrcBigEndian)
     {
         return Compute(data) == ReadBigEndian(storedCrcBigEndian);
     }
 
+    /// <summary>
+    /// スライディング方式用の CRC-32 ルックアップテーブル（8×256）を構築します。
+    /// </summary>
+    /// <returns>8 段×256 エントリの CRC テーブル。</returns>
     private static uint[][] BuildTables()
     {
         const uint poly = 0xEDB88320u;
