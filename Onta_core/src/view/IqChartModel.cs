@@ -16,7 +16,6 @@ public sealed class IqChartModel
     private const int MaxPoints = 256;
     private readonly ObservableCollection<ObservablePoint> _points = [];
     private static readonly SKColor PointColor = new(166, 221, 176);
-    private static readonly SKColor AxisColor = new(176, 181, 191);
     private static readonly SKColor GridColor = new(92, 97, 108);
 
     public IqChartModel()
@@ -37,11 +36,11 @@ public sealed class IqChartModel
         [
             new Axis
             {
-                Name = "I",
+                Name = null,
                 MinLimit = -2,
                 MaxLimit = 2,
-                NamePaint = new SolidColorPaint(AxisColor),
-                LabelsPaint = new SolidColorPaint(AxisColor),
+                NamePaint = null,
+                LabelsPaint = null,
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
             }
         ];
@@ -50,11 +49,11 @@ public sealed class IqChartModel
         [
             new Axis
             {
-                Name = "Q",
+                Name = null,
                 MinLimit = -2,
                 MaxLimit = 2,
-                NamePaint = new SolidColorPaint(AxisColor),
-                LabelsPaint = new SolidColorPaint(AxisColor),
+                NamePaint = null,
+                LabelsPaint = null,
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
             }
         ];

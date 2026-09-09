@@ -8,11 +8,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"
-                           MinHeight="100"/>
-            <RowDefinition Height="*"
-                           MinHeight="100"/>
+                           MinHeight="160"/>
         </Grid.RowDefinitions>
 
         <TextBlock Text="受信"
@@ -113,41 +110,20 @@
             </StackPanel>
         </Grid>
 
-        <TabControl Grid.Row="3"
-                    Grid.RowSpan="2"
-                    Margin="0,0,0,8">
-            <TabItem Header="エラー率">
-                <Border BorderBrush="{StaticResource BrushBorder}"
-                        BorderThickness="1"
-                        Background="{StaticResource BrushInput}"
-                        CornerRadius="3"
-                        Padding="4">
-                    <lvc:CartesianChart x:Name="ErrorChart"
-                                        Background="{StaticResource BrushInput}"
-                                        Series="{Binding Series}"
-                                        XAxes="{Binding XAxes}"
-                                        YAxes="{Binding YAxes}"
-                                        AnimationsSpeed="0"
-                                        TooltipPosition="Hidden"/>
-                </Border>
-            </TabItem>
-            <TabItem Header="FFT">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock x:Name="FftTitle"
-                               Text="FFT"
-                               Margin="4,0,0,4"
-                               Foreground="{StaticResource BrushTextMuted}"/>
-                    <Border Grid.Row="1"
-                            BorderBrush="{StaticResource BrushBorder}"
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="0.5*"/>
+            </Grid.ColumnDefinitions>
+
+            <TabControl Margin="0,0,8,0">
+                <TabItem Header="エラー率">
+                    <Border BorderBrush="{StaticResource BrushBorder}"
                             BorderThickness="1"
                             Background="{StaticResource BrushInput}"
                             CornerRadius="3"
                             Padding="4">
-                        <lvc:CartesianChart x:Name="FftChart"
+                        <lvc:CartesianChart x:Name="ErrorChart"
                                             Background="{StaticResource BrushInput}"
                                             Series="{Binding Series}"
                                             XAxes="{Binding XAxes}"
@@ -155,33 +131,59 @@
                                             AnimationsSpeed="0"
                                             TooltipPosition="Hidden"/>
                     </Border>
-                </Grid>
-            </TabItem>
-        </TabControl>
+                </TabItem>
+                <TabItem Header="FFT">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="FftTitle"
+                                   Text="FFT"
+                                   Margin="4,0,0,4"
+                                   Foreground="{StaticResource BrushTextMuted}"/>
+                        <Border Grid.Row="1"
+                                BorderBrush="{StaticResource BrushBorder}"
+                                BorderThickness="1"
+                                Background="{StaticResource BrushInput}"
+                                CornerRadius="3"
+                                Padding="4">
+                            <lvc:CartesianChart x:Name="FftChart"
+                                                Background="{StaticResource BrushInput}"
+                                                Series="{Binding Series}"
+                                                XAxes="{Binding XAxes}"
+                                                YAxes="{Binding YAxes}"
+                                                AnimationsSpeed="0"
+                                                TooltipPosition="Hidden"/>
+                        </Border>
+                    </Grid>
+                </TabItem>
+            </TabControl>
 
-        <Grid Grid.Row="5">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <TextBlock x:Name="IqTitle"
-                       Text="I-Q"
-                       Margin="4,0,0,4"
-                       Foreground="{StaticResource BrushTextMuted}"/>
-            <Border Grid.Row="1"
-                    BorderBrush="{StaticResource BrushBorder}"
-                    BorderThickness="1"
-                    Background="{StaticResource BrushInput}"
-                    CornerRadius="3"
-                    Padding="4">
-                <lvc:CartesianChart x:Name="IqChart"
-                                    Background="{StaticResource BrushInput}"
-                                    Series="{Binding Series}"
-                                    XAxes="{Binding XAxes}"
-                                    YAxes="{Binding YAxes}"
-                                    AnimationsSpeed="0"
-                                    TooltipPosition="Hidden"/>
-            </Border>
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="IqTitle"
+                           Text="I-Q"
+                           Margin="4,0,0,4"
+                           Foreground="{StaticResource BrushTextMuted}"/>
+                <Border Grid.Row="1"
+                        BorderBrush="{StaticResource BrushBorder}"
+                        BorderThickness="1"
+                        Background="{StaticResource BrushInput}"
+                        CornerRadius="3"
+                        Padding="4">
+                    <lvc:CartesianChart x:Name="IqChart"
+                                        Background="{StaticResource BrushInput}"
+                                        Series="{Binding Series}"
+                                        XAxes="{Binding XAxes}"
+                                        YAxes="{Binding YAxes}"
+                                        AnimationsSpeed="0"
+                                        TooltipPosition="Hidden"/>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </UserControl>

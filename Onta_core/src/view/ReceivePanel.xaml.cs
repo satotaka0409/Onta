@@ -129,6 +129,15 @@ public partial class ReceivePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 送信動作中など、受信変調に基づく表示ができないときは I-Q を空にします。
+    /// </summary>
+    public void ClearIqDisplay()
+    {
+        _iqChart.Clear();
+        IqTitle.Text = "I-Q";
+    }
+
     public void SetWowFlutterFromPilots(double leftSpeedRatio, double rightSpeedRatio)
     {
         WowLeft.SetFromSpeedRatio(leftSpeedRatio);

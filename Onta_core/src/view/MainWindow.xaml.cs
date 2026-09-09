@@ -87,6 +87,8 @@ public partial class MainWindow : Window
             EstimatePanel.ResetProgress();
             BottomTabs.SelectedItem = EstimateTab;
             SendPanel.SetTransmissionRunning(true);
+            // I-Q は受信変調に連動するため、送信中は表示しない。
+            ReceivePanel.ClearIqDisplay();
             _pollingReceive = false;
             if (!_progressPollTimer.IsEnabled)
             {
@@ -173,7 +175,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 送信進捗: 見積メーターを 0.5 秒間隔で更新。
+        // 送信進捗: 見積メーターを更新。
         var progress = _coreWorker.GetProgress();
         EstimatePanel.ApplyProgress(progress.ElapsedAudioSeconds, progress.IsRunning);
         _ = _coreWorker.ConsumeFrameEvents();
