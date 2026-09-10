@@ -192,8 +192,19 @@ public partial class MainWindow : Window
                 return;
             }
 
-            // ファイル情報は FH 読み込み完了まで未受信表示。
-            ReceivePanel.SetFileInfo("(未受信)", "-", "-");
+            // FH 確定前でも入力WAV情報を表示し、開始中であることを明示する。
+            var inputDisplayName = Path.GetFileName(ReceivePanel.SelectedWavPath);
+            var inputSizeText = "-";
+            try
+            {
+                inputSizeText = $"{new FileInfo(ReceivePanel.SelectedWavPath).Length:N0} bytes";
+            }
+            catch
+            {
+                // サイズ取得に失敗しても受信は続行。
+            }
+
+            ReceivePanel.SetFileInfo(inputDisplayName, inputSizeText, "-");
             ReceivePanel.SetProgressText("FH 開始中…");
             ReceiveDetailPanel.Clear();
 

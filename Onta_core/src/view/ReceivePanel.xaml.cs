@@ -302,9 +302,20 @@ public partial class ReceivePanel : UserControl
 
         _selectedWavPath = dlg.FileName;
         WavPathBox.Text = dlg.FileName;
-        // ファイル名・サイズは FH 受信後に更新する（WAV メタは使わない）。
-        SetFileInfo("(未受信)", "-", "-");
-        ProgressBox.Text = "-";
+        var displayName = Path.GetFileName(dlg.FileName);
+        var sizeText = "-";
+        try
+        {
+            sizeText = $"{new FileInfo(dlg.FileName).Length:N0} bytes";
+        }
+        catch
+        {
+            // サイズ取得に失敗しても選択自体は有効。
+        }
+
+        // FH 確定前でも「何を選んだか」を先に見せる。
+        SetFileInfo(displayName, sizeText, "-");
+        ProgressBox.Text = "スタート待ち";
     }
 
     private void OnBrowseOutputDir(object sender, RoutedEventArgs e)
