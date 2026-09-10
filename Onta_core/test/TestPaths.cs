@@ -5,11 +5,11 @@ namespace Onta.Core.Tests;
 /// </summary>
 internal static class TestPaths
 {
-    private const string InputFileName = "QR_326213.png";
+    private const string InputFileName = "Sample1.png";
     private static readonly string TestProjectDir = LocateTestProjectDir();
 
     /// <summary>
-    /// 既定の入力 PNG（test/in_files/QR_326213.png）を解決します。
+    /// 既定の入力 PNG（test/in_files/Sample1.png）を解決します。
     /// </summary>
     public static string ResolveInputPng()
     {

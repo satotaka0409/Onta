@@ -25,8 +25,8 @@ public sealed class OntaTest4
         RoundTripWithImpairments(
             whiteNoiseLevel: WhiteNoiseLevel,
             wowAmount: WowFlutterAmount,
-            wavName: "QR_326213_test4.wav",
-            restoredName: "QR_326213_test4.png");
+            wavName: "Sample1_test4.wav",
+            restoredName: "Sample1_test4.png");
     }
 
     private void RoundTripWithImpairments(

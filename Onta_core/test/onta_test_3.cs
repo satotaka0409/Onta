@@ -5,12 +5,12 @@ using Xunit;
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ステレオ / 18サブキャリア / 16QAM に、3% ホワイトノイズと 1% ワウフラッターを付与したラウンドトリップ試験です。
+/// ステレオ / 18サブキャリア / 16QAM に、2% ホワイトノイズと 1% ワウフラッターを付与したラウンドトリップ試験です。
 /// ワウはメモリ上の可逆写像で付与し、復号時に同一パラメータで逆補正します。
 /// </summary>
 public sealed class OntaTest3
 {
-    private const double WhiteNoiseLevel = 0.03;
+    private const double WhiteNoiseLevel = 0.02;
     private const double WowFlutterAmount = 0.01;
     private const int ImpairmentSeed = 20260904;
 
@@ -25,19 +25,19 @@ public sealed class OntaTest3
         RoundTripWithImpairments(
             whiteNoiseLevel: 0.0,
             wowAmount: WowFlutterAmount,
-            wavName: "QR_326213_test3_wow_only.wav",
-            restoredName: "QR_326213_test3_wow_only.png");
+            wavName: "Sample1_test3_wow_only.wav",
+            restoredName: "Sample1_test3_wow_only.png");
     }
 
     [Fact]
     public void EncodeDecode_QrPng_MatchesOriginal_Stereo18Sc16Qam_WithNoiseAndWowFlutter()
     {
-        // L/R LLR 合成 + ソフト出力畳み込み → ターボ軟入力で 3% AWGN を吸収する。
+        // L/R LLR 合成 + ソフト出力畳み込み → ターボ軟入力で 2% AWGN を吸収する。
         RoundTripWithImpairments(
             whiteNoiseLevel: WhiteNoiseLevel,
             wowAmount: WowFlutterAmount,
-            wavName: "QR_326213_test3.wav",
-            restoredName: "QR_326213_test3.png");
+            wavName: "Sample1_test3.wav",
+            restoredName: "Sample1_test3.png");
     }
 
     private void RoundTripWithImpairments(

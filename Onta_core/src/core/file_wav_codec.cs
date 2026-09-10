@@ -209,14 +209,21 @@ public sealed class FileWavCodec
 
         var originalBytes = File.ReadAllBytes(inputPath);
         var fileInfo = new FileInfo(inputPath);
-        var (leftSamples, rightSamples) = EncodeFileToSamples(originalBytes, fileInfo);
-        WavWriter.WritePcm16(
-            wavPath,
-            _profile.SampleRate,
-            leftSamples,
-            rightSamples,
-            _profile.SamplePeak,
-            _profile.ChannelMode);
+        using (var wavWriter = WavWriter.CreateStreamingPcm16(
+                   wavPath,
+                   _profile.SampleRate,
+                   _profile.SamplePeak,
+                   _profile.ChannelMode))
+        {
+            _ = EncodeFileToSamples(
+                originalBytes,
+                fileInfo,
+                onPcmChunk: (leftChunk, rightChunk) =>
+                {
+                    wavWriter.WriteChunk(leftChunk, rightChunk);
+                },
+                retainAllSamples: false);
+        }
 
         var decodedBytes = DecodeWavToFileBytes(wavPath, correctWow: false);
         if (restoredPath is not null)
@@ -232,6 +239,7 @@ public sealed class FileWavCodec
     /// <param name="fileInfo">ファイル名／属性の取得元。</param>
     /// <param name="onFrameTransmitted">フレーム送出時のコールバック（省略可）。</param>
     /// <param name="onPcmChunk">新規 PCM チャンク送出時のコールバック（L/R、リアルタイム再生向け、省略可）。</param>
+    /// <param name="retainAllSamples">false の場合、送出済みサンプルを保持せず逐次破棄します。</param>
     /// <param name="cancellationToken">符号化中止用トークン（省略可）。</param>
     /// <returns>L/R の OFDM PCM サンプル列。</returns>
     public (Complex[] Left, Complex[] Right) EncodeFileToSamples(
@@ -239,8 +247,14 @@ public sealed class FileWavCodec
         FileInfo fileInfo,
         Action<TransmissionFrameKind>? onFrameTransmitted = null,
         PcmChunkHandler? onPcmChunk = null,
+        bool retainAllSamples = true,
         CancellationToken cancellationToken = default)
     {
+        if (!retainAllSamples && onPcmChunk is null)
+        {
+            throw new ArgumentException("onPcmChunk is required when retainAllSamples is false.", nameof(onPcmChunk));
+        }
+
         var fileHash = Hash.ComputeSha512(fileBytes);
         var blocks = SplitDataBlocks(fileBytes);
         var blockHashes = new byte[blocks.Count][];
@@ -289,6 +303,15 @@ public sealed class FileWavCodec
 
             onPcmChunk(leftSpan, rightSpan);
             pcmEmitted = leftPcm.Count;
+
+            // 逐次出力モードでは、送出済みサンプルを都度破棄してメモリ常駐を抑える。
+            if (!retainAllSamples)
+            {
+                leftPcm.Clear();
+                rightPcm.Clear();
+                pcmEmitted = 0;
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
         }
 
@@ -375,6 +398,12 @@ public sealed class FileWavCodec
         AppendSilence(leftPcm, rightPcm, _profile.TrailingSilenceSamples, stereo: _profile.ChannelMode == ChannelMode.Stereo);
         EnsureStereoParity("trailing silence");
         FlushPcmChunk();
+
+        if (!retainAllSamples)
+        {
+            return (Array.Empty<Complex>(), Array.Empty<Complex>());
+        }
+
         return (leftPcm.ToArray(), rightPcm.ToArray());
     }
 
@@ -3141,6 +3170,23 @@ public sealed class FileWavCodec
 public static class WavWriter
 {
     /// <summary>
+    /// 16-bit PCM WAV を逐次書き込みするストリームライターを生成します。
+    /// </summary>
+    /// <param name="path">書き出し先 WAV パス。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="peakTarget">実数サンプルに適用するスケール（通常 0..1）。</param>
+    /// <param name="channelMode">チャンネルモード。</param>
+    /// <returns>逐次書き込みライター。</returns>
+    public static StreamingPcm16Writer CreateStreamingPcm16(
+        string path,
+        int sampleRate,
+        double peakTarget,
+        ChannelMode channelMode)
+    {
+        return new StreamingPcm16Writer(path, sampleRate, peakTarget, channelMode);
+    }
+
+    /// <summary>
     /// チャンネルモードに応じて 1ch または 2ch の WAV を書き出します。
     /// モノラル時は <paramref name="right"/> を無視し、L のみを出力します。
     /// </summary>
@@ -3281,6 +3327,123 @@ public static class WavWriter
     private static short ToPcm16(double value, double scale)
     {
         return (short)Math.Round(Math.Clamp(value * scale, -1.0, 1.0) * short.MaxValue);
+    }
+
+    /// <summary>
+    /// 16-bit PCM WAV を逐次書き込みするライターです。
+    /// </summary>
+    public sealed class StreamingPcm16Writer : IDisposable
+    {
+        private readonly FileStream _stream;
+        private readonly BinaryWriter _writer;
+        private readonly ChannelMode _channelMode;
+        private readonly int _sampleRate;
+        private readonly double _scale;
+        private long _sampleFrames;
+        private bool _disposed;
+
+        internal StreamingPcm16Writer(string path, int sampleRate, double peakTarget, ChannelMode channelMode)
+        {
+            ArgumentNullException.ThrowIfNull(path);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+
+            _channelMode = channelMode;
+            _sampleRate = sampleRate;
+            _scale = Math.Clamp(peakTarget, 0.0, 1.0);
+            _stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+            _writer = new BinaryWriter(_stream, Encoding.ASCII, leaveOpen: true);
+            WriteHeaderPlaceholder();
+        }
+
+        /// <summary>
+        /// PCM サンプルチャンクを追記します。
+        /// </summary>
+        /// <param name="left">L チャンネルサンプル。</param>
+        /// <param name="right">R チャンネルサンプル（モノラル時は空）。</param>
+        public void WriteChunk(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(StreamingPcm16Writer));
+            }
+
+            if (_channelMode == ChannelMode.Mono)
+            {
+                for (var i = 0; i < left.Length; i++)
+                {
+                    _writer.Write(ToPcm16(left[i].Real, _scale));
+                }
+
+                _sampleFrames += left.Length;
+                return;
+            }
+
+            if (left.Length != right.Length)
+            {
+                throw new ArgumentException("Left/Right sample lengths must match for stereo.");
+            }
+
+            for (var i = 0; i < left.Length; i++)
+            {
+                _writer.Write(ToPcm16(left[i].Real, _scale));
+                _writer.Write(ToPcm16(right[i].Real, _scale));
+            }
+
+            _sampleFrames += left.Length;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            var channels = _channelMode == ChannelMode.Mono ? 1 : 2;
+            var dataBytesLong = _sampleFrames * sizeof(short) * channels;
+            if (dataBytesLong > int.MaxValue)
+            {
+                throw new InvalidOperationException("WAV data exceeds RIFF 32-bit size limit.");
+            }
+
+            var dataBytes = (int)dataBytesLong;
+            var riffSize = 36 + dataBytes;
+
+            _writer.Flush();
+            var end = _stream.Position;
+            _stream.Seek(4, SeekOrigin.Begin);
+            _writer.Write(riffSize);
+            _stream.Seek(40, SeekOrigin.Begin);
+            _writer.Write(dataBytes);
+            _stream.Seek(end, SeekOrigin.Begin);
+
+            _writer.Dispose();
+            _stream.Dispose();
+            _disposed = true;
+        }
+
+        private void WriteHeaderPlaceholder()
+        {
+            var channels = _channelMode == ChannelMode.Mono ? 1 : 2;
+            var blockAlign = (short)(sizeof(short) * channels);
+            var byteRate = _sampleRate * blockAlign;
+
+            _writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+            _writer.Write(0); // 後で確定
+            _writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+
+            _writer.Write(Encoding.ASCII.GetBytes("fmt "));
+            _writer.Write(16);
+            _writer.Write((short)1); // PCM
+            _writer.Write((short)channels);
+            _writer.Write(_sampleRate);
+            _writer.Write(byteRate);
+            _writer.Write(blockAlign);
+            _writer.Write((short)16);
+
+            _writer.Write(Encoding.ASCII.GetBytes("data"));
+            _writer.Write(0); // 後で確定
+        }
     }
 }
 

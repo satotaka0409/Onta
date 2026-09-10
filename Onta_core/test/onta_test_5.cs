@@ -77,7 +77,7 @@ public sealed class OntaTest5
     [Fact]
     public void EncodeDecode_QrPng_MatchesOriginal_Mono9ScQpsk_InterleaveX2()
     {
-        RoundTrip(BaseProfile with { BlockInterleaveFactor = 2 }, "QR_326213_test5_x2.wav", "QR_326213_test5_x2.png");
+        RoundTrip(BaseProfile with { BlockInterleaveFactor = 2 }, "Sample1_test5_x2.wav", "Sample1_test5_x2.png");
     }
 
     private static void RoundTrip(FileWavCodecProfile profile, string wavName, string restoredName)

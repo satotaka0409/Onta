@@ -174,42 +174,38 @@ internal sealed class OutputCoreWorker
             UpdateSnapshot(0, 0, totalSeconds, "符号化＋音声出力", ErrorRateFrameKind.Bh, false, false, fileSizeText, blockCountText);
             var codec = new FileWavCodec(profile);
             var inputInfo = new FileInfo(settings.InputFilePath);
-            var (left, right) = codec.EncodeFileToSamples(
-                bytes,
-                inputInfo,
-                OnCoreFrameTransmitted,
-                onPcmChunk: (leftChunk, rightChunk) =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    player?.AddSamples(leftChunk, rightChunk);
-                    emittedSamples += leftChunk.Length;
-                    var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
-                    var pct = 100.0 * elapsed / Math.Max(totalSeconds, 1e-9);
-                    UpdateSnapshot(
-                        pct,
-                        elapsed,
-                        totalSeconds,
-                        "符号化＋音声出力",
-                        ErrorRateFrameKind.Bd,
-                        false,
-                        false,
-                        fileSizeText,
-                        blockCountText);
-                },
-                cancellationToken: cancellationToken);
-
-            cancellationToken.ThrowIfCancellationRequested();
-            UpdateSnapshot(
-                ResolveProgressPercent(emittedSamples, player, totalSamples),
-                ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples),
-                totalSeconds,
-                "WAV書き出し",
-                ErrorRateFrameKind.Bd,
-                false,
-                false,
-                fileSizeText,
-                blockCountText);
-            WavWriter.WritePcm16(outputWavPath, profile.SampleRate, left, right, profile.SamplePeak, profile.ChannelMode);
+            using (var wavWriter = WavWriter.CreateStreamingPcm16(
+                       outputWavPath,
+                       profile.SampleRate,
+                       profile.SamplePeak,
+                       profile.ChannelMode))
+            {
+                _ = codec.EncodeFileToSamples(
+                    bytes,
+                    inputInfo,
+                    OnCoreFrameTransmitted,
+                    onPcmChunk: (leftChunk, rightChunk) =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        wavWriter.WriteChunk(leftChunk, rightChunk);
+                        player?.AddSamples(leftChunk, rightChunk);
+                        emittedSamples += leftChunk.Length;
+                        var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
+                        var pct = 100.0 * elapsed / Math.Max(totalSeconds, 1e-9);
+                        UpdateSnapshot(
+                            pct,
+                            elapsed,
+                            totalSeconds,
+                            "符号化＋WAV逐次出力",
+                            ErrorRateFrameKind.Bd,
+                            false,
+                            false,
+                            fileSizeText,
+                            blockCountText);
+                    },
+                    retainAllSamples: false,
+                    cancellationToken: cancellationToken);
+            }
 
             if (player is not null)
             {

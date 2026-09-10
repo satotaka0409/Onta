@@ -16,8 +16,8 @@ public sealed class OntaTest1
     public void EncodeDecode_QrPng_MatchesOriginal_Stereo9ScQpsk()
     {
         var inputPath = TestPaths.ResolveInputPng();
-        var wavPath = TestPaths.ResolveOutputPath("QR_326213_test1.wav");
-        var restoredPath = TestPaths.ResolveOutputPath("QR_326213_test1.png");
+        var wavPath = TestPaths.ResolveOutputPath("Sample1_test1.wav");
+        var restoredPath = TestPaths.ResolveOutputPath("Sample1_test1.png");
 
         var original = File.ReadAllBytes(inputPath);
         var codec = new FileWavCodec(Profile);
