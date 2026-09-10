@@ -87,12 +87,22 @@ public partial class ReceivePanel : UserControl
         BlockCountBox.Text = blockCountText;
     }
 
+    /// <summary>進捗表示テキストを直接更新します（受信開始直後の即時フィードバック用）。</summary>
+    public void SetProgressText(string text)
+    {
+        ProgressBox.Text = text;
+    }
+
     /// <summary>
     /// コア問い合わせ結果（進捗 / エラー率 / I-Q）を画面へ反映します。
+    /// ファイル名・サイズ・ブロック数は FH 確定後のみ更新します。
     /// </summary>
     public void ApplyExecutionStatus(CoreExecutionStatus status)
     {
-        SetFileInfo(status.FileName, status.FileSizeText, status.BlockCountText);
+        if (ReceiveDetailPanel.HasFileHeaderInfo(status))
+        {
+            SetFileInfo(status.FileName, status.FileSizeText, status.BlockCountText);
+        }
 
         var frameLabel = status.Progress.CurrentFrame switch
         {
@@ -219,15 +229,8 @@ public partial class ReceivePanel : UserControl
         UpdateInputModePanels();
         if (UseWavInput)
         {
-            if (!string.IsNullOrWhiteSpace(_selectedWavPath) && File.Exists(_selectedWavPath))
-            {
-                var fileInfo = new FileInfo(_selectedWavPath);
-                SetFileInfo(fileInfo.Name, $"{fileInfo.Length:N0} bytes", "-");
-            }
-            else
-            {
-                SetFileInfo("(未受信)", "-", "-");
-            }
+            // ファイル名・サイズは FH 由来。WAV 選択だけでは更新しない。
+            SetFileInfo("(未受信)", "-", "-");
         }
         else
         {
@@ -293,8 +296,8 @@ public partial class ReceivePanel : UserControl
 
         _selectedWavPath = dlg.FileName;
         WavPathBox.Text = dlg.FileName;
-        var fileInfo = new FileInfo(dlg.FileName);
-        SetFileInfo(fileInfo.Name, $"{fileInfo.Length:N0} bytes", "-");
+        // ファイル名・サイズは FH 受信後に更新する（WAV メタは使わない）。
+        SetFileInfo("(未受信)", "-", "-");
         ProgressBox.Text = "-";
     }
 

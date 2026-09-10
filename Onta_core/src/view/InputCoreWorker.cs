@@ -4,6 +4,7 @@ namespace Onta.View;
 
 /// <summary>
 /// 受信コア処理を UI スレッドと分離して実行し、問い合わせ時に進捗を返します。
+/// 送信用 CoreBackgroundHost とは別スレッドで動かし、送信待ちで受信が詰まらないようにします。
 /// </summary>
 internal sealed class InputCoreWorker
 {
@@ -14,6 +15,12 @@ internal sealed class InputCoreWorker
     private byte[]? _decodedBytes;
     private bool _completionPending;
     private string? _lastError;
+
+    /// <summary>
+    /// FH 確定時（ファイル名, サイズ表示文字列, ブロック数）。
+    /// ワーカースレッドから発火するため、購読側で UI スレッドへマーシャリングすること。
+    /// </summary>
+    public event Action<string, string, int>? FileHeaderReady;
 
     public bool IsRunning
     {
@@ -38,15 +45,32 @@ internal sealed class InputCoreWorker
                 return false;
             }
 
-            var fileName = Path.GetFileName(wavPath);
             var state = new ProgressiveDecodeState();
-            state.StatusBoard.BeginRun(fileName);
+            // ファイル情報は FH 確定まで未受信のまま（WAV 名は出さない）。
+            state.StatusBoard.BeginRun("(未受信)");
+            state.StatusBoard.SetProgress(new CoreProgressInfo(
+                CurrentFrame: CoreFrameKind.Fh,
+                CurrentBlockIndex: -1,
+                PassIndex: 0,
+                AcceptedBlockCount: 0,
+                TotalBlockCount: 0,
+                ProgressPercent: 1.0));
+            state.FileHeaderReady = (fileName, fileSize, blockCount) =>
+            {
+                FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount);
+            };
             _state = state;
             _decodedBytes = null;
             _lastDecodedPath = null;
             _lastError = null;
             _completionPending = false;
-            _worker = CoreBackgroundHost.RunAsync(_ => RunWavDecode(wavPath, profile, state));
+
+            // 送信ホストとは独立（LongRunning）。送信の符号化／再生待ちで受信がブロックされない。
+            _worker = Task.Factory.StartNew(
+                () => RunWavDecode(wavPath, profile, state),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
             return true;
         }
     }
@@ -88,16 +112,31 @@ internal sealed class InputCoreWorker
     {
         try
         {
+            state.StatusBoard.SetProgress(new CoreProgressInfo(
+                CurrentFrame: CoreFrameKind.Fh,
+                CurrentBlockIndex: -1,
+                PassIndex: 0,
+                AcceptedBlockCount: 0,
+                TotalBlockCount: 0,
+                ProgressPercent: 2.0));
+
             var codec = new FileWavCodec(profile);
             var (left, right) = WavReader.ReadPcm16(wavPath);
-            var fileInfo = new FileInfo(wavPath);
-            state.StatusBoard.SetFileInfo(fileInfo.Name, $"{fileInfo.Length:N0} bytes", "-");
+            state.StatusBoard.SetProgress(new CoreProgressInfo(
+                CurrentFrame: CoreFrameKind.Fh,
+                CurrentBlockIndex: -1,
+                PassIndex: 0,
+                AcceptedBlockCount: 0,
+                TotalBlockCount: 0,
+                ProgressPercent: 3.0));
 
+            // テスト往復と同じく、一括 WAV 受信はまず無補正で FH を素早く確定する。
+            // （correctWow=true だと FH 前のワウ全探索で UI が数分固まる）
             var status = codec.DecodePcmSamplesProgressive(
                 left,
                 right,
                 state,
-                correctWow: true,
+                correctWow: false,
                 wowParams: null,
                 tuning: DecodeRuntimeTuning.Default,
                 allowIncomplete: false);

@@ -27,9 +27,14 @@ public partial class MainWindow : Window
         SendPanel.OutputRequested += OnOutputRequested;
         SendPanel.StopRequested += OnStopRequested;
         ReceivePanel.ReceiveStartRequested += OnReceiveStartRequested;
-        _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        _inputCoreWorker.FileHeaderReady += OnReceiveFileHeaderReady;
+        _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _progressPollTimer.Tick += OnProgressPollTick;
-        Closed += (_, _) => StopAudioPlayback();
+        Closed += (_, _) =>
+        {
+            _inputCoreWorker.FileHeaderReady -= OnReceiveFileHeaderReady;
+            StopAudioPlayback();
+        };
         RefreshEstimate();
     }
 
@@ -90,7 +95,12 @@ public partial class MainWindow : Window
             SendPanel.SetTransmissionRunning(true);
             // I-Q は受信変調に連動するため、送信中は表示しない。
             ReceivePanel.ClearIqDisplay();
-            _pollingReceive = false;
+            // 受信実行中ならポーリングは維持（送受信は別スレッド）。
+            if (!_inputCoreWorker.IsRunning)
+            {
+                _pollingReceive = false;
+            }
+
             if (!_progressPollTimer.IsEnabled)
             {
                 _progressPollTimer.Start();
@@ -108,9 +118,35 @@ public partial class MainWindow : Window
         _ = _coreWorker.RequestStop();
     }
 
+    /// <summary>FH 確定をワーカーから受け取り、UI へ即時反映します。</summary>
+    private void OnReceiveFileHeaderReady(string fileName, string fileSizeText, int blockCount)
+    {
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            ReceivePanel.SetFileInfo(fileName, fileSizeText, blockCount.ToString());
+            ReceiveDetailPanel.ApplyFileHeader(fileName, fileSizeText, blockCount);
+            if (!_receiveDetailOpened)
+            {
+                _receiveDetailOpened = true;
+                BottomTabs.SelectedItem = ReceiveDetailTab;
+            }
+        });
+    }
+
     private void OnReceiveStartRequested(object? sender, EventArgs e)
     {
-        if (ReceivePanel.UseWavInput)
+        if (!ReceivePanel.UseWavInput)
+        {
+            MessageBox.Show(
+                this,
+                $"音声入力（デバイス: {ReceivePanel.AudioDeviceName}）は未実装です。",
+                "Onta",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        try
         {
             if (string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
             {
@@ -145,25 +181,27 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // ファイル情報は FH 読み込み完了まで未受信表示。
+            ReceivePanel.SetFileInfo("(未受信)", "-", "-");
+            ReceivePanel.SetProgressText("FH 開始中…");
+            ReceiveDetailPanel.Clear();
+
             _pollingReceive = true;
             if (!_progressPollTimer.IsEnabled)
             {
                 _progressPollTimer.Start();
             }
-
-            return;
         }
-
-        MessageBox.Show(
-            this,
-            $"音声入力（デバイス: {ReceivePanel.AudioDeviceName}）は未実装です。",
-            "Onta",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"受信開始に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void OnProgressPollTick(object? sender, EventArgs e)
     {
+        var sendProgress = _coreWorker.GetProgress();
+
         if (_pollingReceive)
         {
             // 画面 → コア問い合わせ: 進捗 / エラー率 / FFT / I-Q。
@@ -181,10 +219,6 @@ public partial class MainWindow : Window
             if (_inputCoreWorker.TryConsumeCompletion(out var success, out var message, out var outputPath))
             {
                 _pollingReceive = false;
-                if (!_coreWorker.GetProgress().IsRunning)
-                {
-                    _progressPollTimer.Stop();
-                }
 
                 if (success)
                 {
@@ -200,26 +234,31 @@ public partial class MainWindow : Window
                     MessageBox.Show(this, message, "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
-
-            return;
         }
 
-        // 送信進捗: 送信詳細タブのメーターを更新。
-        var progress = _coreWorker.GetProgress();
-        EstimatePanel.ApplyProgress(progress.ElapsedAudioSeconds, progress.IsRunning);
+        // 送信進捗は受信ポーリング中でも更新する（共有タイマー）。
+        EstimatePanel.ApplyProgress(sendProgress.ElapsedAudioSeconds, sendProgress.IsRunning);
         _ = _coreWorker.ConsumeFrameEvents();
 
-        if (!_coreWorker.TryConsumeCompletion(out var completion))
+        if (_coreWorker.TryConsumeCompletion(out var completion))
         {
-            return;
+            SendPanel.SetTransmissionRunning(false);
+            EstimatePanel.ApplyProgress(
+                completion.IsSuccess
+                    ? Math.Max(sendProgress.TotalAudioSeconds, sendProgress.ElapsedAudioSeconds)
+                    : sendProgress.ElapsedAudioSeconds,
+                isRunning: false);
+            HandleSendCompletion(completion);
         }
 
-        _progressPollTimer.Stop();
-        SendPanel.SetTransmissionRunning(false);
-        EstimatePanel.ApplyProgress(
-            completion.IsSuccess ? Math.Max(progress.TotalAudioSeconds, progress.ElapsedAudioSeconds) : progress.ElapsedAudioSeconds,
-            isRunning: false);
+        if (!_pollingReceive && !_coreWorker.GetProgress().IsRunning)
+        {
+            _progressPollTimer.Stop();
+        }
+    }
 
+    private void HandleSendCompletion(CoreCompletionResult completion)
+    {
         if (completion.WasCancelled)
         {
             MessageBox.Show(this, completion.Message, "Onta", MessageBoxButton.OK, MessageBoxImage.Information);

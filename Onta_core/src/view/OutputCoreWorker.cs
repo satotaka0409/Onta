@@ -14,6 +14,11 @@ internal sealed class OutputCoreWorker
     private CoreCompletionResult? _completion;
     private RealtimePcmPlayer? _player;
     private CancellationTokenSource? _cts;
+    /// <summary>再生位置のライブ計算用（符号化中もバッファ消化で経過が進む）。</summary>
+    private long _emittedSamples;
+    private long _totalSamples;
+    private int _sampleRate = 44100;
+    private double _totalAudioSeconds;
 
     public bool TryStart(SendSettingsSnapshot settings, string? outputWavPath)
     {
@@ -56,6 +61,11 @@ internal sealed class OutputCoreWorker
                 StartedAtUtc: DateTime.UtcNow);
             _completion = null;
             _frameEvents.Clear();
+            _emittedSamples = 0;
+            _totalSamples = 0;
+            _sampleRate = 44100;
+            _totalAudioSeconds = 0;
+            _player = null;
         }
 
         _ = CoreBackgroundHost.RunAsync(_ => RunCore(settings, outputWavPath, cts.Token), cts.Token);
@@ -97,7 +107,19 @@ internal sealed class OutputCoreWorker
     {
         lock (_sync)
         {
-            return _snapshot;
+            // 音声再生中は投入済み−バッファ残で経過を都度算出（符号化待ち中もメーターが動く）。
+            if (!_snapshot.IsRunning || _player is null || _player.IsDisposed || _totalSamples <= 0)
+            {
+                return _snapshot;
+            }
+
+            var elapsed = ResolveElapsedSeconds(_emittedSamples, _player, _sampleRate, _totalSamples);
+            var total = Math.Max(_totalAudioSeconds, 1e-9);
+            return _snapshot with
+            {
+                ElapsedAudioSeconds = elapsed,
+                ProgressPercent = Math.Clamp(100.0 * elapsed / total, 0.0, 100.0)
+            };
         }
     }
 
@@ -157,6 +179,13 @@ internal sealed class OutputCoreWorker
             var totalSamples = Math.Max(1L, estimate.TotalSamples);
             var totalSeconds = estimate.TotalSeconds;
             long emittedSamples = 0;
+            lock (_sync)
+            {
+                _emittedSamples = 0;
+                _totalSamples = totalSamples;
+                _sampleRate = profile.SampleRate;
+                _totalAudioSeconds = totalSeconds;
+            }
 
             UpdateSnapshot(0, 0, totalSeconds, "プロファイル構築", ErrorRateFrameKind.Fh, false, false, fileSizeText, blockCountText);
             cancellationToken.ThrowIfCancellationRequested();
@@ -199,20 +228,44 @@ internal sealed class OutputCoreWorker
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     wavWriter?.WriteChunk(leftChunk, rightChunk);
-                    player?.AddSamples(leftChunk, rightChunk);
-                    emittedSamples += leftChunk.Length;
-                    var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
-                    var pct = 100.0 * elapsed / Math.Max(totalSeconds, 1e-9);
-                    UpdateSnapshot(
-                        pct,
-                        elapsed,
-                        totalSeconds,
-                        stageLabel,
-                        ErrorRateFrameKind.Bd,
-                        false,
-                        false,
-                        fileSizeText,
-                        blockCountText);
+                    if (player is not null)
+                    {
+                        // スライス投入ごとに emitted を進め、待ち中も GetProgress が再生位置を追える。
+                        player.AddSamples(leftChunk, rightChunk, samplesQueued =>
+                        {
+                            emittedSamples += samplesQueued;
+                            PublishEmittedSamples(emittedSamples);
+                            var liveElapsed = ResolveElapsedSeconds(
+                                emittedSamples, player, profile.SampleRate, totalSamples);
+                            UpdateSnapshot(
+                                100.0 * liveElapsed / Math.Max(totalSeconds, 1e-9),
+                                liveElapsed,
+                                totalSeconds,
+                                stageLabel,
+                                ErrorRateFrameKind.Bd,
+                                false,
+                                false,
+                                fileSizeText,
+                                blockCountText);
+                        });
+                    }
+                    else
+                    {
+                        emittedSamples += leftChunk.Length;
+                        PublishEmittedSamples(emittedSamples);
+                        var elapsed = ResolveElapsedSeconds(
+                            emittedSamples, player, profile.SampleRate, totalSamples);
+                        UpdateSnapshot(
+                            100.0 * elapsed / Math.Max(totalSeconds, 1e-9),
+                            elapsed,
+                            totalSeconds,
+                            stageLabel,
+                            ErrorRateFrameKind.Bd,
+                            false,
+                            false,
+                            fileSizeText,
+                            blockCountText);
+                    }
                 },
                 retainAllSamples: false,
                 cancellationToken: cancellationToken);
@@ -232,6 +285,7 @@ internal sealed class OutputCoreWorker
                         break;
                     }
 
+                    PublishEmittedSamples(emittedSamples);
                     var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
                     UpdateSnapshot(
                         100.0 * elapsed / Math.Max(totalSeconds, 1e-9),
@@ -243,7 +297,7 @@ internal sealed class OutputCoreWorker
                         false,
                         fileSizeText,
                         blockCountText);
-                    Thread.Sleep(40);
+                    Thread.Sleep(20);
                 }
             }
 
@@ -269,8 +323,10 @@ internal sealed class OutputCoreWorker
             var total = 0.0;
             lock (_sync)
             {
-                elapsed = _snapshot.ElapsedAudioSeconds;
                 total = _snapshot.TotalAudioSeconds;
+                elapsed = _player is not null && !_player.IsDisposed && _totalSamples > 0
+                    ? ResolveElapsedSeconds(_emittedSamples, _player, _sampleRate, _totalSamples)
+                    : _snapshot.ElapsedAudioSeconds;
             }
 
             UpdateSnapshot(elapsed > 0 && total > 0 ? 100.0 * elapsed / total : 0, elapsed, total, "停止", ErrorRateFrameKind.Bd, true, false, "-", "-");
@@ -339,12 +395,12 @@ internal sealed class OutputCoreWorker
         return Math.Min(played, totalSamples) / (double)rate;
     }
 
-    private static double ResolveProgressPercent(long emittedSamples, RealtimePcmPlayer? player, long totalSamples)
+    private void PublishEmittedSamples(long emittedSamples)
     {
-        var done = player is null || player.IsDisposed
-            ? emittedSamples
-            : Math.Max(0L, emittedSamples - player.BufferedSampleFrames);
-        return 100.0 * Math.Clamp(done, 0L, totalSamples) / Math.Max(1L, totalSamples);
+        lock (_sync)
+        {
+            _emittedSamples = Math.Max(0L, emittedSamples);
+        }
     }
 
     private void UpdateSnapshot(

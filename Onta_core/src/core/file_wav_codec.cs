@@ -77,7 +77,11 @@ public sealed record DecodeRuntimeTuning(
     double SoftLlrAbortMeanAbs = 0.35,
     double SoftLlrAbortMeanAbsWhenWowLocked = 0.55,
     /// <summary>soft 失敗後の hard turbo を試す最小平均 |LLR|。</summary>
-    double SoftHardFallbackMinMeanAbsLlr = 1.0)
+    double SoftHardFallbackMinMeanAbsLlr = 1.0,
+    /// <summary>
+    /// 適応 wow 再ワープの先読み秒数。巨大 WAV 全体を一度に再ワープしない（UI が FH 2% で固まるのを防ぐ）。
+    /// </summary>
+    double WowRewarpLookaheadSeconds = 8.0)
 {
     public static DecodeRuntimeTuning Default { get; } = new();
 }
@@ -116,6 +120,14 @@ public sealed class ProgressiveDecodeState
     internal int DataAcceptedViaTurbo;
     internal int DataFallbackUsed;
     internal int DataTotalAttempts;
+    /// <summary>FH から読み取った元ファイル名（UTF-8）。</summary>
+    internal string? ReceivedFileName;
+
+    /// <summary>
+    /// FH 確定時コールバック（ファイル名, ファイルサイズ bytes, ブロック数）。
+    /// UI スレッド外から呼ばれるため、呼び出し側で Dispatcher へマーシャリングすること。
+    /// </summary>
+    public Action<string, long, int>? FileHeaderReady;
 
     /// <summary>増分復号状態を初期化します。</summary>
     public void Reset()
@@ -145,6 +157,8 @@ public sealed class ProgressiveDecodeState
         DataAcceptedViaTurbo = 0;
         DataFallbackUsed = 0;
         DataTotalAttempts = 0;
+        ReceivedFileName = null;
+        FileHeaderReady = null;
         StatusBoard.Reset();
     }
 
@@ -318,7 +332,7 @@ public sealed class FileWavCodec
             }
         }
 
-        /// <summary>未送出の PCM をコールバックへ流します。</summary>
+        /// <summary>未送出の PCM をコールバックへ流します（約 50ms 単位で分割し進捗追従を細かくする）。</summary>
         void FlushPcmChunk()
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -327,21 +341,29 @@ public sealed class FileWavCodec
                 return;
             }
 
-            var count = leftPcm.Count - pcmEmitted;
-            if (count <= 0)
+            var remaining = leftPcm.Count - pcmEmitted;
+            if (remaining <= 0)
             {
                 return;
             }
 
-            var leftSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(leftPcm).Slice(pcmEmitted, count);
-            ReadOnlySpan<Complex> rightSpan = ReadOnlySpan<Complex>.Empty;
-            if (_profile.ChannelMode == ChannelMode.Stereo)
+            // 約 50ms @ SampleRate。大きな BD を一括送出せず、UI／再生進捗を細かく進める。
+            var maxFlush = Math.Max(512, _profile.SampleRate / 20);
+            while (remaining > 0)
             {
-                rightSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(rightPcm).Slice(pcmEmitted, count);
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                var count = Math.Min(remaining, maxFlush);
+                var leftSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(leftPcm).Slice(pcmEmitted, count);
+                ReadOnlySpan<Complex> rightSpan = ReadOnlySpan<Complex>.Empty;
+                if (_profile.ChannelMode == ChannelMode.Stereo)
+                {
+                    rightSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(rightPcm).Slice(pcmEmitted, count);
+                }
 
-            onPcmChunk(leftSpan, rightSpan);
-            pcmEmitted = leftPcm.Count;
+                onPcmChunk(leftSpan, rightSpan);
+                pcmEmitted += count;
+                remaining -= count;
+            }
 
             // 逐次出力モードでは、送出済みサンプルを都度破棄してメモリ常駐を抑える。
             if (!retainAllSamples)
@@ -635,15 +657,7 @@ public sealed class FileWavCodec
                     tracked.FlutterPhase);
             }
         }
-        else if (adaptiveWow)
-        {
-            // ApplyAdaptiveWowCorrection が配列内容を書き換えるためコピーする。
-            leftSamples = (Complex[])leftSamples.Clone();
-            if (_profile.ChannelMode == ChannelMode.Stereo)
-            {
-                rightSamples = (Complex[])rightSamples.Clone();
-            }
-        }
+        // adaptiveWow: 全配列 Clone はしない。区間再ワープは RewarpTailInPlace が作業バッファを使う。
 
         var trackedWow = state.TrackedWow ?? (Amount: 0.01, WowPhase: 0.0, FlutterPhase: 0.0);
         var hasTrackedWow = state.HasTrackedWow;
@@ -652,6 +666,13 @@ public sealed class FileWavCodec
         var logicalOffset = state.HeaderReady ? state.LogicalOffset : 0L;
         var coarseRadius = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 8, _profile.SampleRate / 50);
         var fineRadius = Math.Max(headerOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200);
+        var rewarpLookaheadSamples = Math.Max(
+            headerOfdm.SamplesPerOfdmSymbol * 64,
+            (int)(Math.Max(1.0, tuning.WowRewarpLookaheadSeconds) * _profile.SampleRate));
+
+        /// <summary>次に必要な区間だけを再ワープする上限サンプル数です。</summary>
+        int ResolveRewarpLength(int remaining) =>
+            Math.Min(remaining, rewarpLookaheadSamples);
 
         /// <summary>復号カーソルと wow 追跡状態を ProgressiveDecodeState へ保存します。</summary>
         void PersistCursor()
@@ -706,7 +727,7 @@ public sealed class FileWavCodec
             if (state.HeaderReady)
             {
                 state.StatusBoard.SetFileInfo(
-                    state.StatusBoard.FileName,
+                    string.IsNullOrWhiteSpace(state.ReceivedFileName) ? state.StatusBoard.FileName : state.ReceivedFileName,
                     $"{state.FileSize:N0} bytes",
                     blockCount.ToString());
             }
@@ -790,7 +811,7 @@ public sealed class FileWavCodec
                 return;
             }
 
-            var tailLength = channelSamples.Length - warpedCursor;
+            var tailLength = ResolveRewarpLength(channelSamples.Length - warpedCursor);
             if (tailLength <= 0)
             {
                 return;
@@ -853,7 +874,7 @@ public sealed class FileWavCodec
                 RewarpTailInPlace(
                     ref rightSamples,
                     warpedCursor,
-                    remaining,
+                    ResolveRewarpLength(remaining),
                     trackedWow.Amount,
                     trackedWow.WowPhase,
                     trackedWow.FlutterPhase);
@@ -886,6 +907,9 @@ public sealed class FileWavCodec
         {
             if (!state.HeaderReady)
             {
+                // FH 探索・ワウ推定の前に進捗を出し、画面が「止まっている」ように見えないようにする。
+                PublishStatus(CoreFrameKind.Fh, blockIndex: -1);
+
                 var minForFh = _profile.LeadingSilenceSamples
                     + _profile.UnmodulatedPreambleSamples
                     + fhPacketSamples
@@ -899,6 +923,13 @@ public sealed class FileWavCodec
                 warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.UnmodulatedPreambleSamples);
                 logicalOffset = warpedCursor;
 
+                state.StatusBoard.SetProgress(new CoreProgressInfo(
+                    CurrentFrame: CoreFrameKind.Fh,
+                    CurrentBlockIndex: -1,
+                    PassIndex: 0,
+                    AcceptedBlockCount: 0,
+                    TotalBlockCount: 0,
+                    ProgressPercent: 3.0));
                 ApplyAdaptiveWowCorrectionPair();
                 SkipHeaderUnmodulatedPreamble(
                     leftSamples,
@@ -906,6 +937,13 @@ public sealed class FileWavCodec
                     ref logicalOffset,
                     _profile.FileHeaderUnmodulatedSamples);
                 ApplyAdaptiveWowCorrectionPair();
+                state.StatusBoard.SetProgress(new CoreProgressInfo(
+                    CurrentFrame: CoreFrameKind.Fh,
+                    CurrentBlockIndex: -1,
+                    PassIndex: 0,
+                    AcceptedBlockCount: 0,
+                    TotalBlockCount: 0,
+                    ProgressPercent: 4.0));
                 var fileHeader = DecodeHeaderPacketSynced(
                     leftSamples,
                     rightSamples,
@@ -927,14 +965,35 @@ public sealed class FileWavCodec
                     return ProgressiveDecodeStatus.Failed;
                 }
 
+                var fhFileName = ReadFileHeaderFileName(fileHeader);
                 state.FileSize = fileSize;
                 state.BlockCount = blockCount;
+                state.ReceivedFileName = fhFileName;
                 state.OutputSlots = new byte[blockCount][];
                 state.SlotAccepted = new bool[blockCount];
                 state.HeaderReady = true;
                 state.Pass = 0;
                 state.Local = 0;
                 PersistCursor();
+                // FH 確定直後にファイル情報を StatusBoard へ載せ、以降の BD 復号を待たずに UI へ出す。
+                var displayName = string.IsNullOrWhiteSpace(fhFileName) ? "(無名)" : fhFileName;
+                state.StatusBoard.SetFileInfo(displayName, $"{fileSize:N0} bytes", blockCount.ToString());
+                state.StatusBoard.SetProgress(new CoreProgressInfo(
+                    CurrentFrame: CoreFrameKind.Fh,
+                    CurrentBlockIndex: -1,
+                    PassIndex: 0,
+                    AcceptedBlockCount: 0,
+                    TotalBlockCount: blockCount,
+                    ProgressPercent: 5.0));
+                try
+                {
+                    state.FileHeaderReady?.Invoke(displayName, fileSize, blockCount);
+                }
+                catch
+                {
+                    // UI 通知失敗で復号を止めない。
+                }
+
                 PublishStatus(CoreFrameKind.Fh, blockIndex: -1, errorRatePercent: 0.0);
             }
 
@@ -2769,6 +2828,30 @@ public sealed class FileWavCodec
         }
 
         return output;
+    }
+
+    /// <summary>ファイルヘッダーから UTF-8 ファイル名（768 バイト欄）を取り出します。</summary>
+    /// <param name="fileHeader">880 バイトのファイルヘッダー。</param>
+    /// <returns>NUL 埋めを除いたファイル名。空のときは空文字。</returns>
+    private static string ReadFileHeaderFileName(ReadOnlySpan<byte> fileHeader)
+    {
+        if (fileHeader.Length < HeaderPrefixBytes + FileNameBytes)
+        {
+            return string.Empty;
+        }
+
+        var nameBytes = fileHeader.Slice(HeaderPrefixBytes, FileNameBytes);
+        var end = nameBytes.IndexOf((byte)0);
+        if (end < 0)
+        {
+            end = nameBytes.Length;
+        }
+        else if (end == 0)
+        {
+            return string.Empty;
+        }
+
+        return Encoding.UTF8.GetString(nameBytes[..end]).Trim();
     }
 
     /// <summary>仕様どおりのファイルヘッダー（880 バイト）を組み立てます。</summary>

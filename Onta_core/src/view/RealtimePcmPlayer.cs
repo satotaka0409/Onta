@@ -55,7 +55,13 @@ internal sealed class RealtimePcmPlayer : IDisposable
     }
 
     /// <summary>符号化で生成された Complex PCM チャンクを再生キューへ投入します。</summary>
-    public void AddSamples(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
+    /// <param name="left">L チャンネル。</param>
+    /// <param name="right">R チャンネル（モノラル時は空可）。</param>
+    /// <param name="onSamplesQueued">スライス投入直後に呼ばれる（投入サンプル数）。進捗追従用。</param>
+    public void AddSamples(
+        ReadOnlySpan<Complex> left,
+        ReadOnlySpan<Complex> right,
+        Action<int>? onSamplesQueued = null)
     {
         if (_disposed)
         {
@@ -115,6 +121,7 @@ internal sealed class RealtimePcmPlayer : IDisposable
 
             buffer.AddSamples(scratch, 0, byteCount);
             offset += slice;
+            onSamplesQueued?.Invoke(slice);
 
             if (waveOut.PlaybackState != PlaybackState.Playing)
             {

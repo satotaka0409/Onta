@@ -165,7 +165,7 @@ public partial class FileEstimatePanel : UserControl
             set
             {
                 var clamped = Math.Clamp(value, 0.0, 100.0);
-                if (Math.Abs(_progressPercent - clamped) < 0.01)
+                if (Math.Abs(_progressPercent - clamped) < 0.001)
                 {
                     return;
                 }
@@ -178,7 +178,7 @@ public partial class FileEstimatePanel : UserControl
         public event PropertyChangedEventHandler? PropertyChanged;
 
         public static EstimateRow Segment(string name, double seconds) =>
-            new(name, seconds.ToString("0.###"), showMeter: true);
+            new(name, Math.Round(seconds, 1, MidpointRounding.AwayFromZero).ToString("0.0"), showMeter: true);
 
         public static EstimateRow Info(string name, string seconds) =>
             new(name, seconds, showMeter: false);
