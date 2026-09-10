@@ -109,6 +109,13 @@ public sealed class ProgressiveDecodeState
     internal bool HasTrackedWow;
     internal CoreFrameKind CurrentFrame = CoreFrameKind.Fh;
     internal int CurrentBlockIndex = -1;
+    internal int HeaderRsDecodeCount;
+    internal int DataBlocksDecoded;
+    internal int DataBlocksAccepted;
+    internal int DataAcceptedViaViterbi;
+    internal int DataAcceptedViaTurbo;
+    internal int DataFallbackUsed;
+    internal int DataTotalAttempts;
 
     /// <summary>増分復号状態を初期化します。</summary>
     public void Reset()
@@ -131,6 +138,13 @@ public sealed class ProgressiveDecodeState
         HasTrackedWow = false;
         CurrentFrame = CoreFrameKind.Fh;
         CurrentBlockIndex = -1;
+        HeaderRsDecodeCount = 0;
+        DataBlocksDecoded = 0;
+        DataBlocksAccepted = 0;
+        DataAcceptedViaViterbi = 0;
+        DataAcceptedViaTurbo = 0;
+        DataFallbackUsed = 0;
+        DataTotalAttempts = 0;
         StatusBoard.Reset();
     }
 
@@ -147,6 +161,28 @@ public enum ProgressiveDecodeStatus
     NeedMoreSamples,
     Completed,
     Failed
+}
+
+/// <summary>
+/// 直近の復号におけるステージ別統計です。
+/// </summary>
+/// <param name="HeaderRsDecodeCount">RS を使うヘッダーパケット復号の成功回数。</param>
+/// <param name="DataBlocksDecoded">データブロック復号の試行回数。</param>
+/// <param name="DataBlocksAccepted">ハッシュ一致で受理されたデータブロック数。</param>
+/// <param name="DataAcceptedViaViterbi">ビタービ経路（ハード）で受理されたブロック数。</param>
+/// <param name="DataAcceptedViaTurbo">ターボ経路（ソフト）で受理されたブロック数。</param>
+/// <param name="DataFallbackUsed">フォールバック経路を使用したブロック数。</param>
+/// <param name="DataTotalAttempts">データブロック復号の総試行回数。</param>
+public readonly record struct DecodeStageMetrics(
+    int HeaderRsDecodeCount,
+    int DataBlocksDecoded,
+    int DataBlocksAccepted,
+    int DataAcceptedViaViterbi,
+    int DataAcceptedViaTurbo,
+    int DataFallbackUsed,
+    int DataTotalAttempts)
+{
+    public static DecodeStageMetrics Empty { get; } = new(0, 0, 0, 0, 0, 0, 0);
 }
 
 /// <summary>
@@ -178,6 +214,9 @@ public sealed class FileWavCodec
     private static readonly ConvolutionalCode.PunctureRate HeaderPunctureRate = ConvolutionalCode.PunctureRate.Rate1_2;
 
     private readonly FileWavCodecProfile _profile;
+
+    /// <summary>直近復号のステージ別統計です。</summary>
+    public DecodeStageMetrics LastDecodeStageMetrics { get; private set; } = DecodeStageMetrics.Empty;
 
     /// <summary>指定プロファイルでコーデックを初期化します。</summary>
     /// <param name="profile">コーデック初期化用プロファイル。</param>
@@ -437,6 +476,7 @@ public sealed class FileWavCodec
         (double Amount, double WowPhase, double FlutterPhase)? wowParams = null,
         DecodeRuntimeTuning? tuning = null)
     {
+        LastDecodeStageMetrics = DecodeStageMetrics.Empty;
         var state = new ProgressiveDecodeState();
         var status = DecodePcmSamplesProgressive(
             leftSamples,
@@ -446,12 +486,25 @@ public sealed class FileWavCodec
             wowParams,
             tuning,
             allowIncomplete: false);
+        LastDecodeStageMetrics = BuildDecodeStageMetrics(state);
         if (status == ProgressiveDecodeStatus.Completed && state.CompletedFile is not null)
         {
             return state.CompletedFile;
         }
 
         throw new InvalidDataException(state.LastError ?? "Decode failed.");
+    }
+
+    private static DecodeStageMetrics BuildDecodeStageMetrics(ProgressiveDecodeState state)
+    {
+        return new DecodeStageMetrics(
+            HeaderRsDecodeCount: state.HeaderRsDecodeCount,
+            DataBlocksDecoded: state.DataBlocksDecoded,
+            DataBlocksAccepted: state.DataBlocksAccepted,
+            DataAcceptedViaViterbi: state.DataAcceptedViaViterbi,
+            DataAcceptedViaTurbo: state.DataAcceptedViaTurbo,
+            DataFallbackUsed: state.DataFallbackUsed,
+            DataTotalAttempts: state.DataTotalAttempts);
     }
 
     /// <summary>
@@ -863,6 +916,7 @@ public sealed class FileWavCodec
                     FileHeaderPilot,
                     coarseRadius,
                     InterleaveInitSeedFileHeader);
+                state.HeaderRsDecodeCount++;
                 EnsureHeaderCrc(fileHeader, "file header");
                 var fileSize = BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(860, 8));
                 var blockCount = (int)BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(868, 8));
@@ -941,6 +995,7 @@ public sealed class FileWavCodec
                             FileHeaderPilot,
                             fineRadius,
                             InterleaveInitSeedFileHeader);
+                        state.HeaderRsDecodeCount++;
                         EnsureHeaderCrc(midFh, "mid file header");
                     }
 
@@ -964,6 +1019,7 @@ public sealed class FileWavCodec
                         BlockHeaderPilot,
                         fineRadius,
                         InterleaveInitSeedBlock);
+                    state.HeaderRsDecodeCount++;
                     EnsureHeaderCrc(blockHeader, "block header");
                     PublishStatus(CoreFrameKind.Bh, expectedBlockIndex, errorRatePercent: 0.0);
                     var blockIndex = BinaryPrimitives.ReadInt64BigEndian(blockHeader.AsSpan(12, 8));
@@ -1018,6 +1074,12 @@ public sealed class FileWavCodec
                         wowLocked: hasTrackedWow,
                         statusBoard: state.StatusBoard,
                         out var diag);
+                    state.DataBlocksDecoded++;
+                    state.DataTotalAttempts += diag.TotalAttempts;
+                    if (diag.FallbackUsed)
+                    {
+                        state.DataFallbackUsed++;
+                    }
                     if (traceDataErrors)
                     {
                         Console.WriteLine(
@@ -1026,6 +1088,19 @@ public sealed class FileWavCodec
 
                     var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
                     var acceptable = IsDataBlockAcceptable(padded, expectedHash, blockSize);
+                    if (acceptable)
+                    {
+                        state.DataBlocksAccepted++;
+                        if (diag.HardMatchSucceeded)
+                        {
+                            state.DataAcceptedViaViterbi++;
+                        }
+
+                        if (diag.SoftMatchSucceeded)
+                        {
+                            state.DataAcceptedViaTurbo++;
+                        }
+                    }
                     if (!slotAccepted[expectedBlockIndex] || acceptable)
                     {
                         var payload = new byte[blockSize];
@@ -1086,6 +1161,7 @@ public sealed class FileWavCodec
                         FileHeaderPilot,
                         fineRadius,
                         InterleaveInitSeedFileHeader);
+                    state.HeaderRsDecodeCount++;
                     EnsureHeaderCrc(endFh, "trailing file header");
                 }
             }
@@ -2103,6 +2179,7 @@ public sealed class FileWavCodec
         if (warpedCursor >= 0 && warpedCursor + ofdm.SamplesPerOfdmSymbol <= leftSamples.Length)
         {
             fallbackUsed = true;
+            totalAttempts++;
             var cursor = warpedCursor;
             var qamLlrs = DemodulateDataSoftLlrsFromStream(
                 ofdm,
@@ -2124,25 +2201,51 @@ public sealed class FileWavCodec
                 qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true, punctureRate: punctureRate);
             ClampLlrsInPlace(infoLlrs, 16.0);
             _ = lastError;
-            diag = new DataDecodeDiag(
-                totalAttempts,
-                hardMatchSucceeded,
-                softMatchSucceeded,
-                fallbackUsed,
-                startDeltaSamples);
             var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
             var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
             if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
             {
+                softMatchSucceeded = true;
+                diag = new DataDecodeDiag(
+                    totalAttempts,
+                    hardMatchSucceeded,
+                    softMatchSucceeded,
+                    fallbackUsed,
+                    startDeltaSamples);
                 return softCandidate;
             }
 
             if (MeanAbsLlrs(infoLlrs) >= tuning.SoftHardFallbackMinMeanAbsLlr)
             {
                 var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
-                return PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
+                var preferred = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
+                if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))
+                {
+                    if (ReferenceEquals(preferred, hardCandidate))
+                    {
+                        hardMatchSucceeded = true;
+                    }
+                    else
+                    {
+                        softMatchSucceeded = true;
+                    }
+                }
+
+                diag = new DataDecodeDiag(
+                    totalAttempts,
+                    hardMatchSucceeded,
+                    softMatchSucceeded,
+                    fallbackUsed,
+                    startDeltaSamples);
+                return preferred;
             }
 
+            diag = new DataDecodeDiag(
+                totalAttempts,
+                hardMatchSucceeded,
+                softMatchSucceeded,
+                fallbackUsed,
+                startDeltaSamples);
             return softCandidate;
         }
 
