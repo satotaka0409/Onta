@@ -19,7 +19,12 @@ public sealed class OntaTest6
             ModulationScheme: ModulationScheme.Qam16,
             ChannelMode: ChannelMode.Stereo,
             BlockInterleaveFactor: 1);
-        var rxProfile = txProfile with { ModulationScheme = ModulationScheme.Qam64 };
+        // 受信側プロファイルの SC/変調はヒントにしない（BH と FH グリッド探索で決める）。
+        var rxProfile = new FileWavCodecProfile(
+            ActiveSubcarriers: 9,
+            ModulationScheme: ModulationScheme.Qam64,
+            ChannelMode: ChannelMode.Stereo,
+            BlockInterleaveFactor: 1);
 
         var txCodec = new FileWavCodec(txProfile);
         var rxCodec = new FileWavCodec(rxProfile);
@@ -67,7 +72,7 @@ public sealed class OntaTest6
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
 
-        var headerOfdm = (OfdmGenerator?)method!.Invoke(codec, [36]);
+        var headerOfdm = (OfdmGenerator?)method!.Invoke(codec, null);
         Assert.NotNull(headerOfdm);
         Assert.Equal(ChannelMode.Mono, headerOfdm!.ChannelMode);
     }

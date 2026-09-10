@@ -33,10 +33,14 @@ internal sealed class InputCoreWorker
         }
     }
 
-    public bool TryStartWavDecode(string wavPath, FileWavCodecProfile profile)
+    public bool TryStartWavDecode(string wavPath, FileWavCodecProfile profile, string? outputDirectory = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(wavPath);
         ArgumentNullException.ThrowIfNull(profile);
+
+        var outDir = string.IsNullOrWhiteSpace(outputDirectory)
+            ? AppPaths.OutputDir
+            : Path.GetFullPath(outputDirectory);
 
         lock (_sync)
         {
@@ -67,7 +71,7 @@ internal sealed class InputCoreWorker
 
             // 送信ホストとは独立（LongRunning）。送信の符号化／再生待ちで受信がブロックされない。
             _worker = Task.Factory.StartNew(
-                () => RunWavDecode(wavPath, profile, state),
+                () => RunWavDecode(wavPath, profile, state, outDir),
                 CancellationToken.None,
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
@@ -108,7 +112,11 @@ internal sealed class InputCoreWorker
         }
     }
 
-    private void RunWavDecode(string wavPath, FileWavCodecProfile profile, ProgressiveDecodeState state)
+    private void RunWavDecode(
+        string wavPath,
+        FileWavCodecProfile profile,
+        ProgressiveDecodeState state,
+        string outputDirectory)
     {
         try
         {
@@ -143,10 +151,18 @@ internal sealed class InputCoreWorker
 
             if (status == ProgressiveDecodeStatus.Completed && state.CompletedFile is not null)
             {
-                var outPath = Path.Combine(
-                    AppPaths.OutputDir,
-                    Path.GetFileNameWithoutExtension(wavPath) + "_rx.bin");
-                Directory.CreateDirectory(AppPaths.OutputDir);
+                Directory.CreateDirectory(outputDirectory);
+                var outName = !string.IsNullOrWhiteSpace(state.ReceivedFileName)
+                    ? Path.GetFileName(state.ReceivedFileName)
+                    : Path.GetFileNameWithoutExtension(wavPath) + "_rx.bin";
+                // FH 名に拡張子が無い／危険なパス要素がある場合は安全なファイル名へ。
+                outName = string.Join("_", outName.Split(Path.GetInvalidFileNameChars()));
+                if (string.IsNullOrWhiteSpace(outName))
+                {
+                    outName = Path.GetFileNameWithoutExtension(wavPath) + "_rx.bin";
+                }
+
+                var outPath = Path.Combine(outputDirectory, outName);
                 File.WriteAllBytes(outPath, state.CompletedFile);
                 lock (_sync)
                 {

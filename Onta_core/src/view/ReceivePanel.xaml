@@ -113,8 +113,10 @@
                 <Grid>
                   <StackPanel x:Name="WavInputPanel"
                               Orientation="Horizontal"
-                              VerticalAlignment="Center">
+                              VerticalAlignment="Center"
+                              Margin="0,0,0,4">
                     <TextBlock Text="入力ファイル"
+                               Width="72"
                                VerticalAlignment="Center"
                                Margin="0,0,8,0"/>
                     <TextBox x:Name="WavPathBox"
@@ -129,12 +131,14 @@
                   <StackPanel x:Name="AudioInputPanel"
                               Orientation="Horizontal"
                               VerticalAlignment="Center"
+                              Margin="0,0,0,4"
                               Visibility="Collapsed">
                     <TextBlock Text="入力デバイス"
+                               Width="72"
                                VerticalAlignment="Center"
                                Margin="0,0,8,0"/>
                     <ComboBox x:Name="AudioDeviceComboBox"
-                              Width="360"
+                              Width="300"
                               Foreground="#FF1E2024"
                               SelectedValuePath="DeviceNumber"
                               SelectionChanged="OnAudioDeviceSelectionChanged">
@@ -153,6 +157,20 @@
                     </ComboBox>
                   </StackPanel>
                 </Grid>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="出力フォルダー"
+                             Width="72"
+                             VerticalAlignment="Center"
+                             Margin="0,0,8,0"/>
+                  <TextBox x:Name="OutputDirBox"
+                           Width="300"
+                           IsReadOnly="True"
+                           VerticalAlignment="Center"/>
+                  <Button Content="…"
+                          Width="36"
+                          Margin="8,0,0,0"
+                          Click="OnBrowseOutputDir"/>
+                </StackPanel>
               </StackPanel>
             </GroupBox>
 

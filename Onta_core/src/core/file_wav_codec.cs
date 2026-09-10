@@ -123,6 +123,11 @@ public sealed class ProgressiveDecodeState
     /// <summary>FH から読み取った元ファイル名（UTF-8）。</summary>
     internal string? ReceivedFileName;
 
+    /// <summary>先頭 BH で確定したデータ部 SC 数。</summary>
+    internal int? DetectedDataSubcarriers;
+    /// <summary>先頭 BH で確定したデータ部変調。</summary>
+    internal ModulationScheme? DetectedModulationScheme;
+
     /// <summary>
     /// FH 確定時コールバック（ファイル名, ファイルサイズ bytes, ブロック数）。
     /// UI スレッド外から呼ばれるため、呼び出し側で Dispatcher へマーシャリングすること。
@@ -158,7 +163,9 @@ public sealed class ProgressiveDecodeState
         DataFallbackUsed = 0;
         DataTotalAttempts = 0;
         ReceivedFileName = null;
-        FileHeaderReady = null;
+        DetectedDataSubcarriers = null;
+        DetectedModulationScheme = null;
+        // FileHeaderReady は呼び出し側が付け直す想定のため残す。
         StatusBoard.Reset();
     }
 
@@ -381,8 +388,8 @@ public sealed class FileWavCodec
         FlushPcmChunk();
         if (_profile.UnmodulatedPreambleSamples > 0)
         {
-            // 先頭無変調はベース SC 族のヘッダー配置を使う。
-            var preambleOfdm = CreateHeaderOfdm(_profile.ActiveSubcarriers);
+            // 先頭無変調は FH/BH と同じ固定ヘッダー配置を使う。
+            var preambleOfdm = CreateHeaderOfdm();
             AppendHeaderPair(leftPcm, rightPcm, preambleOfdm.GenerateUnmodulated(_profile.UnmodulatedPreambleSamples));
             EnsureStereoParity("global preamble");
             FlushPcmChunk();
@@ -390,7 +397,7 @@ public sealed class FileWavCodec
 
         // data_struct.mdc: 先頭 FH → (BH+BD)×N（16ブロックごとに FH）×パス → 末尾 FH。
         // ×2 の第2パスは奇偶入れ替え＋SC/変調ダウングレード。パス先頭の追加 FH は出さない。
-        var openingHeaderOfdm = CreateHeaderOfdm(_profile.ActiveSubcarriers);
+        var openingHeaderOfdm = CreateHeaderOfdm();
         AppendFileHeaderPacket(leftPcm, rightPcm, openingHeaderOfdm, fileHeader);
         EnsureStereoParity("file header");
         FlushPcmChunk();
@@ -403,7 +410,7 @@ public sealed class FileWavCodec
                 pass,
                 _profile.ActiveSubcarriers,
                 _profile.ModulationScheme);
-            var headerOfdm = CreateHeaderOfdm(passSc);
+            var headerOfdm = CreateHeaderOfdm();
             var dataOfdm = CreateDataOfdm(passSc, passMod);
             var dataPunctureRate = ResolveDataPunctureRate(passMod);
             trailingHeaderOfdm = headerOfdm;
@@ -578,27 +585,9 @@ public sealed class FileWavCodec
 
         state.SourceLength = leftSamples.Length;
 
-        var headerOfdm = CreateHeaderOfdm(_profile.ActiveSubcarriers);
+        // FH/BH は仕様上 GROUP-B・9SC・BPSK 固定（周波数配置も固定。送信 UI / 探索は不要）。
+        var headerOfdm = CreateHeaderOfdm();
         var dataOfdmCache = new Dictionary<(int Sc, ModulationScheme Mod), OfdmGenerator>();
-        var headerOfdmCache = new Dictionary<int, OfdmGenerator>
-        {
-            [_profile.ActiveSubcarriers] = headerOfdm
-        };
-
-        /// <summary>データ SC 族に対応するヘッダー用 OFDM 生成器を取得（キャッシュ）します。</summary>
-        /// <param name="dataSubcarriers">キャッシュキーとなるデータ部 SC 数。</param>
-        /// <returns>ヘッダー用 OFDM 生成器。</returns>
-        OfdmGenerator ResolveHeaderOfdmFor(int dataSubcarriers)
-        {
-            if (headerOfdmCache.TryGetValue(dataSubcarriers, out var cached))
-            {
-                return cached;
-            }
-
-            var created = CreateHeaderOfdm(dataSubcarriers);
-            headerOfdmCache[dataSubcarriers] = created;
-            return created;
-        }
 
         /// <summary>データ部用 OFDM 生成器を取得（キャッシュ）します。</summary>
         /// <param name="activeSubcarriers">データ部の有効サブキャリア数。</param>
@@ -910,6 +899,7 @@ public sealed class FileWavCodec
                 // FH 探索・ワウ推定の前に進捗を出し、画面が「止まっている」ように見えないようにする。
                 PublishStatus(CoreFrameKind.Fh, blockIndex: -1);
 
+                // modulation.mdc: FH は GROUP-B・9SC・BPSK・配置固定。
                 var minForFh = _profile.LeadingSilenceSamples
                     + _profile.UnmodulatedPreambleSamples
                     + fhPacketSamples
@@ -944,18 +934,30 @@ public sealed class FileWavCodec
                     AcceptedBlockCount: 0,
                     TotalBlockCount: 0,
                     ProgressPercent: 4.0));
-                var fileHeader = DecodeHeaderPacketSynced(
-                    leftSamples,
-                    rightSamples,
-                    ref warpedCursor,
-                    ref logicalOffset,
-                    headerOfdm,
-                    FileHeaderBytes,
-                    FileHeaderPilot,
-                    coarseRadius,
-                    InterleaveInitSeedFileHeader);
-                state.HeaderRsDecodeCount++;
-                EnsureHeaderCrc(fileHeader, "file header");
+
+                byte[] fileHeader;
+                try
+                {
+                    fileHeader = DecodeHeaderPacketSynced(
+                        leftSamples,
+                        rightSamples,
+                        ref warpedCursor,
+                        ref logicalOffset,
+                        headerOfdm,
+                        FileHeaderBytes,
+                        FileHeaderPilot,
+                        coarseRadius,
+                        InterleaveInitSeedFileHeader);
+                    state.HeaderRsDecodeCount++;
+                    EnsureHeaderCrc(fileHeader, "file header");
+                }
+                catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+                {
+                    state.LastError = ex.Message;
+                    PersistCursor();
+                    return ProgressiveDecodeStatus.Failed;
+                }
+
                 var fileSize = BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(860, 8));
                 var blockCount = (int)BinaryPrimitives.ReadInt64BigEndian(fileHeader.AsSpan(868, 8));
                 if (fileSize < 0 || blockCount < 0)
@@ -1008,22 +1010,15 @@ public sealed class FileWavCodec
 
             for (var pass = state.Pass; pass < _profile.BlockInterleaveFactor; pass++)
             {
-                var (passSc, _) = ResolveInterleavePassModulation(
-                    pass,
-                    _profile.ActiveSubcarriers,
-                    _profile.ModulationScheme);
-                var passHeaderOfdm = ResolveHeaderOfdmFor(passSc);
-                var passFhPacketSamples = HeaderPacketSamples(
-                    passHeaderOfdm, FileHeaderBytes, _profile.FileHeaderUnmodulatedSamples);
-                var passBhPacketSamples = HeaderPacketSamples(
-                    passHeaderOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
+                var passFhPacketSamples = fhPacketSamples;
+                var passBhPacketSamples = bhPacketSamplesBase;
 
                 var order = GetBlockEmissionOrder(blockCountReady, pass);
                 var localStart = pass == state.Pass ? state.Local : 0;
                 for (var local = localStart; local < order.Length; local++)
                 {
                     // BH 分だけ先に足りるか見る。データ長は BH 読取後に確定する。
-                    var minForBlock = passBhPacketSamples + passHeaderOfdm.SamplesPerOfdmSymbol;
+                    var minForBlock = passBhPacketSamples + headerOfdm.SamplesPerOfdmSymbol;
                     if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                     {
                         minForBlock += passFhPacketSamples;
@@ -1049,7 +1044,7 @@ public sealed class FileWavCodec
                             rightSamples,
                             ref warpedCursor,
                             ref logicalOffset,
-                            passHeaderOfdm,
+                            headerOfdm,
                             FileHeaderBytes,
                             FileHeaderPilot,
                             fineRadius,
@@ -1073,7 +1068,7 @@ public sealed class FileWavCodec
                         rightSamples,
                         ref warpedCursor,
                         ref logicalOffset,
-                        passHeaderOfdm,
+                        headerOfdm,
                         BlockHeaderBytes,
                         BlockHeaderPilot,
                         fineRadius,
@@ -1098,8 +1093,10 @@ public sealed class FileWavCodec
                         return ProgressiveDecodeStatus.Failed;
                     }
 
-                    // データ部の SC/変調は BH 記載を正とする（受信プロファイルの変調設定は使わない）。
+                    // データ部の SC/変調は BH 記載を正とする（送信 UI のヒントは使わない）。
                     var (blockSc, blockModulation) = ReadBlockDataModulation(blockHeader);
+                    state.DetectedDataSubcarriers = blockSc;
+                    state.DetectedModulationScheme = blockModulation;
                     var blockDataOfdm = ResolveDataOfdmFor(blockSc, blockModulation);
                     var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
                     PublishStatus(CoreFrameKind.Bd, expectedBlockIndex);
@@ -1205,17 +1202,12 @@ public sealed class FileWavCodec
                         ref logicalOffset,
                         _profile.FileHeaderUnmodulatedSamples);
                     ApplyAdaptiveWowCorrectionPair();
-                    var trailingPass = Math.Max(0, _profile.BlockInterleaveFactor - 1);
-                    var (trailingSc, _) = ResolveInterleavePassModulation(
-                        trailingPass,
-                        _profile.ActiveSubcarriers,
-                        _profile.ModulationScheme);
                     var endFh = DecodeHeaderPacketSynced(
                         leftSamples,
                         rightSamples,
                         ref warpedCursor,
                         ref logicalOffset,
-                        ResolveHeaderOfdmFor(trailingSc),
+                        headerOfdm,
                         FileHeaderBytes,
                         FileHeaderPilot,
                         fineRadius,
@@ -1289,16 +1281,16 @@ public sealed class FileWavCodec
         }
     }
 
-    /// <summary>FH/BH 用（GROUP B・9 SC・BPSK）の OFDM 生成器を作成します。</summary>
-    /// <param name="dataSubcarriers">周波数グリッドを決めるデータ部 SC 数。</param>
+    /// <summary>FH/BH 用（GROUP B・9 SC・BPSK・配置固定）の OFDM 生成器を作成します。</summary>
     /// <returns>FH/BH 用 OFDM 生成器。</returns>
-    private OfdmGenerator CreateHeaderOfdm(int dataSubcarriers)
+    private OfdmGenerator CreateHeaderOfdm()
     {
-        // modulation.mdc: FH/BH は GROUP B（概念 10–18）9 SC + BPSK。
-        // 周波数グリッドはデータ部 SC 族に合わせる（SC-9/18 族 or SC-27/36 族）。
+        // modulation.mdc: FH/BH は GROUP B（概念 10–18）9 SC + BPSK 固定。
+        // ヘッダー配置はデータ部 SC に依存させない（常に SC-9 族の GROUP B）。
         var groupB = OfdmConfig.ResolveGroupBLeftBins();
-        var grid = OfdmConfig.ResolveCarrierGrid(dataSubcarriers);
-        var fftSize = OfdmConfig.ResolveFftSize(dataSubcarriers, _profile.ChannelMode);
+        const int headerSubcarriers = 9;
+        var grid = OfdmConfig.ResolveCarrierGrid(headerSubcarriers);
+        var fftSize = OfdmConfig.ResolveFftSize(headerSubcarriers, _profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
             activeSubcarriers: groupB.Length,
@@ -3182,7 +3174,7 @@ public sealed class FileWavCodec
         totalSamples += profile.LeadingSilenceSamples;
         AddSegment(segments, "プリアンブル", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples);
 
-        var openingHeaderOfdm = codec.CreateHeaderOfdm(profile.ActiveSubcarriers);
+        var openingHeaderOfdm = codec.CreateHeaderOfdm();
         var openingFhSamples = HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
         AddSegment(segments, "FH", openingFhSamples, profile.SampleRate, ref totalSamples);
 
@@ -3193,7 +3185,7 @@ public sealed class FileWavCodec
                 pass,
                 profile.ActiveSubcarriers,
                 profile.ModulationScheme);
-            var headerOfdm = codec.CreateHeaderOfdm(passSc);
+            var headerOfdm = codec.CreateHeaderOfdm();
             var dataOfdm = codec.CreateDataOfdm(passSc, passMod);
             trailingHeaderOfdm = headerOfdm;
             var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);

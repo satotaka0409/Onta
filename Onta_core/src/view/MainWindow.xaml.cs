@@ -160,13 +160,24 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var snap = SendPanel.CreateSnapshot();
-            // モノラル／ステレオは WAV から決定（送信側 UI とは独立）。
-            var profile = CodecProfileFactory.ForWavReceive(
-                ReceivePanel.SelectedWavPath,
-                snap.ActiveSubcarriers,
-                snap.ModulationScheme,
-                snap.BlockInterleaveFactor);
+            var outputDir = ReceivePanel.SelectedOutputDir;
+            if (string.IsNullOrWhiteSpace(outputDir))
+            {
+                MessageBox.Show(this, "出力フォルダーを選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"出力フォルダーを作成できません。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var profile = CodecProfileFactory.ForWavReceive(ReceivePanel.SelectedWavPath);
             ReceivePanel.SetWowChannelMode(profile.ChannelMode);
             ReceivePanel.StopDemoFeed();
             ReceivePanel.ErrorGraph.Clear();
@@ -175,7 +186,7 @@ public partial class MainWindow : Window
             ReceiveDetailPanel.Clear();
             _receiveDetailOpened = false;
 
-            if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile))
+            if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile, outputDir))
             {
                 MessageBox.Show(this, "受信コアが実行中です。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;

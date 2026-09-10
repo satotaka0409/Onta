@@ -21,18 +21,21 @@ internal static class CodecProfileFactory
 
     /// <summary>
     /// WAV 受信用プロファイルを生成します。
-    /// モノラル／ステレオは WAV のチャンネル数から決め、送信側 UI には依存しません。
-    /// SC／変調／インターリーブは復号ヒント（暫定: 送信詳細と同じ値を渡す場合あり）。
+    /// モノラル／ステレオは WAV チャンネル数のみ参照します。
+    /// FH/BH の SC・変調は仕様どおり固定（GROUP-B・9SC・BPSK）で、
+    /// データ部の SC／変調は BH から読み取るため、ここではプレースホルダです。
     /// </summary>
-    public static FileWavCodecProfile ForWavReceive(
-        string wavPath,
-        int activeSubcarriers,
-        ModulationScheme modulationScheme,
-        int blockInterleaveFactor)
+    public static FileWavCodecProfile ForWavReceive(string wavPath)
     {
         var channels = WavReader.PeekChannelCount(wavPath);
         var channelMode = channels == 2 ? ChannelMode.Stereo : ChannelMode.Mono;
-        return Create(activeSubcarriers, modulationScheme, channelMode, blockInterleaveFactor);
+        // ActiveSubcarriers/Modulation は BH 確定前のプレースホルダ。
+        // インターリーブは第1パスだけで全ブロックを受け取れるため 1 を既定とする。
+        return Create(
+            activeSubcarriers: 9,
+            modulationScheme: ModulationScheme.Bpsk,
+            channelMode: channelMode,
+            blockInterleaveFactor: 1);
     }
 
     private static FileWavCodecProfile Create(

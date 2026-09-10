@@ -23,6 +23,7 @@ public partial class ReceivePanel : UserControl
     private double _demoBias;
     private double _demoTimeSec;
     private string? _selectedWavPath;
+    private string _outputDir = AppPaths.OutputDir;
     private CoreFrameKind _lastErrorFrame = CoreFrameKind.Fh;
     private double _lastErrorPercent = -1;
 
@@ -34,6 +35,7 @@ public partial class ReceivePanel : UserControl
         IqChart.DataContext = _iqChart;
         InitializeAudioDevices();
         UpdateInputModePanels();
+        OutputDirBox.Text = _outputDir;
 
         // ワウフラッター／デモは 0.2 秒間隔のスナップショット。
         _demoTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
@@ -59,6 +61,10 @@ public partial class ReceivePanel : UserControl
     public bool UseWavInput => WavInputRadio.IsChecked == true;
 
     public string? SelectedWavPath => _selectedWavPath;
+
+    /// <summary>受信ファイルを書き出すフォルダー。</summary>
+    public string SelectedOutputDir =>
+        string.IsNullOrWhiteSpace(_outputDir) ? AppPaths.OutputDir : _outputDir;
 
     public int AudioDeviceNumber =>
         AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
@@ -299,6 +305,22 @@ public partial class ReceivePanel : UserControl
         // ファイル名・サイズは FH 受信後に更新する（WAV メタは使わない）。
         SetFileInfo("(未受信)", "-", "-");
         ProgressBox.Text = "-";
+    }
+
+    private void OnBrowseOutputDir(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFolderDialog
+        {
+            Title = "受信ファイルの出力フォルダーを選択",
+            InitialDirectory = Directory.Exists(_outputDir) ? _outputDir : AppPaths.OutputDir
+        };
+        if (dlg.ShowDialog() != true || string.IsNullOrWhiteSpace(dlg.FolderName))
+        {
+            return;
+        }
+
+        _outputDir = Path.GetFullPath(dlg.FolderName);
+        OutputDirBox.Text = _outputDir;
     }
 
     private void OnReceiveStartClick(object sender, RoutedEventArgs e)
