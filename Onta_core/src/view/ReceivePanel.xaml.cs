@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using NAudioWaveIn = NAudio.Wave.WaveIn;
 using Onta.Core;
 
 namespace Onta.View;
@@ -11,6 +12,8 @@ namespace Onta.View;
 /// </summary>
 public partial class ReceivePanel : UserControl
 {
+    private const int DefaultAudioDeviceNumber = -1;
+
     private readonly ErrorRateChartModel _errorChart = new();
     private readonly FftChartModel _fftChart = new();
     private readonly IqChartModel _iqChart = new();
@@ -19,7 +22,6 @@ public partial class ReceivePanel : UserControl
     private bool _demoRunning;
     private double _demoBias;
     private double _demoTimeSec;
-    private string _receiveSource = "WAV入力";
     private string? _selectedWavPath;
     private CoreFrameKind _lastErrorFrame = CoreFrameKind.Fh;
     private double _lastErrorPercent = -1;
@@ -30,6 +32,8 @@ public partial class ReceivePanel : UserControl
         ErrorChart.DataContext = _errorChart;
         FftChart.DataContext = _fftChart;
         IqChart.DataContext = _iqChart;
+        InitializeAudioDevices();
+        UpdateInputModePanels();
 
         // ワウフラッター／デモは 0.2 秒間隔のスナップショット。
         _demoTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
@@ -44,15 +48,27 @@ public partial class ReceivePanel : UserControl
             _iqChart.Clear();
             SetFileInfo("(未受信)", "-", "-");
             ProgressBox.Text = "-";
+            UpdateInputModePanels();
         };
         Unloaded += (_, _) => StopDemoFeed();
     }
 
     public event EventHandler? ReceiveStartRequested;
 
-    public string ReceiveSource => _receiveSource;
+    /// <summary>WAV入力モードか（音声入力のときは false）。</summary>
+    public bool UseWavInput => WavInputRadio.IsChecked == true;
 
     public string? SelectedWavPath => _selectedWavPath;
+
+    public int AudioDeviceNumber =>
+        AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
+            ? item.DeviceNumber
+            : DefaultAudioDeviceNumber;
+
+    public string AudioDeviceName =>
+        AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
+            ? item.Name
+            : "既定デバイス";
 
     public ErrorRateChartModel ErrorGraph => _errorChart;
 
@@ -87,6 +103,11 @@ public partial class ReceivePanel : UserControl
         ProgressBox.Text =
             $"{frameLabel} {status.Progress.ProgressPercent:0.0}% " +
             $"({status.Progress.AcceptedBlockCount}/{Math.Max(status.Progress.TotalBlockCount, 0)})";
+
+        if (status.IsRunning && status.FftGraph.FftSize > 0)
+        {
+            SetWowStereoEnabled(status.FftGraph.IsStereo);
+        }
 
         SetWowFlutterPercent(status.WowLeftPercent, status.WowRightPercent);
 
@@ -144,6 +165,25 @@ public partial class ReceivePanel : UserControl
         WowRight.SetFromSpeedRatio(rightSpeedRatio);
     }
 
+    /// <summary>
+    /// チャンネルモードに応じて R 側ワウフラッターの有効／無効を切り替えます。
+    /// モノラル時は R を暗くし停止します。
+    /// </summary>
+    public void SetWowChannelMode(ChannelMode channelMode)
+    {
+        SetWowStereoEnabled(channelMode == ChannelMode.Stereo);
+    }
+
+    /// <summary>ステレオ時のみ R メーターを動作させます。</summary>
+    public void SetWowStereoEnabled(bool stereo)
+    {
+        WowRight.IsActive = stereo;
+        if (!stereo)
+        {
+            WowRight.Clear();
+        }
+    }
+
     public void SetWowFlutterPercent(double leftPercent, double rightPercent)
     {
         WowLeft.AddSample(leftPercent);
@@ -169,6 +209,75 @@ public partial class ReceivePanel : UserControl
         _demoTimer.Stop();
     }
 
+    private void OnInputModeChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { IsChecked: false })
+        {
+            return;
+        }
+
+        UpdateInputModePanels();
+        if (UseWavInput)
+        {
+            if (!string.IsNullOrWhiteSpace(_selectedWavPath) && File.Exists(_selectedWavPath))
+            {
+                var fileInfo = new FileInfo(_selectedWavPath);
+                SetFileInfo(fileInfo.Name, $"{fileInfo.Length:N0} bytes", "-");
+            }
+            else
+            {
+                SetFileInfo("(未受信)", "-", "-");
+            }
+        }
+        else
+        {
+            SetFileInfo($"(音声入力: {AudioDeviceName})", "-", "-");
+        }
+
+        ProgressBox.Text = "-";
+    }
+
+    private void UpdateInputModePanels()
+    {
+        if (WavInputRadio is null || WavInputPanel is null || AudioInputPanel is null)
+        {
+            return;
+        }
+
+        var useWav = WavInputRadio.IsChecked == true;
+        WavInputPanel.Visibility = useWav ? Visibility.Visible : Visibility.Collapsed;
+        AudioInputPanel.Visibility = useWav ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void InitializeAudioDevices()
+    {
+        AudioDeviceComboBox.Items.Clear();
+        AudioDeviceComboBox.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, "既定デバイス"));
+
+        try
+        {
+            for (var i = 0; i < NAudioWaveIn.DeviceCount; i++)
+            {
+                var caps = NAudioWaveIn.GetCapabilities(i);
+                AudioDeviceComboBox.Items.Add(new AudioDeviceItem(i, caps.ProductName));
+            }
+        }
+        catch
+        {
+            // デバイス列挙失敗時は既定デバイスのみで継続。
+        }
+
+        AudioDeviceComboBox.SelectedIndex = 0;
+    }
+
+    private void OnAudioDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (AudioInputRadio?.IsChecked == true)
+        {
+            SetFileInfo($"(音声入力: {AudioDeviceName})", "-", "-");
+        }
+    }
+
     private void OnBrowseWavInput(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
@@ -182,18 +291,10 @@ public partial class ReceivePanel : UserControl
             return;
         }
 
-        _receiveSource = "WAV入力";
         _selectedWavPath = dlg.FileName;
+        WavPathBox.Text = dlg.FileName;
         var fileInfo = new FileInfo(dlg.FileName);
         SetFileInfo(fileInfo.Name, $"{fileInfo.Length:N0} bytes", "-");
-        ProgressBox.Text = "-";
-    }
-
-    private void OnUseAudioInput(object sender, RoutedEventArgs e)
-    {
-        _receiveSource = "音声入力";
-        _selectedWavPath = null;
-        SetFileInfo("(音声入力)", "-", "-");
         ProgressBox.Text = "-";
     }
 
@@ -225,4 +326,6 @@ public partial class ReceivePanel : UserControl
         wowR += (_rng.NextDouble() - 0.5) * 0.08;
         SetWowFlutterPercent(wowL, wowR);
     }
+
+    private sealed record AudioDeviceItem(int DeviceNumber, string Name);
 }

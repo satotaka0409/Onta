@@ -1,15 +1,19 @@
 <UserControl x:Class="Onta.View.WowFlutterMeter"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             MinHeight="40" MinWidth="80"
+             MinHeight="24" MinWidth="80"
              Background="Transparent">
   <Grid Margin="4,2">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-    </Grid.RowDefinitions>
-    <TextBlock x:Name="TitleText" FontWeight="SemiBold" Foreground="{StaticResource BrushTextMuted}" Margin="0,0,0,4"/>
-    <Border Grid.Row="1"
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="Auto"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+    <TextBlock x:Name="TitleText"
+               FontWeight="SemiBold"
+               VerticalAlignment="Center"
+               Margin="0,0,8,0"
+               Foreground="{StaticResource BrushText}"/>
+    <Border Grid.Column="1"
             Background="{StaticResource BrushTrack}"
             BorderBrush="{StaticResource BrushBorder}"
             BorderThickness="1"

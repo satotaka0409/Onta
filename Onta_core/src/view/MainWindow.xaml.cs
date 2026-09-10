@@ -8,7 +8,7 @@ using System.Windows.Threading;
 namespace Onta.View;
 
 /// <summary>
-/// メインウィンドウです（送信上・受信下・タブは見積以下。画面仕様.mdc）。
+/// メインウィンドウです（送信上・受信下・タブは送信／受信詳細。画面仕様.mdc）。
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private WaveOutEvent? _activeWaveOut;
     private AudioFileReader? _activeAudioReader;
     private bool _pollingReceive;
+    private bool _receiveDetailOpened;
 
     public MainWindow()
     {
@@ -37,7 +38,7 @@ public partial class MainWindow : Window
         var snap = SendPanel.CreateSnapshot();
         EstimatePanel.UpdateEstimate(snap);
 
-        // 送信ファイル選択後は見積タブを前面に出す。
+        // 送信ファイル選択後は送信詳細タブを前面に出す。
         if (!string.IsNullOrWhiteSpace(snap.InputFilePath) && File.Exists(snap.InputFilePath))
         {
             BottomTabs.SelectedItem = EstimateTab;
@@ -67,7 +68,7 @@ public partial class MainWindow : Window
         try
         {
             var outputWavPath = ResolveOutputWavPath(snap);
-            if (outputWavPath is null)
+            if (snap.WriteWav && outputWavPath is null)
             {
                 return;
             }
@@ -109,45 +110,73 @@ public partial class MainWindow : Window
 
     private void OnReceiveStartRequested(object? sender, EventArgs e)
     {
-        if (ReceivePanel.ReceiveSource != "WAV入力" || string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
+        if (ReceivePanel.UseWavInput)
         {
-            MessageBox.Show(this, "WAV入力ファイルを選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
+            {
+                MessageBox.Show(this, "WAV入力ファイルを選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (!File.Exists(ReceivePanel.SelectedWavPath))
+            {
+                MessageBox.Show(this, "WAV ファイルが見つかりません。", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var snap = SendPanel.CreateSnapshot();
+            // モノラル／ステレオは WAV から決定（送信側 UI とは独立）。
+            var profile = CodecProfileFactory.ForWavReceive(
+                ReceivePanel.SelectedWavPath,
+                snap.ActiveSubcarriers,
+                snap.ModulationScheme,
+                snap.BlockInterleaveFactor);
+            ReceivePanel.SetWowChannelMode(profile.ChannelMode);
+            ReceivePanel.StopDemoFeed();
+            ReceivePanel.ErrorGraph.Clear();
+            ReceivePanel.FftGraph.Clear();
+            ReceivePanel.IqGraph.Clear();
+            ReceiveDetailPanel.Clear();
+            _receiveDetailOpened = false;
+
+            if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile))
+            {
+                MessageBox.Show(this, "受信コアが実行中です。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _pollingReceive = true;
+            if (!_progressPollTimer.IsEnabled)
+            {
+                _progressPollTimer.Start();
+            }
+
             return;
         }
 
-        if (!File.Exists(ReceivePanel.SelectedWavPath))
-        {
-            MessageBox.Show(this, "WAV ファイルが見つかりません。", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var snap = SendPanel.CreateSnapshot();
-        var profile = CodecProfileFactory.FromSnapshot(snap);
-        ReceivePanel.StopDemoFeed();
-        ReceivePanel.ErrorGraph.Clear();
-        ReceivePanel.FftGraph.Clear();
-        ReceivePanel.IqGraph.Clear();
-
-        if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile))
-        {
-            MessageBox.Show(this, "受信コアが実行中です。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        _pollingReceive = true;
-        if (!_progressPollTimer.IsEnabled)
-        {
-            _progressPollTimer.Start();
-        }
+        MessageBox.Show(
+            this,
+            $"音声入力（デバイス: {ReceivePanel.AudioDeviceName}）は未実装です。",
+            "Onta",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 
     private void OnProgressPollTick(object? sender, EventArgs e)
     {
         if (_pollingReceive)
         {
-            // 画面 → コア問い合わせ（0.5 秒間隔）: 進捗 / エラー率 / FFT / I-Q。
+            // 画面 → コア問い合わせ: 進捗 / エラー率 / FFT / I-Q。
             var status = _inputCoreWorker.QueryExecutionStatus();
             ReceivePanel.ApplyExecutionStatus(status);
+            ReceiveDetailPanel.ApplyStatus(status);
+
+            // FH 受信後に受信詳細を前面表示し、サイズ／ブロック数を見せる。
+            if (!_receiveDetailOpened && ReceiveDetailPanel.HasFileHeaderInfo(status))
+            {
+                _receiveDetailOpened = true;
+                BottomTabs.SelectedItem = ReceiveDetailTab;
+            }
 
             if (_inputCoreWorker.TryConsumeCompletion(out var success, out var message, out var outputPath))
             {
@@ -175,7 +204,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 送信進捗: 見積メーターを更新。
+        // 送信進捗: 送信詳細タブのメーターを更新。
         var progress = _coreWorker.GetProgress();
         EstimatePanel.ApplyProgress(progress.ElapsedAudioSeconds, progress.IsRunning);
         _ = _coreWorker.ConsumeFrameEvents();
@@ -199,17 +228,21 @@ public partial class MainWindow : Window
 
         if (completion.IsSuccess)
         {
-            // リアルタイム再生済みなら完了後に WAV を重ね再生しない。
-            if (completion.Settings.PlayAudio && !completion.PlayedRealtime)
+            if (completion.Settings.PlayAudio && !completion.PlayedRealtime
+                && !string.IsNullOrWhiteSpace(completion.OutputWavPath)
+                && File.Exists(completion.OutputWavPath))
             {
                 StartAudioPlayback(completion.OutputWavPath, completion.Settings.AudioDeviceNumber);
             }
 
+            var wavLine = completion.Settings.WriteWav && !string.IsNullOrWhiteSpace(completion.OutputWavPath)
+                ? $"WAV: {completion.OutputWavPath}\n"
+                : "WAV: （未出力）\n";
             MessageBox.Show(
                 this,
                 "出力が完了しました。\n\n"
                 + $"入力: {completion.Settings.InputFilePath}\n"
-                + $"WAV: {completion.OutputWavPath}\n"
+                + wavLine
                 + $"チャンネル: {completion.Settings.ChannelMode}\n"
                 + $"サブキャリア: {completion.Settings.ActiveSubcarriers}\n"
                 + $"変調: {completion.Settings.ModulationScheme}\n"
@@ -227,29 +260,33 @@ public partial class MainWindow : Window
 
     private string? ResolveOutputWavPath(SendSettingsSnapshot snap)
     {
-        var defaultPath = BuildDefaultOutputPath(snap);
-
-        if (snap.WriteWav)
+        if (!snap.WriteWav)
         {
-            var dlg = new SaveFileDialog
-            {
-                Title = "WAV 出力ファイル",
-                Filter = "WAV (*.wav)|*.wav",
-                InitialDirectory = Path.GetDirectoryName(defaultPath),
-                FileName = Path.GetFileName(defaultPath),
-                AddExtension = true,
-                DefaultExt = ".wav"
-            };
-
-            if (dlg.ShowDialog(this) != true)
-            {
-                return null;
-            }
-
-            return Path.GetFullPath(dlg.FileName);
+            return null;
         }
 
-        return defaultPath;
+        if (!string.IsNullOrWhiteSpace(snap.WavOutputPath))
+        {
+            return Path.GetFullPath(snap.WavOutputPath);
+        }
+
+        var defaultPath = BuildDefaultOutputPath(snap);
+        var dlg = new SaveFileDialog
+        {
+            Title = "WAV 出力ファイル",
+            Filter = "WAV (*.wav)|*.wav",
+            InitialDirectory = Path.GetDirectoryName(defaultPath),
+            FileName = Path.GetFileName(defaultPath),
+            AddExtension = true,
+            DefaultExt = ".wav"
+        };
+
+        if (dlg.ShowDialog(this) != true)
+        {
+            return null;
+        }
+
+        return Path.GetFullPath(dlg.FileName);
     }
 
     private static string BuildDefaultOutputPath(SendSettingsSnapshot snap)
@@ -260,8 +297,7 @@ public partial class MainWindow : Window
         }
 
         var inputName = Path.GetFileNameWithoutExtension(snap.InputFilePath);
-        var suffix = snap.WriteWav ? "_out.wav" : "_preview.wav";
-        return Path.Combine(AppPaths.OutputDir, $"{inputName}{suffix}");
+        return Path.Combine(AppPaths.OutputDir, $"{inputName}_out.wav");
     }
 
     private void StartAudioPlayback(string wavPath, int deviceNumber)

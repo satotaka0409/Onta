@@ -13,11 +13,38 @@ public partial class WowFlutterMeter : UserControl
     private double _rangePercent = 5.0;
     private string _channelLabel = "L";
 
+    private bool _isActive = true;
+
     public WowFlutterMeter()
     {
         InitializeComponent();
         ChannelLabel = "L";
         UpdateVisual();
+    }
+
+    /// <summary>
+    /// false のときメーターを暗くし、更新を停止します（モノラル時の R 用）。
+    /// </summary>
+    public bool IsActive
+    {
+        get => _isActive;
+        set
+        {
+            if (_isActive == value)
+            {
+                return;
+            }
+
+            _isActive = value;
+            Opacity = value ? 1.0 : 0.35;
+            IsHitTestVisible = value;
+            if (!value)
+            {
+                _valuePercent = 0;
+            }
+
+            UpdateVisual();
+        }
     }
 
     public string ChannelLabel
@@ -26,7 +53,7 @@ public partial class WowFlutterMeter : UserControl
         set
         {
             _channelLabel = value ?? string.Empty;
-            TitleText.Text = $"ワウフラッター {_channelLabel}";
+            TitleText.Text = _channelLabel;
         }
     }
 
@@ -44,11 +71,21 @@ public partial class WowFlutterMeter : UserControl
 
     public void SetFromSpeedRatio(double speedRatio)
     {
+        if (!_isActive)
+        {
+            return;
+        }
+
         AddSample((speedRatio - 1.0) * 100.0);
     }
 
     public void AddSample(double valuePercent)
     {
+        if (!_isActive)
+        {
+            return;
+        }
+
         _valuePercent = valuePercent;
         UpdateVisual();
     }

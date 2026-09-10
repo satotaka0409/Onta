@@ -15,9 +15,12 @@ internal sealed class OutputCoreWorker
     private RealtimePcmPlayer? _player;
     private CancellationTokenSource? _cts;
 
-    public bool TryStart(SendSettingsSnapshot settings, string outputWavPath)
+    public bool TryStart(SendSettingsSnapshot settings, string? outputWavPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(outputWavPath);
+        if (settings.WriteWav && string.IsNullOrWhiteSpace(outputWavPath))
+        {
+            throw new ArgumentException("WAV 出力パスが必要です。", nameof(outputWavPath));
+        }
 
         CancellationTokenSource cts;
         lock (_sync)
@@ -49,7 +52,7 @@ internal sealed class OutputCoreWorker
                 WowLeftPercent: 0,
                 WowRightPercent: 0,
                 ErrorRatePercent: 0,
-                OutputWavPath: outputWavPath,
+                OutputWavPath: outputWavPath ?? string.Empty,
                 StartedAtUtc: DateTime.UtcNow);
             _completion = null;
             _frameEvents.Clear();
@@ -132,9 +135,10 @@ internal sealed class OutputCoreWorker
         }
     }
 
-    private void RunCore(SendSettingsSnapshot settings, string outputWavPath, CancellationToken cancellationToken)
+    private void RunCore(SendSettingsSnapshot settings, string? outputWavPath, CancellationToken cancellationToken)
     {
         RealtimePcmPlayer? player = null;
+        WavWriter.StreamingPcm16Writer? wavWriter = null;
         try
         {
             UpdateSnapshot(0, 0, 0, "入力読み込み", ErrorRateFrameKind.Fh, false, false, "-", "-");
@@ -171,41 +175,50 @@ internal sealed class OutputCoreWorker
                 }
             }
 
-            UpdateSnapshot(0, 0, totalSeconds, "符号化＋音声出力", ErrorRateFrameKind.Bh, false, false, fileSizeText, blockCountText);
+            if (settings.WriteWav)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(outputWavPath);
+                wavWriter = WavWriter.CreateStreamingPcm16(
+                    outputWavPath,
+                    profile.SampleRate,
+                    profile.SamplePeak,
+                    profile.ChannelMode);
+            }
+
+            var stageLabel = settings.WriteWav
+                ? (settings.PlayAudio ? "符号化＋WAV／音声出力" : "符号化＋WAV逐次出力")
+                : "符号化＋音声出力";
+            UpdateSnapshot(0, 0, totalSeconds, stageLabel, ErrorRateFrameKind.Bh, false, false, fileSizeText, blockCountText);
             var codec = new FileWavCodec(profile);
             var inputInfo = new FileInfo(settings.InputFilePath);
-            using (var wavWriter = WavWriter.CreateStreamingPcm16(
-                       outputWavPath,
-                       profile.SampleRate,
-                       profile.SamplePeak,
-                       profile.ChannelMode))
-            {
-                _ = codec.EncodeFileToSamples(
-                    bytes,
-                    inputInfo,
-                    OnCoreFrameTransmitted,
-                    onPcmChunk: (leftChunk, rightChunk) =>
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        wavWriter.WriteChunk(leftChunk, rightChunk);
-                        player?.AddSamples(leftChunk, rightChunk);
-                        emittedSamples += leftChunk.Length;
-                        var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
-                        var pct = 100.0 * elapsed / Math.Max(totalSeconds, 1e-9);
-                        UpdateSnapshot(
-                            pct,
-                            elapsed,
-                            totalSeconds,
-                            "符号化＋WAV逐次出力",
-                            ErrorRateFrameKind.Bd,
-                            false,
-                            false,
-                            fileSizeText,
-                            blockCountText);
-                    },
-                    retainAllSamples: false,
-                    cancellationToken: cancellationToken);
-            }
+            _ = codec.EncodeFileToSamples(
+                bytes,
+                inputInfo,
+                OnCoreFrameTransmitted,
+                onPcmChunk: (leftChunk, rightChunk) =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    wavWriter?.WriteChunk(leftChunk, rightChunk);
+                    player?.AddSamples(leftChunk, rightChunk);
+                    emittedSamples += leftChunk.Length;
+                    var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
+                    var pct = 100.0 * elapsed / Math.Max(totalSeconds, 1e-9);
+                    UpdateSnapshot(
+                        pct,
+                        elapsed,
+                        totalSeconds,
+                        stageLabel,
+                        ErrorRateFrameKind.Bd,
+                        false,
+                        false,
+                        fileSizeText,
+                        blockCountText);
+                },
+                retainAllSamples: false,
+                cancellationToken: cancellationToken);
+
+            wavWriter?.Dispose();
+            wavWriter = null;
 
             if (player is not null)
             {
@@ -241,7 +254,7 @@ internal sealed class OutputCoreWorker
                 _completion = new CoreCompletionResult(
                     IsSuccess: true,
                     Message: "出力が完了しました。",
-                    OutputWavPath: outputWavPath,
+                    OutputWavPath: settings.WriteWav ? (outputWavPath ?? string.Empty) : string.Empty,
                     InputFileName: inputInfo.Name,
                     FileSizeText: fileSizeText,
                     BlockCountText: blockCountText,
@@ -266,7 +279,7 @@ internal sealed class OutputCoreWorker
                 _completion = new CoreCompletionResult(
                     IsSuccess: false,
                     Message: "送信を停止しました。",
-                    OutputWavPath: outputWavPath,
+                    OutputWavPath: settings.WriteWav ? (outputWavPath ?? string.Empty) : string.Empty,
                     InputFileName: string.IsNullOrWhiteSpace(settings.InputFilePath) ? "(未選択)" : Path.GetFileName(settings.InputFilePath),
                     FileSizeText: "-",
                     BlockCountText: "-",
@@ -283,7 +296,7 @@ internal sealed class OutputCoreWorker
                 _completion = new CoreCompletionResult(
                     IsSuccess: false,
                     Message: ex.Message,
-                    OutputWavPath: outputWavPath,
+                    OutputWavPath: settings.WriteWav ? (outputWavPath ?? string.Empty) : string.Empty,
                     InputFileName: string.IsNullOrWhiteSpace(settings.InputFilePath) ? "(未選択)" : Path.GetFileName(settings.InputFilePath),
                     FileSizeText: "-",
                     BlockCountText: "-",
@@ -294,6 +307,7 @@ internal sealed class OutputCoreWorker
         }
         finally
         {
+            wavWriter?.Dispose();
             lock (_sync)
             {
                 _player = null;

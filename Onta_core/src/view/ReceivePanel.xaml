@@ -9,7 +9,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"
-                           MinHeight="160"/>
+                           MinHeight="130"/>
         </Grid.RowDefinitions>
 
         <TextBlock Text="受信"
@@ -64,50 +64,107 @@
         <Grid Grid.Row="2"
               Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <Grid Grid.Column="0"
-                  Margin="0,0,10,0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <TextBlock Text="ワウフラッター"
-                           Margin="4,0,0,6"
-                           Foreground="{StaticResource BrushTextMuted}"/>
-                <Grid Grid.Row="1">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <local:WowFlutterMeter x:Name="WowLeft"
-                                           ChannelLabel="L"
-                                           Margin="0,0,6,0"/>
-                    <local:WowFlutterMeter x:Name="WowRight"
-                                           Grid.Column="1"
-                                           ChannelLabel="R"
-                                           Margin="6,0,0,0"/>
-                </Grid>
-            </Grid>
+            <GroupBox Grid.Column="0"
+                      Header="ワウフラッター"
+                      Width="600"
+                      Margin="0,0,8,0"
+                      VerticalAlignment="Top">
+              <Grid Margin="4,2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <local:WowFlutterMeter x:Name="WowLeft"
+                                       ChannelLabel="L"
+                                       Margin="0,0,6,0"/>
+                <local:WowFlutterMeter x:Name="WowRight"
+                                       Grid.Column="1"
+                                       ChannelLabel="R"
+                                       Margin="6,0,0,0"/>
+              </Grid>
+            </GroupBox>
 
-            <StackPanel Grid.Column="1"
-                        Orientation="Vertical"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center">
-                <Button Content="WAV入力"
-                        Width="110"
-                        Margin="0,0,0,6"
-                        Click="OnBrowseWavInput"/>
-                <Button Content="音声入力"
-                        Width="110"
-                        Margin="0,0,0,6"
-                        Click="OnUseAudioInput"/>
-                <Button Content="スタート"
-                        Width="110"
-                        Click="OnReceiveStartClick"/>
-            </StackPanel>
+            <GroupBox Grid.Column="1"
+                      Header="入出力"
+                      Margin="0,0,8,0"
+                      VerticalAlignment="Top">
+              <StackPanel Margin="4,2">
+                <StackPanel Orientation="Horizontal"
+                            Margin="0,0,0,6">
+                  <RadioButton x:Name="WavInputRadio"
+                               Content="WAV入力"
+                               GroupName="ReceiveInputMode"
+                               IsChecked="True"
+                               VerticalAlignment="Center"
+                               Checked="OnInputModeChanged"/>
+                  <RadioButton x:Name="AudioInputRadio"
+                               Content="音声入力"
+                               GroupName="ReceiveInputMode"
+                               Margin="16,0,0,0"
+                               VerticalAlignment="Center"
+                               Checked="OnInputModeChanged"/>
+                </StackPanel>
+                <Grid>
+                  <StackPanel x:Name="WavInputPanel"
+                              Orientation="Horizontal"
+                              VerticalAlignment="Center">
+                    <TextBlock Text="入力ファイル"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"/>
+                    <TextBox x:Name="WavPathBox"
+                             Width="300"
+                             IsReadOnly="True"
+                             VerticalAlignment="Center"/>
+                    <Button Content="…"
+                            Width="36"
+                            Margin="8,0,0,0"
+                            Click="OnBrowseWavInput"/>
+                  </StackPanel>
+                  <StackPanel x:Name="AudioInputPanel"
+                              Orientation="Horizontal"
+                              VerticalAlignment="Center"
+                              Visibility="Collapsed">
+                    <TextBlock Text="入力デバイス"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"/>
+                    <ComboBox x:Name="AudioDeviceComboBox"
+                              Width="360"
+                              Foreground="#FF1E2024"
+                              SelectedValuePath="DeviceNumber"
+                              SelectionChanged="OnAudioDeviceSelectionChanged">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                          <TextBlock Text="{Binding Name}"
+                                     Foreground="#FF1E2024"/>
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                      <ComboBox.ItemContainerStyle>
+                        <Style TargetType="ComboBoxItem">
+                          <Setter Property="Foreground" Value="#FF1E2024"/>
+                          <Setter Property="Background" Value="White"/>
+                        </Style>
+                      </ComboBox.ItemContainerStyle>
+                    </ComboBox>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </GroupBox>
+
+            <!-- スタート（右寄せ） -->
+            <Button Grid.Column="3"
+                    Content="スタート"
+                    Width="110"
+                    Height="34"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="0,8,4,0"
+                    Click="OnReceiveStartClick"/>
         </Grid>
 
         <Grid Grid.Row="3">

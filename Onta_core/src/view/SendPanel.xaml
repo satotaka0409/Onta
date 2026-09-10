@@ -32,13 +32,13 @@
         <GroupBox Header="チャンネル"
                   Margin="4">
           <StackPanel Margin="4">
-            <RadioButton x:Name="StereoRadio"
-                         Content="ステレオ"
+            <RadioButton x:Name="MonoRadio"
+                         Content="モノラル"
                          GroupName="Channel"
                          IsChecked="True"
                          Margin="0,0,0,8"/>
-            <RadioButton x:Name="MonoRadio"
-                         Content="モノラル"
+            <RadioButton x:Name="StereoRadio"
+                         Content="ステレオ"
                          GroupName="Channel"/>
           </StackPanel>
         </GroupBox>
@@ -122,69 +122,82 @@
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
-              <RowDefinition Height="Auto"/>
-              <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <Button Content="ファイル選択"
-                    Width="100"
-                    HorizontalAlignment="Left"
-                    Click="OnBrowseInput"/>
-            <TextBox x:Name="InputPathBox"
-                     Grid.Row="1"
-                     Margin="0,8,0,0"
-                     IsReadOnly="True"/>
-            <StackPanel Grid.Row="2"
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Button Content="送信ファイル"
+                      Width="100"
+                      VerticalAlignment="Center"
+                      Click="OnBrowseInput"/>
+              <TextBox x:Name="InputPathBox"
+                       Grid.Column="1"
+                       Margin="8,0,0,0"
+                       VerticalAlignment="Center"
+                       IsReadOnly="True"/>
+            </Grid>
+            <StackPanel Grid.Row="1"
                         Orientation="Horizontal"
                         Margin="0,8,0,0">
-              <CheckBox x:Name="WriteWavCheck"
-                        Content="WAV出力"
-                        IsChecked="True"
-                        VerticalAlignment="Center"
-                        Checked="OnSettingsChanged"
-                        Unchecked="OnSettingsChanged"/>
-              <Button Content="…"
-                      Width="36"
-                      Margin="12,0,0,0"
-                      Click="OnBrowseWav"/>
-              <CheckBox x:Name="PlayAudioCheck"
-                        Content="音声出力"
-                        Margin="16,0,0,0"
-                        VerticalAlignment="Center"
-                        Checked="OnSettingsChanged"
-                        Unchecked="OnSettingsChanged"/>
+              <RadioButton x:Name="WriteWavRadio"
+                           Content="WAV出力"
+                           GroupName="OutputMode"
+                           IsChecked="True"
+                           VerticalAlignment="Center"
+                           Checked="OnSettingsChanged"/>
+              <RadioButton x:Name="PlayAudioRadio"
+                           Content="音声出力"
+                           GroupName="OutputMode"
+                           Margin="16,0,0,0"
+                           VerticalAlignment="Center"
+                           Checked="OnSettingsChanged"/>
             </StackPanel>
-            <TextBox x:Name="WavPathBox"
-                     Grid.Row="3"
-                     Margin="0,8,0,0"
-                     IsReadOnly="True"/>
-            <StackPanel Grid.Row="4"
-                        Orientation="Horizontal"
-                        Margin="0,8,0,0"
-                        VerticalAlignment="Center">
-              <TextBlock Text="出力デバイス"
-                         VerticalAlignment="Center"
-                         Foreground="{StaticResource BrushTextMuted}"/>
-              <ComboBox x:Name="AudioDeviceComboBox"
-                        Width="220"
-                        Margin="10,0,0,0"
-                        Foreground="#FF1E2024"
-                        SelectedValuePath="DeviceNumber"
-                        SelectionChanged="OnAudioDeviceSelectionChanged">
-                <!-- DisplayMemberPath だと TextBlock 全体スタイル（明色）が乗り、白背景で文字が消える -->
-                <ComboBox.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding Name}"
-                               Foreground="#FF1E2024"/>
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-                <ComboBox.ItemContainerStyle>
-                  <Style TargetType="ComboBoxItem">
-                    <Setter Property="Foreground" Value="#FF1E2024"/>
-                    <Setter Property="Background" Value="White"/>
-                  </Style>
-                </ComboBox.ItemContainerStyle>
-              </ComboBox>
-            </StackPanel>
+            <Grid Grid.Row="2"
+                  Margin="0,8,0,0">
+              <StackPanel x:Name="WavOutputPanel"
+                          Orientation="Horizontal"
+                          VerticalAlignment="Center">
+                <TextBlock Text="出力ファイル"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0"/>
+                <TextBox x:Name="WavPathBox"
+                         Width="280"
+                         IsReadOnly="True"
+                         VerticalAlignment="Center"/>
+                <Button Content="…"
+                        Width="36"
+                        Margin="8,0,0,0"
+                        Click="OnBrowseWav"/>
+              </StackPanel>
+              <StackPanel x:Name="AudioOutputPanel"
+                          Orientation="Horizontal"
+                          VerticalAlignment="Center"
+                          Visibility="Collapsed">
+                <TextBlock Text="出力デバイス"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0"/>
+                <ComboBox x:Name="AudioDeviceComboBox"
+                          Width="280"
+                          Foreground="#FF1E2024"
+                          SelectedValuePath="DeviceNumber"
+                          SelectionChanged="OnAudioDeviceSelectionChanged">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Name}"
+                                 Foreground="#FF1E2024"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                  <ComboBox.ItemContainerStyle>
+                    <Style TargetType="ComboBoxItem">
+                      <Setter Property="Foreground" Value="#FF1E2024"/>
+                      <Setter Property="Background" Value="White"/>
+                    </Style>
+                  </ComboBox.ItemContainerStyle>
+                </ComboBox>
+              </StackPanel>
+            </Grid>
           </Grid>
         </GroupBox>
       </Grid>

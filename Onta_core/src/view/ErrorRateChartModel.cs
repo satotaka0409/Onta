@@ -75,6 +75,8 @@ public sealed class ErrorRateChartModel
                 MinLimit = 0,
                 MaxLimit = 100,
                 Labeler = value => $"{value:0}",
+                TextSize = 8,
+                NameTextSize = 8,
                 NamePaint = new SolidColorPaint(AxisColor),
                 LabelsPaint = new SolidColorPaint(AxisColor),
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
@@ -88,6 +90,8 @@ public sealed class ErrorRateChartModel
                 Name = "属性",
                 Labeler = LabelForSample,
                 MinStep = 1,
+                TextSize = 8,
+                NameTextSize = 8,
                 NamePaint = new SolidColorPaint(AxisColor),
                 LabelsPaint = new SolidColorPaint(AxisColor),
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }

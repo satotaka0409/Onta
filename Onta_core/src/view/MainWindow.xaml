@@ -11,11 +11,11 @@
         Background="{StaticResource BrushBg}">
   <Grid Margin="10">
     <Grid.RowDefinitions>
-      <RowDefinition Height="270"/>
+      <RowDefinition Height="200"/>
       <RowDefinition Height="*"
-          MinHeight="220"/>
-      <RowDefinition Height="0.8*"
-          MinHeight="180"/>
+          MinHeight="190"/>
+      <RowDefinition Height="0.7*"
+          MinHeight="140"/>
     </Grid.RowDefinitions>
 
     <Border Grid.Row="0"
@@ -37,15 +37,14 @@
           BorderThickness="0"
           Background="Transparent">
         <TabItem x:Name="EstimateTab"
-            Header="見積">
+            Header="送信詳細">
           <local:FileEstimatePanel x:Name="EstimatePanel"
               Margin="8"/>
         </TabItem>
-        <TabItem Header="受信詳細">
-          <TextBlock Margin="12"
-                     Foreground="{StaticResource BrushTextMuted}"
-                     TextWrapping="Wrap"
-                     Text="受信詳細（たたき台）&#x0a;復元ファイル一覧・ブロック取り込み履歴などをここに表示します。&#x0a;エラー率グラフは上段の受信パネルで LiveCharts2 により更新されます。"/>
+        <TabItem x:Name="ReceiveDetailTab"
+            Header="受信詳細">
+          <local:ReceiveDetailPanel x:Name="ReceiveDetailPanel"
+              Margin="8"/>
         </TabItem>
       </TabControl>
     </Border>

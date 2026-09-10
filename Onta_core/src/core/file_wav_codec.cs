@@ -538,13 +538,13 @@ public sealed class FileWavCodec
 
         if (_profile.ChannelMode == ChannelMode.Mono && rightSamples.Length != 0)
         {
-            state.LastError = "Mono profile expects a 1-channel WAV.";
+            state.LastError = "モノラル受信には 1ch WAV が必要です。";
             return ProgressiveDecodeStatus.Failed;
         }
 
         if (_profile.ChannelMode == ChannelMode.Stereo && rightSamples.Length != leftSamples.Length)
         {
-            state.LastError = "Stereo profile expects a 2-channel WAV with equal L/R length.";
+            state.LastError = "ステレオ受信には L/R 同長の 2ch WAV が必要です。";
             return ProgressiveDecodeStatus.Failed;
         }
 
@@ -3555,6 +3555,55 @@ public static class WavWriter
 /// </summary>
 public static class WavReader
 {
+    /// <summary>
+    /// WAV のチャンネル数だけを fmt チャンクから読み取ります（1 または 2）。
+    /// </summary>
+    /// <param name="path">WAV パス。</param>
+    /// <returns>チャンネル数。</returns>
+    public static int PeekChannelCount(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var reader = new BinaryReader(stream);
+
+        var riff = Encoding.ASCII.GetString(reader.ReadBytes(4));
+        if (riff != "RIFF")
+        {
+            throw new InvalidDataException("Not a RIFF file.");
+        }
+
+        reader.ReadInt32();
+        var wave = Encoding.ASCII.GetString(reader.ReadBytes(4));
+        if (wave != "WAVE")
+        {
+            throw new InvalidDataException("Not a WAVE file.");
+        }
+
+        while (stream.Position + 8 <= stream.Length)
+        {
+            var chunkId = Encoding.ASCII.GetString(reader.ReadBytes(4));
+            var chunkSize = reader.ReadInt32();
+            if (chunkId == "fmt ")
+            {
+                var format = reader.ReadInt16();
+                var channels = reader.ReadInt16();
+                if (format != 1 || channels is not (1 or 2))
+                {
+                    throw new NotSupportedException("Only PCM 1ch/2ch WAV is supported.");
+                }
+
+                return channels;
+            }
+
+            stream.Position += Math.Max(0, chunkSize);
+            if ((chunkSize & 1) != 0)
+            {
+                stream.Position += 1;
+            }
+        }
+
+        throw new InvalidDataException("fmt chunk not found.");
+    }
+
     /// <summary>
     /// 1ch または 2ch の 16-bit PCM WAV を読みます。モノラル時は Right が空配列です。
     /// </summary>

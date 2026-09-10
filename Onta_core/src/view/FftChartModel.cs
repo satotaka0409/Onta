@@ -57,6 +57,8 @@ public sealed class FftChartModel
             {
                 Name = "Bin",
                 MinStep = 8,
+                TextSize = 8,
+                NameTextSize = 8,
                 NamePaint = new SolidColorPaint(AxisColor),
                 LabelsPaint = new SolidColorPaint(AxisColor),
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
@@ -71,6 +73,8 @@ public sealed class FftChartModel
                 MinLimit = -120,
                 MaxLimit = 20,
                 Labeler = value => $"{value:0}",
+                TextSize = 8,
+                NameTextSize = 8,
                 NamePaint = new SolidColorPaint(AxisColor),
                 LabelsPaint = new SolidColorPaint(AxisColor),
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }

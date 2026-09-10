@@ -26,7 +26,7 @@ public partial class SendPanel : UserControl
         StereoRadio.Checked += OnSettingsChanged;
         MonoRadio.Checked += OnSettingsChanged;
         InitializeAudioDevices();
-        UpdateAudioDeviceEnabledState();
+        UpdateOutputModePanels();
     }
 
     /// <summary>
@@ -34,15 +34,16 @@ public partial class SendPanel : UserControl
     /// </summary>
     public SendSettingsSnapshot CreateSnapshot()
     {
+        var writeWav = WriteWavRadio.IsChecked == true;
         return new SendSettingsSnapshot(
             ChannelMode: MonoRadio.IsChecked == true ? Onta.Core.ChannelMode.Mono : Onta.Core.ChannelMode.Stereo,
             ActiveSubcarriers: ReadSelectedInt("Subcarrier", 9),
             ModulationScheme: ReadSelectedModulation(),
             BlockInterleaveFactor: ReadRepeatCount(),
             InputFilePath: InputPathBox.Text,
-            WriteWav: WriteWavCheck.IsChecked == true,
+            WriteWav: writeWav,
             WavOutputPath: WavPathBox.Text,
-            PlayAudio: PlayAudioCheck.IsChecked == true,
+            PlayAudio: !writeWav,
             AudioDeviceNumber: ReadSelectedAudioDeviceNumber(),
             AudioDeviceName: ReadSelectedAudioDeviceName());
     }
@@ -62,7 +63,7 @@ public partial class SendPanel : UserControl
             return;
         }
 
-        UpdateAudioDeviceEnabledState();
+        UpdateOutputModePanels();
 
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -87,7 +88,7 @@ public partial class SendPanel : UserControl
         StopButton.IsEnabled = isRunning;
         if (!isRunning)
         {
-            UpdateAudioDeviceEnabledState();
+            UpdateOutputModePanels();
         }
     }
 
@@ -139,10 +140,10 @@ public partial class SendPanel : UserControl
         AudioDeviceComboBox.SelectedIndex = 0;
     }
 
-    private void UpdateAudioDeviceEnabledState()
+    private void UpdateOutputModePanels()
     {
         // XAML 初期化中に Checked が先に飛ぶため、未生成コントロールは無視する。
-        if (PlayAudioCheck is null || AudioDeviceComboBox is null)
+        if (WriteWavRadio is null || WavOutputPanel is null || AudioOutputPanel is null)
         {
             return;
         }
@@ -152,9 +153,9 @@ public partial class SendPanel : UserControl
             return;
         }
 
-        var enabled = PlayAudioCheck.IsChecked == true;
-        AudioDeviceComboBox.IsEnabled = enabled;
-        AudioDeviceComboBox.Opacity = enabled ? 1.0 : 0.6;
+        var writeWav = WriteWavRadio.IsChecked == true;
+        WavOutputPanel.Visibility = writeWav ? Visibility.Visible : Visibility.Collapsed;
+        AudioOutputPanel.Visibility = writeWav ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private int ReadSelectedAudioDeviceNumber()
