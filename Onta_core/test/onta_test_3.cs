@@ -27,7 +27,7 @@ public sealed class OntaTest3
             wowAmount: WowFlutterAmount,
             wavName: "Sample1_test3_wow_only.wav",
             restoredName: "Sample1_test3_wow_only.png",
-            testTitle: nameof(EncodeDecode_QrPng_MatchesOriginal_Stereo18Sc16Qam_WowOnly));
+            testTitle: "test3:" + nameof(EncodeDecode_QrPng_MatchesOriginal_Stereo18Sc16Qam_WowOnly));
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public sealed class OntaTest3
             wowAmount: WowFlutterAmount,
             wavName: "Sample1_test3.wav",
             restoredName: "Sample1_test3.png",
-            testTitle: nameof(EncodeDecode_QrPng_MatchesOriginal_Stereo18Sc16Qam_WithNoiseAndWowFlutter));
+            testTitle: "test3:" + nameof(EncodeDecode_QrPng_MatchesOriginal_Stereo18Sc16Qam_WithNoiseAndWowFlutter));
     }
 
     private void RoundTripWithImpairments(

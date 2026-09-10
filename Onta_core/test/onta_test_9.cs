@@ -24,7 +24,7 @@ public sealed class OntaTest9
     [Fact]
     public void Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise()
     {
-        const string testTitle = nameof(Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise);
+        const string testTitle = "test9:" + nameof(Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise);
         var inputPath = TestPaths.ResolveInputPng();
         var wavPath = TestPaths.ResolveOutputPath("Sample1_test9_rx_st27_qpsk_lpf.wav");
         var restoredPath = TestPaths.ResolveOutputPath("Sample1_test9_rx_st27_qpsk_lpf.png");

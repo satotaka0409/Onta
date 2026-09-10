@@ -24,7 +24,7 @@ public sealed class OntaTest7
     [Fact]
     public void Decode_MatchesOriginal_Stereo27ScQpsk_WithPeriodicRandomSilenceWowAndNoise()
     {
-        const string testTitle = nameof(Decode_MatchesOriginal_Stereo27ScQpsk_WithPeriodicRandomSilenceWowAndNoise);
+        const string testTitle = "test7:" + nameof(Decode_MatchesOriginal_Stereo27ScQpsk_WithPeriodicRandomSilenceWowAndNoise);
         var inputPath = TestPaths.ResolveInputPng();
         var wavPath = TestPaths.ResolveOutputPath("Sample1_test7_rx_st27_qpsk.wav");
         var restoredPath = TestPaths.ResolveOutputPath("Sample1_test7_rx_st27_qpsk.png");

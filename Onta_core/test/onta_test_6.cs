@@ -13,6 +13,7 @@ public sealed class OntaTest6
     [Fact]
     public void Decode_UsesBlockHeaderModulationMode_InsteadOfReceiverProfile()
     {
+        const string testTitle = "test6:" + nameof(Decode_UsesBlockHeaderModulationMode_InsteadOfReceiverProfile);
         var txProfile = new FileWavCodecProfile(
             ActiveSubcarriers: 36,
             ModulationScheme: ModulationScheme.Qam16,
@@ -32,7 +33,25 @@ public sealed class OntaTest6
         var (left, right) = txCodec.EncodeFileToSamples(payload, inputInfo);
         var decoded = rxCodec.DecodePcmSamplesToFileBytes(left, right, correctWow: false);
 
+        PrintDecodeStageMetrics(rxCodec.LastDecodeStageMetrics, testTitle);
+
         Assert.Equal(payload, decoded);
+    }
+
+    private static void PrintDecodeStageMetrics(DecodeStageMetrics metrics, string testTitle)
+    {
+        var accepted = Math.Max(1, metrics.DataBlocksAccepted);
+        var decoded = Math.Max(1, metrics.DataBlocksDecoded);
+        var viterbiPercent = metrics.DataAcceptedViaViterbi * 100.0 / accepted;
+        var turboPercent = metrics.DataAcceptedViaTurbo * 100.0 / accepted;
+        var acceptPercent = metrics.DataBlocksAccepted * 100.0 / decoded;
+        var attemptsPerBlock = metrics.DataBlocksDecoded > 0
+            ? metrics.DataTotalAttempts / (double)metrics.DataBlocksDecoded
+            : 0.0;
+        Console.WriteLine(
+            $"[DECODE-STAGE] test={testTitle} rsHeaderDecode={metrics.HeaderRsDecodeCount} dataDecoded={metrics.DataBlocksDecoded} dataAccepted={metrics.DataBlocksAccepted} acceptPercent={acceptPercent:F2}% viterbiAccepted={metrics.DataAcceptedViaViterbi} turboAccepted={metrics.DataAcceptedViaTurbo} fallbackUsed={metrics.DataFallbackUsed} attemptsPerBlock={attemptsPerBlock:F2}");
+        Console.WriteLine(
+            $"[DECODE-STAGE-RATE] test={testTitle} viterbiShare={viterbiPercent:F2}% turboShare={turboPercent:F2}%");
     }
 
     [Fact]

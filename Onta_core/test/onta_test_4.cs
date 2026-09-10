@@ -27,7 +27,7 @@ public sealed class OntaTest4
             wowAmount: WowFlutterAmount,
             wavName: "Sample1_test4.wav",
             restoredName: "Sample1_test4.png",
-            testTitle: nameof(EncodeDecode_QrPng_MatchesOriginal_Mono27ScQpsk_WithNoiseAndWowFlutter));
+            testTitle: "test4:" + nameof(EncodeDecode_QrPng_MatchesOriginal_Mono27ScQpsk_WithNoiseAndWowFlutter));
     }
 
     private void RoundTripWithImpairments(
