@@ -1,12 +1,12 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 using Onta.Core;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// コア処理を UI スレッドから分離して実行する常駐バックグラウンドホストです。
+/// Core 処理を単一バックグラウンドスレッドで実行するホストです。
 /// </summary>
 internal static class CoreBackgroundHost
 {
@@ -18,6 +18,9 @@ internal static class CoreBackgroundHost
     private static Thread? _workerThread;
     private static int _warmupQueued;
 
+    /// <summary>
+    /// バックグラウンドワーカースレッドを開始します。
+    /// </summary>
     public static void Start()
     {
         if (RunInline)
@@ -43,6 +46,9 @@ internal static class CoreBackgroundHost
         }
     }
 
+    /// <summary>
+    /// バックグラウンドワーカースレッドを停止し、未処理キューを破棄します。
+    /// </summary>
     public static void Stop()
     {
         if (RunInline)
@@ -81,6 +87,12 @@ internal static class CoreBackgroundHost
         cts?.Dispose();
     }
 
+    /// <summary>
+    /// Core 向け処理をキューへ投入して非同期実行します。
+    /// </summary>
+    /// <param name="action">実行する処理本体。</param>
+    /// <param name="cancellationToken">呼び出し側キャンセル用トークン。</param>
+    /// <returns>投入処理の完了を表すタスク。</returns>
     public static Task RunAsync(Action<CancellationToken> action, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
@@ -142,6 +154,9 @@ internal static class CoreBackgroundHost
         return tcs.Task;
     }
 
+    /// <summary>
+    /// 初回遅延を減らすため、主要処理のウォームアップを1回だけキュー投入します。
+    /// </summary>
     public static void QueueWarmup()
     {
         if (RunInline)
@@ -179,6 +194,11 @@ internal static class CoreBackgroundHost
         });
     }
 
+    /// <summary>
+    /// キューから処理を取り出して順次実行するワーカーループです。
+    /// </summary>
+    /// <param name="queue">実行対象のワークキュー。</param>
+    /// <param name="hostToken">ホスト停止用キャンセルトークン。</param>
     private static void WorkerLoop(BlockingCollection<WorkItem> queue, CancellationToken hostToken)
     {
         try
@@ -216,7 +236,7 @@ internal static class CoreBackgroundHost
         }
         catch (OperationCanceledException)
         {
-            // 停止要求時に発生。
+            // ホスト停止時の通常終了。
         }
         finally
         {
@@ -227,11 +247,19 @@ internal static class CoreBackgroundHost
         }
     }
 
+    /// <summary>
+    /// キューに保持するワーク項目です。
+    /// </summary>
     private readonly record struct WorkItem(
         Action<CancellationToken> Action,
         CancellationToken CancellationToken,
         TaskCompletionSource Completion);
 
+    /// <summary>
+    /// インライン実行モードかどうかを判定します。
+    /// テスト実行時はデフォルトでインラインに切り替えます。
+    /// </summary>
+    /// <returns>インライン実行する場合 true。</returns>
     private static bool ResolveRunInline()
     {
         var env = Environment.GetEnvironmentVariable("ONTA_CORE_INLINE");
@@ -270,3 +298,7 @@ internal static class CoreBackgroundHost
         });
     }
 }
+
+
+
+

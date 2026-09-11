@@ -1,13 +1,13 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
 using NAudioWaveOut = NAudio.Wave.WaveOut;
 using Onta.Core;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 送信設定パネルです（チャンネル／SC／変調／繰り返し回数／入出力）。
+/// 送信設定の編集と送信開始/停止操作を担うパネルです。
 /// </summary>
 public partial class SendPanel : UserControl
 {
@@ -20,6 +20,9 @@ public partial class SendPanel : UserControl
 
     private bool _transmissionRunning;
 
+    /// <summary>
+    /// 送信パネルを初期化します。
+    /// </summary>
     public SendPanel()
     {
         InitializeComponent();
@@ -30,8 +33,9 @@ public partial class SendPanel : UserControl
     }
 
     /// <summary>
-    /// 現在の送信設定スナップショットを返します。
+    /// 現在のUI設定から送信スナップショットを生成します。
     /// </summary>
+    /// <returns>送信設定スナップショット。</returns>
     public SendSettingsSnapshot CreateSnapshot()
     {
         var writeWav = WriteWavRadio.IsChecked == true;
@@ -49,8 +53,9 @@ public partial class SendPanel : UserControl
     }
 
     /// <summary>
-    /// 繰り返し回数（×1=1 / ×2=2）。data_struct.mdc のブロックインターリーブ倍率。
+    /// UIで選択されたインタリーブ係数を返します。
     /// </summary>
+    /// <returns>1〜2に丸めたインタリーブ係数。</returns>
     private int ReadRepeatCount()
     {
         return Math.Clamp(ReadSelectedInt("Interleave", 1), 1, 2);
@@ -79,7 +84,10 @@ public partial class SendPanel : UserControl
         StopRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>送信実行中はストップ以外（設定一式＋スタート）を無効化します。</summary>
+    /// <summary>
+    /// 送信実行中状態に合わせて入力UIの有効/無効を切り替えます。
+    /// </summary>
+    /// <param name="isRunning">送信中なら true。</param>
     public void SetTransmissionRunning(bool isRunning)
     {
         _transmissionRunning = isRunning;
@@ -101,7 +109,7 @@ public partial class SendPanel : UserControl
     {
         var dlg = new OpenFileDialog
         {
-            Title = "送信ファイルを選択",
+            Title = "Select input file",
             Filter = "すべてのファイル (*.*)|*.*|PNG (*.png)|*.png",
             InitialDirectory = AppPaths.InputDir
         };
@@ -134,7 +142,7 @@ public partial class SendPanel : UserControl
         }
         catch
         {
-            // デバイス列挙失敗時は既定デバイスのみで継続。
+            // デバイス列挙失敗時は既定デバイスのみで継続する。
         }
 
         AudioDeviceComboBox.SelectedIndex = 0;
@@ -142,7 +150,7 @@ public partial class SendPanel : UserControl
 
     private void UpdateOutputModePanels()
     {
-        // XAML 初期化中に Checked が先に飛ぶため、未生成コントロールは無視する。
+        // 初期化順の都合で未生成コントロールなら何もしない。
         if (WriteWavRadio is null || WavOutputPanel is null || AudioOutputPanel is null)
         {
             return;
@@ -246,3 +254,7 @@ public partial class SendPanel : UserControl
 
     private sealed record AudioDeviceItem(int DeviceNumber, string Name);
 }
+
+
+
+

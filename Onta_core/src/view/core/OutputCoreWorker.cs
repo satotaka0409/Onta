@@ -1,10 +1,9 @@
-using Onta.Core;
+﻿using Onta.Core;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 送信コア処理を UI スレッドと分離して実行し、問い合わせ時に進捗を返します。
-/// 音声出力選択時は符号化と並行してリアルタイム再生します。
+/// 送信エンコード処理の進捗管理と中断制御を行うワーカーです。
 /// </summary>
 internal sealed class OutputCoreWorker
 {
@@ -14,17 +13,23 @@ internal sealed class OutputCoreWorker
     private CoreCompletionResult? _completion;
     private RealtimePcmPlayer? _player;
     private CancellationTokenSource? _cts;
-    /// <summary>再生位置のライブ計算用（符号化中もバッファ消化で経過が進む）。</summary>
+    /// <summary>再生側へ投入済みの総サンプル数です。</summary>
     private long _emittedSamples;
     private long _totalSamples;
     private int _sampleRate = 44100;
     private double _totalAudioSeconds;
 
+    /// <summary>
+    /// 送信ワーカーを開始します。
+    /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <param name="outputWavPath">WAV出力先パス。</param>
+    /// <returns>開始に成功した場合 true。</returns>
     public bool TryStart(SendSettingsSnapshot settings, string? outputWavPath)
     {
         if (settings.WriteWav && string.IsNullOrWhiteSpace(outputWavPath))
         {
-            throw new ArgumentException("WAV 出力パスが必要です。", nameof(outputWavPath));
+            throw new ArgumentException("WAV output path is required.", nameof(outputWavPath));
         }
 
         CancellationTokenSource cts;
@@ -49,7 +54,7 @@ internal sealed class OutputCoreWorker
                 ProgressPercent: 0,
                 ElapsedAudioSeconds: 0,
                 TotalAudioSeconds: 0,
-                Stage: "待機",
+                Stage: "Preparing",
                 ErrorFrameKind: ErrorRateFrameKind.Fh,
                 InputFileName: fileName,
                 FileSizeText: "-",
@@ -72,7 +77,10 @@ internal sealed class OutputCoreWorker
         return true;
     }
 
-    /// <summary>実行中の送信を停止要求します。</summary>
+    /// <summary>
+    /// 実行中ワーカーへ停止要求を送ります。
+    /// </summary>
+    /// <returns>停止要求を受理した場合 true。</returns>
     public bool RequestStop()
     {
         RealtimePcmPlayer? player;
@@ -86,7 +94,7 @@ internal sealed class OutputCoreWorker
 
             cts = _cts;
             player = _player;
-            _snapshot = _snapshot with { Stage = "停止中" };
+            _snapshot = _snapshot with { Stage = "中断要求中" };
         }
 
         try
@@ -95,19 +103,23 @@ internal sealed class OutputCoreWorker
         }
         catch (ObjectDisposedException)
         {
-            // 完了直後の競合は無視。
+            // 既に解放済みなら停止要求のみで終了する。
         }
 
-        // バッファ待ちを解除するため再生を即停止。
+        // 再生待機中のAddSamplesを早期解除するため先に破棄する。
         player?.Dispose();
         return true;
     }
 
+    /// <summary>
+    /// 現在の送信進捗スナップショットを返します。
+    /// </summary>
+    /// <returns>送信進捗。</returns>
     public CoreProgressSnapshot GetProgress()
     {
         lock (_sync)
         {
-            // 音声再生中は投入済み−バッファ残で経過を都度算出（符号化待ち中もメーターが動く）。
+            // 進捗算出に必要な情報が欠ける場合は直近スナップショットを返す。
             if (!_snapshot.IsRunning || _player is null || _player.IsDisposed || _totalSamples <= 0)
             {
                 return _snapshot;
@@ -124,8 +136,9 @@ internal sealed class OutputCoreWorker
     }
 
     /// <summary>
-    /// コア側で発生した FH/BH/BD 通知をまとめて取り出します。
+    /// フレームイベントを取り出して内部キューを空にします。
     /// </summary>
+    /// <returns>取り出したイベント配列。</returns>
     public ErrorRateFrameKind[] ConsumeFrameEvents()
     {
         lock (_sync)
@@ -141,6 +154,11 @@ internal sealed class OutputCoreWorker
         }
     }
 
+    /// <summary>
+    /// 完了結果を1回だけ取り出します。
+    /// </summary>
+    /// <param name="completion">完了結果。</param>
+    /// <returns>取り出せた場合 true。</returns>
     public bool TryConsumeCompletion(out CoreCompletionResult completion)
     {
         lock (_sync)
@@ -157,13 +175,19 @@ internal sealed class OutputCoreWorker
         }
     }
 
+    /// <summary>
+    /// Core のエンコード送信本体を実行します。
+    /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <param name="outputWavPath">WAV出力先。</param>
+    /// <param name="cancellationToken">中断トークン。</param>
     private void RunCore(SendSettingsSnapshot settings, string? outputWavPath, CancellationToken cancellationToken)
     {
         RealtimePcmPlayer? player = null;
         WavWriter.StreamingPcm16Writer? wavWriter = null;
         try
         {
-            UpdateSnapshot(0, 0, 0, "入力読み込み", ErrorRateFrameKind.Fh, false, false, "-", "-");
+            UpdateSnapshot(0, 0, 0, "入力読込中", ErrorRateFrameKind.Fh, false, false, "-", "-");
             cancellationToken.ThrowIfCancellationRequested();
             var bytes = File.ReadAllBytes(settings.InputFilePath);
             var blockCount = Math.Max(1, (bytes.Length + 4095) / 4096);
@@ -187,7 +211,7 @@ internal sealed class OutputCoreWorker
                 _totalAudioSeconds = totalSeconds;
             }
 
-            UpdateSnapshot(0, 0, totalSeconds, "プロファイル構築", ErrorRateFrameKind.Fh, false, false, fileSizeText, blockCountText);
+            UpdateSnapshot(0, 0, totalSeconds, "Profiling", ErrorRateFrameKind.Fh, false, false, fileSizeText, blockCountText);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (settings.PlayAudio)
@@ -215,8 +239,8 @@ internal sealed class OutputCoreWorker
             }
 
             var stageLabel = settings.WriteWav
-                ? (settings.PlayAudio ? "符号化＋WAV／音声出力" : "符号化＋WAV逐次出力")
-                : "符号化＋音声出力";
+                ? (settings.PlayAudio ? "Encoding (WAV + Audio)" : "Encoding (WAV)")
+                : "Encoding (Audio)";
             UpdateSnapshot(0, 0, totalSeconds, stageLabel, ErrorRateFrameKind.Bh, false, false, fileSizeText, blockCountText);
             var codec = new FileWavCodec(profile);
             var inputInfo = new FileInfo(settings.InputFilePath);
@@ -230,7 +254,7 @@ internal sealed class OutputCoreWorker
                     wavWriter?.WriteChunk(leftChunk, rightChunk);
                     if (player is not null)
                     {
-                        // スライス投入ごとに emitted を進め、待ち中も GetProgress が再生位置を追える。
+                        // キュー投入時点のサンプル数から実時間進捗を近似する。
                         player.AddSamples(leftChunk, rightChunk, samplesQueued =>
                         {
                             emittedSamples += samplesQueued;
@@ -291,7 +315,7 @@ internal sealed class OutputCoreWorker
                         100.0 * elapsed / Math.Max(totalSeconds, 1e-9),
                         elapsed,
                         totalSeconds,
-                        "音声再生完了待ち",
+                        "音声再生中",
                         ErrorRateFrameKind.Bd,
                         false,
                         false,
@@ -302,12 +326,12 @@ internal sealed class OutputCoreWorker
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            UpdateSnapshot(100, totalSeconds, totalSeconds, "完了", ErrorRateFrameKind.Bd, true, false, fileSizeText, blockCountText);
+            UpdateSnapshot(100, totalSeconds, totalSeconds, "Completed", ErrorRateFrameKind.Bd, true, false, fileSizeText, blockCountText);
             lock (_sync)
             {
                 _completion = new CoreCompletionResult(
                     IsSuccess: true,
-                    Message: "出力が完了しました。",
+                    Message: "Transmission completed successfully.",
                     OutputWavPath: settings.WriteWav ? (outputWavPath ?? string.Empty) : string.Empty,
                     InputFileName: inputInfo.Name,
                     FileSizeText: fileSizeText,
@@ -329,12 +353,12 @@ internal sealed class OutputCoreWorker
                     : _snapshot.ElapsedAudioSeconds;
             }
 
-            UpdateSnapshot(elapsed > 0 && total > 0 ? 100.0 * elapsed / total : 0, elapsed, total, "停止", ErrorRateFrameKind.Bd, true, false, "-", "-");
+            UpdateSnapshot(elapsed > 0 && total > 0 ? 100.0 * elapsed / total : 0, elapsed, total, "中断", ErrorRateFrameKind.Bd, true, false, "-", "-");
             lock (_sync)
             {
                 _completion = new CoreCompletionResult(
                     IsSuccess: false,
-                    Message: "送信を停止しました。",
+                    Message: "Transmission cancelled.",
                     OutputWavPath: settings.WriteWav ? (outputWavPath ?? string.Empty) : string.Empty,
                     InputFileName: string.IsNullOrWhiteSpace(settings.InputFilePath) ? "(未選択)" : Path.GetFileName(settings.InputFilePath),
                     FileSizeText: "-",
@@ -346,7 +370,7 @@ internal sealed class OutputCoreWorker
         }
         catch (Exception ex)
         {
-            UpdateSnapshot(100, 0, 0, "失敗", ErrorRateFrameKind.Bd, true, true, "-", "-");
+            UpdateSnapshot(100, 0, 0, "Failed", ErrorRateFrameKind.Bd, true, true, "-", "-");
             lock (_sync)
             {
                 _completion = new CoreCompletionResult(
@@ -378,6 +402,14 @@ internal sealed class OutputCoreWorker
         }
     }
 
+    /// <summary>
+    /// 再生キュー残量を考慮して経過秒を推定します。
+    /// </summary>
+    /// <param name="emittedSamples">投入済みサンプル数。</param>
+    /// <param name="player">再生プレイヤー。</param>
+    /// <param name="sampleRate">サンプルレート。</param>
+    /// <param name="totalSamples">総サンプル数。</param>
+    /// <returns>推定経過秒。</returns>
     private static double ResolveElapsedSeconds(
         long emittedSamples,
         RealtimePcmPlayer? player,
@@ -390,11 +422,15 @@ internal sealed class OutputCoreWorker
             return Math.Min(emittedSamples, totalSamples) / (double)rate;
         }
 
-        // 再生側の経過 = 投入済み − バッファ残（リアルタイム進行に合わせる）。
+        // 出力済み総数から未再生バッファを差し引いて実再生数を推定する。
         var played = Math.Max(0L, emittedSamples - player.BufferedSampleFrames);
         return Math.Min(played, totalSamples) / (double)rate;
     }
 
+    /// <summary>
+    /// 投入済みサンプル数を共有状態へ反映します。
+    /// </summary>
+    /// <param name="emittedSamples">投入済みサンプル数。</param>
     private void PublishEmittedSamples(long emittedSamples)
     {
         lock (_sync)
@@ -403,6 +439,18 @@ internal sealed class OutputCoreWorker
         }
     }
 
+    /// <summary>
+    /// 進捗スナップショットを更新します。
+    /// </summary>
+    /// <param name="progressPercent">進捗率。</param>
+    /// <param name="elapsedAudioSeconds">経過秒。</param>
+    /// <param name="totalAudioSeconds">総秒数。</param>
+    /// <param name="stage">処理ステージ表示。</param>
+    /// <param name="errorFrameKind">直近イベント種別。</param>
+    /// <param name="isCompleted">完了フラグ。</param>
+    /// <param name="isFaulted">失敗フラグ。</param>
+    /// <param name="fileSizeText">表示用ファイルサイズ。</param>
+    /// <param name="blockCountText">表示用ブロック数。</param>
     private void UpdateSnapshot(
         double progressPercent,
         double elapsedAudioSeconds,
@@ -432,6 +480,10 @@ internal sealed class OutputCoreWorker
         }
     }
 
+    /// <summary>
+    /// 送信フレーム種別を UI 用イベントへ変換してキューします。
+    /// </summary>
+    /// <param name="frameKind">送信フレーム種別。</param>
     private void OnCoreFrameTransmitted(TransmissionFrameKind frameKind)
     {
         lock (_sync)
@@ -471,7 +523,7 @@ internal readonly record struct CoreProgressSnapshot(
         ProgressPercent: 0,
         ElapsedAudioSeconds: 0,
         TotalAudioSeconds: 0,
-        Stage: "待機",
+        Stage: "Preparing",
         ErrorFrameKind: ErrorRateFrameKind.Fh,
         InputFileName: "(未選択)",
         FileSizeText: "-",
@@ -493,3 +545,7 @@ internal readonly record struct CoreCompletionResult(
     SendSettingsSnapshot Settings,
     bool PlayedRealtime = false,
     bool WasCancelled = false);
+
+
+
+

@@ -1,4 +1,4 @@
-<UserControl x:Class="Onta.View.WowFlutterMeter"
+﻿<UserControl x:Class="Onta.View.Core.WowFlutterMeter"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              MinHeight="24" MinWidth="80"
@@ -29,3 +29,4 @@
     </Border>
   </Grid>
 </UserControl>
+

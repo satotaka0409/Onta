@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Reflection;
 using Onta.Core;
 using Xunit;
@@ -6,7 +6,7 @@ using Xunit;
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// サブキャリアグループごとのパイロット等化が閉域で適用されることを検証します。
+/// ブロックヘッダー起点の復号パラメータ選択を検証するテストです。
 /// </summary>
 public sealed class OntaTest6
 {
@@ -19,7 +19,7 @@ public sealed class OntaTest6
             ModulationScheme: ModulationScheme.Qam16,
             ChannelMode: ChannelMode.Stereo,
             BlockInterleaveFactor: 1);
-        // 受信側プロファイルの SC/変調はヒントにしない（BH と FH グリッド探索で決める）。
+        // 受信プロファイルを意図的に不一致にしても、ヘッダー情報で復号できることを確認する。
         var rxProfile = new FileWavCodecProfile(
             ActiveSubcarriers: 9,
             ModulationScheme: ModulationScheme.Qam64,
@@ -117,7 +117,7 @@ public sealed class OntaTest6
 
         var ofdm = new OfdmGenerator(config);
 
-        // 36 SC は 4 pilot + 32 data。A/B/C の 24 data は 64QAM(6bit)、D の 8 data は 16QAM(4bit)。
+        // 36SCでは 4 pilot + 32 data。Group D では一部を16QAMに落として 176bit/symbol になる。
         Assert.Equal(176, ofdm.BitsPerOfdmSymbol);
     }
 
@@ -138,7 +138,7 @@ public sealed class OntaTest6
 
         var ofdm = new OfdmGenerator(config);
 
-        // 353bit は 176bit/symbol なら 3 symbol 必要（旧 192bit/symbol のままなら 2 symbol で誤る）。
+        // 353bit は 176bit/symbol なら 3 symbol 必要（192bit/symbol 前提なら 2 では不足）。
         Assert.Equal(3 * ofdm.SamplesPerOfdmSymbol, ofdm.SampleCountForBitCount(353));
     }
 

@@ -1,12 +1,12 @@
-using Onta.Core;
+﻿using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// 受信側耐性確認: ステレオ / 18サブキャリア / QPSK に対して
-/// 10秒ごとのランダム位置で 1ms 無音化 + 0.5% ワウフラッター + 0.7% ホワイトノイズを付与します。
+/// ステレオ 18SC / QPSK の耐性テストです。
+/// 周期的無音欠落 + wow/flutter + ノイズ付与後の復元を検証します。
 /// </summary>
 public sealed class OntaTest7
 {
@@ -35,7 +35,7 @@ public sealed class OntaTest7
 
         var (leftSamples, rightSamples) = codec.EncodeFileToSamples(original, fileInfo);
 
-        // 送信サンプルへ劣化を適用: 周期無音化 -> ワウ -> ノイズ。
+        // 送信サンプルへ順に「周期無音 -> wow/flutter -> ノイズ」を適用する。
         var leftRef = ToFloat(leftSamples);
         var rightRef = ToFloat(rightSamples.Length == 0 ? leftSamples : rightSamples);
         var leftF = (float[])leftRef.Clone();
@@ -262,3 +262,4 @@ public sealed class OntaTest7
         return dst;
     }
 }
+

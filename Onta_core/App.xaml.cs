@@ -1,4 +1,4 @@
-namespace Onta.View;
+﻿namespace Onta.View.Core;
 
 /// <summary>
 /// WPF アプリケーションのエントリです。
@@ -18,3 +18,5 @@ public partial class App : System.Windows.Application
         base.OnExit(e);
     }
 }
+
+

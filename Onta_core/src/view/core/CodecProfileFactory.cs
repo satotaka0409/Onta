@@ -1,15 +1,17 @@
-using Onta.Core;
+﻿using Onta.Core;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 送受信プロファイル組み立てです。
+/// UI設定から送受信用の `FileWavCodecProfile` を生成するファクトリです。
 /// </summary>
 internal static class CodecProfileFactory
 {
     /// <summary>
-    /// 送信設定スナップショットから符号化プロファイルを生成します。
+    /// 送信設定スナップショットからコーデックプロファイルを生成します。
     /// </summary>
+    /// <param name="snap">送信設定スナップショット。</param>
+    /// <returns>送信に利用するコーデックプロファイル。</returns>
     public static FileWavCodecProfile FromSnapshot(SendSettingsSnapshot snap)
     {
         return Create(
@@ -20,17 +22,15 @@ internal static class CodecProfileFactory
     }
 
     /// <summary>
-    /// WAV 受信用プロファイルを生成します。
-    /// モノラル／ステレオは WAV チャンネル数のみ参照します。
-    /// FH/BH の SC・変調は仕様どおり固定（GROUP-B・9SC・BPSK）で、
-    /// データ部の SC／変調は BH から読み取るため、ここではプレースホルダです。
+    /// 受信WAVのチャネル数に合わせた既定プロファイルを生成します。
     /// </summary>
+    /// <param name="wavPath">受信対象WAVファイル。</param>
+    /// <returns>WAV受信用のコーデックプロファイル。</returns>
     public static FileWavCodecProfile ForWavReceive(string wavPath)
     {
         var channels = WavReader.PeekChannelCount(wavPath);
         var channelMode = channels == 2 ? ChannelMode.Stereo : ChannelMode.Mono;
-        // ActiveSubcarriers/Modulation は BH 確定前のプレースホルダ。
-        // インターリーブは第1パスだけで全ブロックを受け取れるため 1 を既定とする。
+        // 受信は安全側の既定値（BPSK / SC=9 / Interleave=1）で開始する。
         return Create(
             activeSubcarriers: 9,
             modulationScheme: ModulationScheme.Bpsk,
@@ -54,3 +54,7 @@ internal static class CodecProfileFactory
             BlockInterleaveFactor: Math.Clamp(blockInterleaveFactor, 1, 2));
     }
 }
+
+
+
+

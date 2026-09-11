@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -8,12 +8,12 @@ using System.Runtime.Intrinsics.X86;
 namespace Onta.Core;
 
 /// <summary>
-/// 固定 1024 バイトのペイロードを扱うターボ符号エンコーダ／デコーダです。
+/// 1024バイト固定長のターボ符号エンコード/復号を提供します。
 /// </summary>
 public static class TurboEcc1024
 {
     /// <summary>
-    /// 復号時の補正統計を表します。
+    /// 復号時の補正メトリクスです。
     /// </summary>
     public readonly record struct DecodeMetrics(
         int CorrectedBitCount,
@@ -22,22 +22,22 @@ public static class TurboEcc1024
         double CorrectionRate);
 
     /// <summary>
-    /// <see cref="Encode(byte[])"/> が受け付けるペイロード長（バイト）です。
+    /// 情報ブロック長（バイト）です。
     /// </summary>
     public const int DataUnitBytes = 1024;
 
     /// <summary>
-    /// ペイロード長（ビット）です。
+    /// 情報ブロック長（ビット）です。
     /// </summary>
     public const int DataUnitBits = DataUnitBytes * 8;
 
     /// <summary>
-    /// 符号化後のビット長（符号化率 1/3）です。
+    /// 符号語長（ビット）です。
     /// </summary>
     public const int EncodedBits = DataUnitBits * 3;
 
     /// <summary>
-    /// 符号化後のバイト長です。
+    /// 符号語長（バイト）です。
     /// </summary>
     public const int EncodedBytes = EncodedBits / 8;
 
@@ -55,12 +55,10 @@ public static class TurboEcc1024
     private static readonly byte[] ByteToBitsLookup = BuildByteToBitsLookup();
 
     /// <summary>
-    /// 1024 バイトのペイロードを符号化率 1/3 のターボ符号語へ変換します。
+    /// 1024バイト情報ブロックをターボ符号化します。
     /// </summary>
-    /// <param name="data1024">ペイロード。長さは <see cref="DataUnitBytes"/> である必要があります。</param>
-    /// <returns>長さ <see cref="EncodedBytes"/> の符号化バイト列。</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="data1024"/> が null の場合にスローされます。</exception>
-    /// <exception cref="ArgumentException">入力長が不正な場合にスローされます。</exception>
+    /// <param name="data1024">1024バイトの入力データ。</param>
+    /// <returns>符号化後バイト列。</returns>
     public static byte[] Encode(byte[] data1024)
     {
         ArgumentNullException.ThrowIfNull(data1024);
@@ -69,7 +67,6 @@ public static class TurboEcc1024
             throw new ArgumentException($"Input must be exactly {DataUnitBytes} bytes.", nameof(data1024));
         }
 
-        // 符号化率 1/3: 系統ビット + 2 本の RSC 構成符号器のパリティで構成する。
         var dataBits = BytesToBits(data1024);
         var interleavedBits = InterleaveBits(dataBits, Interleaver);
 
@@ -89,29 +86,25 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 反復 Max-Log-MAP 構成復号により、ターボ符号化ブロックを復号します。
+    /// 符号語を復号します。
     /// </summary>
-    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> である必要があります。</param>
-    /// <param name="iterations">反復回数。0 より大きい必要があります。</param>
-    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。0 より大きい必要があります。</param>
-    /// <returns>長さ <see cref="DataUnitBytes"/> の復号ペイロード。</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
-    /// <exception cref="ArgumentException">いずれかの引数が有効範囲外の場合にスローされます。</exception>
+    /// <param name="encoded">符号化データ。</param>
+    /// <param name="iterations">反復回数。</param>
+    /// <param name="channelReliability">LLR変換に用いるチャネル信頼度。</param>
+    /// <returns>復号した1024バイトデータ。</returns>
     public static byte[] Decode(byte[] encoded, int iterations = 6, double channelReliability = 2.0)
     {
         return Decode(encoded, out _, iterations, channelReliability);
     }
 
     /// <summary>
-    /// 反復 Max-Log-MAP 構成復号により、ターボ符号化ブロックを復号し補正統計も返します。
+    /// 符号語を復号し、補正メトリクスを返します。
     /// </summary>
-    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> である必要があります。</param>
-    /// <param name="metrics">補正統計。<see cref="DecodeMetrics.CorrectionRate"/> は 8192 ビットに対する補正率です。</param>
-    /// <param name="iterations">反復回数。0 より大きい必要があります。</param>
-    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。0 より大きい必要があります。</param>
-    /// <returns>長さ <see cref="DataUnitBytes"/> の復号ペイロード。</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="encoded"/> が null の場合にスローされます。</exception>
-    /// <exception cref="ArgumentException">いずれかの引数が有効範囲外の場合にスローされます。</exception>
+    /// <param name="encoded">符号化データ。</param>
+    /// <param name="metrics">復号時の補正メトリクス。</param>
+    /// <param name="iterations">反復回数。</param>
+    /// <param name="channelReliability">LLR変換に用いるチャネル信頼度。</param>
+    /// <returns>復号した1024バイトデータ。</returns>
     public static byte[] Decode(byte[] encoded, out DecodeMetrics metrics, int iterations = 6, double channelReliability = 2.0)
     {
         ArgumentNullException.ThrowIfNull(encoded);
@@ -137,7 +130,6 @@ public static class TurboEcc1024
 
         try
         {
-            // 直列化 3 要素組を直接読み、bool[] や LLR 中間配列の生成を避ける。
             for (var i = 0; i < DataUnitBits; i++)
             {
                 var baseIndex = i * 3;
@@ -167,11 +159,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// チャネル LLR（長さ <see cref="EncodedBits"/>、正=ビット0・負=ビット1）からターボ復号します。
+    /// チャネルLLR列から復号します。
     /// </summary>
-    /// <param name="encodedBitLlrs">符号化ビットのチャネル LLR。長さは <see cref="EncodedBits"/> 以上。</param>
-    /// <param name="iterations">反復回数。0 より大きい必要があります。</param>
-    /// <returns>長さ <see cref="DataUnitBytes"/> の復号ペイロード。</returns>
+    /// <param name="encodedBitLlrs">符号語ビットのLLR列。</param>
+    /// <param name="iterations">反復回数。</param>
+    /// <returns>復号した1024バイトデータ。</returns>
     public static byte[] DecodeFromChannelLlrs(
         ReadOnlySpan<double> encodedBitLlrs,
         int iterations = 12)
@@ -180,12 +172,12 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// チャネル LLR からターボ復号し、補正統計も返します。
+    /// チャネルLLR列から復号し、補正メトリクスを返します。
     /// </summary>
-    /// <param name="encodedBitLlrs">符号化ビットのチャネル LLR。長さは <see cref="EncodedBits"/> 以上。</param>
-    /// <param name="metrics">補正統計。</param>
-    /// <param name="iterations">反復回数。0 より大きい必要があります。</param>
-    /// <returns>長さ <see cref="DataUnitBytes"/> の復号ペイロード。</returns>
+    /// <param name="encodedBitLlrs">符号語ビットのLLR列。</param>
+    /// <param name="metrics">復号時の補正メトリクス。</param>
+    /// <param name="iterations">反復回数。</param>
+    /// <returns>復号した1024バイトデータ。</returns>
     public static byte[] DecodeFromChannelLlrs(
         ReadOnlySpan<double> encodedBitLlrs,
         out DecodeMetrics metrics,
@@ -220,15 +212,15 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 系統・パリティ LLR から反復ターボ復号を実行します。
+    /// 成分LLR（系統/パリティ）から反復復号を実行します。
     /// </summary>
-    /// <param name="systematic">系統ビットのチャネル LLR。</param>
-    /// <param name="parity1">構成符号器1のパリティ LLR。</param>
-    /// <param name="parity2">構成符号器2のパリティ LLR。</param>
-    /// <param name="sysBits">系統ビットのハード判定（補正統計用）。</param>
+    /// <param name="systematic">系統ビットLLR。</param>
+    /// <param name="parity1">1本目パリティLLR。</param>
+    /// <param name="parity2">2本目パリティLLR。</param>
+    /// <param name="sysBits">系統ビットのハード判定。</param>
     /// <param name="iterations">反復回数。</param>
-    /// <param name="metrics">補正統計。</param>
-    /// <returns>長さ <see cref="DataUnitBytes"/> の復号ペイロード。</returns>
+    /// <param name="metrics">復号時の補正メトリクス。</param>
+    /// <returns>復号したバイト列。</returns>
     private static byte[] DecodeFromComponentLlrs(
         ReadOnlySpan<double> systematic,
         ReadOnlySpan<double> parity1,
@@ -254,7 +246,6 @@ public static class TurboEcc1024
             InterleaveDoublesInto(systematic, Interleaver, systematicInterleaved.AsSpan(0, n));
             Array.Clear(apriori1, 0, n);
 
-            // 2 つの構成復号器間で外部情報を反復交換する。硬判定が連続安定したら早期終了。
             var stableHardIters = 0;
             var prevHard = ArrayPool<bool>.Shared.Rent(n);
             try
@@ -334,27 +325,27 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// ターボ符号化ブロックの復号を試みます。
+    /// 例外を投げずに復号を試行します。
     /// </summary>
-    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> を想定します。</param>
-    /// <param name="decoded1024">成功時は復号ペイロード、失敗時は空配列。</param>
+    /// <param name="encoded">符号化データ。</param>
+    /// <param name="decoded1024">成功時の復号データ。</param>
     /// <param name="iterations">反復回数。</param>
-    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。</param>
-    /// <returns>復号成功時は <see langword="true"/>、それ以外は <see langword="false"/>。</returns>
+    /// <param name="channelReliability">LLR変換に用いるチャネル信頼度。</param>
+    /// <returns>復号成功時 true。</returns>
     public static bool TryDecode(byte[] encoded, out byte[] decoded1024, int iterations = 6, double channelReliability = 2.0)
     {
         return TryDecode(encoded, out decoded1024, out _, iterations, channelReliability);
     }
 
     /// <summary>
-    /// ターボ符号化ブロックの復号を試み、補正統計も返します。
+    /// 例外を投げずに復号を試行し、メトリクスを返します。
     /// </summary>
-    /// <param name="encoded">符号化データ。長さは <see cref="EncodedBytes"/> を想定します。</param>
-    /// <param name="decoded1024">成功時は復号ペイロード、失敗時は空配列。</param>
-    /// <param name="metrics">成功時は補正統計、失敗時は既定値。</param>
+    /// <param name="encoded">符号化データ。</param>
+    /// <param name="decoded1024">成功時の復号データ。</param>
+    /// <param name="metrics">復号時の補正メトリクス。</param>
     /// <param name="iterations">反復回数。</param>
-    /// <param name="channelReliability">初期 LLR 変換に用いるチャネル信頼度。</param>
-    /// <returns>復号成功時は <see langword="true"/>、それ以外は <see langword="false"/>。</returns>
+    /// <param name="channelReliability">LLR変換に用いるチャネル信頼度。</param>
+    /// <returns>復号成功時 true。</returns>
     public static bool TryDecode(byte[] encoded, out byte[] decoded1024, out DecodeMetrics metrics, int iterations = 6, double channelReliability = 2.0)
     {
         decoded1024 = Array.Empty<byte>();
@@ -371,13 +362,12 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// RSC 構成符号器を実行し、パリティビット列のみを返します。
+    /// EncodeRscParity を符号化します。
     /// </summary>
-    /// <param name="inputBits">入力情報ビット列。</param>
-    /// <returns>パリティビット列。</returns>
+    /// <param name="inputBits">inputBits を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static bool[] EncodeRscParity(bool[] inputBits)
     {
-        // 再帰的系統畳み込み符号器を 1 本実行し、パリティのみを出力する。
         var parity = new bool[inputBits.Length];
         var state = 0;
 
@@ -399,12 +389,12 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// Max-Log-MAP SISO 復号で外部 LLR を算出します。
+    /// Max-Log-MAP SISO 復号で外部LLRを算出します。
     /// </summary>
-    /// <param name="systematic">系統ビット LLR。</param>
-    /// <param name="parity">パリティビット LLR。</param>
-    /// <param name="apriori">事前 LLR。</param>
-    /// <param name="extrinsic">外部 LLR の出力先。</param>
+    /// <param name="systematic">系統ビットLLR。</param>
+    /// <param name="parity">パリティビットLLR。</param>
+    /// <param name="apriori">事前LLR。</param>
+    /// <param name="extrinsic">外部LLRの出力先。</param>
     private static void DecodeSisoMaxLogMapInto(
         ReadOnlySpan<double> systematic,
         ReadOnlySpan<double> parity,
@@ -422,7 +412,6 @@ public static class TurboEcc1024
             Array.Fill(alpha, NegativeInfinity, 0, matrixLength);
             Array.Fill(beta, NegativeInfinity, 0, matrixLength);
 
-            // 前向き（alpha）および後ろ向き（beta）の状態メトリクス。
             for (var s = 0; s < StateCount; s++)
             {
                 alpha[s] = s == 0 ? 0.0 : NegativeInfinity;
@@ -498,7 +487,6 @@ public static class TurboEcc1024
                 }
             }
 
-            // 各ビット位置の Max-Log-MAP LLR と外部情報を算出する。
             for (var k = 0; k < n; k++)
             {
                 var rowBase = k * rowWidth;
@@ -547,11 +535,11 @@ public static class TurboEcc1024
     /// <summary>
     /// トレリス枝の Max-Log メトリクスを計算します。
     /// </summary>
-    /// <param name="systematic">系統 LLR。</param>
-    /// <param name="parity">パリティ LLR。</param>
+    /// <param name="systematic">系統ビット LLR。</param>
+    /// <param name="parity">パリティビット LLR。</param>
     /// <param name="apriori">事前 LLR。</param>
-    /// <param name="informationBit">想定する情報ビット（0/1）。</param>
-    /// <param name="parityBit">想定するパリティビット（0/1）。</param>
+    /// <param name="informationBit">想定情報ビット（0/1）。</param>
+    /// <param name="parityBit">想定パリティビット（0/1）。</param>
     /// <returns>枝メトリクス。</returns>
     private static double BranchMetric(double systematic, double parity, double apriori, int informationBit, int parityBit)
     {
@@ -561,18 +549,18 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 状態と入力ビットからトレリス表インデックスを求めます。
+    /// 状態と入力ビットからトレリス添字を計算します。
     /// </summary>
     /// <param name="state">現在状態。</param>
     /// <param name="inputBit">入力ビット（0/1）。</param>
-    /// <returns>トレリス表インデックス。</returns>
+    /// <returns>トレリス添字。</returns>
     private static int TrellisIndex(int state, int inputBit) => (state << 1) | inputBit;
 
     /// <summary>
-    /// 指定入力ビットに対する次状態テーブルを構築します。
+    /// BuildNextStateByInput を構築します。
     /// </summary>
-    /// <param name="inputBit">入力ビット（0/1）。</param>
-    /// <returns>状態→次状態のテーブル。</returns>
+    /// <param name="inputBit">inputBit を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static byte[] BuildNextStateByInput(int inputBit)
     {
         var table = new byte[StateCount];
@@ -585,10 +573,10 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 指定入力ビットに対するパリティ出力テーブルを構築します。
+    /// BuildParityByInput を構築します。
     /// </summary>
-    /// <param name="inputBit">入力ビット（0/1）。</param>
-    /// <returns>状態→パリティ出力のテーブル。</returns>
+    /// <param name="inputBit">inputBit を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static byte[] BuildParityByInput(int inputBit)
     {
         var table = new byte[StateCount];
@@ -601,34 +589,31 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// RSC トレリスの次状態テーブルを返します。
+    /// BuildNextStateTable を構築します。
     /// </summary>
-    /// <returns>トレリス次状態テーブル。</returns>
+    /// <returns>処理結果。</returns>
     private static byte[] BuildNextStateTable()
     {
-        // 記憶素子 3 段の RSC 符号器に対するトレリス遷移表。
         return [0, 1, 3, 2, 4, 5, 7, 6, 1, 0, 2, 3, 5, 4, 6, 7];
     }
 
     /// <summary>
-    /// RSC トレリスのパリティ出力テーブルを返します。
+    /// BuildParityTable を構築します。
     /// </summary>
-    /// <returns>トレリスパリティ出力テーブル。</returns>
+    /// <returns>処理結果。</returns>
     private static byte[] BuildParityTable()
     {
-        // 各（状態, 入力）ペアに対するトレリスのパリティ出力表。
         return [0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1];
     }
 
     /// <summary>
-    /// 固定シードの Fisher-Yates でインタリーバ順列を生成します。
+    /// BuildInterleaver を構築します。
     /// </summary>
-    /// <param name="length">順列長。</param>
-    /// <param name="seed">乱数シード。</param>
-    /// <returns>インタリーバ順列。</returns>
+    /// <param name="length">length を指定します。</param>
+    /// <param name="seed">seed を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static int[] BuildInterleaver(int length, int seed)
     {
-        // 固定シードの Fisher-Yates で、再現可能なインタリーバ順列を生成する。
         var permutation = new int[length];
         for (var i = 0; i < length; i++)
         {
@@ -646,10 +631,10 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// インタリーバの逆順列を構築します。
+    /// BuildDeinterleaver を構築します。
     /// </summary>
-    /// <param name="interleaver">正方向のインタリーバ順列。</param>
-    /// <returns>デインタリーバ順列。</returns>
+    /// <param name="interleaver">interleaver を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static int[] BuildDeinterleaver(int[] interleaver)
     {
         var deinterleaver = new int[interleaver.Length];
@@ -662,11 +647,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// ビット列を順列に従ってインタリーブします。
+    /// InterleaveBits を実行します。
     /// </summary>
-    /// <param name="input">入力ビット列。</param>
-    /// <param name="permutation">インタリーバ順列。</param>
-    /// <returns>インタリーブ後のビット列。</returns>
+    /// <param name="input">input を指定します。</param>
+    /// <param name="permutation">permutation を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static bool[] InterleaveBits(bool[] input, int[] permutation)
     {
         var output = new bool[input.Length];
@@ -679,11 +664,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 実数列をインタリーブした新規配列を返します。
+    /// InterleaveDoubles を実行します。
     /// </summary>
-    /// <param name="input">入力実数列。</param>
-    /// <param name="permutation">インタリーバ順列。</param>
-    /// <returns>インタリーブ後の実数列。</returns>
+    /// <param name="input">input を指定します。</param>
+    /// <param name="permutation">permutation を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static double[] InterleaveDoubles(double[] input, int[] permutation)
     {
         var output = new double[input.Length];
@@ -693,11 +678,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 実数列をデインタリーブした新規配列を返します。
+    /// DeinterleaveDoubles を実行します。
     /// </summary>
-    /// <param name="input">入力実数列。</param>
-    /// <param name="deinterleaver">デインタリーバ順列。</param>
-    /// <returns>デインタリーブ後の実数列。</returns>
+    /// <param name="input">input を指定します。</param>
+    /// <param name="deinterleaver">deinterleaver を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static double[] DeinterleaveDoubles(double[] input, int[] deinterleaver)
     {
         var output = new double[input.Length];
@@ -707,11 +692,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 実数列を出力バッファへインタリーブします。
+    /// InterleaveDoublesInto を実行します。
     /// </summary>
-    /// <param name="input">入力実数列。</param>
-    /// <param name="permutation">インタリーバ順列。</param>
-    /// <param name="output">出力バッファ。</param>
+    /// <param name="input">input を指定します。</param>
+    /// <param name="permutation">permutation を指定します。</param>
+    /// <param name="output">output を指定します。</param>
     private static void InterleaveDoublesInto(ReadOnlySpan<double> input, int[] permutation, Span<double> output)
     {
         for (var i = 0; i < permutation.Length; i++)
@@ -721,11 +706,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 実数列を出力バッファへデインタリーブします。
+    /// DeinterleaveDoublesInto を実行します。
     /// </summary>
-    /// <param name="input">入力実数列。</param>
-    /// <param name="deinterleaver">デインタリーバ順列。</param>
-    /// <param name="output">出力バッファ。</param>
+    /// <param name="input">input を指定します。</param>
+    /// <param name="deinterleaver">deinterleaver を指定します。</param>
+    /// <param name="output">output を指定します。</param>
     private static void DeinterleaveDoublesInto(ReadOnlySpan<double> input, int[] deinterleaver, Span<double> output)
     {
         for (var i = 0; i < deinterleaver.Length; i++)
@@ -735,14 +720,13 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// ハードビットを疑似 LLR へ変換します。
+    /// BitsToLlr を実行します。
     /// </summary>
-    /// <param name="bits">ハード判定ビット列。</param>
-    /// <param name="reliability">チャネル信頼度（正）。</param>
-    /// <returns>疑似 LLR 列（正=ビット0、負=ビット1）。</returns>
+    /// <param name="bits">bits を指定します。</param>
+    /// <param name="reliability">reliability を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static double[] BitsToLlr(bool[] bits, double reliability)
     {
-        // 簡易復号器で使う、ハード判定から疑似 LLR への写像。
         var llr = new double[bits.Length];
         for (var i = 0; i < bits.Length; i++)
         {
@@ -753,10 +737,10 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// バイト列を MSB-first のビット列へ展開します。
+    /// BytesToBits を実行します。
     /// </summary>
-    /// <param name="bytes">入力バイト列。</param>
-    /// <returns>MSB-first のビット列。</returns>
+    /// <param name="bytes">bytes を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static bool[] BytesToBits(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
@@ -776,9 +760,9 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// バイト→8 ビット展開用のルックアップ表を構築します。
+    /// BuildByteToBitsLookup を構築します。
     /// </summary>
-    /// <returns>256×8 のビット展開ルックアップ。</returns>
+    /// <returns>処理結果。</returns>
     private static byte[] BuildByteToBitsLookup()
     {
         var lookup = new byte[256 * 8];
@@ -799,10 +783,10 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// ビット列を MSB-first でバイト列へパックします。
+    /// BitsToBytes を実行します。
     /// </summary>
-    /// <param name="bits">入力ビット列（長さは 8 の倍数）。</param>
-    /// <returns>パック済みバイト列。</returns>
+    /// <param name="bits">bits を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static byte[] BitsToBytes(bool[] bits)
     {
         var bytes = new byte[bits.Length / 8];
@@ -819,10 +803,10 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// ビット列をバイト列へパックします（端数ビット対応）。
+    /// PackBits を実行します。
     /// </summary>
-    /// <param name="bits">入力ビット列。</param>
-    /// <returns>パック済みバイト列。</returns>
+    /// <param name="bits">bits を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static byte[] PackBits(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
@@ -856,11 +840,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// パック済みバイト列から指定ビット数を展開します。
+    /// UnpackBits を実行します。
     /// </summary>
-    /// <param name="bytes">パック済みバイト列。</param>
-    /// <param name="bitCount">展開するビット数。</param>
-    /// <returns>展開後のビット列。</returns>
+    /// <param name="bytes">bytes を指定します。</param>
+    /// <param name="bitCount">bitCount を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static bool[] UnpackBits(byte[] bytes, int bitCount)
     {
         var bits = new bool[bitCount];
@@ -892,22 +876,22 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 2 つのバイト列の不一致バイト数を数えます。
+    /// CountDifferentBytes を実行します。
     /// </summary>
-    /// <param name="left">比較元バイト列。</param>
-    /// <param name="right">比較先バイト列。</param>
-    /// <returns>不一致バイト数。</returns>
+    /// <param name="left">left を指定します。</param>
+    /// <param name="right">right を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static int CountDifferentBytes(byte[] left, byte[] right)
     {
         return CountDifferentByteSpans(left, right);
     }
 
     /// <summary>
-    /// 2 つのビット列の不一致ビット数を数えます。
+    /// CountDifferentBits を実行します。
     /// </summary>
-    /// <param name="left">比較元ビット列。</param>
-    /// <param name="right">比較先ビット列。</param>
-    /// <returns>不一致ビット数。</returns>
+    /// <param name="left">left を指定します。</param>
+    /// <param name="right">right を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static int CountDifferentBits(bool[] left, bool[] right)
     {
         ReadOnlySpan<byte> leftBytes = MemoryMarshal.AsBytes(left.AsSpan());
@@ -916,11 +900,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// ビット配列とスパンの不一致ビット数を数えます。
+    /// CountDifferentBits を実行します。
     /// </summary>
-    /// <param name="left">比較元ビット列。</param>
-    /// <param name="right">比較先ビットスパン。</param>
-    /// <returns>不一致ビット数。</returns>
+    /// <param name="left">left を指定します。</param>
+    /// <param name="right">right を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static int CountDifferentBits(bool[] left, ReadOnlySpan<bool> right)
     {
         ReadOnlySpan<byte> leftBytes = MemoryMarshal.AsBytes(left.AsSpan());
@@ -929,11 +913,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// バイト列をビット展開してビット列との不一致数を数えます。
+    /// CountDifferentBytesAgainstBits を実行します。
     /// </summary>
-    /// <param name="bytes">比較元バイト列。</param>
-    /// <param name="bits">比較先ビット列。</param>
-    /// <returns>不一致ビット数。</returns>
+    /// <param name="bytes">bytes を指定します。</param>
+    /// <param name="bits">bits を指定します。</param>
+    /// <returns>処理結果。</returns>
     private static int CountDifferentBytesAgainstBits(ReadOnlySpan<byte> bytes, ReadOnlySpan<bool> bits)
     {
         var different = 0;
@@ -955,11 +939,11 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// パック済みバイト列から指定ビットを読み出します。
+    /// ReadPackedBit を読み取ります。
     /// </summary>
-    /// <param name="packed">パック済みバイト列。</param>
-    /// <param name="bitIndex">読み出すビット位置（0 起点）。</param>
-    /// <returns>ビット値。</returns>
+    /// <param name="packed">packed を指定します。</param>
+    /// <param name="bitIndex">bitIndex を指定します。</param>
+    /// <returns>判定結果。</returns>
     private static bool ReadPackedBit(ReadOnlySpan<byte> packed, int bitIndex)
     {
         var b = packed[bitIndex >> 3];
@@ -967,7 +951,7 @@ public static class TurboEcc1024
     }
 
     /// <summary>
-    /// 2 つのバイトスパンの不一致要素数を数えます。
+    /// 2つのバイトスパンの不一致要素数を数えます。
     /// </summary>
     /// <param name="left">比較元バイトスパン。</param>
     /// <param name="right">比較先バイトスパン。</param>
@@ -1012,7 +996,6 @@ public static class TurboEcc1024
                 var a = Vector128.LoadUnsafe(ref leftRef, (nuint)i);
                 var b = Vector128.LoadUnsafe(ref rightRef, (nuint)i);
                 var eq = AdvSimd.CompareEqual(a, b);
-                // 0xFF/0x00 を 1/0 に正規化してから lane 合計で一致数を得る。
                 var normalizedEq = AdvSimd.ShiftRightLogical(eq, 7);
                 normalizedEq.CopyTo(equalLanes);
 
@@ -1047,3 +1030,4 @@ public static class TurboEcc1024
         return different;
     }
 }
+

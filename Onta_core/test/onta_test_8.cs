@@ -1,12 +1,12 @@
-using Onta.Core;
+﻿using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// 受信側耐性確認: ステレオ / 18サブキャリア / QPSK に対して
-/// 0.5% ワウフラッター + 7kHz LPF（-10dB/oct 相当）+ 0.7% ホワイトノイズを付与します。
+/// ステレオ 18SC / QPSK の耐性テストです。
+/// wow/flutter + 7kHz 低域通過近似 + ノイズ付与後の復元を検証します。
 /// </summary>
 public sealed class OntaTest8
 {
@@ -83,7 +83,7 @@ public sealed class OntaTest8
             throw new ArgumentException("Left/right length mismatch.");
         }
 
-        // 1次 LPF を2段カスケード（-12dB/oct）し、少量ドライを混ぜて実効 -10dB/oct 付近へ寄せる。
+        // 1次LPFを2段直列 + dry/wet 合成で約 -10dB/oct 相当を近似する。
         var dt = 1.0 / sampleRate;
         var rc = 1.0 / (2.0 * Math.PI * LpfCutoffHz);
         var alpha = dt / (rc + dt);
@@ -248,3 +248,4 @@ public sealed class OntaTest8
         return dst;
     }
 }
+

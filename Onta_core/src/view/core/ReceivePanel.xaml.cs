@@ -1,14 +1,14 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
 using Onta.Core;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 受信パネルです（ファイル情報・L/R ワウフラッター・エラー率 / I-Q グラフ）。
+/// 受信入力設定と受信状態可視化を担うパネルです。
 /// </summary>
 public partial class ReceivePanel : UserControl
 {
@@ -27,6 +27,9 @@ public partial class ReceivePanel : UserControl
     private CoreFrameKind _lastErrorFrame = CoreFrameKind.Fh;
     private double _lastErrorPercent = -1;
 
+    /// <summary>
+    /// 受信パネルを初期化します。
+    /// </summary>
     public ReceivePanel()
     {
         InitializeComponent();
@@ -37,7 +40,7 @@ public partial class ReceivePanel : UserControl
         UpdateInputModePanels();
         OutputDirBox.Text = _outputDir;
 
-        // ワウフラッター／デモは 0.2 秒間隔のスナップショット。
+        // デモ表示用タイマー（実受信がないときの可視化確認向け）。
         _demoTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _demoTimer.Tick += OnDemoTick;
 
@@ -57,12 +60,12 @@ public partial class ReceivePanel : UserControl
 
     public event EventHandler? ReceiveStartRequested;
 
-    /// <summary>WAV入力モードか（音声入力のときは false）。</summary>
+    /// <summary>WAV入力モードが選択中なら true。</summary>
     public bool UseWavInput => WavInputRadio.IsChecked == true;
 
     public string? SelectedWavPath => _selectedWavPath;
 
-    /// <summary>受信ファイルを書き出すフォルダー。</summary>
+    /// <summary>出力フォルダー（未設定時は既定値）を返します。</summary>
     public string SelectedOutputDir =>
         string.IsNullOrWhiteSpace(_outputDir) ? AppPaths.OutputDir : _outputDir;
 
@@ -86,6 +89,12 @@ public partial class ReceivePanel : UserControl
 
     public double WowFlutterRightPercent => WowRight.ValuePercent;
 
+    /// <summary>
+    /// 受信ファイル情報を表示へ反映します。
+    /// </summary>
+    /// <param name="fileName">ファイル名。</param>
+    /// <param name="fileSizeText">表示用サイズ。</param>
+    /// <param name="blockCountText">表示用ブロック数。</param>
     public void SetFileInfo(string fileName, string fileSizeText, string blockCountText)
     {
         FileNameBox.Text = fileName;
@@ -93,16 +102,17 @@ public partial class ReceivePanel : UserControl
         BlockCountBox.Text = blockCountText;
     }
 
-    /// <summary>進捗表示テキストを直接更新します（受信開始直後の即時フィードバック用）。</summary>
+    /// <summary>進捗テキストを更新します。</summary>
+    /// <param name="text">表示文字列。</param>
     public void SetProgressText(string text)
     {
         ProgressBox.Text = text;
     }
 
     /// <summary>
-    /// コア問い合わせ結果（進捗 / エラー率 / I-Q）を画面へ反映します。
-    /// ファイル名・サイズ・ブロック数は FH 確定後のみ更新します。
+    /// Core 実行状態を受信UIへ反映します。
     /// </summary>
+    /// <param name="status">Core 実行状態。</param>
     public void ApplyExecutionStatus(CoreExecutionStatus status)
     {
         if (ReceiveDetailPanel.HasFileHeaderInfo(status))
@@ -167,7 +177,7 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// 送信動作中など、受信変調に基づく表示ができないときは I-Q を空にします。
+    /// IQ表示を初期状態へ戻します。
     /// </summary>
     public void ClearIqDisplay()
     {
@@ -175,6 +185,11 @@ public partial class ReceivePanel : UserControl
         IqTitle.Text = "I-Q";
     }
 
+    /// <summary>
+    /// パイロット推定値から WOW/Flutter 表示を更新します。
+    /// </summary>
+    /// <param name="leftSpeedRatio">左チャネル速度比。</param>
+    /// <param name="rightSpeedRatio">右チャネル速度比。</param>
     public void SetWowFlutterFromPilots(double leftSpeedRatio, double rightSpeedRatio)
     {
         WowLeft.SetFromSpeedRatio(leftSpeedRatio);
@@ -182,15 +197,16 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// チャンネルモードに応じて R 側ワウフラッターの有効／無効を切り替えます。
-    /// モノラル時は R を暗くし停止します。
+    /// WOW/Flutter 表示のチャネルモードを設定します。
     /// </summary>
+    /// <param name="channelMode">チャネルモード。</param>
     public void SetWowChannelMode(ChannelMode channelMode)
     {
         SetWowStereoEnabled(channelMode == ChannelMode.Stereo);
     }
 
-    /// <summary>ステレオ時のみ R メーターを動作させます。</summary>
+    /// <summary>WOW/Flutter 表示の右チャネル活性状態を切り替えます。</summary>
+    /// <param name="stereo">ステレオ表示なら true。</param>
     public void SetWowStereoEnabled(bool stereo)
     {
         WowRight.IsActive = stereo;
@@ -200,17 +216,30 @@ public partial class ReceivePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// WOW/Flutter パーセント値をグラフへ追加します。
+    /// </summary>
+    /// <param name="leftPercent">左チャネル値。</param>
+    /// <param name="rightPercent">右チャネル値。</param>
     public void SetWowFlutterPercent(double leftPercent, double rightPercent)
     {
         WowLeft.AddSample(leftPercent);
         WowRight.AddSample(rightPercent);
     }
 
+    /// <summary>
+    /// エラー率サンプルをグラフへ追加します。
+    /// </summary>
+    /// <param name="errorRatePercent">エラー率。</param>
+    /// <param name="frameKind">対象フレーム種別。</param>
     public void AddErrorRateSample(double errorRatePercent, ErrorRateFrameKind frameKind)
     {
         _errorChart.AddSample(errorRatePercent, frameKind);
     }
 
+    /// <summary>
+    /// デモ表示の更新を開始します。
+    /// </summary>
     public void StartDemoFeed()
     {
         _demoRunning = true;
@@ -219,6 +248,9 @@ public partial class ReceivePanel : UserControl
         _demoTimer.Start();
     }
 
+    /// <summary>
+    /// デモ表示の更新を停止します。
+    /// </summary>
     public void StopDemoFeed()
     {
         _demoRunning = false;
@@ -235,7 +267,7 @@ public partial class ReceivePanel : UserControl
         UpdateInputModePanels();
         if (UseWavInput)
         {
-            // ファイル名・サイズは FH 由来。WAV 選択だけでは更新しない。
+            // WAVモードに切替時は受信対象表示を初期化する。
             SetFileInfo("(未受信)", "-", "-");
         }
         else
@@ -273,7 +305,7 @@ public partial class ReceivePanel : UserControl
         }
         catch
         {
-            // デバイス列挙失敗時は既定デバイスのみで継続。
+            // デバイス列挙失敗時は既定デバイスのみで動作継続する。
         }
 
         AudioDeviceComboBox.SelectedIndex = 0;
@@ -291,7 +323,7 @@ public partial class ReceivePanel : UserControl
     {
         var dlg = new OpenFileDialog
         {
-            Title = "受信 WAV ファイルを選択",
+            Title = "Select receive WAV file",
             Filter = "WAV (*.wav)|*.wav|すべてのファイル (*.*)|*.*",
             InitialDirectory = AppPaths.InputDir
         };
@@ -310,19 +342,19 @@ public partial class ReceivePanel : UserControl
         }
         catch
         {
-            // サイズ取得に失敗しても選択自体は有効。
+            // サイズ取得失敗時は既定値 "-" を表示する。
         }
 
-        // FH 確定前でも「何を選んだか」を先に見せる。
+        // ファイル選択後はヘッダー情報待ち状態として表示する。
         SetFileInfo(displayName, sizeText, "-");
-        ProgressBox.Text = "スタート待ち";
+        ProgressBox.Text = "待機中";
     }
 
     private void OnBrowseOutputDir(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFolderDialog
         {
-            Title = "受信ファイルの出力フォルダーを選択",
+            Title = "Select output folder for received file",
             InitialDirectory = Directory.Exists(_outputDir) ? _outputDir : AppPaths.OutputDir
         };
         if (dlg.ShowDialog() != true || string.IsNullOrWhiteSpace(dlg.FolderName))
@@ -365,3 +397,7 @@ public partial class ReceivePanel : UserControl
 
     private sealed record AudioDeviceItem(int DeviceNumber, string Name);
 }
+
+
+
+

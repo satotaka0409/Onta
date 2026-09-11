@@ -1,4 +1,4 @@
-<UserControl x:Class="Onta.View.SendPanel"
+﻿<UserControl x:Class="Onta.View.Core.SendPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid>
@@ -19,7 +19,7 @@
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
 
-      <!-- 送信中はここ全体を Disable（ストップだけ外側に残す） -->
+      <!-- 送信中はここ全体を Disable（ストップだけ右側に残す） -->
       <Grid x:Name="SettingsHost">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="100"/>
@@ -98,15 +98,15 @@
         </GroupBox>
 
         <GroupBox Grid.Column="3"
-                  Header="ブロックインターリーブ"
+                  Header="Block Interleave"
                   Margin="4">
           <StackPanel Margin="4">
-            <RadioButton Content="×1"
+            <RadioButton Content="x1"
                          Tag="1"
                          GroupName="Interleave"
                          IsChecked="True"
                          Checked="OnSettingsChanged"/>
-            <RadioButton Content="×2"
+            <RadioButton Content="x2"
                          Tag="2"
                          GroupName="Interleave"
                          Checked="OnSettingsChanged"
@@ -142,13 +142,13 @@
                         Orientation="Horizontal"
                         Margin="0,8,0,0">
               <RadioButton x:Name="WriteWavRadio"
-                           Content="WAV出力"
+                           Content="WAV Output"
                            GroupName="OutputMode"
                            IsChecked="True"
                            VerticalAlignment="Center"
                            Checked="OnSettingsChanged"/>
               <RadioButton x:Name="PlayAudioRadio"
-                           Content="音声出力"
+                           Content="Audio Output"
                            GroupName="OutputMode"
                            Margin="16,0,0,0"
                            VerticalAlignment="Center"
@@ -166,7 +166,7 @@
                          Width="280"
                          IsReadOnly="True"
                          VerticalAlignment="Center"/>
-                <Button Content="…"
+                <Button Content="..."
                         Width="36"
                         Margin="8,0,0,0"
                         Click="OnBrowseWav"/>
@@ -191,8 +191,10 @@
                   </ComboBox.ItemTemplate>
                   <ComboBox.ItemContainerStyle>
                     <Style TargetType="ComboBoxItem">
-                      <Setter Property="Foreground" Value="#FF1E2024"/>
-                      <Setter Property="Background" Value="White"/>
+                      <Setter Property="Foreground"
+                              Value="#FF1E2024"/>
+                      <Setter Property="Background"
+                              Value="White"/>
                     </Style>
                   </ComboBox.ItemContainerStyle>
                 </ComboBox>
@@ -207,12 +209,12 @@
                   VerticalAlignment="Bottom"
                   Margin="8,0,4,4">
         <Button x:Name="StartButton"
-                Content="スタート"
+                Content="Start"
                 Width="120"
                 Height="34"
                 Click="OnStartClick"/>
         <Button x:Name="StopButton"
-                Content="ストップ"
+                Content="Stop"
                 Width="120"
                 Height="34"
                 Margin="0,8,0,0"
@@ -222,3 +224,4 @@
     </Grid>
   </Grid>
 </UserControl>
+

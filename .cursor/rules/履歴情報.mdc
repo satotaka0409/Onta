@@ -1,0 +1,84 @@
+---
+alwaysApply: true
+---
+
+# 履歴情報
+
+## 概要
+
+- 送信履歴/受信履歴は固定ファイル名 Onta_history.bin に保存する。
+- 保存場所はアプリのルートディレクトリ（例: C:\proj\Onta\Onta_history.bin）。
+- 送信成功時は「送信した事実のみ」を1件追記する（バイナリは保存しない）。
+- 受信完了（成功/失敗）ごとに1件追記する。
+- 受信成功時のバイナリデータは履歴内に保持し続ける（履歴画面からいつでもファイル化可能）。
+- 起動時に最新1件を読み込み、受信詳細へ反映する。
+- 履歴データとバイナリデータは、履歴から削除した時点で初めて削除される。
+
+## バイナリフォーマット
+
+### ファイル全体
+
+| 項目       | 型       | 内容                        |
+| :--------- | :------- | :-------------------------- |
+| Magic      | byte[8]  | ASCII "ONTAHIS1"            |
+| Version    | int32    | 1                           |
+| EntryCount | int32    | エントリ件数                |
+| Entries    | 繰り返し | 下記 Entry を EntryCount 件 |
+
+- 現行の書き込みバージョンは当面 1 固定とする。
+- バージョン変更は明示合意がある場合のみ行う（自動で上げない）。
+
+### Entry
+
+| 項目               | 型       | 内容                                      |
+| :----------------- | :------- | :---------------------------------------- |
+| EntryId            | string   | 履歴エントリ識別子（GUID文字列）          |
+| Kind               | byte     | 1:Receive 2:Send                          |
+| ReceivedAtUtcTicks | int64    | Receive:受信日時 / Send:送信日時 (UTC)    |
+| ContentHashHex     | string   | 比較用SHA-256(16進)。Send更新判定に使用   |
+| SourcePath         | string   | Receive: 受信元WAV / Send: 送信元ファイル |
+| FileName           | string   | 表示用ファイル名                          |
+| FileSize           | int64    | バイト数                                  |
+| BlockCount         | int32    | 受信時ブロック総数（送信は0）             |
+| IsSuccess          | bool     | 完了成功フラグ                            |
+| OutputPath         | string   | Receive: 復号出力先 / Send: 送信WAV出力先 |
+| CompletionMessage  | string   | 完了メッセージ                            |
+| PayloadLength      | int32    | 受信バイナリ長（Sendは0）                 |
+| Payload            | bytes    | 受信成功データ（Sendは空）                |
+| BlockItemCount     | int32    | ブロック履歴件数                          |
+| Blocks             | 繰り返し | 下記 Block を BlockItemCount 件           |
+| OrphanCount        | int32    | 親不明ブロック件数                        |
+| Orphans            | 繰り返し | 下記 Orphan を OrphanCount 件             |
+
+### Block
+
+| 項目       | 型     | 内容                         |
+| :--------- | :----- | :--------------------------- |
+| BlockIndex | int32  | ブロック番号                 |
+| State      | byte   | 0:Unknown 1:Accepted 2:Error |
+| ErrorText  | string | ブロックエラー詳細           |
+
+### Orphan
+
+| 項目          | 型     | 内容                                     |
+| :------------ | :----- | :--------------------------------------- |
+| HashHex       | string | 受信データのSHA-256（16進文字列）        |
+| Detail        | string | 親探索状況（例: 親不明 / 解決済み）      |
+| PayloadLength | int32  | 受信データ長（バイト）                   |
+| Payload       | bytes  | 受信データ本体（親未確定時でも保存する） |
+
+## 運用ルール
+
+- ブロック単位の受信エラーは復号処理を中断せず、次ブロックへ継続する。
+- 受信側は同一データを複数回受信した場合、ReceivedAtUtcTicks を最新日時で更新する。
+- 送信側は履歴内の ContentHashHex を比較し、同一ハッシュが存在した場合は ReceivedAtUtcTicks を最新日時で更新する。
+- ブロックヘッダー受信時に HashHex -> ブロック番号 の親対応表を更新する。
+- インターリーブによりブロック受信順は前後し得るため、受信順ではなく親対応表で組み込み先を決定する。
+- 親が見つからない受信データは Orphan として履歴へ保存する（Payload含む）。
+- 後続のブロックヘッダーで同一HashHexの親が見つかったら、そのOrphanを正式ブロックとして組み込む。
+- Error ブロックは受信詳細の BLK-N 行で NG 表示し、ErrorText で詳細確認する。
+- あるブロックが後続パスで Accepted になった場合は Accepted を優先する。
+- 送信履歴はイベント記録のみで、バイナリデータは保存しない。
+- 受信成功時の Payload は履歴から削除するまで保持する。
+- 履歴削除は EntryId 単位で行い、削除時に Payload/Orphan Payload も同時に削除される。
+- 履歴ファイルが破損またはVersion不一致の場合は履歴なしとして扱い、起動を継続する。

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -110,3 +110,4 @@ public sealed class EccAllocationBenchmarkTest
         return llrs;
     }
 }
+

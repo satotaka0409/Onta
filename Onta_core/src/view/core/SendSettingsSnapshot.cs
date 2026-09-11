@@ -1,9 +1,9 @@
-using Onta.Core;
+﻿using Onta.Core;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 送信設定の読み取り専用スナップショットです。
+/// 送信開始時点の設定値を保持するスナップショットです。
 /// </summary>
 public sealed record SendSettingsSnapshot(
     ChannelMode ChannelMode,
@@ -16,3 +16,7 @@ public sealed record SendSettingsSnapshot(
     bool PlayAudio,
     int AudioDeviceNumber,
     string AudioDeviceName);
+
+
+
+

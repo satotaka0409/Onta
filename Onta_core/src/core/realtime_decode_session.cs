@@ -1,9 +1,9 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Onta.Core;
 
 /// <summary>
-/// 受信 PCM を逐次投入し、別スレッドで一定間隔ごとに増分復号を試みるセッションです。
+/// リアルタイムで受信PCMを蓄積し、段階的デコードを継続実行するセッションです。
 /// </summary>
 public sealed class RealtimeDecodeSession : IDisposable
 {
@@ -27,14 +27,14 @@ public sealed class RealtimeDecodeSession : IDisposable
     private RealtimeDecodeSnapshot _snapshot = RealtimeDecodeSnapshot.Idle;
 
     /// <summary>
-    /// コーデックとサンプリング条件を指定してリアルタイム復号セッションを生成します。
+    /// デコードセッションを初期化します。
     /// </summary>
-    /// <param name="codec">WAV/PCM 復号に用いるコーデック。</param>
-    /// <param name="sampleRate">入力サンプルレート（Hz）。</param>
-    /// <param name="tuning">復号ランタイム調整。省略時は既定値。</param>
-    /// <param name="pollInterval">ワーカーのポーリング間隔。省略時は 500 ms。</param>
-    /// <param name="minAttemptSeconds">初回復号試行に必要な最小バッファ秒数。</param>
-    /// <param name="maxBufferSeconds">リングバッファの最大保持秒数。</param>
+    /// <param name="codec">段階的デコードを実行するコーデック。</param>
+    /// <param name="sampleRate">入力サンプルレート。</param>
+    /// <param name="tuning">復号時のランタイム調整値。null の場合は既定値。</param>
+    /// <param name="pollInterval">ワーカーループのポーリング間隔。null の場合は既定値。</param>
+    /// <param name="minAttemptSeconds">デコード試行を開始する最小蓄積秒数。</param>
+    /// <param name="maxBufferSeconds">内部リングバッファの最大保持秒数。</param>
     public RealtimeDecodeSession(
         FileWavCodec codec,
         int sampleRate,
@@ -54,7 +54,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// バックグラウンド復号ワーカーを開始します。
+    /// バックグラウンドのデコードループを開始します。
     /// </summary>
     public void Start()
     {
@@ -78,7 +78,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// 復号ワーカーを停止し、キャンセルを待ちます。
+    /// デコードループを停止し、実行中タスクを終了します。
     /// </summary>
     public void Stop()
     {
@@ -113,10 +113,10 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// L/R PCM サンプルをリングバッファへ追記します。
+    /// 新しい複素サンプル列をバッファへ追記します。
     /// </summary>
-    /// <param name="left">L チャンネル複素サンプル列。</param>
-    /// <param name="right">R チャンネル複素サンプル列。</param>
+    /// <param name="left">左チャンネルの複素サンプル列。</param>
+    /// <param name="right">右チャンネルの複素サンプル列。</param>
     public void AppendSamples(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
     {
         ThrowIfDisposed();
@@ -135,9 +135,9 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// セッション状態のスナップショットを返します。
+    /// 現在の実行スナップショットを返します。
     /// </summary>
-    /// <returns>実行中フラグ・バッファ量・復号結果などを含む状態。</returns>
+    /// <returns>現在の実行スナップショット。</returns>
     public RealtimeDecodeSnapshot GetSnapshot()
     {
         lock (_sync)
@@ -147,9 +147,9 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// 画面から実行状況（進捗 / エラー率 / I-Q）を問い合わせます。
+    /// 現在の詳細実行状態を返します。
     /// </summary>
-    /// <returns>進捗・エラー率・I-Q を含む実行状況。</returns>
+    /// <returns>UI表示向けの実行状態。</returns>
     public CoreExecutionStatus QueryExecutionStatus()
     {
         lock (_sync)
@@ -159,10 +159,10 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// 完了済み復号バイト列があれば消費して返します。
+    /// 復元済みバイト列がある場合に1回だけ取り出します。
     /// </summary>
-    /// <param name="decoded">取得できた復号データ。無い場合は空配列。</param>
-    /// <returns>復号データを返した場合は <see langword="true"/>。</returns>
+    /// <param name="decoded">成功時に取り出した復元バイト列。</param>
+    /// <returns>取り出しに成功した場合 true。</returns>
     public bool TryConsumeDecoded(out byte[] decoded)
     {
         lock (_sync)
@@ -180,10 +180,8 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// バッファ増分を監視し、条件を満たしたら増分復号を試行するワーカーループです。
+    /// バッファ量に応じて段階的デコードを試行するワーカーループです。
     /// </summary>
-    /// <param name="token">キャンセル用トークン。</param>
-    /// <returns>キャンセルまたは終了で完了するタスク。</returns>
     private async Task WorkerLoop(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -300,7 +298,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// 破棄済みなら <see cref="ObjectDisposedException"/> を投げます。
+    /// 破棄済みなら例外を送出します。
     /// </summary>
     private void ThrowIfDisposed()
     {
@@ -311,7 +309,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// ワーカーを停止し、セッションを破棄します。
+    /// セッションを停止して関連リソースを解放します。
     /// </summary>
     public void Dispose()
     {
@@ -325,9 +323,9 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// 復号試行用スナップショット配列の長さを必要サンプル数に合わせます。
+    /// スナップショット用配列の容量を現在サンプル数に合わせます。
     /// </summary>
-    /// <param name="sampleCount">必要なサンプル数。</param>
+    /// <param name="sampleCount">sampleCount を指定します。</param>
     private void EnsureSnapshotCapacity(int sampleCount)
     {
         if (_leftSnapshot.Length != sampleCount)
@@ -342,7 +340,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// 固定容量の複素サンプルリングバッファです。
+    /// 複素サンプルを固定長で保持するリングバッファです。
     /// </summary>
     private sealed class ComplexRingBuffer
     {
@@ -351,9 +349,8 @@ public sealed class RealtimeDecodeSession : IDisposable
         private int _count;
 
         /// <summary>
-        /// 指定容量のリングバッファを生成します。
+        /// 指定容量でバッファを作成します。
         /// </summary>
-        /// <param name="capacity">保持できる最大サンプル数。</param>
         public ComplexRingBuffer(int capacity)
         {
             if (capacity <= 0)
@@ -365,14 +362,13 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
 
         /// <summary>
-        /// 現在保持しているサンプル数です。
+        /// 現在バッファされているサンプル数です。
         /// </summary>
         public int Count => _count;
 
         /// <summary>
-        /// サンプル列を追記します。満杯時は最古を上書きします。
+        /// サンプル列を書き込み、容量超過時は最古データを上書きします。
         /// </summary>
-        /// <param name="source">追記する複素サンプル列。</param>
         public void Write(ReadOnlySpan<Complex> source)
         {
             var capacity = _buffer.Length;
@@ -392,9 +388,8 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
 
         /// <summary>
-        /// 保持中サンプルを先頭から連続領域へコピーします。
+        /// 現在バッファされている内容を時系列順にコピーします。
         /// </summary>
-        /// <param name="destination">コピー先（保持件数以上の長さが必要）。</param>
         public void CopyTo(Span<Complex> destination)
         {
             if (destination.Length < _count)
@@ -417,11 +412,8 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
 
         /// <summary>
-        /// バッファが先頭から満杯で連続している場合、内部配列をそのまま返します。
+        /// バッファ全体が連続領域として参照できる場合にその配列を返します。
         /// </summary>
-        /// <param name="buffer">連続窓として使える内部配列。失敗時は空配列。</param>
-        /// <param name="count">有効サンプル数。失敗時は 0。</param>
-        /// <returns>連続満杯窓を返せた場合は <see langword="true"/>。</returns>
         public bool TryGetContiguousWindow(out Complex[] buffer, out int count)
         {
             if (_head == 0 && _count == _buffer.Length)
@@ -439,7 +431,7 @@ public sealed class RealtimeDecodeSession : IDisposable
 }
 
 /// <summary>
-/// リアルタイム復号セッションの公開状態スナップショットです。
+/// リアルタイムデコード処理の公開スナップショットです。
 /// </summary>
 public readonly record struct RealtimeDecodeSnapshot(
     bool IsRunning,
@@ -450,7 +442,7 @@ public readonly record struct RealtimeDecodeSnapshot(
     string? LastError)
 {
     /// <summary>
-    /// 未開始時の既定スナップショットです。
+    /// 停止状態の初期スナップショットです。
     /// </summary>
     public static RealtimeDecodeSnapshot Idle { get; } = new(
         IsRunning: false,
@@ -460,3 +452,4 @@ public readonly record struct RealtimeDecodeSnapshot(
         DecodedBytes: null,
         LastError: null);
 }
+

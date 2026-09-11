@@ -1,4 +1,4 @@
-using Onta.Core;
+﻿using Onta.Core;
 using Xunit;
 
 namespace Onta.Core.Tests;
@@ -25,3 +25,4 @@ public sealed class CoreStatusBoardTests
         Assert.Equal(0.7, status.IqGraph.Points[0].I, 6);
     }
 }
+

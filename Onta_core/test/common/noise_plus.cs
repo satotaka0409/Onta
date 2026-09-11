@@ -1,25 +1,25 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Text;
 
 namespace Onta.Core;
 
 /// <summary>
-/// WAV（2ch / 16-bit PCM）に対するノイズ・ワウフラッター付与ユーティリティです。
+/// テスト用にWAVへノイズ/WowFlutter劣化を付与するユーティリティです。
 /// </summary>
 public static class NoisePlus
 {
     /// <summary>
-    /// 入力 WAV にホワイトノイズを加算して出力します。
+    /// 入力WAVへホワイトノイズを加えて出力します。
     /// </summary>
-    /// <param name="inputWavPath">入力 WAV パス（2ch / 16-bit PCM）。</param>
-    /// <param name="outputWavPath">出力 WAV パス。</param>
+    /// <param name="inputWavPath">入力WAVパス（2ch / 16-bit PCM）。</param>
+    /// <param name="outputWavPath">出力WAVパス。</param>
     /// <param name="noiseLevel">
-    /// フルスケール（±1.0）に対するノイズ振幅。
-    /// 0 で無変化、1.0 でピーク付近の強いノイズ。推奨範囲は 0..1。
+    /// ノイズ強度（通常は 0..1 程度）。
+    /// 0 で無劣化、1.0 で大きな劣化です。
     /// </param>
     /// <param name="seed">乱数シード。0 の場合は時間依存シードを使用します。</param>
-    /// <exception cref="ArgumentNullException">パスが null の場合にスローされます。</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="noiseLevel"/> が負の場合にスローされます。</exception>
+    /// <exception cref="ArgumentNullException">パスが null の場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="noiseLevel"/> が負の場合。</exception>
     public static void AddWhiteNoise(
         string inputWavPath,
         string outputWavPath,
@@ -43,7 +43,7 @@ public static class NoisePlus
         var random = seed == 0 ? new Random() : new Random(seed);
         for (var i = 0; i < left.Length; i++)
         {
-            // Box-Muller で正規乱数を生成し、振幅を noiseLevel でスケールする。
+            // Box-Muller 法で生成したガウス乱数を重畳する。
             left[i] = ClampToUnit(left[i] + (NextGaussian(random) * noiseLevel));
             right[i] = ClampToUnit(right[i] + (NextGaussian(random) * noiseLevel));
         }
@@ -52,7 +52,7 @@ public static class NoisePlus
     }
 
     /// <summary>
-    /// メモリ上のステレオ実信号へホワイトノイズを加算します。
+    /// メモリ上のステレオ波形へホワイトノイズを加えます。
     /// </summary>
     public static void AddWhiteNoiseInMemory(
         Span<float> left,
@@ -82,7 +82,7 @@ public static class NoisePlus
     }
 
     /// <summary>
-    /// メモリ上の複素 OFDM 実信号へ可逆ワウを付与します。
+    /// メモリ上の複素サンプルへ wow/flutter を付与します。
     /// </summary>
     public static (Complex[] Left, Complex[] Right, double WowPhase, double FlutterPhase) ApplyWowFlutterInMemory(
         Complex[] left,
@@ -112,18 +112,18 @@ public static class NoisePlus
     }
 
     /// <summary>
-    /// 入力 WAV にワウ・フラッター（再生速度の周期的変動）を付与して出力します。
+    /// 入力WAVへ wow/flutter 劣化を付与して出力します。
     /// </summary>
-    /// <param name="inputWavPath">入力 WAV パス（2ch / 16-bit PCM）。</param>
-    /// <param name="outputWavPath">出力 WAV パス。</param>
+    /// <param name="inputWavPath">入力WAVパス（2ch / 16-bit PCM）。</param>
+    /// <param name="outputWavPath">出力WAVパス。</param>
     /// <param name="flutterAmount">
-    /// 速度変調の深さ（ピーク相対値）。
-    /// 例: 0.01 なら瞬間速度がおおよそ ±1% 変動します。0 で無変化。
+    /// 劣化量（0..1未満）。
+    /// 例: 0.01 は約1%の時間軸ゆらぎです。
     /// </param>
-    /// <param name="seed">乱数シード（変調位相の初期化に使用）。0 の場合は時間依存シードを使用します。</param>
-    /// <returns>適用した wow / flutter 位相（復号側の既知補正や診断用）。</returns>
-    /// <exception cref="ArgumentNullException">パスが null の場合にスローされます。</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="flutterAmount"/> が負、または 1 以上の場合にスローされます。</exception>
+    /// <param name="seed">乱数シード。0 の場合は時間依存シードを使用します。</param>
+    /// <returns>適用した位相パラメータ（wow/flutter）。</returns>
+    /// <exception cref="ArgumentNullException">パスが null の場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="flutterAmount"/> が範囲外の場合。</exception>
     public static (double WowPhase, double FlutterPhase) ApplyWowFlutter(
         string inputWavPath,
         string outputWavPath,
@@ -169,7 +169,7 @@ public static class NoisePlus
 
     private static double NextGaussian(Random random)
     {
-        // Box-Muller 変換。
+        // Box-Muller 螟画鋤縲・
         var u1 = 1.0 - random.NextDouble();
         var u2 = 1.0 - random.NextDouble();
         return Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
@@ -315,3 +315,4 @@ public static class NoisePlus
         return (short)Math.Round(clamped * short.MaxValue);
     }
 }
+

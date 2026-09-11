@@ -1,14 +1,15 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using Microsoft.Win32;
 using NAudio.Wave;
 using Onta.Core;
+using Onta.History;
 using System.Windows.Threading;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// メインウィンドウです（送信上・受信下・タブは送信／受信詳細。画面仕様.mdc）。
+/// 送受信ワークフロー全体を統括するメインウィンドウです。
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -20,6 +21,9 @@ public partial class MainWindow : Window
     private bool _pollingReceive;
     private bool _receiveDetailOpened;
 
+    /// <summary>
+    /// メインウィンドウを初期化し、各パネルのイベントを接続します。
+    /// </summary>
     public MainWindow()
     {
         InitializeComponent();
@@ -35,38 +39,47 @@ public partial class MainWindow : Window
             _inputCoreWorker.FileHeaderReady -= OnReceiveFileHeaderReady;
             StopAudioPlayback();
         };
+        LoadReceiveHistoryAtStartup();
         RefreshEstimate();
     }
 
+    /// <summary>
+    /// 現在の送信設定で見積りパネルを更新します。
+    /// </summary>
     private void RefreshEstimate()
     {
         var snap = SendPanel.CreateSnapshot();
         EstimatePanel.UpdateEstimate(snap);
 
-        // 送信ファイル選択後は送信詳細タブを前面に出す。
+        // 入力が選択済みなら見積りタブを前面にする。
         if (!string.IsNullOrWhiteSpace(snap.InputFilePath) && File.Exists(snap.InputFilePath))
         {
             BottomTabs.SelectedItem = EstimateTab;
         }
     }
 
+    /// <summary>
+    /// 送信開始要求を処理します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="snap">送信設定スナップショット。</param>
     private void OnOutputRequested(object? sender, SendSettingsSnapshot snap)
     {
         if (string.IsNullOrWhiteSpace(snap.InputFilePath))
         {
-            MessageBox.Show(this, "ファイルを選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "Please select an input file.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (!File.Exists(snap.InputFilePath))
         {
-            MessageBox.Show(this, "入力ファイルが見つかりません。", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, "Input file was not found.", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         if (!snap.WriteWav && !snap.PlayAudio)
         {
-            MessageBox.Show(this, "WAV出力 または 音声出力 を選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "Enable WAV output or realtime audio output.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -80,22 +93,22 @@ public partial class MainWindow : Window
 
             if (!_coreWorker.TryStart(snap, outputWavPath))
             {
-                MessageBox.Show(this, "コア処理が実行中です。完了後に再実行してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, "Core is already running. Stop current transmission first.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            // 前回のファイル再生が残っていれば止める（リアルタイム出力と競合しないように）。
+            // 送信開始前に既存の再生状態をリセットする。
             StopAudioPlayback();
 
             ReceivePanel.StopDemoFeed();
             ReceivePanel.SetWowFlutterPercent(0, 0);
-            // 送信選択ファイルは受信パネルへ表示しない。
+            // 新規送信開始に合わせて進捗表示を初期化する。
             EstimatePanel.ResetProgress();
             BottomTabs.SelectedItem = EstimateTab;
             SendPanel.SetTransmissionRunning(true);
-            // I-Q は受信変調に連動するため、送信中は表示しない。
+            // 前回受信時のIQ表示を消して誤解を防ぐ。
             ReceivePanel.ClearIqDisplay();
-            // 受信実行中ならポーリングは維持（送受信は別スレッド）。
+            // 受信ワーカー未実行なら受信ポーリングは止める。
             if (!_inputCoreWorker.IsRunning)
             {
                 _pollingReceive = false;
@@ -109,16 +122,26 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SendPanel.SetTransmissionRunning(false);
-            MessageBox.Show(this, $"出力に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, $"送信中にエラーが発生しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
+    /// <summary>
+    /// 送信停止要求を Core ワーカーへ伝搬します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnStopRequested(object? sender, EventArgs e)
     {
         _ = _coreWorker.RequestStop();
     }
 
-    /// <summary>FH 確定をワーカーから受け取り、UI へ即時反映します。</summary>
+    /// <summary>
+    /// 受信FH確定時に受信パネルと詳細パネルへヘッダー情報を反映します。
+    /// </summary>
+    /// <param name="fileName">受信ファイル名。</param>
+    /// <param name="fileSizeText">表示用ファイルサイズ。</param>
+    /// <param name="blockCount">総ブロック数。</param>
     private void OnReceiveFileHeaderReady(string fileName, string fileSizeText, int blockCount)
     {
         _ = Dispatcher.BeginInvoke(() =>
@@ -133,13 +156,18 @@ public partial class MainWindow : Window
         });
     }
 
+    /// <summary>
+    /// 受信開始要求を処理します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnReceiveStartRequested(object? sender, EventArgs e)
     {
         if (!ReceivePanel.UseWavInput)
         {
             MessageBox.Show(
                 this,
-                $"音声入力（デバイス: {ReceivePanel.AudioDeviceName}）は未実装です。",
+                $"Audio input mode is not implemented yet. Device: {ReceivePanel.AudioDeviceName}",
                 "Onta",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -150,20 +178,20 @@ public partial class MainWindow : Window
         {
             if (string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
             {
-                MessageBox.Show(this, "WAV入力ファイルを選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, "Please select a WAV input file.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             if (!File.Exists(ReceivePanel.SelectedWavPath))
             {
-                MessageBox.Show(this, "WAV ファイルが見つかりません。", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(this, "WAV input file was not found.", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             var outputDir = ReceivePanel.SelectedOutputDir;
             if (string.IsNullOrWhiteSpace(outputDir))
             {
-                MessageBox.Show(this, "出力フォルダーを選択してください。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, "Please select an output folder.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -184,15 +212,16 @@ public partial class MainWindow : Window
             ReceivePanel.FftGraph.Clear();
             ReceivePanel.IqGraph.Clear();
             ReceiveDetailPanel.Clear();
+            ReceiveDetailPanel.SetSourcePath(ReceivePanel.SelectedWavPath);
             _receiveDetailOpened = false;
 
             if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile, outputDir))
             {
-                MessageBox.Show(this, "受信コアが実行中です。", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, "Receive core is already running.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            // FH 確定前でも入力WAV情報を表示し、開始中であることを明示する。
+            // 受信開始時点の入力情報をパネルへ表示する。
             var inputDisplayName = Path.GetFileName(ReceivePanel.SelectedWavPath);
             var inputSizeText = "-";
             try
@@ -201,12 +230,11 @@ public partial class MainWindow : Window
             }
             catch
             {
-                // サイズ取得に失敗しても受信は続行。
+                // サイズ取得失敗時は既定値 "-" を維持する。
             }
 
             ReceivePanel.SetFileInfo(inputDisplayName, inputSizeText, "-");
-            ReceivePanel.SetProgressText("FH 開始中…");
-            ReceiveDetailPanel.Clear();
+            ReceivePanel.SetProgressText("FH 待機中...");
 
             _pollingReceive = true;
             if (!_progressPollTimer.IsEnabled)
@@ -220,18 +248,23 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 送受信進捗を定期ポーリングして UI へ反映します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnProgressPollTick(object? sender, EventArgs e)
     {
         var sendProgress = _coreWorker.GetProgress();
 
         if (_pollingReceive)
         {
-            // 画面 → コア問い合わせ: 進捗 / エラー率 / FFT / I-Q。
+            // 受信実行状態を各表示へ反映する。
             var status = _inputCoreWorker.QueryExecutionStatus();
             ReceivePanel.ApplyExecutionStatus(status);
             ReceiveDetailPanel.ApplyStatus(status);
 
-            // FH 受信後に受信詳細を前面表示し、サイズ／ブロック数を見せる。
+            // FH確定後に未表示なら受信詳細タブへ遷移する。
             if (!_receiveDetailOpened && ReceiveDetailPanel.HasFileHeaderInfo(status))
             {
                 _receiveDetailOpened = true;
@@ -241,6 +274,9 @@ public partial class MainWindow : Window
             if (_inputCoreWorker.TryConsumeCompletion(out var success, out var message, out var outputPath))
             {
                 _pollingReceive = false;
+                ReceiveDetailPanel.MarkCompletion(success, message, outputPath);
+                SaveReceiveHistory();
+                HistoryPanel.ReloadHistory();
 
                 if (success)
                 {
@@ -258,7 +294,7 @@ public partial class MainWindow : Window
             }
         }
 
-        // 送信進捗は受信ポーリング中でも更新する（共有タイマー）。
+        // 送信見積りの全体進捗メーターを更新する。
         EstimatePanel.ApplyProgress(sendProgress.ElapsedAudioSeconds, sendProgress.IsRunning);
         _ = _coreWorker.ConsumeFrameEvents();
 
@@ -271,11 +307,81 @@ public partial class MainWindow : Window
                     : sendProgress.ElapsedAudioSeconds,
                 isRunning: false);
             HandleSendCompletion(completion);
+            HistoryPanel.ReloadHistory();
         }
 
         if (!_pollingReceive && !_coreWorker.GetProgress().IsRunning)
         {
             _progressPollTimer.Stop();
+        }
+    }
+
+    /// <summary>
+    /// 起動時に最新受信履歴を読み込み、受信表示へ反映します。
+    /// </summary>
+    private void LoadReceiveHistoryAtStartup()
+    {
+        try
+        {
+            var latest = HistoryService.TryLoadLatestReceive(AppPaths.ReceiveHistoryFilePath);
+            if (latest is null)
+            {
+                return;
+            }
+
+            ReceiveDetailPanel.ApplyHistory(latest);
+            if (!string.IsNullOrWhiteSpace(latest.FileName) && latest.FileName != "(未受信)")
+            {
+                var sizeText = latest.FileSize > 0 ? $"{latest.FileSize:N0} bytes" : "-";
+                var blockText = latest.BlockCount > 0 ? latest.BlockCount.ToString() : "-";
+                ReceivePanel.SetFileInfo(latest.FileName, sizeText, blockText);
+                ReceivePanel.SetProgressText("履歴を読み込みました");
+            }
+        }
+        catch
+        {
+            // 履歴読み込み失敗時は起動を継続する。
+        }
+    }
+
+    /// <summary>
+    /// 現在の受信結果を履歴ファイルへ保存します。
+    /// </summary>
+    private void SaveReceiveHistory()
+    {
+        try
+        {
+            var orphans = _inputCoreWorker.CaptureOrphans();
+            var payload = _inputCoreWorker.CaptureDecodedPayload() ?? Array.Empty<byte>();
+            var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, payload);
+            HistoryService.SaveReceive(AppPaths.ReceiveHistoryFilePath, entry);
+        }
+        catch
+        {
+            // 履歴保存失敗時は UI を止めずに継続する。
+        }
+    }
+
+    /// <summary>
+    /// 送信成功時の履歴を保存します。
+    /// </summary>
+    /// <param name="completion">送信完了情報。</param>
+    private static void SaveSendHistory(CoreCompletionResult completion)
+    {
+        try
+        {
+            if (!completion.IsSuccess)
+            {
+                return;
+            }
+
+            var input = completion.Settings.InputFilePath ?? string.Empty;
+            var outputPath = completion.OutputWavPath ?? string.Empty;
+            HistoryService.SaveSend(AppPaths.ReceiveHistoryFilePath, input, outputPath, "Send completed");
+        }
+        catch
+        {
+            // 履歴保存失敗時は送信完了処理を継続する。
         }
     }
 
@@ -289,6 +395,7 @@ public partial class MainWindow : Window
 
         if (completion.IsSuccess)
         {
+            SaveSendHistory(completion);
             if (completion.Settings.PlayAudio && !completion.PlayedRealtime
                 && !string.IsNullOrWhiteSpace(completion.OutputWavPath)
                 && File.Exists(completion.OutputWavPath))
@@ -298,25 +405,25 @@ public partial class MainWindow : Window
 
             var wavLine = completion.Settings.WriteWav && !string.IsNullOrWhiteSpace(completion.OutputWavPath)
                 ? $"WAV: {completion.OutputWavPath}\n"
-                : "WAV: （未出力）\n";
+                : "WAV: (disabled)\n";
             MessageBox.Show(
                 this,
-                "出力が完了しました。\n\n"
-                + $"入力: {completion.Settings.InputFilePath}\n"
+                "Transmission completed.\n\n"
+                + $"Input: {completion.Settings.InputFilePath}\n"
                 + wavLine
-                + $"チャンネル: {completion.Settings.ChannelMode}\n"
-                + $"サブキャリア: {completion.Settings.ActiveSubcarriers}\n"
-                + $"変調: {completion.Settings.ModulationScheme}\n"
-                + $"繰り返し: ×{completion.Settings.BlockInterleaveFactor}\n"
-                + $"デバイス: {completion.Settings.AudioDeviceName}\n"
-                + (completion.PlayedRealtime ? "音声: リアルタイム出力\n" : string.Empty),
+                + $"Channel: {completion.Settings.ChannelMode}\n"
+                + $"Subcarrier: {completion.Settings.ActiveSubcarriers}\n"
+                + $"Modulation: {completion.Settings.ModulationScheme}\n"
+                + $"Interleave: {completion.Settings.BlockInterleaveFactor}\n"
+                + $"Device: {completion.Settings.AudioDeviceName}\n"
+                + (completion.PlayedRealtime ? "Audio: realtime playback\n" : string.Empty),
                 "Onta",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
         }
 
-        MessageBox.Show(this, $"出力に失敗しました。\n{completion.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+        MessageBox.Show(this, $"送信中にエラーが発生しました。\n{completion.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
     private string? ResolveOutputWavPath(SendSettingsSnapshot snap)
@@ -396,3 +503,7 @@ public partial class MainWindow : Window
         }
     }
 }
+
+
+
+

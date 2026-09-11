@@ -1,7 +1,7 @@
-namespace Onta.Core.Tests;
+﻿namespace Onta.Core.Tests;
 
 /// <summary>
-/// テスト用入出力パスの解決です（Onta_core/test/in_files / out_files）。
+/// テスト入出力パス（in_files / out_files）を解決します。
 /// </summary>
 internal static class TestPaths
 {
@@ -9,7 +9,7 @@ internal static class TestPaths
     private static readonly string TestProjectDir = LocateTestProjectDir();
 
     /// <summary>
-    /// 既定の入力 PNG（test/in_files/Sample1.png）を解決します。
+    /// 既定の入力PNG（test/in_files/Sample1.png）を解決します。
     /// </summary>
     public static string ResolveInputPng()
     {
@@ -23,7 +23,7 @@ internal static class TestPaths
     }
 
     /// <summary>
-    /// 出力ディレクトリ（C:\proj\Onta\Onta_core\test\out_files）を解決し、なければ作成します。
+    /// 出力ディレクトリ（test/out_files）を解決し、なければ作成します。
     /// </summary>
     public static string ResolveOutputDir()
     {
@@ -33,7 +33,7 @@ internal static class TestPaths
     }
 
     /// <summary>
-    /// out_files 配下の出力パスを返します。
+    /// out_files 配下の出力ファイルパスを返します。
     /// </summary>
     public static string ResolveOutputPath(string fileName)
     {
@@ -41,7 +41,7 @@ internal static class TestPaths
     }
 
     /// <summary>
-    /// Onta_core.Tests.csproj がある test ディレクトリを探します。
+    /// `Onta_core.Tests.csproj` からテストプロジェクトディレクトリを探索します。
     /// </summary>
     private static string LocateTestProjectDir()
     {
@@ -61,6 +61,7 @@ internal static class TestPaths
         }
 
         throw new DirectoryNotFoundException(
-            $"テストプロジェクトディレクトリ（{projectFile}）が見つかりません。");
+            $"テストプロジェクト ディレクトリが見つかりません: {projectFile}");
     }
 }
+

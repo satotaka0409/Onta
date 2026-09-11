@@ -1,11 +1,11 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// ワウフラッター偏差メーター（中央 0、数値・時間軸なし、0.2 秒スナップショット）。
+/// WOW/Flutter の偏差を左右バーとノブで可視化するメーターです。
 /// </summary>
 public partial class WowFlutterMeter : UserControl
 {
@@ -15,6 +15,9 @@ public partial class WowFlutterMeter : UserControl
 
     private bool _isActive = true;
 
+    /// <summary>
+    /// メーターを初期化します。
+    /// </summary>
     public WowFlutterMeter()
     {
         InitializeComponent();
@@ -23,7 +26,7 @@ public partial class WowFlutterMeter : UserControl
     }
 
     /// <summary>
-    /// false のときメーターを暗くし、更新を停止します（モノラル時の R 用）。
+    /// メーターを有効/無効化します。無効化時は値をリセットします。
     /// </summary>
     public bool IsActive
     {
@@ -47,6 +50,7 @@ public partial class WowFlutterMeter : UserControl
         }
     }
 
+    /// <summary>表示チャネルラベルです（例: L/R）。</summary>
     public string ChannelLabel
     {
         get => _channelLabel;
@@ -57,6 +61,7 @@ public partial class WowFlutterMeter : UserControl
         }
     }
 
+    /// <summary>表示レンジ（±%）です。</summary>
     public double RangePercent
     {
         get => _rangePercent;
@@ -67,8 +72,13 @@ public partial class WowFlutterMeter : UserControl
         }
     }
 
+    /// <summary>現在の表示値（%）です。</summary>
     public double ValuePercent => _valuePercent;
 
+    /// <summary>
+    /// 速度比を % 偏差へ変換して表示します。
+    /// </summary>
+    /// <param name="speedRatio">速度比（1.0 が基準）。</param>
     public void SetFromSpeedRatio(double speedRatio)
     {
         if (!_isActive)
@@ -79,6 +89,10 @@ public partial class WowFlutterMeter : UserControl
         AddSample((speedRatio - 1.0) * 100.0);
     }
 
+    /// <summary>
+    /// 直接 % 値を追加して表示を更新します。
+    /// </summary>
+    /// <param name="valuePercent">表示する偏差値（%）。</param>
     public void AddSample(double valuePercent)
     {
         if (!_isActive)
@@ -90,6 +104,9 @@ public partial class WowFlutterMeter : UserControl
         UpdateVisual();
     }
 
+    /// <summary>
+    /// 表示値を 0 に戻します。
+    /// </summary>
     public void Clear()
     {
         _valuePercent = 0;
@@ -138,3 +155,7 @@ public partial class WowFlutterMeter : UserControl
         Canvas.SetLeft(Knob, knobX);
     }
 }
+
+
+
+

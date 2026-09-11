@@ -1,10 +1,10 @@
-using Onta.Core;
+﻿using Onta.Core;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ステレオ / 9サブキャリア / QPSK の符号化→WAV→復号ラウンドトリップ試験です。
+/// ステレオ 9SC / QPSK の往復テストです。
 /// </summary>
 public sealed class OntaTest1
 {
@@ -45,3 +45,4 @@ public sealed class OntaTest1
             $"[DECODE-STAGE-RATE] test={testTitle} viterbiShare={viterbiPercent:F2}% turboShare={turboPercent:F2}%");
     }
 }
+

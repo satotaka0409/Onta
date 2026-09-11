@@ -1,12 +1,12 @@
-using Onta.Core;
+﻿using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ステレオ / 18サブキャリア / 16QAM に、2% ホワイトノイズと 1% ワウフラッターを付与したラウンドトリップ試験です。
-/// ワウはメモリ上の可逆写像で付与し、復号時に同一パラメータで逆補正します。
+/// ステレオ 18SC / 16QAM の劣化耐性往復テストです。
+/// ホワイトノイズと wow/flutter を付与して復元可否を検証します。
 /// </summary>
 public sealed class OntaTest3
 {
@@ -21,7 +21,7 @@ public sealed class OntaTest3
     [Fact]
     public void EncodeDecode_QrPng_MatchesOriginal_Stereo18Sc16Qam_WowOnly()
     {
-        // 可逆ワウ写像なら、ノイズ無しでは完全復元できる（ワウ残差≈0の確認）。
+        // wow/flutter のみを付与した条件で往復確認する。
         RoundTripWithImpairments(
             whiteNoiseLevel: 0.0,
             wowAmount: WowFlutterAmount,
@@ -33,7 +33,7 @@ public sealed class OntaTest3
     [Fact]
     public void EncodeDecode_QrPng_MatchesOriginal_Stereo18Sc16Qam_WithNoiseAndWowFlutter()
     {
-        // L/R LLR 合成 + ソフト出力畳み込み → ターボ軟入力で 2% AWGN を吸収する。
+        // wow/flutter に加えて 2% AWGN を重畳する。
         RoundTripWithImpairments(
             whiteNoiseLevel: WhiteNoiseLevel,
             wowAmount: WowFlutterAmount,
@@ -61,7 +61,7 @@ public sealed class OntaTest3
         var leftRef = ToFloat(leftSamples);
         var rightRef = ToFloat(rightSamples.Length == 0 ? leftSamples : rightSamples);
 
-        // 中間 WAV 量子化を挟まず、符号化サンプルへ直接ワウ→ノイズを付与する。
+        // 中間WAVを作る前にサンプルへ劣化を適用する。
         double wowPhase = 0.0;
         double flutterPhase = 0.0;
         Complex[] leftOut = leftSamples;
@@ -78,7 +78,7 @@ public sealed class OntaTest3
 
         var leftF = ToFloat(leftOut);
         var rightF = ToFloat(rightOut.Length == 0 ? leftOut : rightOut);
-        // ピーク正規化後に 3% を載せる（正規化前だと小振幅 OFDM に対し実効 SNR が極端に悪化する）。
+        // 正規化後にノイズを重畳して受信側SNRを下げる。
         NormalizeToPeak(leftF, rightF, (float)Profile.SamplePeak);
         if (whiteNoiseLevel > 0.0)
         {
@@ -175,12 +175,12 @@ public sealed class OntaTest3
             src[i] = Math.Sin(2.0 * Math.PI * 440.0 * i / sampleRate);
         }
 
-        // 可逆最近傍（全射写像）
+        // 最近傍補間は高精度で往復できることを確認する。
         var warpedNn = WowFlutterWarp.Apply(src, sampleRate, amount, wowPhase, flutterPhase);
         var restoredNn = WowFlutterWarp.Correct(warpedNn, sampleRate, amount, wowPhase, flutterPhase);
         Assert.True(Mse(src, restoredNn) < 1e-30, $"nearest MSE={Mse(src, restoredNn):E4}");
 
-        // オーバーサンプル線形（付与↔逆補正のペア）
+        // オーバーサンプル線形補間も許容誤差内で復元できることを確認する。
         var warpedLin = WowFlutterWarp.ApplyOversampledLinear(
             src, sampleRate, amount, wowPhase, flutterPhase, oversample: 8);
         var restoredLin = WowFlutterWarp.CorrectOversampledLinear(
@@ -286,3 +286,4 @@ public sealed class OntaTest3
         return count;
     }
 }
+

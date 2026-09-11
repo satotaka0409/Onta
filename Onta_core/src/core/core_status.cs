@@ -1,9 +1,9 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Onta.Core;
 
 /// <summary>
-/// 送受信コアが現在処理中のフレーム種別です（画面仕様の FH/BH/BD）。
+/// 処理中フレーム種別を表します。
 /// </summary>
 public enum CoreFrameKind : byte
 {
@@ -13,20 +13,19 @@ public enum CoreFrameKind : byte
 }
 
 /// <summary>
-/// 1. 現在受信中の FH/BLOCK と進捗率です。
+/// 進捗表示に必要な最小情報を保持します。
 /// </summary>
 public readonly record struct CoreProgressInfo(
     CoreFrameKind CurrentFrame,
-    /// <summary>FH のときは -1。BH/BD はブロック番号。</summary>
     int CurrentBlockIndex,
     int PassIndex,
     int AcceptedBlockCount,
     int TotalBlockCount,
-    /// <summary>0〜100。</summary>
+    /// <summary>0 から 100 の進捗率です。</summary>
     double ProgressPercent)
 {
     /// <summary>
-    /// 未開始／待機時の既定進捗です。
+    /// 待機状態を表す初期値です。
     /// </summary>
     public static CoreProgressInfo Idle { get; } = new(
         CurrentFrame: CoreFrameKind.Fh,
@@ -38,25 +37,25 @@ public readonly record struct CoreProgressInfo(
 }
 
 /// <summary>
-/// 2. 直近のエラー率（0〜100%）です。
+/// 最新エラー率と対象フレーム種別を保持します。
 /// </summary>
 public readonly record struct CoreErrorRateInfo(
     double LatestPercent,
     CoreFrameKind FrameKind)
 {
     /// <summary>
-    /// 未開始／待機時の既定エラー率です。
+    /// 初期エラー率情報です。
     /// </summary>
     public static CoreErrorRateInfo Idle { get; } = new(0, CoreFrameKind.Fh);
 }
 
 /// <summary>
-/// I-Q 平面上の1点です（等化後データキャリア）。
+/// I/Q 平面上の1サンプルです。
 /// </summary>
 public readonly record struct CoreIqSample(double I, double Q);
 
 /// <summary>
-/// 3. I-Q グラフ用の直近サンプル列です。
+/// IQグラフ描画に必要な系列情報です。
 /// </summary>
 public readonly record struct CoreIqGraphInfo(
     IReadOnlyList<CoreIqSample> Points,
@@ -64,18 +63,18 @@ public readonly record struct CoreIqGraphInfo(
     ModulationScheme ModulationScheme)
 {
     /// <summary>
-    /// サンプル未取得時の空グラフです。
+    /// 空状態のIQグラフ情報です。
     /// </summary>
     public static CoreIqGraphInfo Empty { get; } = new(Array.Empty<CoreIqSample>(), 0, ModulationScheme.Bpsk);
 }
 
 /// <summary>
-/// FFT グラフの 1 ビン分サンプルです。
+/// FFTグラフ描画用の1ビンサンプルです。
 /// </summary>
 public readonly record struct CoreFftSample(int Bin, double MagnitudeDb);
 
 /// <summary>
-/// FFT グラフ用の直近フレームです（正周波数側のみ）。
+/// 左右FFTの描画データとモード情報を保持します。
 /// </summary>
 public readonly record struct CoreFftGraphInfo(
     IReadOnlyList<CoreFftSample> LeftPoints,
@@ -84,7 +83,7 @@ public readonly record struct CoreFftGraphInfo(
     int FftSize)
 {
     /// <summary>
-    /// サンプル未取得時の空 FFT グラフです。
+    /// 空状態のFFTグラフ情報です。
     /// </summary>
     public static CoreFftGraphInfo Empty { get; } = new(
         Array.Empty<CoreFftSample>(),
@@ -94,7 +93,7 @@ public readonly record struct CoreFftGraphInfo(
 }
 
 /// <summary>
-/// 画面がコアスレッドへ問い合わせる実行状況のスナップショットです。
+/// UI表示向けに集約した実行状態です。
 /// </summary>
 public readonly record struct CoreExecutionStatus(
     bool IsRunning,
@@ -112,7 +111,7 @@ public readonly record struct CoreExecutionStatus(
     string? LastError)
 {
     /// <summary>
-    /// 未開始／待機時の既定実行状況です。
+    /// 待機状態の初期実行ステータスです。
     /// </summary>
     public static CoreExecutionStatus Idle { get; } = new(
         IsRunning: false,
@@ -131,7 +130,7 @@ public readonly record struct CoreExecutionStatus(
 }
 
 /// <summary>
-/// コアスレッドが保持し、画面からの問い合わせでスナップショットを返す実行状況バッファです。
+/// 実行状態をスレッド安全に更新・参照する状態ボードです。
 /// </summary>
 public sealed class CoreExecutionStatusBoard
 {
@@ -152,7 +151,7 @@ public sealed class CoreExecutionStatusBoard
     private CoreExecutionStatus _status = CoreExecutionStatus.Idle;
 
     /// <summary>
-    /// 現在保持しているファイル名表示文字列です。
+    /// 現在の対象ファイル名を返します。
     /// </summary>
     public string FileName
     {
@@ -166,9 +165,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// I-Q リングバッファ容量を指定して実行状況ボードを初期化します。
+    /// 状態ボードを生成します。
     /// </summary>
-    /// <param name="iqCapacity">I-Q サンプルの保持上限。</param>
+    /// <param name="iqCapacity">保持するIQサンプルの最大数。</param>
     public CoreExecutionStatusBoard(int iqCapacity = DefaultIqCapacity)
     {
         if (iqCapacity <= 0)
@@ -182,9 +181,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 実行状況・グラフバッファを待機状態へ戻します。
+    /// 実行状態を初期化します。
     /// </summary>
-    /// <param name="fileName">表示用ファイル名。</param>
+    /// <param name="fileName">初期表示するファイル名。</param>
     public void Reset(string fileName = "(未受信)")
     {
         lock (_sync)
@@ -201,9 +200,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 実行開始状態へ遷移し、グラフバッファをクリアします。
+    /// 新しい処理開始時の状態へ遷移します。
     /// </summary>
-    /// <param name="fileName">表示用ファイル名。</param>
+    /// <param name="fileName">対象ファイル名。</param>
     /// <param name="fileSizeText">表示用ファイルサイズ文字列。</param>
     /// <param name="blockCountText">表示用ブロック数文字列。</param>
     public void BeginRun(string fileName, string fileSizeText = "-", string blockCountText = "-")
@@ -235,9 +234,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// ファイル名・サイズ・ブロック数の表示文字列を更新します。
+    /// ファイル情報表示を更新します。
     /// </summary>
-    /// <param name="fileName">表示用ファイル名。</param>
+    /// <param name="fileName">対象ファイル名。</param>
     /// <param name="fileSizeText">表示用ファイルサイズ文字列。</param>
     /// <param name="blockCountText">表示用ブロック数文字列。</param>
     public void SetFileInfo(string fileName, string fileSizeText, string blockCountText)
@@ -254,9 +253,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// FH/BLOCK 進捗情報を更新します。
+    /// 進捗情報を更新します。
     /// </summary>
-    /// <param name="progress">更新する進捗スナップショット。</param>
+    /// <param name="progress">更新する進捗情報。</param>
     public void SetProgress(CoreProgressInfo progress)
     {
         lock (_sync)
@@ -266,10 +265,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 直近エラー率（%）と対象フレーム種別を更新します。
+    /// エラー率と対象フレーム種別を更新します。
     /// </summary>
-    /// <param name="percent">エラー率（0〜100）。</param>
-    /// <param name="frameKind">対象フレーム種別（FH/BH/BD）。</param>
+    /// <param name="percent">エラー率（0 から 100）。</param>
+    /// <param name="frameKind">エラー率の対象フレーム種別。</param>
     public void SetErrorRate(double percent, CoreFrameKind frameKind)
     {
         lock (_sync)
@@ -282,9 +281,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// エラー率グラフ用のフレーム種別だけを差し替えます。
+    /// エラー率表示の対象フレーム種別のみ更新します。
     /// </summary>
-    /// <param name="frameKind">差し替えるフレーム種別。</param>
+    /// <param name="frameKind">対象フレーム種別。</param>
     public void SetErrorFrameKind(CoreFrameKind frameKind)
     {
         lock (_sync)
@@ -297,10 +296,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// ワウ・フラッター推定値（L/R、%）を更新します。
+    /// WOW/Flutter 推定値を更新します。
     /// </summary>
-    /// <param name="leftPercent">L 側推定値（%）。</param>
-    /// <param name="rightPercent">R 側推定値（%）。</param>
+    /// <param name="leftPercent">左チャネル推定値（%）。</param>
+    /// <param name="rightPercent">右チャネル推定値（%）。</param>
     public void SetWowFlutterPercent(double leftPercent, double rightPercent)
     {
         lock (_sync)
@@ -314,7 +313,7 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 等化後シンボル 1 点を I-Q リングへ追加します。
+    /// 単一IQサンプルを追加します。
     /// </summary>
     /// <param name="equalizedSymbol">等化後の複素シンボル。</param>
     public void PushIq(Complex equalizedSymbol)
@@ -323,10 +322,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// I/Q 座標 1 点をリングバッファへ追加します。
+    /// I/Q 成分を指定して単一サンプルを追加します。
     /// </summary>
-    /// <param name="i">I 成分。</param>
-    /// <param name="q">Q 成分。</param>
+    /// <param name="i">同相成分 I。</param>
+    /// <param name="q">直交成分 Q。</param>
     public void PushIq(double i, double q)
     {
         lock (_sync)
@@ -341,9 +340,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 等化後シンボル列をまとめて I-Q リングへ追加します。
+    /// 複数のIQサンプルをまとめて追加します。
     /// </summary>
-    /// <param name="equalizedSymbols">追加する等化後シンボル列。</param>
+    /// <param name="equalizedSymbols">等化後シンボル列。</param>
     public void PushIqMany(ReadOnlySpan<Complex> equalizedSymbols)
     {
         lock (_sync)
@@ -362,10 +361,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// I-Q 表示を指定シンボル列で置き換え、変調方式も更新します。
+    /// IQ表示用フレームを丸ごと差し替えます。
     /// </summary>
-    /// <param name="equalizedSymbols">表示する等化後シンボル列。</param>
-    /// <param name="modulationScheme">表示用の変調方式。</param>
+    /// <param name="equalizedSymbols">等化後シンボル列。</param>
+    /// <param name="modulationScheme">表示対象の変調方式。</param>
     public void SetIqFrame(ReadOnlySpan<Complex> equalizedSymbols, ModulationScheme modulationScheme)
     {
         lock (_sync)
@@ -391,10 +390,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// FFT 周波数ビンから正周波数側の dB 振幅を左右どちらかへ格納します。
+    /// FFT表示用フレームを更新します。
     /// </summary>
-    /// <param name="freqBins">FFT 周波数ビン列。</param>
-    /// <param name="isRightChannel">R チャンネルへ格納するか。</param>
+    /// <param name="freqBins">周波数ビン列。</param>
+    /// <param name="isRightChannel">右チャネル更新時は true。</param>
     public void SetFftFrame(ReadOnlySpan<Complex> freqBins, bool isRightChannel)
     {
         lock (_sync)
@@ -435,9 +434,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// FFT グラフのステレオ表示可否を設定します。
+    /// FFTのステレオ表示モードを設定します。
     /// </summary>
-    /// <param name="isStereo">ステレオ表示にするか。</param>
+    /// <param name="isStereo">ステレオ表示にする場合 true。</param>
     public void SetFftStereoMode(bool isStereo)
     {
         lock (_sync)
@@ -451,10 +450,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 実行完了（正常／異常）を記録し、実行中フラグを下ろします。
+    /// 処理完了状態へ遷移します。
     /// </summary>
-    /// <param name="faulted">異常完了なら <see langword="true"/>。</param>
-    /// <param name="lastError">直近エラーメッセージ。省略可。</param>
+    /// <param name="faulted">失敗終了時は true。</param>
+    /// <param name="lastError">失敗理由メッセージ。</param>
     public void Complete(bool faulted, string? lastError = null)
     {
         lock (_sync)
@@ -477,9 +476,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 直近エラーメッセージを更新します。
+    /// 最終エラーメッセージを更新します。
     /// </summary>
-    /// <param name="lastError">直近エラーメッセージ。無い場合は null。</param>
+    /// <param name="lastError">設定するエラー文字列。</param>
     public void SetLastError(string? lastError)
     {
         lock (_sync)
@@ -489,9 +488,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 画面スレッドからの問い合わせ用スナップショットを返します。
+    /// 現在状態を描画用データ付きで取得します。
     /// </summary>
-    /// <returns>進捗・エラー率・I-Q/FFT を含む実行状況。</returns>
+    /// <returns>現在の実行状態。</returns>
     public CoreExecutionStatus Query()
     {
         lock (_sync)
@@ -512,9 +511,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// I-Q リング容量が不足していれば拡張します（呼び出し側でロック済み想定）。
+    /// EnsureIqCapacityUnlocked を実行します。
     /// </summary>
-    /// <param name="required">必要な最小容量。</param>
+    /// <param name="required">required を指定します。</param>
     private void EnsureIqCapacityUnlocked(int required)
     {
         if (required <= _iqRing.Length)
@@ -528,10 +527,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// FFT ビン配列の容量が不足していれば左右どちらかを拡張します。
+    /// EnsureFftCapacityUnlocked を実行します。
     /// </summary>
-    /// <param name="required">必要な最小ビン数。</param>
-    /// <param name="isRightChannel">R 側を拡張するか。</param>
+    /// <param name="required">required を指定します。</param>
+    /// <param name="isRightChannel">isRightChannel を指定します。true で有効です。</param>
     private void EnsureFftCapacityUnlocked(int required, bool isRightChannel)
     {
         var target = isRightChannel ? _fftRightBins : _fftLeftBins;
@@ -553,9 +552,9 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// リング上の I-Q 点を時系列順の配列へコピーします。
+    /// CopyIqPointsUnlocked を実行します。
     /// </summary>
-    /// <returns>時系列順の I-Q 点列（空なら空配列）。</returns>
+    /// <returns>処理結果。</returns>
     private CoreIqSample[] CopyIqPointsUnlocked()
     {
         if (_iqCount == 0)
@@ -574,10 +573,10 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 左右いずれかの FFT 点列をコピーして返します。
+    /// CopyFftPointsUnlocked を実行します。
     /// </summary>
-    /// <param name="isRightChannel">R 側をコピーするか。</param>
-    /// <returns>コピーした FFT 点列（空なら空配列）。</returns>
+    /// <param name="isRightChannel">isRightChannel を指定します。true で有効です。</param>
+    /// <returns>処理結果。</returns>
     private CoreFftSample[] CopyFftPointsUnlocked(bool isRightChannel)
     {
         var count = isRightChannel ? _fftRightCount : _fftLeftCount;
@@ -592,3 +591,4 @@ public sealed class CoreExecutionStatusBoard
         return points;
     }
 }
+

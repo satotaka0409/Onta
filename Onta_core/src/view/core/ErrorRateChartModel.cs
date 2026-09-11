@@ -1,11 +1,11 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using LiveChartsCore;
 using LiveChartsCore.Defaults;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
 using SkiaSharp;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 public enum ErrorRateFrameKind
 {
@@ -15,7 +15,7 @@ public enum ErrorRateFrameKind
 }
 
 /// <summary>
-/// LiveCharts2 によるエラー率（%）グラフのモデルです（グレー基調）。
+/// 受信フレーム種別ごとのエラー率推移を表示するチャートモデルです。
 /// </summary>
 public sealed class ErrorRateChartModel
 {
@@ -27,7 +27,7 @@ public sealed class ErrorRateChartModel
     private int _firstSampleIndex;
     private int _nextSampleIndex;
 
-    // FH/BH/BD を見分けやすくする色分け。
+    // 系列と軸の表示色
     private static readonly SKColor FhColor = new(186, 215, 255);
     private static readonly SKColor BhColor = new(240, 204, 140);
     private static readonly SKColor BdColor = new(166, 221, 176);
@@ -71,7 +71,7 @@ public sealed class ErrorRateChartModel
         [
             new Axis
             {
-                Name = "エラー率 (%)",
+                Name = "エラー率(%)",
                 MinLimit = 0,
                 MaxLimit = 100,
                 Labeler = value => $"{value:0}",
@@ -87,7 +87,7 @@ public sealed class ErrorRateChartModel
         [
             new Axis
             {
-                Name = "属性",
+                Name = "種別",
                 Labeler = LabelForSample,
                 MinStep = 1,
                 TextSize = 8,
@@ -108,7 +108,7 @@ public sealed class ErrorRateChartModel
     public double LatestPercent { get; private set; }
 
     /// <summary>
-    /// エラー率サンプル（0〜100%）を追加します。
+    /// サンプルを追加し、保持上限を超えた古いデータを間引きます。
     /// </summary>
     public void AddSample(double errorRatePercent, ErrorRateFrameKind kind)
     {
@@ -179,3 +179,5 @@ public sealed class ErrorRateChartModel
         LatestPercent = 0;
     }
 }
+
+

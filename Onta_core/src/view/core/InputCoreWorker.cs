@@ -1,10 +1,10 @@
-using Onta.Core;
+﻿using Onta.Core;
+using Onta.History;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 受信コア処理を UI スレッドと分離して実行し、問い合わせ時に進捗を返します。
-/// 送信用 CoreBackgroundHost とは別スレッドで動かし、送信待ちで受信が詰まらないようにします。
+/// WAV入力の段階的デコードをバックグラウンドで実行するワーカーです。
 /// </summary>
 internal sealed class InputCoreWorker
 {
@@ -17,11 +17,13 @@ internal sealed class InputCoreWorker
     private string? _lastError;
 
     /// <summary>
-    /// FH 確定時（ファイル名, サイズ表示文字列, ブロック数）。
-    /// ワーカースレッドから発火するため、購読側で UI スレッドへマーシャリングすること。
+    /// ファイルヘッダー（名前/サイズ/ブロック数）確定時に通知します。
     /// </summary>
     public event Action<string, string, int>? FileHeaderReady;
 
+    /// <summary>
+    /// 現在デコード実行中かどうかを返します。
+    /// </summary>
     public bool IsRunning
     {
         get
@@ -33,6 +35,13 @@ internal sealed class InputCoreWorker
         }
     }
 
+    /// <summary>
+    /// WAVデコード処理を開始します。
+    /// </summary>
+    /// <param name="wavPath">入力WAVパス。</param>
+    /// <param name="profile">デコードに使用するプロファイル。</param>
+    /// <param name="outputDirectory">復元ファイル出力先。null時は既定フォルダー。</param>
+    /// <returns>開始に成功した場合 true。</returns>
     public bool TryStartWavDecode(string wavPath, FileWavCodecProfile profile, string? outputDirectory = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(wavPath);
@@ -50,7 +59,7 @@ internal sealed class InputCoreWorker
             }
 
             var state = new ProgressiveDecodeState();
-            // ファイル情報は FH 確定まで未受信のまま（WAV 名は出さない）。
+            // 初期状態を受信待ちとして公開する。
             state.StatusBoard.BeginRun("(未受信)");
             state.StatusBoard.SetProgress(new CoreProgressInfo(
                 CurrentFrame: CoreFrameKind.Fh,
@@ -69,7 +78,7 @@ internal sealed class InputCoreWorker
             _lastError = null;
             _completionPending = false;
 
-            // 送信ホストとは独立（LongRunning）。送信の符号化／再生待ちで受信がブロックされない。
+            // 長時間処理をUIスレッドから分離して実行する。
             _worker = Task.Factory.StartNew(
                 () => RunWavDecode(wavPath, profile, state, outDir),
                 CancellationToken.None,
@@ -80,8 +89,9 @@ internal sealed class InputCoreWorker
     }
 
     /// <summary>
-    /// 1.進捗 2.エラー率 3.I-Q グラフ情報をまとめて問い合わせます。
+    /// 現在の実行状態を取得します。
     /// </summary>
+    /// <returns>Core 実行状態。</returns>
     public CoreExecutionStatus QueryExecutionStatus()
     {
         lock (_sync)
@@ -90,6 +100,13 @@ internal sealed class InputCoreWorker
         }
     }
 
+    /// <summary>
+    /// 完了結果を1回だけ取り出します。
+    /// </summary>
+    /// <param name="success">成功した場合 true。</param>
+    /// <param name="message">完了メッセージ。</param>
+    /// <param name="outputPath">出力ファイルパス。</param>
+    /// <returns>完了結果が存在した場合 true。</returns>
     public bool TryConsumeCompletion(out bool success, out string message, out string? outputPath)
     {
         lock (_sync)
@@ -105,13 +122,58 @@ internal sealed class InputCoreWorker
             _completionPending = false;
             success = _decodedBytes is not null && _lastError is null;
             message = success
-                ? "受信復号が完了しました。"
-                : (_lastError ?? "受信復号に失敗しました。");
+                ? "Receive completed successfully."
+                : (_lastError ?? "Receive failed.");
             outputPath = _lastDecodedPath;
             return true;
         }
     }
 
+    /// <summary>
+    /// 収集済み orphan 情報をスナップショットとして返します。
+    /// </summary>
+    /// <returns>orphan 履歴配列。</returns>
+    public ReceiveOrphanHistory[] CaptureOrphans()
+    {
+        lock (_sync)
+        {
+            if (_state is null)
+            {
+                return Array.Empty<ReceiveOrphanHistory>();
+            }
+
+            var result = new List<ReceiveOrphanHistory>(_state.OrphanPayloadByHash.Count);
+            foreach (var pair in _state.OrphanPayloadByHash)
+            {
+                var detail = _state.OrphanDetailByHash.TryGetValue(pair.Key, out var text)
+                    ? text
+                    : string.Empty;
+                result.Add(new ReceiveOrphanHistory(pair.Key, detail, pair.Value.ToArray()));
+            }
+
+            return result.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// 復元済みペイロードのコピーを返します。
+    /// </summary>
+    /// <returns>復元バイト列。未完了時は null。</returns>
+    public byte[]? CaptureDecodedPayload()
+    {
+        lock (_sync)
+        {
+            return _decodedBytes?.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// WAVを読み込み、段階的デコードして結果を保存します。
+    /// </summary>
+    /// <param name="wavPath">入力WAVパス。</param>
+    /// <param name="profile">デコードプロファイル。</param>
+    /// <param name="state">進行状態オブジェクト。</param>
+    /// <param name="outputDirectory">出力フォルダー。</param>
     private void RunWavDecode(
         string wavPath,
         FileWavCodecProfile profile,
@@ -138,8 +200,7 @@ internal sealed class InputCoreWorker
                 TotalBlockCount: 0,
                 ProgressPercent: 3.0));
 
-            // テスト往復と同じく、一括 WAV 受信はまず無補正で FH を素早く確定する。
-            // （correctWow=true だと FH 前のワウ全探索で UI が数分固まる）
+            // 1回のフルデコードで結果確定まで処理する。
             var status = codec.DecodePcmSamplesProgressive(
                 left,
                 right,
@@ -155,7 +216,7 @@ internal sealed class InputCoreWorker
                 var outName = !string.IsNullOrWhiteSpace(state.ReceivedFileName)
                     ? Path.GetFileName(state.ReceivedFileName)
                     : Path.GetFileNameWithoutExtension(wavPath) + "_rx.bin";
-                // FH 名に拡張子が無い／危険なパス要素がある場合は安全なファイル名へ。
+                // ファイル名として無効な文字を除去する。
                 outName = string.Join("_", outName.Split(Path.GetInvalidFileNameChars()));
                 if (string.IsNullOrWhiteSpace(outName))
                 {
@@ -199,3 +260,7 @@ internal sealed class InputCoreWorker
         }
     }
 }
+
+
+
+

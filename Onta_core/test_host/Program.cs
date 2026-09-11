@@ -1,10 +1,10 @@
-using Onta.Core;
+﻿using Onta.Core;
 using Onta.Core.Tests;
 
 namespace Onta.Core.TestHost;
 
 /// <summary>
-/// デバッガ用ホストです。vstest を介さずテストメソッドを直接実行し、ブレークポイントを効かせます。
+/// デバッグ実行用テストホストです。引数で対象テストを切り替えます。
 /// </summary>
 internal static class Program
 {
@@ -47,3 +47,4 @@ internal static class Program
         }
     }
 }
+

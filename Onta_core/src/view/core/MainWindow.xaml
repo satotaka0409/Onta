@@ -1,0 +1,59 @@
+﻿<Window x:Class="Onta.View.Core.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Onta.View.Core"
+        xmlns:hist="clr-namespace:Onta.View.History"
+        Title="Onta"
+        Width="1280"
+        Height="1024"
+        MinWidth="1100"
+        MinHeight="860"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BrushBg}">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="200"/>
+            <RowDefinition Height="*"
+                           MinHeight="190"/>
+            <RowDefinition Height="0.7*"
+                           MinHeight="140"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Style="{StaticResource PanelBorder}"
+                Margin="0,0,0,8">
+            <local:SendPanel x:Name="SendPanel"/>
+        </Border>
+
+        <Border Grid.Row="1"
+                Style="{StaticResource PanelBorder}"
+                Margin="0,0,0,8">
+            <local:ReceivePanel x:Name="ReceivePanel"/>
+        </Border>
+
+        <Border Grid.Row="2"
+                Style="{StaticResource PanelBorder}"
+                Padding="4">
+            <TabControl x:Name="BottomTabs"
+                        BorderThickness="0"
+                        Background="Transparent">
+                <TabItem x:Name="EstimateTab"
+                         Header="送信詳細">
+                    <local:FileEstimatePanel x:Name="EstimatePanel"
+                                             Margin="8"/>
+                </TabItem>
+                <TabItem x:Name="ReceiveDetailTab"
+                         Header="受信詳細">
+                    <local:ReceiveDetailPanel x:Name="ReceiveDetailPanel"
+                                              Margin="8"/>
+                </TabItem>
+                <TabItem x:Name="HistoryTab"
+                         Header="履歴">
+                    <hist:HistoryPanel x:Name="HistoryPanel"
+                                       Margin="8"/>
+                </TabItem>
+            </TabControl>
+        </Border>
+    </Grid>
+</Window>
+

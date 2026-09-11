@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Intrinsics.X86;
 using Xunit;
@@ -189,10 +189,11 @@ public sealed class SimdBenchmarkTest
         var random = new Random(1234567);
         for (var i = 0; i < values.Length; i++)
         {
-            // 64QAM 軸スケール近傍を広くカバー。
+            // 64QAM の典型振幅域をカバーする。
             values[i] = (random.NextDouble() * 18.0) - 9.0;
         }
 
         return values;
     }
 }
+

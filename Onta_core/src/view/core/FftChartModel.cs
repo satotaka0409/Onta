@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using LiveChartsCore;
 using LiveChartsCore.Defaults;
 using LiveChartsCore.SkiaSharpView;
@@ -6,10 +6,10 @@ using LiveChartsCore.SkiaSharpView.Painting;
 using Onta.Core;
 using SkiaSharp;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 受信 FFT スペクトル表示用の LiveCharts2 モデルです。
+/// 受信FFTスペクトルを描画するためのチャートモデルです。
 /// </summary>
 public sealed class FftChartModel
 {
@@ -128,3 +128,5 @@ public sealed class FftChartModel
         _rightSeries.IsVisible = false;
     }
 }
+
+

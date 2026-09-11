@@ -1,12 +1,12 @@
-using Onta.Core;
+﻿using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// モノラル / 27サブキャリア / QPSK に、3% ホワイトノイズと 1% ワウフラッターを付与したラウンドトリップ試験です。
-/// ワウはメモリ上の可逆写像で付与し、復号時に同一パラメータで逆補正します。
+/// モノラル 27SC / QPSK の劣化耐性往復テストです。
+/// ホワイトノイズと wow/flutter を付与して復元可否を検証します。
 /// </summary>
 public sealed class OntaTest4
 {
@@ -49,7 +49,7 @@ public sealed class OntaTest4
         var leftRef = ToFloat(leftSamples);
         var rightRef = rightSamples.Length == 0 ? Array.Empty<float>() : ToFloat(rightSamples);
 
-        // 中間 WAV 量子化を挟まず、符号化サンプルへ直接ワウ→ノイズを付与する。
+        // 中間WAVを作る前にサンプルへ劣化を適用する。
         double wowPhase = 0.0;
         double flutterPhase = 0.0;
         Complex[] leftOut = leftSamples;
@@ -66,7 +66,7 @@ public sealed class OntaTest4
 
         var leftF = ToFloat(leftOut);
         var rightF = rightOut.Length == 0 ? Array.Empty<float>() : ToFloat(rightOut);
-        // ピーク正規化後にノイズを載せる（正規化前だと小振幅 OFDM に対し実効 SNR が極端に悪化する）。
+        // 正規化後にノイズを重畳して受信側SNRを下げる。
         if (rightF.Length == 0)
         {
             NormalizeToPeakMono(leftF, (float)Profile.SamplePeak);
@@ -271,3 +271,4 @@ public sealed class OntaTest4
         return count;
     }
 }
+

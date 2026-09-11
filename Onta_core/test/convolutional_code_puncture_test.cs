@@ -1,4 +1,4 @@
-using Onta.Core;
+﻿using Onta.Core;
 using Xunit;
 
 namespace Onta.Core.Tests;
@@ -37,3 +37,4 @@ public sealed class ConvolutionalCodePunctureTests
         Assert.Equal(source, decoded);
     }
 }
+

@@ -1,16 +1,15 @@
-using System.Numerics;
+﻿using System.Numerics;
 using NAudio.Wave;
 using Onta.Core;
 
-namespace Onta.View;
+namespace Onta.View.Core;
 
 /// <summary>
-/// 符号化中の PCM を NAudio 経由でリアルタイム再生します。
-/// エンコードが再生より速い場合はバッファ空きを待って分割投入します。
+/// PCM チャンクを逐次キューイングしてリアルタイム再生するプレイヤーです。
 /// </summary>
 internal sealed class RealtimePcmPlayer : IDisposable
 {
-    /// <summary>1回の AddSamples 上限（約 100ms @ 44.1kHz）。大きな BD チャンクの Buffer full を防ぐ。</summary>
+    /// <summary>1回に変換・投入する最大サンプル数です。</summary>
     private const int MaxSliceSamples = 4410;
 
     private readonly object _sync = new();
@@ -22,13 +21,18 @@ internal sealed class RealtimePcmPlayer : IDisposable
     private double _scale = 1.0;
     private bool _disposed;
 
+    /// <summary>
+    /// 破棄済みかどうかを返します。
+    /// </summary>
     public bool IsDisposed => _disposed;
 
-    /// <summary>再生を開始します。</summary>
-    /// <param name="deviceNumber">NAudio デバイス番号（-1=既定）。</param>
-    /// <param name="sampleRate">サンプリング周波数。</param>
-    /// <param name="channelMode">モノラル / ステレオ。</param>
-    /// <param name="samplePeak">PCM 量子化時のピーク目標（既存 WAV 出力と揃える）。</param>
+    /// <summary>
+    /// 再生デバイスとフォーマットを初期化して再生を開始します。
+    /// </summary>
+    /// <param name="deviceNumber">出力デバイス番号。</param>
+    /// <param name="sampleRate">サンプルレート。</param>
+    /// <param name="channelMode">モノラル/ステレオ。</param>
+    /// <param name="samplePeak">出力振幅スケール。</param>
     public void Start(int deviceNumber, int sampleRate, Onta.Core.ChannelMode channelMode, double samplePeak)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -36,12 +40,12 @@ internal sealed class RealtimePcmPlayer : IDisposable
 
         _channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
         _sampleRate = Math.Max(1, sampleRate);
-        // リアルタイムでは全体ピークが未知のため、SamplePeak をそのまま振幅スケールに使う。
+        // クリップを避けるため再生振幅を安全域に制限する。
         _scale = Math.Clamp(samplePeak <= 0.0 ? 0.8 : samplePeak, 0.05, 1.0);
         var format = new WaveFormat(_sampleRate, 16, _channels);
         _buffer = new BufferedWaveProvider(format)
         {
-            // 長尺ブロックでも空き待ちできるよう余裕を持たせる。
+            // 長時間再生に備えてバッファを十分確保する。
             BufferDuration = TimeSpan.FromSeconds(60),
             DiscardOnBufferOverflow = false
         };
@@ -54,10 +58,12 @@ internal sealed class RealtimePcmPlayer : IDisposable
         _waveOut.Play();
     }
 
-    /// <summary>符号化で生成された Complex PCM チャンクを再生キューへ投入します。</summary>
-    /// <param name="left">L チャンネル。</param>
-    /// <param name="right">R チャンネル（モノラル時は空可）。</param>
-    /// <param name="onSamplesQueued">スライス投入直後に呼ばれる（投入サンプル数）。進捗追従用。</param>
+    /// <summary>
+    /// 複素PCMチャンクを16bit PCMへ変換して再生キューへ追加します。
+    /// </summary>
+    /// <param name="left">左チャネルサンプル。</param>
+    /// <param name="right">右チャネルサンプル。</param>
+    /// <param name="onSamplesQueued">投入フレーム数通知コールバック。</param>
     public void AddSamples(
         ReadOnlySpan<Complex> left,
         ReadOnlySpan<Complex> right,
@@ -130,7 +136,10 @@ internal sealed class RealtimePcmPlayer : IDisposable
         }
     }
 
-    /// <summary>符号化完了後、残バッファの再生終了を待ちます。</summary>
+    /// <summary>
+    /// 指定時間内で再生バッファが空になるまで待機します。
+    /// </summary>
+    /// <param name="timeout">待機上限時間。</param>
     public void FinishAndWait(TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -157,7 +166,9 @@ internal sealed class RealtimePcmPlayer : IDisposable
         }
     }
 
-    /// <summary>再生待ちバッファに残っているサンプルフレーム数（モノラル換算の時間軸）。</summary>
+    /// <summary>
+    /// 現在バッファに残っているフレーム数です。
+    /// </summary>
     public int BufferedSampleFrames
     {
         get
@@ -175,6 +186,9 @@ internal sealed class RealtimePcmPlayer : IDisposable
         }
     }
 
+    /// <summary>
+    /// 再生リソースを解放します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -243,3 +257,7 @@ internal sealed class RealtimePcmPlayer : IDisposable
         dest[offset++] = (byte)((sample >> 8) & 0xFF);
     }
 }
+
+
+
+

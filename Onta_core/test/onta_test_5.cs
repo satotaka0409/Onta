@@ -1,10 +1,10 @@
-using Onta.Core;
+﻿using Onta.Core;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ブロック時系列インターリーブ ×2 の送出順・変調ダウングレードとラウンドトリップ試験です（data_struct.mdc）。
+/// ブロック送信順序と変調ダウングレード規則の検証テストです。
 /// </summary>
 public sealed class OntaTest5
 {
@@ -115,3 +115,4 @@ public sealed class OntaTest5
             $"[DECODE-STAGE-RATE] test={testTitle} viterbiShare={viterbiPercent:F2}% turboShare={turboPercent:F2}%");
     }
 }
+
