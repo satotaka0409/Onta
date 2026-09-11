@@ -291,7 +291,7 @@ internal static class ReceiveHistoryStore
         var latest = incoming.ReceivedAtUtc >= existing.ReceivedAtUtc ? incoming.ReceivedAtUtc : existing.ReceivedAtUtc;
         var payload = incoming.Payload.Length > 0 ? incoming.Payload : existing.Payload;
         var orphans = incoming.Orphans.Count > 0 ? incoming.Orphans : existing.Orphans;
-        var blocks = incoming.Blocks.Count > 0 ? incoming.Blocks : existing.Blocks;
+        var blocks = MergeBlocks(existing.Blocks, incoming.Blocks);
 
         return existing with
         {
@@ -308,6 +308,56 @@ internal static class ReceiveHistoryStore
             Blocks = blocks,
             Orphans = orphans
         };
+    }
+
+    private static IReadOnlyList<ReceiveBlockHistory> MergeBlocks(
+        IReadOnlyList<ReceiveBlockHistory> existing,
+        IReadOnlyList<ReceiveBlockHistory> incoming)
+    {
+        if (existing.Count == 0)
+        {
+            return incoming;
+        }
+
+        if (incoming.Count == 0)
+        {
+            return existing;
+        }
+
+        var map = new Dictionary<int, ReceiveBlockHistory>();
+        foreach (var block in existing)
+        {
+            map[block.BlockIndex] = block;
+        }
+
+        foreach (var block in incoming)
+        {
+            if (!map.TryGetValue(block.BlockIndex, out var prior))
+            {
+                map[block.BlockIndex] = block;
+                continue;
+            }
+
+            if (prior.State == ReceiveBlockState.Accepted && block.State != ReceiveBlockState.Accepted)
+            {
+                continue;
+            }
+
+            if (block.State == ReceiveBlockState.Accepted || prior.State == ReceiveBlockState.Unknown)
+            {
+                map[block.BlockIndex] = block;
+                continue;
+            }
+
+            if (prior.State == ReceiveBlockState.Error
+                && string.IsNullOrWhiteSpace(prior.ErrorText)
+                && !string.IsNullOrWhiteSpace(block.ErrorText))
+            {
+                map[block.BlockIndex] = block;
+            }
+        }
+
+        return map.Values.OrderBy(x => x.BlockIndex).ToArray();
     }
 }
 

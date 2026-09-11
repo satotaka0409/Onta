@@ -229,7 +229,15 @@ public partial class ReceiveDetailPanel : UserControl
         IReadOnlyList<ReceiveOrphanHistory>? orphans = null,
         byte[]? payload = null)
     {
-        var fileName = FindInfoValue("File Name", "(Not received)");
+        var fileName = FindInfoValue("File Name", "(未登録データ)");
+        if (string.IsNullOrWhiteSpace(fileName)
+            || string.Equals(fileName, "(Not received)", StringComparison.Ordinal)
+            || string.Equals(fileName, "(未受信)", StringComparison.Ordinal)
+            || string.Equals(fileName, "(FH待ち)", StringComparison.Ordinal))
+        {
+            fileName = "(未登録データ)";
+        }
+
         var fileSizeText = FindInfoValue("ファイルサイズ", "-");
         var blockCountText = FindInfoValue("ブロック数", "-");
         var fileSize = ParseFileSize(fileSizeText);
@@ -238,6 +246,11 @@ public partial class ReceiveDetailPanel : UserControl
         var blocks = new List<ReceiveBlockHistory>(_blockStates.Length);
         for (var i = 0; i < _blockStates.Length; i++)
         {
+            if (_blockStates[i] == ReceiveBlockState.Unknown)
+            {
+                continue;
+            }
+
             blocks.Add(new ReceiveBlockHistory(i, _blockStates[i], _blockErrors[i]));
         }
 
@@ -245,7 +258,7 @@ public partial class ReceiveDetailPanel : UserControl
             EntryId: Guid.NewGuid().ToString("N"),
             Kind: HistoryEntryKind.Receive,
             ReceivedAtUtc: DateTime.UtcNow,
-            ContentHashHex: ResolveReceiveHash(payload),
+            ContentHashHex: ResolveReceiveHash(payload, fileName, fileSize, blockCount),
             SourcePath: _sourcePath,
             FileName: fileName,
             FileSize: fileSize,
@@ -258,11 +271,19 @@ public partial class ReceiveDetailPanel : UserControl
             Orphans: orphans ?? Array.Empty<ReceiveOrphanHistory>());
     }
 
-    private string ResolveReceiveHash(byte[]? payload)
+    private string ResolveReceiveHash(byte[]? payload, string fileName, long fileSize, int blockCount)
     {
         if (payload is { Length: > 0 })
         {
             return Convert.ToHexString(Hash.ComputeSha256(payload));
+        }
+
+        if (!string.IsNullOrWhiteSpace(fileName)
+            && !string.Equals(fileName, "(未登録データ)", StringComparison.Ordinal)
+            && fileSize > 0
+            && blockCount > 0)
+        {
+            return $"FH:{fileName}|{fileSize}|{blockCount}";
         }
 
         if (!string.IsNullOrWhiteSpace(_sourcePath))

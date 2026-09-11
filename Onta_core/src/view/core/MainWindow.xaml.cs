@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private AudioFileReader? _activeAudioReader;
     private bool _pollingReceive;
     private bool _receiveDetailOpened;
+    private string _lastReceiveHistorySnapshotKey = string.Empty;
 
     /// <summary>
     /// メインウィンドウを初期化し、各パネルのイベントを接続します。
@@ -148,6 +149,7 @@ public partial class MainWindow : Window
         {
             ReceivePanel.SetFileInfo(fileName, fileSizeText, blockCount.ToString());
             ReceiveDetailPanel.ApplyFileHeader(fileName, fileSizeText, blockCount);
+            SaveReceiveHistoryIfChanged(force: false);
             if (!_receiveDetailOpened)
             {
                 _receiveDetailOpened = true;
@@ -214,6 +216,7 @@ public partial class MainWindow : Window
             ReceiveDetailPanel.Clear();
             ReceiveDetailPanel.SetSourcePath(ReceivePanel.SelectedWavPath);
             _receiveDetailOpened = false;
+            _lastReceiveHistorySnapshotKey = string.Empty;
 
             if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile, outputDir))
             {
@@ -263,6 +266,7 @@ public partial class MainWindow : Window
             var status = _inputCoreWorker.QueryExecutionStatus();
             ReceivePanel.ApplyExecutionStatus(status);
             ReceiveDetailPanel.ApplyStatus(status);
+            SaveReceiveHistoryIfChanged(force: false);
 
             // FH確定後に未表示なら受信詳細タブへ遷移する。
             if (!_receiveDetailOpened && ReceiveDetailPanel.HasFileHeaderInfo(status))
@@ -275,7 +279,7 @@ public partial class MainWindow : Window
             {
                 _pollingReceive = false;
                 ReceiveDetailPanel.MarkCompletion(success, message, outputPath);
-                SaveReceiveHistory();
+                SaveReceiveHistoryIfChanged(force: true);
                 HistoryPanel.ReloadHistory();
 
                 if (success)
@@ -347,19 +351,54 @@ public partial class MainWindow : Window
     /// <summary>
     /// 現在の受信結果を履歴ファイルへ保存します。
     /// </summary>
-    private void SaveReceiveHistory()
+    private void SaveReceiveHistoryIfChanged(bool force)
     {
         try
         {
             var orphans = _inputCoreWorker.CaptureOrphans();
             var payload = _inputCoreWorker.CaptureDecodedPayload() ?? Array.Empty<byte>();
             var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, payload);
+
+            var snapshotKey = BuildReceiveHistorySnapshotKey(entry);
+            if (!force && string.Equals(_lastReceiveHistorySnapshotKey, snapshotKey, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             HistoryService.SaveReceive(AppPaths.ReceiveHistoryFilePath, entry);
+            _lastReceiveHistorySnapshotKey = snapshotKey;
         }
         catch
         {
             // 履歴保存失敗時は UI を止めずに継続する。
         }
+    }
+
+    /// <summary>
+    /// 受信履歴の重複保存を抑制するためのスナップショット識別子を作成します。
+    /// </summary>
+    /// <param name="entry">履歴エントリ。</param>
+    /// <returns>現在状態を表す識別子文字列。</returns>
+    private static string BuildReceiveHistorySnapshotKey(ReceiveHistoryEntry entry)
+    {
+        var blockFingerprint = entry.Blocks.Count == 0
+            ? "none"
+            : string.Join(",", entry.Blocks
+                .OrderBy(b => b.BlockIndex)
+                .Select(b => $"{b.BlockIndex}:{(int)b.State}:{b.ErrorText}"));
+
+        return string.Join("|",
+            entry.ContentHashHex,
+            entry.SourcePath,
+            entry.FileName,
+            entry.FileSize,
+            entry.BlockCount,
+            blockFingerprint,
+            entry.Orphans.Count,
+            entry.Payload.Length,
+            entry.IsSuccess,
+            entry.OutputPath,
+            entry.CompletionMessage);
     }
 
     /// <summary>
