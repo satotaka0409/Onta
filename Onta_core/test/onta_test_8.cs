@@ -69,6 +69,7 @@ public sealed class OntaTest8
         PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);
         PrintBlockBitErrorRates(original, decoded, 4096, testTitle);
         Assert.Equal(original, decoded);
+        HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, wavPath);
     }
 
     private static void ApplyLowPass7kHzApprox10dBPerOct(float[] left, float[] right, int sampleRate)

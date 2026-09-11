@@ -28,7 +28,9 @@ public sealed class OntaTest6
 
         var txCodec = new FileWavCodec(txProfile);
         var rxCodec = new FileWavCodec(rxProfile);
-        var inputInfo = new FileInfo(TestPaths.ResolveInputPng());
+        var inputPath = TestPaths.ResolveInputPng();
+        var inputInfo = new FileInfo(inputPath);
+        var outputPath = TestPaths.ResolveOutputPath("Sample1_test6_from_samples.wav");
         var payload = new byte[1024];
         for (var i = 0; i < payload.Length; i++)
         {
@@ -41,6 +43,7 @@ public sealed class OntaTest6
         PrintDecodeStageMetrics(rxCodec.LastDecodeStageMetrics, testTitle);
 
         Assert.Equal(payload, decoded);
+        HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, outputPath);
     }
 
     private static void PrintDecodeStageMetrics(DecodeStageMetrics metrics, string testTitle)

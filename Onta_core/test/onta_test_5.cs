@@ -97,6 +97,7 @@ public sealed class OntaTest5
         PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);
 
         Assert.Equal(original, decoded);
+        HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, wavPath);
     }
 
     private static void PrintDecodeStageMetrics(DecodeStageMetrics metrics, string testTitle)

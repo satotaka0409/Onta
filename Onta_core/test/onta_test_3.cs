@@ -104,6 +104,7 @@ public sealed class OntaTest3
         PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);
         PrintBlockBitErrorRates(original, decoded, 4096, testTitle);
         Assert.Equal(original, decoded);
+        HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, wavPath);
     }
 
     private static void PrintChannelImpairmentRate(
