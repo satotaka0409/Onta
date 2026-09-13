@@ -1,7 +1,10 @@
 ﻿using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Numerics;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Onta.Core;
 
@@ -96,10 +99,21 @@ public sealed class ProgressiveDecodeState
     internal int Local;
     internal int WarpedCursor;
     internal long LogicalOffset;
+    /// <summary>
+    /// 現在の PCM バッファ先頭が、ストリーム先頭から何サンプル目かに相当するかです。
+    /// リアルタイム受信で消費済み先頭を捨てるときに進めます。
+    /// </summary>
+    internal long StreamSampleBase;
     internal byte[]?[]? OutputSlots;
     internal bool[]? SlotAccepted;
     internal (double Amount, double WowPhase, double FlutterPhase)? TrackedWow;
     internal bool HasTrackedWow;
+    /// <summary>true のとき絶対時刻セグメント補正、false のとき Correct モデル。</summary>
+    internal bool UseSegmentWowModel;
+    /// <summary>開口ワウ探索（Match/FH推定）を少なくとも1回試したか。</summary>
+    internal bool OpeningWowSearchDone;
+    /// <summary>前回の FH ワウ再推定時のバッファ長（サンプル）。</summary>
+    internal int LastOpeningWowEstimateAtSamples;
     internal CoreFrameKind CurrentFrame = CoreFrameKind.Fh;
     internal int CurrentBlockIndex = -1;
     internal int HeaderRsDecodeCount;
@@ -136,10 +150,14 @@ public sealed class ProgressiveDecodeState
         Local = 0;
         WarpedCursor = 0;
         LogicalOffset = 0;
+        StreamSampleBase = 0;
         OutputSlots = null;
         SlotAccepted = null;
         TrackedWow = null;
         HasTrackedWow = false;
+        UseSegmentWowModel = false;
+        OpeningWowSearchDone = false;
+        LastOpeningWowEstimateAtSamples = 0;
         CurrentFrame = CoreFrameKind.Fh;
         CurrentBlockIndex = -1;
         HeaderRsDecodeCount = 0;
@@ -533,7 +551,11 @@ public sealed class FileWavCodec
 
         if (leftSamples.Length < state.SourceLength)
         {
-            state.Reset();
+            // StreamSampleBase が進んでいる場合は先頭圧縮なので状態を維持する。
+            if (state.StreamSampleBase <= 0)
+            {
+                state.Reset();
+            }
         }
 
         state.SourceLength = leftSamples.Length;
@@ -560,37 +582,184 @@ public sealed class FileWavCodec
         var adaptiveWow = wowParams is null && correctWow && !state.HasTrackedWow;
         if (wowParams is { } known)
         {
-            leftSamples = headerOfdm.CorrectWowFlutterWithParams(
-                leftSamples,
-                known.Amount,
-                known.WowPhase,
-                known.FlutterPhase);
-            if (_profile.ChannelMode == ChannelMode.Stereo)
-            {
-                rightSamples = headerOfdm.CorrectWowFlutterWithParams(
-                    rightSamples,
-                    known.Amount,
-                    known.WowPhase,
-                    known.FlutterPhase);
-            }
-
+            ApplyTrackedWowToBuffers(
+                headerOfdm,
+                ref leftSamples,
+                ref rightSamples,
+                known,
+                state.StreamSampleBase,
+                useSegmentModel: state.StreamSampleBase != 0 || state.UseSegmentWowModel);
             state.TrackedWow = known;
             state.HasTrackedWow = true;
         }
         else if (state.HasTrackedWow && state.TrackedWow is { } tracked)
         {
-            leftSamples = headerOfdm.CorrectWowFlutterWithParams(
-                leftSamples,
-                tracked.Amount,
-                tracked.WowPhase,
-                tracked.FlutterPhase);
-            if (_profile.ChannelMode == ChannelMode.Stereo)
+            ApplyTrackedWowToBuffers(
+                headerOfdm,
+                ref leftSamples,
+                ref rightSamples,
+                tracked,
+                state.StreamSampleBase,
+                useSegmentModel: state.UseSegmentWowModel || state.StreamSampleBase != 0);
+        }
+        else if (adaptiveWow)
+        {
+            // 段階デコードでは毎回 Match すると FH 前に数分×N で固まる。
+            // プリアンブルが揃ってから1回だけ Match→Refine / FH推定し、失敗時のみ間引き再試行する。
+            var minForOpeningWow = _profile.LeadingSilenceSamples
+                + _profile.UnmodulatedPreambleSamples
+                + Math.Max(headerOfdm.SamplesPerOfdmSymbol * 16, _profile.SampleRate / 4);
+            var retryGap = Math.Max(_profile.SampleRate * 2, headerOfdm.SamplesPerOfdmSymbol * 64);
+            var canRetryEstimate = state.OpeningWowSearchDone
+                && !state.HasTrackedWow
+                && leftSamples.Length >= state.LastOpeningWowEstimateAtSamples + retryGap;
+            var shouldSearch = leftSamples.Length >= minForOpeningWow
+                && (!state.OpeningWowSearchDone || canRetryEstimate);
+
+            if (shouldSearch)
             {
-                rightSamples = headerOfdm.CorrectWowFlutterWithParams(
-                    rightSamples,
-                    tracked.Amount,
-                    tracked.WowPhase,
-                    tracked.FlutterPhase);
+                state.OpeningWowSearchDone = true;
+                state.LastOpeningWowEstimateAtSamples = leftSamples.Length;
+                state.StatusBoard.SetProgress(new CoreProgressInfo(
+                    CurrentFrame: CoreFrameKind.Fh,
+                    CurrentBlockIndex: -1,
+                    PassIndex: 0,
+                    AcceptedBlockCount: 0,
+                    TotalBlockCount: 0,
+                    ProgressPercent: 2.5));
+
+                (double Amount, double WowPhase, double FlutterPhase)? lockedWow = null;
+                var useSegmentCorrectModel = false;
+                var preambleStart = _profile.LeadingSilenceSamples;
+                var preambleCount = Math.Min(
+                    _profile.UnmodulatedPreambleSamples,
+                    Math.Max(0, leftSamples.Length - preambleStart));
+
+                // Match の scale は samples.Length 基準。切り出し窓だと全長 wow と合わず失敗する。
+                var rawPreambleScore = preambleCount >= headerOfdm.SamplesPerOfdmSymbol * 16
+                    ? headerOfdm.ScorePreambleMatchForDiagnostics(
+                        leftSamples,
+                        preambleStart,
+                        preambleCount,
+                        useRightChannel: false)
+                    : 0.0;
+
+                if (rawPreambleScore >= 0.70)
+                {
+                    // ワウ無し（または既に十分きれい）— 重い Match を省略
+                    lockedWow = (0.0, 0.0, 0.0);
+                    useSegmentCorrectModel = false;
+                    state.StatusBoard.SetProgress(new CoreProgressInfo(
+                        CurrentFrame: CoreFrameKind.Fh,
+                        CurrentBlockIndex: -1,
+                        PassIndex: 0,
+                        AcceptedBlockCount: 0,
+                        TotalBlockCount: 0,
+                        ProgressPercent: 3.5));
+                }
+                else
+                {
+                    var tryMatch = !canRetryEstimate
+                        && preambleCount >= headerOfdm.SamplesPerOfdmSymbol * 16;
+                    var openingDiag = tryMatch
+                        ? headerOfdm.MatchWowParametersForDiagnostics(
+                            leftSamples,
+                            useRightChannel: false,
+                            preambleStart,
+                            preambleCount,
+                            onProgress: (done, total) =>
+                            {
+                                var frac = total <= 0 ? 0.0 : done / (double)total;
+                                state.StatusBoard.SetProgress(new CoreProgressInfo(
+                                    CurrentFrame: CoreFrameKind.Fh,
+                                    CurrentBlockIndex: -1,
+                                    PassIndex: 0,
+                                    AcceptedBlockCount: 0,
+                                    TotalBlockCount: 0,
+                                    ProgressPercent: Math.Clamp(2.5 + (0.7 * frac), 2.5, 3.2)));
+                            })
+                        : null;
+                    if (openingDiag is { } d && d.BestScore >= 0.50)
+                    {
+                        // Match / Refine / Apply はいずれも散乱 Correct（全長 scale）。
+                        lockedWow = headerOfdm.RefineWowParametersForCorrectModel(
+                            leftSamples,
+                            useRightChannel: false,
+                            preambleStart,
+                            preambleCount,
+                            d.Amount,
+                            d.WowPhase,
+                            d.FlutterPhase,
+                            onProgress: (done, total) =>
+                            {
+                                var frac = total <= 0 ? 0.0 : done / (double)total;
+                                state.StatusBoard.SetProgress(new CoreProgressInfo(
+                                    CurrentFrame: CoreFrameKind.Fh,
+                                    CurrentBlockIndex: -1,
+                                    PassIndex: 0,
+                                    AcceptedBlockCount: 0,
+                                    TotalBlockCount: 0,
+                                    ProgressPercent: Math.Clamp(3.2 + (0.7 * frac), 3.2, 3.9)));
+                            });
+                        useSegmentCorrectModel = false;
+                    }
+                    else
+                    {
+                        // 長尺 WAV で Match 失敗後の FH/BD 総当たりは固まるので省略する。
+                        // （短いバッファ／LPF 用途の FH 推定のみ残す）
+                        if (leftSamples.Length <= _profile.SampleRate * 12)
+                        {
+                            lockedWow = TryEstimateWowByOpeningFileHeader(
+                                leftSamples,
+                                rightSamples,
+                                headerOfdm,
+                                onProgress: (done, total) =>
+                                {
+                                    var frac = total <= 0 ? 0.0 : done / (double)total;
+                                    state.StatusBoard.SetProgress(new CoreProgressInfo(
+                                        CurrentFrame: CoreFrameKind.Fh,
+                                        CurrentBlockIndex: -1,
+                                        PassIndex: 0,
+                                        AcceptedBlockCount: 0,
+                                        TotalBlockCount: 0,
+                                        ProgressPercent: Math.Clamp(2.5 + (1.4 * frac), 2.5, 3.9)));
+                                });
+                            useSegmentCorrectModel = lockedWow is not null;
+                        }
+                        else
+                        {
+                            lockedWow = null;
+                            useSegmentCorrectModel = false;
+                        }
+                    }
+                }
+
+                if (lockedWow is { } wow)
+                {
+                    // amount=0 は補正不要（きれいな WAV の高速経路）
+                    if (Math.Abs(wow.Amount) > 1e-12)
+                    {
+                        state.StatusBoard.SetProgress(new CoreProgressInfo(
+                            CurrentFrame: CoreFrameKind.Fh,
+                            CurrentBlockIndex: -1,
+                            PassIndex: 0,
+                            AcceptedBlockCount: 0,
+                            TotalBlockCount: 0,
+                            ProgressPercent: 4.0));
+                        ApplyTrackedWowToBuffers(
+                            headerOfdm,
+                            ref leftSamples,
+                            ref rightSamples,
+                            wow,
+                            state.StreamSampleBase,
+                            useSegmentModel: useSegmentCorrectModel || state.StreamSampleBase != 0);
+                        state.UseSegmentWowModel = useSegmentCorrectModel || state.StreamSampleBase != 0;
+                    }
+
+                    state.TrackedWow = wow;
+                    state.HasTrackedWow = true;
+                    adaptiveWow = false;
+                }
             }
         }
 
@@ -616,14 +785,19 @@ public sealed class FileWavCodec
             state.HasTrackedWow = hasTrackedWow;
         }
 
-        void PublishStatus(CoreFrameKind frame, int blockIndex, double? errorRatePercent = null)
+        void PublishStatus(
+            CoreFrameKind frame,
+            int blockIndex,
+            double? errorRatePercent = null,
+            double blockFraction = 0.0,
+            CoreEccDecoderKind decoderKind = CoreEccDecoderKind.Viterbi)
         {
             state.CurrentFrame = frame;
             state.CurrentBlockIndex = blockIndex;
             var blockCount = Math.Max(0, state.BlockCount);
             var totalWork = Math.Max(1, Math.Max(1, blockCount) * Math.Max(1, _profile.BlockInterleaveFactor));
             var doneWork = state.HeaderReady
-                ? (state.Pass * Math.Max(1, blockCount)) + state.Local
+                ? (state.Pass * Math.Max(1, blockCount)) + state.Local + Math.Clamp(blockFraction, 0.0, 0.999)
                 : 0;
             var percent = state.Completed
                 ? 100.0
@@ -643,7 +817,7 @@ public sealed class FileWavCodec
 
             if (errorRatePercent is { } err)
             {
-                state.StatusBoard.SetErrorRate(err, frame);
+                state.StatusBoard.SetErrorRate(err, frame, decoderKind);
             }
 
             if (hasTrackedWow)
@@ -750,17 +924,15 @@ public sealed class FileWavCodec
             double wowPhase,
             double flutterPhase)
         {
-            var rented = System.Buffers.ArrayPool<Complex>.Shared.Rent(length);
-            try
-            {
-                Array.Copy(channelSamples, start, rented, 0, length);
-                headerOfdm.CorrectWowFlutterWithParamsInPlace(rented, length, amount, wowPhase, flutterPhase);
-                Array.Copy(rented, 0, channelSamples, start, length);
-            }
-            finally
-            {
-                System.Buffers.ArrayPool<Complex>.Shared.Return(rented, clearArray: false);
-            }
+            // 切り出しバッファを t=0 として補正すると位相がずれるため、
+            // 全波形上の絶対時刻で区間補正する（Match と同じ逆写像）。
+            headerOfdm.CorrectWowFlutterSegmentInPlace(
+                channelSamples,
+                start,
+                length,
+                amount,
+                wowPhase,
+                flutterPhase);
         }
 
         void ApplyAdaptiveWowCorrectionPair()
@@ -866,7 +1038,20 @@ public sealed class FileWavCodec
                         FileHeaderBytes,
                         FileHeaderPilot,
                         coarseRadius,
-                        InterleaveInitSeedFileHeader);
+                        InterleaveInitSeedFileHeader,
+                        onSyncProgress: (done, total) =>
+                        {
+                            var frac = total <= 0 ? 0.0 : done / (double)total;
+                            state.StatusBoard.SetProgress(new CoreProgressInfo(
+                                CurrentFrame: CoreFrameKind.Fh,
+                                CurrentBlockIndex: -1,
+                                PassIndex: 0,
+                                AcceptedBlockCount: 0,
+                                TotalBlockCount: 0,
+                                ProgressPercent: Math.Clamp(3.0 + (2.0 * frac), 3.0, 4.9)));
+                        },
+                        statusBoard: state.StatusBoard,
+                        frameKind: CoreFrameKind.Fh);
                     state.HeaderRsDecodeCount++;
                     EnsureHeaderCrc(fileHeader, "file header");
                 }
@@ -897,6 +1082,7 @@ public sealed class FileWavCodec
                 state.Local = 0;
                 PersistCursor();
                 var displayName = string.IsNullOrWhiteSpace(fhFileName) ? "(不明)" : fhFileName;
+                state.StatusBoard.SetAnalyzing(false);
                 state.StatusBoard.SetFileInfo(displayName, $"{fileSize:N0} bytes", blockCount.ToString());
                 state.StatusBoard.SetProgress(new CoreProgressInfo(
                     CurrentFrame: CoreFrameKind.Fh,
@@ -913,7 +1099,7 @@ public sealed class FileWavCodec
                 {
                 }
 
-                PublishStatus(CoreFrameKind.Fh, blockIndex: -1, errorRatePercent: 0.0);
+                PublishStatus(CoreFrameKind.Fh, blockIndex: -1);
             }
 
             var outputSlots = state.OutputSlots ?? throw new InvalidOperationException("Output slots missing.");
@@ -1000,7 +1186,7 @@ public sealed class FileWavCodec
                         state.Pass = pass;
                         state.Local = local + 1;
                         PersistCursor();
-                        PublishStatus(CoreFrameKind.Bd, expectedBlockIndex, errorRatePercent: 100.0);
+                        PublishStatus(CoreFrameKind.Bd, expectedBlockIndex);
                     }
 
                     var minForBlock = passBhPacketSamples + headerOfdm.SamplesPerOfdmSymbol;
@@ -1034,7 +1220,9 @@ public sealed class FileWavCodec
                                 FileHeaderBytes,
                                 FileHeaderPilot,
                                 fineRadius,
-                                InterleaveInitSeedFileHeader);
+                                InterleaveInitSeedFileHeader,
+                                statusBoard: state.StatusBoard,
+                                frameKind: CoreFrameKind.Fh);
                             state.HeaderRsDecodeCount++;
                             EnsureHeaderCrc(midFh, "mid file header");
                         }
@@ -1058,10 +1246,12 @@ public sealed class FileWavCodec
                             BlockHeaderBytes,
                             BlockHeaderPilot,
                             fineRadius,
-                            InterleaveInitSeedBlock);
+                            InterleaveInitSeedBlock,
+                            statusBoard: state.StatusBoard,
+                            frameKind: CoreFrameKind.Bh);
                         state.HeaderRsDecodeCount++;
                         EnsureHeaderCrc(blockHeader, "block header");
-                        PublishStatus(CoreFrameKind.Bh, expectedBlockIndex, errorRatePercent: 0.0);
+                        PublishStatus(CoreFrameKind.Bh, expectedBlockIndex);
 
                         var blockIndex = BinaryPrimitives.ReadInt64BigEndian(blockHeader.AsSpan(12, 8));
                         var blockSize = BinaryPrimitives.ReadInt32BigEndian(blockHeader.AsSpan(20, 4));
@@ -1114,7 +1304,11 @@ public sealed class FileWavCodec
                             punctureRate: blockDataPunctureRate,
                             wowLocked: hasTrackedWow,
                             statusBoard: state.StatusBoard,
-                            out var diag);
+                            out var diag,
+                            onSoftProgress: frac => PublishStatus(
+                                CoreFrameKind.Bd,
+                                expectedBlockIndex,
+                                blockFraction: frac));
                         state.DataBlocksDecoded++;
                         state.DataTotalAttempts += diag.TotalAttempts;
                         if (diag.FallbackUsed)
@@ -1195,8 +1389,7 @@ public sealed class FileWavCodec
                         }
                         PublishStatus(
                             CoreFrameKind.Bd,
-                            effectiveBlockIndex,
-                            errorRatePercent: acceptedForStatus ? 0.0 : 100.0);
+                            effectiveBlockIndex);
                     }
                     catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                     {
@@ -1235,7 +1428,9 @@ public sealed class FileWavCodec
                         FileHeaderBytes,
                         FileHeaderPilot,
                         fineRadius,
-                        InterleaveInitSeedFileHeader);
+                        InterleaveInitSeedFileHeader,
+                        statusBoard: state.StatusBoard,
+                        frameKind: CoreFrameKind.Fh);
                     state.HeaderRsDecodeCount++;
                     EnsureHeaderCrc(endFh, "trailing file header");
                 }
@@ -1276,7 +1471,7 @@ public sealed class FileWavCodec
             state.Completed = true;
             state.LastError = null;
             PersistCursor();
-            PublishStatus(CoreFrameKind.Fh, blockIndex: -1, errorRatePercent: 0.0);
+            PublishStatus(CoreFrameKind.Fh, blockIndex: -1);
             state.StatusBoard.Complete(faulted: false);
             return ProgressiveDecodeStatus.Completed;
         }
@@ -1301,6 +1496,62 @@ public sealed class FileWavCodec
             state.LastError = ex.Message;
             PersistCursor();
             return ProgressiveDecodeStatus.Failed;
+        }
+    }
+
+    /// <summary>
+    /// 追跡中のワウパラメータでバッファを補正した新規配列に差し替えます（元バッファは破壊しない）。
+    /// </summary>
+    private void ApplyTrackedWowToBuffers(
+        OfdmGenerator headerOfdm,
+        ref Complex[] leftSamples,
+        ref Complex[] rightSamples,
+        (double Amount, double WowPhase, double FlutterPhase) wow,
+        long streamSampleBase,
+        bool useSegmentModel)
+    {
+        if (!useSegmentModel && streamSampleBase == 0)
+        {
+            leftSamples = headerOfdm.CorrectWowFlutterWithParams(
+                leftSamples,
+                wow.Amount,
+                wow.WowPhase,
+                wow.FlutterPhase);
+            if (_profile.ChannelMode == ChannelMode.Stereo && rightSamples.Length > 0)
+            {
+                rightSamples = headerOfdm.CorrectWowFlutterWithParams(
+                    rightSamples,
+                    wow.Amount,
+                    wow.WowPhase,
+                    wow.FlutterPhase);
+            }
+
+            return;
+        }
+
+        var left = (Complex[])leftSamples.Clone();
+        headerOfdm.CorrectWowFlutterSegmentInPlace(
+            left,
+            0,
+            left.Length,
+            wow.Amount,
+            wow.WowPhase,
+            wow.FlutterPhase,
+            streamSampleBase);
+        leftSamples = left;
+
+        if (_profile.ChannelMode == ChannelMode.Stereo && rightSamples.Length > 0)
+        {
+            var right = (Complex[])rightSamples.Clone();
+            headerOfdm.CorrectWowFlutterSegmentInPlace(
+                right,
+                0,
+                right.Length,
+                wow.Amount,
+                wow.WowPhase,
+                wow.FlutterPhase,
+                streamSampleBase);
+            rightSamples = right;
         }
     }
 
@@ -1418,6 +1669,869 @@ public sealed class FileWavCodec
             : _profile.BlockHeaderUnmodulatedSamples;
 
     /// <summary>
+    /// 先頭 FH の同期成功を指標にワウパラメータを探索します。
+    /// プリアンブル相関が LPF 等で壊れる場合のフォールバックです。
+    /// prefix Correct で粗い位置を掴み、最終適用と同じ全波形 Correct で精密化します。
+    /// </summary>
+    private (double Amount, double WowPhase, double FlutterPhase)? TryEstimateWowByOpeningFileHeader(
+        Complex[] leftSamples,
+        Complex[] rightSamples,
+        OfdmGenerator headerOfdm,
+        Action<int, int>? onProgress = null)
+    {
+        var fhDataSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, unmodulatedSamples: 0);
+        var expectedFhStart =
+            _profile.LeadingSilenceSamples
+            + _profile.UnmodulatedPreambleSamples
+            + _profile.FileHeaderUnmodulatedSamples;
+        var prefixLen = Math.Min(
+            leftSamples.Length,
+            expectedFhStart + fhDataSamples + headerOfdm.SamplesPerOfdmSymbol * 8);
+        if (prefixLen < expectedFhStart + fhDataSamples)
+        {
+            return null;
+        }
+
+        var rsByteLength = GetReedSolomonEncodedLength(FileHeaderBytes);
+        var convByteLength = GetConvolutionalEncodedLength(rsByteLength, HeaderPunctureRate);
+        var bitCount = convByteLength * 8;
+        var sampleCount = headerOfdm.SampleCountForBitCount(bitCount);
+        var bhRsByteLength = GetReedSolomonEncodedLength(BlockHeaderBytes);
+        var bhConvByteLength = GetConvolutionalEncodedLength(bhRsByteLength, HeaderPunctureRate);
+        var bhBitCount = bhConvByteLength * 8;
+        var bhSampleCount = headerOfdm.SampleCountForBitCount(bhBitCount);
+        var sampleRate = Math.Max(1, _profile.SampleRate);
+        var searchRadius = Math.Max(2, headerOfdm.SamplesPerOfdmSymbol / 8);
+        var stereo = rightSamples.Length >= leftSamples.Length && rightSamples.Length > 0;
+
+        // FH+BH まで（末尾に同期ゆとり）。全波形 Correct は 59MB WAV で致命的に遅い。
+        var headerNeedLen = Math.Min(
+            leftSamples.Length,
+            expectedFhStart
+            + sampleCount
+            + (searchRadius * 4)
+            + _profile.BlockHeaderUnmodulatedSamples
+            + bhSampleCount
+            + (searchRadius * 4)
+            + (headerOfdm.SamplesPerOfdmSymbol * 32));
+        // BD0 最悪寄り（SC9 BPSK）の見積り。BH 後に実長へ縮める。
+        var maxDataOfdm = CreateDataOfdm(9, ModulationScheme.Bpsk);
+        var maxBdSamples = DataPacketSamples(
+            maxDataOfdm,
+            DataBlockBytes,
+            ChannelMode.Mono,
+            ModulationScheme.Bpsk);
+        var dataNeedLen = Math.Min(
+            leftSamples.Length,
+            headerNeedLen
+            + ((_profile.BlockHeaderUnmodulatedSamples + bhSampleCount + maxBdSamples) * 2)
+            + Math.Max(maxDataOfdm.SamplesPerOfdmSymbol * 16, _profile.SampleRate / 25));
+
+        var workLeft = new Complex[dataNeedLen];
+        var workRight = stereo ? new Complex[dataNeedLen] : Array.Empty<Complex>();
+        // OfdmGenerator はスクラッチ持ちなので並列時はスレッドごとに別インスタンスを使う。
+        (Complex[] Left, Complex[] Right, OfdmGenerator Ofdm) CreateWorker() =>
+            (new Complex[dataNeedLen], stereo ? new Complex[dataNeedLen] : Array.Empty<Complex>(), CreateHeaderOfdm());
+
+        void PrepareWork(
+            Complex[] destLeft,
+            Complex[] destRight,
+            OfdmGenerator ofdm,
+            int needLen,
+            double amount,
+            double wowPhase,
+            double flutterPhase)
+        {
+            needLen = Math.Clamp(needLen, 1, dataNeedLen);
+            // 全長基準の scale で先頭区間だけ逆補正（切り出し CorrectInPlace は位相がずれる）
+            ofdm.CorrectWowFlutterSegmentTo(
+                leftSamples,
+                0,
+                needLen,
+                destLeft.AsSpan(0, needLen),
+                amount,
+                wowPhase,
+                flutterPhase);
+            if (needLen < destLeft.Length)
+            {
+                Array.Clear(destLeft, needLen, destLeft.Length - needLen);
+            }
+
+            if (stereo)
+            {
+                ofdm.CorrectWowFlutterSegmentTo(
+                    rightSamples,
+                    0,
+                    needLen,
+                    destRight.AsSpan(0, needLen),
+                    amount,
+                    wowPhase,
+                    flutterPhase);
+                if (needLen < destRight.Length)
+                {
+                    Array.Clear(destRight, needLen, destRight.Length - needLen);
+                }
+            }
+        }
+
+        bool TryHeader(
+            Complex[] left,
+            Complex[] right,
+            OfdmGenerator ofdm,
+            int start,
+            int payloadLength,
+            int rsLen,
+            int bits,
+            int samples,
+            byte[] pilot,
+            int seed,
+            out int endCursor,
+            out double meanAbsLlr,
+            out byte[] payload)
+        {
+            endCursor = start;
+            meanAbsLlr = 0.0;
+            payload = Array.Empty<byte>();
+            if (!TryDecodeHeaderAt(
+                    left,
+                    right,
+                    start,
+                    logicalOffset: start,
+                    ofdm,
+                    bits,
+                    bits,
+                    samples,
+                    payloadLength,
+                    rsLen,
+                    pilot,
+                    stereoSplit: false,
+                    perSymbolSearchRadius: searchRadius,
+                    seed,
+                    out payload,
+                    out endCursor,
+                    out meanAbsLlr))
+            {
+                return false;
+            }
+
+            try
+            {
+                EnsureHeaderCrc(payload, payloadLength == FileHeaderBytes ? "file header" : "block header");
+                return true;
+            }
+            catch (InvalidDataException)
+            {
+                return false;
+            }
+        }
+
+        (double Amount, double WowPhase, double FlutterPhase, double Score)? EvalPrefix(
+            Complex[] destLeft,
+            Complex[] destRight,
+            OfdmGenerator ofdm,
+            double amount,
+            double wowPhase,
+            double flutterPhase)
+        {
+            PrepareWork(destLeft, destRight, ofdm, prefixLen, amount, wowPhase, flutterPhase);
+            if (!TryHeader(
+                    destLeft,
+                    destRight,
+                    ofdm,
+                    expectedFhStart,
+                    FileHeaderBytes,
+                    rsByteLength,
+                    bitCount,
+                    sampleCount,
+                    FileHeaderPilot,
+                    InterleaveInitSeedFileHeader,
+                    out _,
+                    out var llr,
+                    out _))
+            {
+                return null;
+            }
+
+            return (amount, wowPhase, flutterPhase, llr);
+        }
+
+        (double Amount, double WowPhase, double FlutterPhase, double Score)? EvalOpening(
+            Complex[] destLeft,
+            Complex[] destRight,
+            OfdmGenerator ofdm,
+            double amount,
+            double wowPhase,
+            double flutterPhase,
+            bool tryDataBlock)
+        {
+            var need = tryDataBlock ? dataNeedLen : headerNeedLen;
+            PrepareWork(destLeft, destRight, ofdm, need, amount, wowPhase, flutterPhase);
+
+            if (!TryHeader(
+                    destLeft,
+                    destRight,
+                    ofdm,
+                    expectedFhStart,
+                    FileHeaderBytes,
+                    rsByteLength,
+                    bitCount,
+                    sampleCount,
+                    FileHeaderPilot,
+                    InterleaveInitSeedFileHeader,
+                    out var fhEnd,
+                    out var fhLlr,
+                    out _))
+            {
+                return null;
+            }
+
+            // BH0 まで通る候補を強く優先（LPF 下では FH だけの最適がデータ部に足りない）
+            var score = fhLlr;
+            var bhStart = fhEnd + _profile.BlockHeaderUnmodulatedSamples;
+            if (bhStart + bhSampleCount > need
+                || !TryHeader(
+                    destLeft,
+                    destRight,
+                    ofdm,
+                    bhStart,
+                    BlockHeaderBytes,
+                    bhRsByteLength,
+                    bhBitCount,
+                    bhSampleCount,
+                    BlockHeaderPilot,
+                    InterleaveInitSeedBlock,
+                    out var bhEnd,
+                    out var bhLlr,
+                    out var bhPayload))
+            {
+                return (amount, wowPhase, flutterPhase, score);
+            }
+
+            score += 1000.0 + bhLlr;
+            if (!tryDataBlock)
+            {
+                return (amount, wowPhase, flutterPhase, score);
+            }
+
+            // BD0 ハッシュ一致まで見ないと LPF+QPSK では位相が足りない
+            try
+            {
+                var blockSize = BinaryPrimitives.ReadInt32BigEndian(bhPayload.AsSpan(20, 4));
+                if (blockSize < 0 || blockSize > DataBlockBytes)
+                {
+                    return (amount, wowPhase, flutterPhase, score);
+                }
+
+                var expectedHash = bhPayload.AsSpan(24, 32).ToArray();
+                var (blockSc, blockModulation) = ReadBlockDataModulation(bhPayload);
+                var blockDataOfdm = CreateDataOfdm(blockSc, blockModulation);
+                var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
+                var bdSamples = DataPacketSamples(
+                    blockDataOfdm,
+                    Math.Max(1, blockSize),
+                    _profile.ChannelMode,
+                    blockModulation);
+                var bdNeed = Math.Min(
+                    dataNeedLen,
+                    bhEnd
+                    + bdSamples
+                    + Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 8, _profile.SampleRate / 50));
+                if (bdNeed > need)
+                {
+                    PrepareWork(destLeft, destRight, ofdm, bdNeed, amount, wowPhase, flutterPhase);
+                    // 再 Correct 後は FH/BH カーソルは同じ相対位置のまま使える
+                    if (!TryHeader(
+                            destLeft,
+                            destRight,
+                            ofdm,
+                            expectedFhStart,
+                            FileHeaderBytes,
+                            rsByteLength,
+                            bitCount,
+                            sampleCount,
+                            FileHeaderPilot,
+                            InterleaveInitSeedFileHeader,
+                            out fhEnd,
+                            out _,
+                            out _)
+                        || !TryHeader(
+                            destLeft,
+                            destRight,
+                            ofdm,
+                            fhEnd + _profile.BlockHeaderUnmodulatedSamples,
+                            BlockHeaderBytes,
+                            bhRsByteLength,
+                            bhBitCount,
+                            bhSampleCount,
+                            BlockHeaderPilot,
+                            InterleaveInitSeedBlock,
+                            out bhEnd,
+                            out _,
+                            out bhPayload))
+                    {
+                        return (amount, wowPhase, flutterPhase, score);
+                    }
+                }
+
+                var dataCursor = bhEnd;
+                var dataLogical = (long)bhEnd;
+                var tuningLocal = new DecodeRuntimeTuning(
+                    TurboIterationsMin: 4,
+                    TurboIterationsMax: 6,
+                    DataSyncMaxFullAttemptsWhenWowLocked: 2,
+                    DataSyncMaxSoftOnlyAttemptsWhenWowLocked: 1,
+                    SoftLlrAbortMeanAbsWhenWowLocked: 0.7);
+                var padded = DecodeDataBlockSynced(
+                    destLeft,
+                    destRight,
+                    ref dataCursor,
+                    ref dataLogical,
+                    blockDataOfdm,
+                    Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
+                    expectedBlockHash: expectedHash,
+                    payloadLength: blockSize,
+                    modulationScheme: blockModulation,
+                    tuning: tuningLocal,
+                    interleaveInitSeed: InterleaveInitSeedBlock,
+                    punctureRate: blockDataPunctureRate,
+                    wowLocked: true,
+                    statusBoard: null,
+                    out _,
+                    onSoftProgress: null);
+                if (padded.Length > 0)
+                {
+                    score += 1_000_000.0;
+
+                    // BD1 まで通る候補をさらに優先（位相が甘いと途中ブロックで落ちる）
+                    try
+                    {
+                        var bh1Start = dataCursor + _profile.BlockHeaderUnmodulatedSamples;
+                        var need2 = Math.Min(
+                            dataNeedLen,
+                            bh1Start
+                            + bhSampleCount
+                            + bdSamples
+                            + Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 8, _profile.SampleRate / 50));
+                        if (need2 > need)
+                        {
+                            PrepareWork(destLeft, destRight, ofdm, need2, amount, wowPhase, flutterPhase);
+                            if (!TryHeader(
+                                    destLeft,
+                                    destRight,
+                                    ofdm,
+                                    expectedFhStart,
+                                    FileHeaderBytes,
+                                    rsByteLength,
+                                    bitCount,
+                                    sampleCount,
+                                    FileHeaderPilot,
+                                    InterleaveInitSeedFileHeader,
+                                    out fhEnd,
+                                    out _,
+                                    out _)
+                                || !TryHeader(
+                                    destLeft,
+                                    destRight,
+                                    ofdm,
+                                    fhEnd + _profile.BlockHeaderUnmodulatedSamples,
+                                    BlockHeaderBytes,
+                                    bhRsByteLength,
+                                    bhBitCount,
+                                    bhSampleCount,
+                                    BlockHeaderPilot,
+                                    InterleaveInitSeedBlock,
+                                    out bhEnd,
+                                    out _,
+                                    out bhPayload))
+                            {
+                                return (amount, wowPhase, flutterPhase, score);
+                            }
+
+                            dataCursor = bhEnd;
+                            dataLogical = bhEnd;
+                            padded = DecodeDataBlockSynced(
+                                destLeft,
+                                destRight,
+                                ref dataCursor,
+                                ref dataLogical,
+                                blockDataOfdm,
+                                Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
+                                expectedBlockHash: expectedHash,
+                                payloadLength: blockSize,
+                                modulationScheme: blockModulation,
+                                tuning: tuningLocal,
+                                interleaveInitSeed: InterleaveInitSeedBlock,
+                                punctureRate: blockDataPunctureRate,
+                                wowLocked: true,
+                                statusBoard: null,
+                                out _,
+                                onSoftProgress: null);
+                            if (padded.Length == 0)
+                            {
+                                return (amount, wowPhase, flutterPhase, score);
+                            }
+
+                            bh1Start = dataCursor + _profile.BlockHeaderUnmodulatedSamples;
+                        }
+
+                        if (bh1Start + bhSampleCount <= destLeft.Length
+                            && TryHeader(
+                                destLeft,
+                                destRight,
+                                ofdm,
+                                bh1Start,
+                                BlockHeaderBytes,
+                                bhRsByteLength,
+                                bhBitCount,
+                                bhSampleCount,
+                                BlockHeaderPilot,
+                                InterleaveInitSeedBlock,
+                                out var bh1End,
+                                out var bh1Llr,
+                                out var bh1Payload))
+                        {
+                            score += 1000.0 + bh1Llr;
+                            var blockSize1 = BinaryPrimitives.ReadInt32BigEndian(bh1Payload.AsSpan(20, 4));
+                            if (blockSize1 >= 0 && blockSize1 <= DataBlockBytes)
+                            {
+                                var expectedHash1 = bh1Payload.AsSpan(24, 32).ToArray();
+                                var (blockSc1, blockMod1) = ReadBlockDataModulation(bh1Payload);
+                                var ofdm1 = CreateDataOfdm(blockSc1, blockMod1);
+                                var puncture1 = ResolveDataPunctureRate(blockMod1);
+                                var c1 = bh1End;
+                                var l1 = (long)bh1End;
+                                var padded1 = DecodeDataBlockSynced(
+                                    destLeft,
+                                    destRight,
+                                    ref c1,
+                                    ref l1,
+                                    ofdm1,
+                                    Math.Max(ofdm1.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
+                                    expectedBlockHash: expectedHash1,
+                                    payloadLength: blockSize1,
+                                    modulationScheme: blockMod1,
+                                    tuning: tuningLocal,
+                                    interleaveInitSeed: InterleaveInitSeedBlock,
+                                    punctureRate: puncture1,
+                                    wowLocked: true,
+                                    statusBoard: null,
+                                    out _,
+                                    onSoftProgress: null);
+                                if (padded1.Length > 0)
+                                {
+                                    score += 1_000_000.0;
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // BD1 失敗は BD0 成功スコアのまま
+                    }
+                }
+            }
+            catch
+            {
+                // BD 失敗はスコア加算なし
+            }
+
+            return (amount, wowPhase, flutterPhase, score);
+        }
+
+        var amounts = new[] { 0.005, 0.01 };
+        const int phaseSteps = 18;
+        var coarseTotal = amounts.Length * phaseSteps * phaseSteps;
+        var done = 0;
+        var parallelOpts = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+        };
+
+        void ReportProgress()
+        {
+            var d = Interlocked.Increment(ref done);
+            if ((d & 3) == 0 || d >= coarseTotal + 250)
+            {
+                onProgress?.Invoke(Math.Min(d, coarseTotal + 250), coarseTotal + 250);
+            }
+        }
+
+        // --- Stage1: prefix で FH 成功候補を収集（位相グリッド並列） ---
+        var prefixHits = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
+        foreach (var amount in amounts)
+        {
+            using var cts = new CancellationTokenSource();
+            var opts = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = parallelOpts.MaxDegreeOfParallelism,
+                CancellationToken = cts.Token
+            };
+            var foundBefore = prefixHits.Count;
+            try
+            {
+                Parallel.For(
+                    0,
+                    phaseSteps * phaseSteps,
+                    opts,
+                    CreateWorker,
+                    (flat, state, worker) =>
+                    {
+                        if (state.ShouldExitCurrentIteration)
+                        {
+                            return worker;
+                        }
+
+                        ReportProgress();
+                        var wi = flat / phaseSteps;
+                        var fi = flat % phaseSteps;
+                        var wowPhase = wi * (2.0 * Math.PI / phaseSteps);
+                        var flutterPhase = fi * (2.0 * Math.PI / phaseSteps);
+                        var hit = EvalPrefix(worker.Left, worker.Right, worker.Ofdm, amount, wowPhase, flutterPhase);
+                        if (hit is { } h)
+                        {
+                            prefixHits.Add(h);
+                            if (prefixHits.Count >= 24)
+                            {
+                                cts.Cancel();
+                                state.Stop();
+                            }
+                        }
+
+                        return worker;
+                    },
+                    _ => { });
+            }
+            catch (OperationCanceledException)
+            {
+                // 十分な候補が集まった早期終了
+            }
+            catch (AggregateException ae) when (ae.InnerExceptions.All(static e => e is OperationCanceledException))
+            {
+                // Parallel.For 経由のキャンセル
+            }
+
+            var foundForAmount = prefixHits.Count - foundBefore;
+            if (prefixHits.Count >= 24)
+            {
+                break;
+            }
+
+            // 0.005 で十分な FH 成功があれば 0.01 は省略
+            if (amount == 0.005 && foundForAmount >= 3)
+            {
+                break;
+            }
+        }
+
+        if (prefixHits.Count == 0)
+        {
+            return null;
+        }
+
+        var prefixHitList = prefixHits.ToList();
+        prefixHitList.Sort((a, b) => b.Score.CompareTo(a.Score));
+        var centers = new List<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
+        foreach (var hit in prefixHitList)
+        {
+            var near = false;
+            foreach (var c in centers)
+            {
+                if (Math.Abs(WrapPhase(hit.WowPhase - c.WowPhase)) < 0.35
+                    && Math.Abs(WrapPhase(hit.FlutterPhase - c.FlutterPhase)) < 0.35
+                    && Math.Abs(hit.Amount - c.Amount) < 1e-9)
+                {
+                    near = true;
+                    break;
+                }
+            }
+
+            if (!near)
+            {
+                centers.Add(hit);
+            }
+
+            if (centers.Count >= 4)
+            {
+                break;
+            }
+        }
+
+        // --- Stage2: 各中心で wow 密探索（k ループ並列、BH CRC） ---
+        (double Amount, double WowPhase, double FlutterPhase, double Score)? bestBh = null;
+        foreach (var center in centers)
+        {
+            foreach (var amount in new[] { 0.005, center.Amount, 0.01 }.Distinct())
+            {
+                var bag = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
+                Parallel.For(
+                    -20,
+                    21,
+                    parallelOpts,
+                    CreateWorker,
+                    (k, _, worker) =>
+                    {
+                        ReportProgress();
+                        var hit = EvalOpening(
+                            worker.Left,
+                            worker.Right,
+                            worker.Ofdm,
+                            amount,
+                            center.WowPhase + (k * 0.02),
+                            center.FlutterPhase,
+                            tryDataBlock: false);
+                        if (hit is { } h)
+                        {
+                            bag.Add(h);
+                        }
+
+                        return worker;
+                    },
+                    _ => { });
+
+                foreach (var hit in bag)
+                {
+                    if (bestBh is null || hit.Score > bestBh.Value.Score)
+                    {
+                        bestBh = hit;
+                    }
+                }
+
+                if (bestBh is { } b0 && b0.Score >= 1000.0 && Math.Abs(b0.Amount - amount) < 1e-9)
+                {
+                    break;
+                }
+            }
+
+            if (bestBh is { } locked && locked.Score >= 1000.0)
+            {
+                break;
+            }
+        }
+
+        if (bestBh is null)
+        {
+            return null;
+        }
+
+        var best = bestBh.Value;
+        {
+            var flutterBag = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
+            Parallel.For(
+                -12,
+                13,
+                parallelOpts,
+                CreateWorker,
+                (k, _, worker) =>
+                {
+                    ReportProgress();
+                    var hit = EvalOpening(
+                        worker.Left,
+                        worker.Right,
+                        worker.Ofdm,
+                        best.Amount,
+                        best.WowPhase,
+                        best.FlutterPhase + (k * 0.02),
+                        tryDataBlock: false);
+                    if (hit is { } h)
+                    {
+                        flutterBag.Add(h);
+                    }
+
+                    return worker;
+                },
+                _ => { });
+            foreach (var hit in flutterBag)
+            {
+                if (hit.Score > best.Score)
+                {
+                    best = hit;
+                }
+            }
+        }
+
+        // --- Stage3: BD0（螺旋をチャンク並列。成功後の精密化は逐次） ---
+        static IEnumerable<int> SpiralOffsets(int maxAbs)
+        {
+            yield return 0;
+            for (var d = 1; d <= maxAbs; d++)
+            {
+                yield return d;
+                yield return -d;
+            }
+        }
+
+        (double Amount, double WowPhase, double FlutterPhase, double Score)? bestWithData = null;
+        var spiralWow = SpiralOffsets(20).ToArray();
+        const int spiralChunk = 8;
+        for (var chunkStart = 0; chunkStart < spiralWow.Length; chunkStart += spiralChunk)
+        {
+            var chunkEnd = Math.Min(spiralWow.Length, chunkStart + spiralChunk);
+            var bag = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
+            Parallel.For(
+                chunkStart,
+                chunkEnd,
+                parallelOpts,
+                CreateWorker,
+                (idx, _, worker) =>
+                {
+                    ReportProgress();
+                    var k = spiralWow[idx];
+                    var hit = EvalOpening(
+                        worker.Left,
+                        worker.Right,
+                        worker.Ofdm,
+                        best.Amount,
+                        best.WowPhase + (k * 0.002),
+                        best.FlutterPhase,
+                        tryDataBlock: true);
+                    if (hit is { } h)
+                    {
+                        bag.Add(h);
+                    }
+
+                    return worker;
+                },
+                _ => { });
+
+            foreach (var hit in bag)
+            {
+                if (bestWithData is null || hit.Score > bestWithData.Value.Score)
+                {
+                    bestWithData = hit;
+                }
+            }
+
+            if (bestWithData is { } early && early.Score >= 1_000_000.0)
+            {
+                // BD0/BD1 成功帯を wow/flutter 双方で精密化（後続ブロック耐性のため）
+                var refined = early;
+                foreach (var dw in SpiralOffsets(12))
+                {
+                    ReportProgress();
+                    var wHit = EvalOpening(
+                        workLeft,
+                        workRight,
+                        headerOfdm,
+                        refined.Amount,
+                        refined.WowPhase + (dw * 0.001),
+                        refined.FlutterPhase,
+                        tryDataBlock: true);
+                    if (wHit is { } wh && wh.Score > refined.Score)
+                    {
+                        refined = wh;
+                    }
+                }
+
+                foreach (var df in SpiralOffsets(40))
+                {
+                    ReportProgress();
+                    var fHit = EvalOpening(
+                        workLeft,
+                        workRight,
+                        headerOfdm,
+                        refined.Amount,
+                        refined.WowPhase,
+                        refined.FlutterPhase + (df * 0.004),
+                        tryDataBlock: true);
+                    if (fHit is { } fh && fh.Score > refined.Score)
+                    {
+                        refined = fh;
+                    }
+                }
+
+                foreach (var dw in SpiralOffsets(8))
+                {
+                    ReportProgress();
+                    var wHit = EvalOpening(
+                        workLeft,
+                        workRight,
+                        headerOfdm,
+                        refined.Amount,
+                        refined.WowPhase + (dw * 0.001),
+                        refined.FlutterPhase,
+                        tryDataBlock: true);
+                    if (wHit is { } wh && wh.Score > refined.Score)
+                    {
+                        refined = wh;
+                    }
+                }
+
+                return (refined.Amount, refined.WowPhase, refined.FlutterPhase);
+            }
+        }
+
+        if (bestWithData is null || bestWithData.Value.Score < 1_000_000.0)
+        {
+            var spiralFlutter = SpiralOffsets(15).ToArray();
+            for (var chunkStart = 0; chunkStart < spiralFlutter.Length; chunkStart += spiralChunk)
+            {
+                var chunkEnd = Math.Min(spiralFlutter.Length, chunkStart + spiralChunk);
+                var bag = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
+                Parallel.For(
+                    chunkStart,
+                    chunkEnd,
+                    parallelOpts,
+                    CreateWorker,
+                    (idx, _, worker) =>
+                    {
+                        ReportProgress();
+                        var k = spiralFlutter[idx];
+                        var hit = EvalOpening(
+                            worker.Left,
+                            worker.Right,
+                            worker.Ofdm,
+                            best.Amount,
+                            best.WowPhase,
+                            best.FlutterPhase + (k * 0.002),
+                            tryDataBlock: true);
+                        if (hit is { } h)
+                        {
+                            bag.Add(h);
+                        }
+
+                        return worker;
+                    },
+                    _ => { });
+
+                foreach (var hit in bag)
+                {
+                    if (bestWithData is null || hit.Score > bestWithData.Value.Score)
+                    {
+                        bestWithData = hit;
+                    }
+                }
+
+                if (bestWithData is { } ok && ok.Score >= 1_000_000.0)
+                {
+                    return (ok.Amount, ok.WowPhase, ok.FlutterPhase);
+                }
+            }
+        }
+
+        if (bestWithData is { } bdFinal && bdFinal.Score >= 1_000_000.0)
+        {
+            return (bdFinal.Amount, bdFinal.WowPhase, bdFinal.FlutterPhase);
+        }
+
+        return null;
+
+        static double WrapPhase(double x)
+        {
+            while (x > Math.PI)
+            {
+                x -= 2.0 * Math.PI;
+            }
+
+            while (x < -Math.PI)
+            {
+                x += 2.0 * Math.PI;
+            }
+
+            return x;
+        }
+    }
+
+    /// <summary>
     /// ヘッダー前置無変調サンプルを読み飛ばします。
     /// </summary>
     /// <param name="samples">samples を指定します。</param>
@@ -1456,7 +2570,10 @@ public sealed class FileWavCodec
         int payloadLength,
         byte[]? expectedPilot,
         int searchRadius,
-        int interleaveInitSeed)
+        int interleaveInitSeed,
+        Action<int, int>? onSyncProgress = null,
+        CoreExecutionStatusBoard? statusBoard = null,
+        CoreFrameKind frameKind = CoreFrameKind.Fh)
     {
         var rsByteLength = GetReedSolomonEncodedLength(payloadLength);
         var convByteLength = GetConvolutionalEncodedLength(rsByteLength, HeaderPunctureRate);
@@ -1467,6 +2584,7 @@ public sealed class FileWavCodec
         var symbolLength = ofdm.SamplesPerOfdmSymbol;
         var probeSymbols = Math.Clamp(sampleCount / symbolLength, 1, 4);
 
+        onSyncProgress?.Invoke(0, 1);
         if (TryDecodeHeaderAt(
                 leftSamples,
                 rightSamples,
@@ -1483,10 +2601,14 @@ public sealed class FileWavCodec
                 perSymbolSearchRadius: 0,
                 interleaveInitSeed,
                 out var exactPayload,
-                out var exactEnd))
+                out var exactEnd,
+                out _,
+                statusBoard,
+                frameKind))
         {
             warpedCursor = exactEnd;
             logicalOffset += sampleCount;
+            onSyncProgress?.Invoke(1, 1);
             return exactPayload;
         }
 
@@ -1500,8 +2622,10 @@ public sealed class FileWavCodec
             useRightChannel: false);
 
         Exception? lastError = null;
-        foreach (var start in candidateStarts)
+        for (var i = 0; i < candidateStarts.Count; i++)
         {
+            var start = candidateStarts[i];
+            onSyncProgress?.Invoke(i + 1, Math.Max(1, candidateStarts.Count));
             if (start == warpedCursor)
             {
                 continue;
@@ -1525,7 +2649,10 @@ public sealed class FileWavCodec
                         perSymbolSearchRadius: Math.Min(2, Math.Max(0, symbolLength / 16)),
                         interleaveInitSeed,
                         out var payload,
-                        out var endCursor))
+                        out var endCursor,
+                        out _,
+                        statusBoard,
+                        frameKind))
                 {
                     warpedCursor = endCursor;
                     logicalOffset += sampleCount;
@@ -1539,7 +2666,8 @@ public sealed class FileWavCodec
         }
 
         throw new InvalidDataException(
-            $"Header sync failed near sample {warpedCursor} (payload={payloadLength}).",
+            $"ヘッダー同期に失敗しました（sample≈{warpedCursor}, payload={payloadLength}）。" +
+            "プリアンブル位置のずれ、またはワウ／ノイズが強い可能性があります。",
             lastError);
     }
 
@@ -1561,8 +2689,50 @@ public sealed class FileWavCodec
         out byte[] payload,
         out int endCursor)
     {
+        return TryDecodeHeaderAt(
+            leftSamples,
+            rightSamples,
+            start,
+            logicalOffset,
+            ofdm,
+            totalBitCount,
+            channelBitCount,
+            sampleCount,
+            payloadLength,
+            rsByteLength,
+            expectedPilot,
+            stereoSplit,
+            perSymbolSearchRadius,
+            interleaveInitSeed,
+            out payload,
+            out endCursor,
+            out _);
+    }
+
+    private static bool TryDecodeHeaderAt(
+        Complex[] leftSamples,
+        Complex[] rightSamples,
+        int start,
+        long logicalOffset,
+        OfdmGenerator ofdm,
+        int totalBitCount,
+        int channelBitCount,
+        int sampleCount,
+        int payloadLength,
+        int rsByteLength,
+        byte[]? expectedPilot,
+        bool stereoSplit,
+        int perSymbolSearchRadius,
+        int interleaveInitSeed,
+        out byte[] payload,
+        out int endCursor,
+        out double meanAbsLlr,
+        CoreExecutionStatusBoard? statusBoard = null,
+        CoreFrameKind frameKind = CoreFrameKind.Fh)
+    {
         payload = Array.Empty<byte>();
         endCursor = start;
+        meanAbsLlr = 0.0;
         if (start < 0 || start + sampleCount > leftSamples.Length)
         {
             return false;
@@ -1613,12 +2783,30 @@ public sealed class FileWavCodec
                 endCursor = cursor;
             }
 
-            payload = DecodeHeaderFromSoftLlrs(llrs, payloadLength, rsByteLength);
+            var absSum = 0.0;
+            for (var i = 0; i < llrs.Length; i++)
+            {
+                absSum += Math.Abs(llrs[i]);
+            }
+
+            meanAbsLlr = llrs.Length > 0 ? absSum / llrs.Length : 0.0;
+            payload = DecodeHeaderFromSoftLlrs(
+                llrs,
+                payloadLength,
+                rsByteLength,
+                out _,
+                out var infoLlrs);
             if (expectedPilot is not null && !HeaderPrefixMatches(payload, expectedPilot))
             {
                 return false;
             }
 
+            // チャネル符号語ハミングは 10% 超になりやすく天井張り付きになるため、
+            // BCJR 後の情報 LLR から推定 BER を表示する。
+            statusBoard?.SetErrorRate(
+                EstimateSoftBitErrorPercent(infoLlrs),
+                frameKind,
+                CoreEccDecoderKind.Viterbi);
             return true;
         }
         catch (Exception)
@@ -1627,12 +2815,18 @@ public sealed class FileWavCodec
         }
     }
 
-    private static byte[] DecodeHeaderFromSoftLlrs(double[] llrs, int payloadLength, int rsByteLength)
+    private static byte[] DecodeHeaderFromSoftLlrs(
+        double[] llrs,
+        int payloadLength,
+        int rsByteLength,
+        out ConvolutionalCode.DecodeMetrics viterbiMetrics,
+        out double[] infoLlrs)
     {
         var rsEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
             llrs,
             rsByteLength,
-            out _,
+            out infoLlrs,
+            out viterbiMetrics,
             terminated: true,
             punctureRate: HeaderPunctureRate);
         var paddedPayload = ApplyReedSolomonDecode(rsEncoded);
@@ -1668,13 +2862,10 @@ public sealed class FileWavCodec
             }
         }
 
+        // 全半径を総当たりすると候補が数百になり UI が無反応に見えるため、
+        // 期待位置・局所最良・スコア上位のみに絞る。
         Add(expectedStart);
         Add(ofdm.FindBestSymbolStart(samples, expectedStart, Math.Min(searchRadius, symbolLength), useRightChannel));
-        for (var radius = step; radius <= searchRadius; radius += step)
-        {
-            Add(expectedStart - radius);
-            Add(expectedStart + radius);
-        }
 
         var scored = new List<(int Start, double Score)>();
         for (var radius = 0; radius <= searchRadius; radius += Math.Max(step, symbolLength / 4))
@@ -1691,7 +2882,7 @@ public sealed class FileWavCodec
         }
 
         scored.Sort((a, b) => b.Score.CompareTo(a.Score));
-        var top = Math.Min(6, scored.Count);
+        var top = Math.Min(8, scored.Count);
         for (var i = 0; i < top; i++)
         {
             Add(scored[i].Start);
@@ -1903,7 +3094,8 @@ public sealed class FileWavCodec
         ConvolutionalCode.PunctureRate punctureRate,
         bool wowLocked,
         CoreExecutionStatusBoard? statusBoard,
-        out DataDecodeDiag diag)
+        out DataDecodeDiag diag,
+        Action<double>? onSoftProgress = null)
     {
         var paddedLen = TurboPaddedLength(payloadLength + CrcBytes);
         var turboEncodedLength = (paddedLen / TurboEcc1024.DataUnitBytes) * TurboEcc1024.EncodedBytes;
@@ -1983,8 +3175,27 @@ public sealed class FileWavCodec
                         }
 
                         var turboEncoded = ConvolutionalCode.Decode(
-                            BitsToBytesMsb(bits), turboEncodedLength, terminated: true, punctureRate: punctureRate);
-                        candidate = DecodeTurboBlock(turboEncoded, paddedLen, tuning.TurboIterationsMax);
+                            BitsToBytesMsb(bits),
+                            turboEncodedLength,
+                            out var hardConvMetrics,
+                            terminated: true,
+                            punctureRate: punctureRate);
+                        candidate = DecodeTurboBlock(
+                            turboEncoded,
+                            paddedLen,
+                            tuning.TurboIterationsMax,
+                            out var hardTurboRate);
+                        if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
+                        {
+                            statusBoard?.SetErrorRate(
+                                hardConvMetrics.CorrectionRate * 100.0,
+                                CoreFrameKind.Bd,
+                                CoreEccDecoderKind.Viterbi);
+                            statusBoard?.SetErrorRate(
+                                hardTurboRate * 100.0,
+                                CoreFrameKind.Bd,
+                                CoreEccDecoderKind.Turbo);
+                        }
                     }
                     else
                     {
@@ -2004,10 +3215,16 @@ public sealed class FileWavCodec
                             noiseVariance: 0.05,
                             interleaveInitSeed,
                             modulationScheme,
-                            statusBoard);
+                            statusBoard,
+                            onSoftProgress);
                         end = cursor;
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                            qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true, punctureRate: punctureRate);
+                            qamLlrs,
+                            turboEncodedLength,
+                            out var infoLlrs,
+                            out var softConvMetrics,
+                            terminated: true,
+                            punctureRate: punctureRate);
                         ClampLlrsInPlace(infoLlrs, 16.0);
 
                         var meanAbs = MeanAbsLlrs(infoLlrs);
@@ -2017,19 +3234,42 @@ public sealed class FileWavCodec
                         }
 
                         var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
-                        var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
+                        var softCandidate = DecodeTurboBlockFromLlrs(
+                            infoLlrs,
+                            turboEncoded,
+                            paddedLen,
+                            turboIterations,
+                            out var softTurboRate);
+                        double publishTurboRate = softTurboRate;
                         if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
                         {
                             candidate = softCandidate;
                         }
                         else if (meanAbs >= tuning.SoftHardFallbackMinMeanAbsLlr)
                         {
-                            var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
+                            var hardCandidate = DecodeTurboBlock(
+                                turboEncoded,
+                                paddedLen,
+                                turboIterations,
+                                out var fallbackTurboRate);
+                            publishTurboRate = fallbackTurboRate;
                             candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                         }
                         else
                         {
                             candidate = softCandidate;
+                        }
+
+                        if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
+                        {
+                            statusBoard?.SetErrorRate(
+                                EstimateSoftBitErrorPercent(infoLlrs),
+                                CoreFrameKind.Bd,
+                                CoreEccDecoderKind.Viterbi);
+                            statusBoard?.SetErrorRate(
+                                publishTurboRate * 100.0,
+                                CoreFrameKind.Bd,
+                                CoreEccDecoderKind.Turbo);
                         }
                     }
 
@@ -2154,14 +3394,33 @@ public sealed class FileWavCodec
             warpedCursor = cursor;
             logicalOffset += sampleCount;
             var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                qamLlrs, turboEncodedLength, out var infoLlrs, terminated: true, punctureRate: punctureRate);
+                qamLlrs,
+                turboEncodedLength,
+                out var infoLlrs,
+                out var fallbackConvMetrics,
+                terminated: true,
+                punctureRate: punctureRate);
             ClampLlrsInPlace(infoLlrs, 16.0);
             _ = lastError;
             var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
-            var softCandidate = DecodeTurboBlockFromLlrs(infoLlrs, turboEncoded, paddedLen, turboIterations);
+            var softCandidate = DecodeTurboBlockFromLlrs(
+                infoLlrs,
+                turboEncoded,
+                paddedLen,
+                turboIterations,
+                out var fallbackTurboRate);
+            double publishTurboRate = fallbackTurboRate;
             if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
             {
                 softMatchSucceeded = true;
+                statusBoard?.SetErrorRate(
+                    EstimateSoftBitErrorPercent(infoLlrs),
+                    CoreFrameKind.Bd,
+                    CoreEccDecoderKind.Viterbi);
+                statusBoard?.SetErrorRate(
+                    publishTurboRate * 100.0,
+                    CoreFrameKind.Bd,
+                    CoreEccDecoderKind.Turbo);
                 diag = new DataDecodeDiag(
                     totalAttempts,
                     hardMatchSucceeded,
@@ -2173,10 +3432,23 @@ public sealed class FileWavCodec
 
             if (MeanAbsLlrs(infoLlrs) >= tuning.SoftHardFallbackMinMeanAbsLlr)
             {
-                var hardCandidate = DecodeTurboBlock(turboEncoded, paddedLen, turboIterations);
+                var hardCandidate = DecodeTurboBlock(
+                    turboEncoded,
+                    paddedLen,
+                    turboIterations,
+                    out var hardFallbackTurboRate);
+                publishTurboRate = hardFallbackTurboRate;
                 var preferred = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                 if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))
                 {
+                    statusBoard?.SetErrorRate(
+                        EstimateSoftBitErrorPercent(infoLlrs),
+                        CoreFrameKind.Bd,
+                        CoreEccDecoderKind.Viterbi);
+                    statusBoard?.SetErrorRate(
+                        publishTurboRate * 100.0,
+                        CoreFrameKind.Bd,
+                        CoreEccDecoderKind.Turbo);
                     if (ReferenceEquals(preferred, hardCandidate))
                     {
                         hardMatchSucceeded = true;
@@ -2280,19 +3552,42 @@ public sealed class FileWavCodec
         double noiseVariance,
         int interleaveInitSeed,
         ModulationScheme modulationScheme,
-        CoreExecutionStatusBoard? statusBoard = null)
+        CoreExecutionStatusBoard? statusBoard = null,
+        Action<double>? onBlockProgress = null)
     {
         statusBoard?.SetFftStereoMode(stereoSplit);
+        statusBoard?.BeginIqCapture(ofdm.ActiveSubcarriers, modulationScheme);
 
         Action<Complex[], int>? onIqFrame = statusBoard is null
             ? null
-            : (symbols, count) => statusBoard.SetIqFrame(symbols.AsSpan(0, count), modulationScheme);
+            : (symbols, count) => statusBoard.AppendIqFrame(symbols.AsSpan(0, count));
         Action<Complex[], int>? onFftLeftFrame = statusBoard is null
             ? null
             : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: false);
         Action<Complex[], int>? onFftRightFrame = statusBoard is null
             ? null
             : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: true);
+
+        // 送信側の ~33ms ポーリングに合わせ、ブロック内進捗を間引き通知する。
+        var progressClock = System.Diagnostics.Stopwatch.StartNew();
+        Action<int, int>? onSymbolProgress = onBlockProgress is null
+            ? null
+            : (symbolIndex, symbolCount) =>
+            {
+                if (symbolCount <= 0)
+                {
+                    return;
+                }
+
+                var isLast = symbolIndex + 1 >= symbolCount;
+                if (!isLast && progressClock.ElapsedMilliseconds < 33)
+                {
+                    return;
+                }
+
+                progressClock.Restart();
+                onBlockProgress((symbolIndex + 1.0) / symbolCount);
+            };
 
         if (!stereoSplit)
         {
@@ -2307,7 +3602,8 @@ public sealed class FileWavCodec
                 interleaveInitSeed,
                 onEqualizedDataSymbol: null,
                 onEqualizedDataSymbolFrame: onIqFrame,
-                onFftSymbolFrame: onFftLeftFrame);
+                onFftSymbolFrame: onFftLeftFrame,
+                onOfdmSymbolProgress: onSymbolProgress);
         }
 
         var leftCursor = cursor;
@@ -2323,7 +3619,8 @@ public sealed class FileWavCodec
             interleaveInitSeed,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: onIqFrame,
-            onFftSymbolFrame: onFftLeftFrame);
+            onFftSymbolFrame: onFftLeftFrame,
+            onOfdmSymbolProgress: onSymbolProgress);
         var rightLlrs = ofdm.DemodulateSoftLlrsFromStream(
             rightSamples,
             ref rightCursor,
@@ -2334,8 +3631,9 @@ public sealed class FileWavCodec
             noiseVariance,
             interleaveInitSeed,
             onEqualizedDataSymbol: null,
-            onEqualizedDataSymbolFrame: null,
-            onFftSymbolFrame: onFftRightFrame);
+            onEqualizedDataSymbolFrame: onIqFrame,
+            onFftSymbolFrame: onFftRightFrame,
+            onOfdmSymbolProgress: null);
         cursor = leftCursor;
         var joined = new double[totalBitCount];
         var half = (totalBitCount + 1) / 2;
@@ -2378,6 +3676,31 @@ public sealed class FileWavCodec
         }
 
         return sum / llrs.Length;
+    }
+
+    /// <summary>
+    /// LLR の大きさからビット誤り確率を推定し、パーセントで返します（グラフ用）。
+    /// </summary>
+    private static double EstimateSoftBitErrorPercent(ReadOnlySpan<double> llrs)
+    {
+        if (llrs.Length == 0)
+        {
+            return 0.0;
+        }
+
+        var sum = 0.0;
+        for (var i = 0; i < llrs.Length; i++)
+        {
+            var a = Math.Abs(llrs[i]);
+            if (a >= 40.0)
+            {
+                continue;
+            }
+
+            sum += 1.0 / (1.0 + Math.Exp(a));
+        }
+
+        return 100.0 * sum / llrs.Length;
     }
 
     private static byte[] PreferHashMatch(
@@ -2474,61 +3797,101 @@ public sealed class FileWavCodec
         return (int)Math.Round(Math.Clamp(value, minIter, maxIter));
     }
 
-    private static byte[] DecodeTurboBlock(byte[] turboEncoded, int paddedLength, int iterations)
+    private static byte[] DecodeTurboBlock(
+        byte[] turboEncoded,
+        int paddedLength,
+        int iterations,
+        out double meanCorrectionRate)
     {
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
         var encoded = new byte[TurboEcc1024.EncodedBytes];
+        var rateSum = 0.0;
         for (var i = 0; i < unitCount; i++)
         {
             Buffer.BlockCopy(turboEncoded, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-            var decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
+            var decoded = TurboEcc1024.Decode(
+                encoded,
+                out var metrics,
+                iterations: iterations,
+                channelReliability: 1.25);
+            rateSum += metrics.CorrectionRate;
             Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
         }
 
+        meanCorrectionRate = unitCount == 0 ? 0.0 : rateSum / unitCount;
         return padded;
+    }
+
+    private static byte[] DecodeTurboBlock(byte[] turboEncoded, int paddedLength, int iterations)
+    {
+        return DecodeTurboBlock(turboEncoded, paddedLength, iterations, out _);
     }
 
     /// <summary>
     /// Turbo情報LLRを単位ごとに復号し、失敗時はハード判定にフォールバックします。
     /// </summary>
-    /// <param name="infoLlrs">infoLlrs を指定します。</param>
-    /// <param name="turboEncodedHard">turboEncodedHard を指定します。</param>
-    /// <param name="paddedLength">paddedLength を指定します。</param>
-    /// <param name="iterations">iterations を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static byte[] DecodeTurboBlockFromLlrs(double[] infoLlrs, byte[] turboEncodedHard, int paddedLength, int iterations)
+    private static byte[] DecodeTurboBlockFromLlrs(
+        double[] infoLlrs,
+        byte[] turboEncodedHard,
+        int paddedLength,
+        int iterations,
+        out double meanCorrectionRate)
     {
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
         var bitsPerUnit = TurboEcc1024.EncodedBits;
         var encoded = new byte[TurboEcc1024.EncodedBytes];
+        var rateSum = 0.0;
         for (var i = 0; i < unitCount; i++)
         {
             var offset = i * bitsPerUnit;
             byte[] decoded;
+            TurboEcc1024.DecodeMetrics metrics;
             if (infoLlrs.Length >= offset + bitsPerUnit)
             {
                 try
                 {
-                    decoded = TurboEcc1024.DecodeFromChannelLlrs(infoLlrs.AsSpan(offset, bitsPerUnit), iterations: iterations);
+                    decoded = TurboEcc1024.DecodeFromChannelLlrs(
+                        infoLlrs.AsSpan(offset, bitsPerUnit),
+                        out metrics,
+                        iterations: iterations);
                 }
                 catch
                 {
                     Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-                    decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
+                    decoded = TurboEcc1024.Decode(
+                        encoded,
+                        out metrics,
+                        iterations: iterations,
+                        channelReliability: 1.25);
                 }
             }
             else
             {
                 Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-                decoded = TurboEcc1024.Decode(encoded, iterations: iterations, channelReliability: 1.25);
+                decoded = TurboEcc1024.Decode(
+                    encoded,
+                    out metrics,
+                    iterations: iterations,
+                    channelReliability: 1.25);
             }
 
+            rateSum += metrics.CorrectionRate;
             Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
         }
 
+        meanCorrectionRate = unitCount == 0 ? 0.0 : rateSum / unitCount;
         return padded;
+    }
+
+    private static byte[] DecodeTurboBlockFromLlrs(
+        double[] infoLlrs,
+        byte[] turboEncodedHard,
+        int paddedLength,
+        int iterations)
+    {
+        return DecodeTurboBlockFromLlrs(infoLlrs, turboEncodedHard, paddedLength, iterations, out _);
     }
 
     private readonly record struct DataDecodeDiag(
@@ -3508,6 +4871,214 @@ public static class WavReader
         }
 
         return (left, right);
+    }
+}
+
+/// <summary>
+/// PCM16 WAV をチャンク単位で逐次読みするストリームリーダーです。
+/// 全データをメモリへ展開しません。
+/// </summary>
+public sealed class WavPcmStreamReader : IDisposable
+{
+    private readonly FileStream _stream;
+    private readonly BinaryReader _reader;
+    private readonly short _channels;
+    private readonly int _sampleRate;
+    private readonly long _dataStart;
+    private readonly long _dataLength;
+    private long _dataPosition;
+    private bool _disposed;
+
+    private WavPcmStreamReader(
+        FileStream stream,
+        BinaryReader reader,
+        short channels,
+        int sampleRate,
+        long dataStart,
+        long dataLength)
+    {
+        _stream = stream;
+        _reader = reader;
+        _channels = channels;
+        _sampleRate = sampleRate;
+        _dataStart = dataStart;
+        _dataLength = dataLength;
+        _dataPosition = 0;
+        _stream.Position = dataStart;
+    }
+
+    /// <summary>チャネル数（1 または 2）。</summary>
+    public int Channels => _channels;
+
+    /// <summary>サンプルレート。</summary>
+    public int SampleRate => _sampleRate;
+
+    /// <summary>総フレーム数。</summary>
+    public long TotalFrames => _dataLength / (_channels * 2);
+
+    /// <summary>読み込み済みフレーム数。</summary>
+    public long FramesRead => _dataPosition / (_channels * 2);
+
+    /// <summary>読み込み進捗（0〜1）。</summary>
+    public double Progress =>
+        _dataLength <= 0 ? 1.0 : Math.Clamp(_dataPosition / (double)_dataLength, 0.0, 1.0);
+
+    /// <summary>
+    /// WAV を開いてデータチャンク位置までシークします。
+    /// </summary>
+    public static WavPcmStreamReader Open(string path)
+    {
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var reader = new BinaryReader(stream);
+        try
+        {
+            var riff = Encoding.ASCII.GetString(reader.ReadBytes(4));
+            if (riff != "RIFF")
+            {
+                throw new InvalidDataException("Not a RIFF file.");
+            }
+
+            reader.ReadInt32();
+            var wave = Encoding.ASCII.GetString(reader.ReadBytes(4));
+            if (wave != "WAVE")
+            {
+                throw new InvalidDataException("Not a WAVE file.");
+            }
+
+            short channels = 0;
+            short bitsPerSample = 0;
+            var sampleRate = 0;
+            long dataStart = -1;
+            long dataLength = -1;
+
+            while (stream.Position + 8 <= stream.Length)
+            {
+                var chunkId = Encoding.ASCII.GetString(reader.ReadBytes(4));
+                var chunkSize = reader.ReadInt32();
+                var chunkDataPos = stream.Position;
+                if (chunkId == "fmt ")
+                {
+                    var format = reader.ReadInt16();
+                    channels = reader.ReadInt16();
+                    sampleRate = reader.ReadInt32();
+                    reader.ReadInt32();
+                    reader.ReadInt16();
+                    bitsPerSample = reader.ReadInt16();
+                    var remaining = chunkSize - 16;
+                    if (remaining > 0)
+                    {
+                        reader.ReadBytes(remaining);
+                    }
+
+                    if (format != 1 || bitsPerSample != 16 || channels is not (1 or 2))
+                    {
+                        throw new InvalidDataException("Expected 16-bit mono or stereo PCM WAV.");
+                    }
+                }
+                else if (chunkId == "data")
+                {
+                    dataStart = chunkDataPos;
+                    dataLength = Math.Max(0, chunkSize);
+                    stream.Position = chunkDataPos + chunkSize;
+                    if ((chunkSize & 1) != 0 && stream.Position < stream.Length)
+                    {
+                        stream.Position += 1;
+                    }
+                }
+                else
+                {
+                    stream.Position = chunkDataPos + Math.Max(0, chunkSize);
+                    if ((chunkSize & 1) != 0 && stream.Position < stream.Length)
+                    {
+                        stream.Position += 1;
+                    }
+                }
+            }
+
+            if (dataStart < 0 || dataLength < 0 || channels == 0 || sampleRate <= 0)
+            {
+                throw new InvalidDataException("WAV data chunk not found.");
+            }
+
+            return new WavPcmStreamReader(stream, reader, channels, sampleRate, dataStart, dataLength);
+        }
+        catch
+        {
+            reader.Dispose();
+            stream.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 最大 frameCount フレームを読み、Complex L/R を返します。
+    /// </summary>
+    /// <returns>1フレーム以上読めた場合 true。EOF なら false。</returns>
+    public bool TryRead(int frameCount, out Complex[] left, out Complex[] right)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        left = Array.Empty<Complex>();
+        right = Array.Empty<Complex>();
+        if (frameCount <= 0 || _dataPosition >= _dataLength)
+        {
+            return false;
+        }
+
+        var bytesPerFrame = _channels * 2;
+        var remainingFrames = (int)Math.Min(frameCount, (_dataLength - _dataPosition) / bytesPerFrame);
+        if (remainingFrames <= 0)
+        {
+            return false;
+        }
+
+        var byteCount = remainingFrames * bytesPerFrame;
+        var raw = _reader.ReadBytes(byteCount);
+        if (raw.Length < bytesPerFrame)
+        {
+            _dataPosition = _dataLength;
+            return false;
+        }
+
+        var frames = raw.Length / bytesPerFrame;
+        _dataPosition += frames * bytesPerFrame;
+        left = new Complex[frames];
+        if (_channels == 1)
+        {
+            for (var i = 0; i < frames; i++)
+            {
+                var o = i * 2;
+                var s = (short)(raw[o] | (raw[o + 1] << 8));
+                left[i] = new Complex(s / (double)short.MaxValue, 0.0);
+            }
+
+            right = Array.Empty<Complex>();
+            return true;
+        }
+
+        right = new Complex[frames];
+        for (var i = 0; i < frames; i++)
+        {
+            var o = i * 4;
+            var l = (short)(raw[o] | (raw[o + 1] << 8));
+            var r = (short)(raw[o + 2] | (raw[o + 3] << 8));
+            left[i] = new Complex(l / (double)short.MaxValue, 0.0);
+            right[i] = new Complex(r / (double)short.MaxValue, 0.0);
+        }
+
+        return true;
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _reader.Dispose();
+        _stream.Dispose();
     }
 }
 

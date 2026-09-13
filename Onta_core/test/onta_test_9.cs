@@ -38,7 +38,7 @@ public sealed class OntaTest9
         var leftRef = ToFloat(leftSamples);
         var rightRef = ToFloat(rightSamples.Length == 0 ? leftSamples : rightSamples);
 
-        var (warpedLeft, warpedRight, wowPhase, flutterPhase) = NoisePlus.ApplyWowFlutterInMemory(
+        var (warpedLeft, warpedRight, _, _) = NoisePlus.ApplyWowFlutterInMemory(
             leftSamples,
             rightSamples,
             Profile.SampleRate,
@@ -62,10 +62,11 @@ public sealed class OntaTest9
             ToComplex(rightF),
             Profile.SamplePeak);
 
+        // UI 受信と同じく、答えの位相は渡さず適応ワウで復元する。
         var decoded = codec.DecodeWavToFileBytes(
             wavPath,
-            correctWow: false,
-            wowParams: (WowFlutterAmount, wowPhase, flutterPhase));
+            correctWow: true,
+            wowParams: null);
         File.WriteAllBytes(restoredPath, decoded);
 
         PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);

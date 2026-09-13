@@ -1,12 +1,17 @@
 ﻿using System.Collections.ObjectModel;
+using System.Diagnostics;
 using LiveChartsCore;
 using LiveChartsCore.Defaults;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
+using Onta.Core;
 using SkiaSharp;
 
 namespace Onta.View.Core;
 
+/// <summary>
+/// 送信側フレーム種別（進捗イベント用。受信エラー率チャートはビタビ/ターボ）。
+/// </summary>
 public enum ErrorRateFrameKind
 {
     Fh,
@@ -15,23 +20,25 @@ public enum ErrorRateFrameKind
 }
 
 /// <summary>
-/// 受信フレーム種別ごとのエラー率推移を表示するチャートモデルです。
+/// 誤り訂正の中間訂正率を表示するチャートです（ビタビ / ターボを色分け）。
+/// 横軸 60 秒固定・右端が最新です。
 /// </summary>
 public sealed class ErrorRateChartModel
 {
-    private const int MaxSamples = 240;
-    private readonly ObservableCollection<ObservablePoint> _fhValues = [];
-    private readonly ObservableCollection<ObservablePoint> _bhValues = [];
-    private readonly ObservableCollection<ObservablePoint> _bdValues = [];
-    private readonly List<ErrorRateFrameKind> _kinds = [];
-    private int _firstSampleIndex;
-    private int _nextSampleIndex;
+    private const double WindowSeconds = 60.0;
+    private const double YMaxPercent = 10.0;
+    private const double MinSampleIntervalSeconds = 0.05;
+    private const double LineBreakGapSeconds = 1.0;
+    private readonly ObservableCollection<ObservablePoint> _viterbiValues = [];
+    private readonly ObservableCollection<ObservablePoint> _turboValues = [];
+    private readonly Stopwatch _clock = new();
+    private double _windowEndSeconds;
+    private double _lastSampleSeconds = double.NegativeInfinity;
+    private CoreEccDecoderKind _lastDecoderKind = CoreEccDecoderKind.Viterbi;
 
-    // 系列と軸の表示色
-    private static readonly SKColor FhColor = new(186, 215, 255);
-    private static readonly SKColor BhColor = new(240, 204, 140);
-    private static readonly SKColor BdColor = new(166, 221, 176);
-    private static readonly SKColor AxisColor = new(176, 181, 191);
+    private static readonly SKColor ViterbiColor = new(186, 215, 255);
+    private static readonly SKColor TurboColor = new(255, 170, 120);
+    private static readonly SKColor AxisColor = new(210, 214, 220);
     private static readonly SKColor GridColor = new(92, 97, 108);
 
     public ErrorRateChartModel()
@@ -40,30 +47,25 @@ public sealed class ErrorRateChartModel
         [
             new LineSeries<ObservablePoint>
             {
-                Values = _fhValues,
-                Name = "FH",
+                Values = _viterbiValues,
+                Name = "ビタビ",
                 Fill = null,
-                GeometrySize = 0,
+                GeometrySize = 4,
+                GeometryFill = new SolidColorPaint(ViterbiColor),
+                GeometryStroke = null,
                 LineSmoothness = 0,
-                Stroke = new SolidColorPaint(FhColor, 2)
+                Stroke = new SolidColorPaint(ViterbiColor, 2)
             },
             new LineSeries<ObservablePoint>
             {
-                Values = _bhValues,
-                Name = "BH",
+                Values = _turboValues,
+                Name = "ターボ",
                 Fill = null,
-                GeometrySize = 0,
+                GeometrySize = 4,
+                GeometryFill = new SolidColorPaint(TurboColor),
+                GeometryStroke = null,
                 LineSmoothness = 0,
-                Stroke = new SolidColorPaint(BhColor, 2)
-            },
-            new LineSeries<ObservablePoint>
-            {
-                Values = _bdValues,
-                Name = "BD",
-                Fill = null,
-                GeometrySize = 0,
-                LineSmoothness = 0,
-                Stroke = new SolidColorPaint(BdColor, 2)
+                Stroke = new SolidColorPaint(TurboColor, 2)
             }
         ];
 
@@ -71,9 +73,10 @@ public sealed class ErrorRateChartModel
         [
             new Axis
             {
-                Name = "エラー率(%)",
+                Name = "推定エラー率(%)",
                 MinLimit = 0,
-                MaxLimit = 100,
+                MaxLimit = YMaxPercent,
+                MinStep = 2,
                 Labeler = value => $"{value:0}",
                 TextSize = 8,
                 NameTextSize = 8,
@@ -87,10 +90,13 @@ public sealed class ErrorRateChartModel
         [
             new Axis
             {
-                Name = "種別",
-                Labeler = LabelForSample,
-                MinStep = 1,
-                TextSize = 8,
+                Name = null,
+                MinLimit = -WindowSeconds,
+                MaxLimit = 0,
+                MinStep = 10,
+                ForceStepToMin = true,
+                Labeler = LabelForTime,
+                TextSize = 9,
                 NameTextSize = 8,
                 NamePaint = new SolidColorPaint(AxisColor),
                 LabelsPaint = new SolidColorPaint(AxisColor),
@@ -107,77 +113,90 @@ public sealed class ErrorRateChartModel
 
     public double LatestPercent { get; private set; }
 
+    public CoreEccDecoderKind LatestDecoderKind { get; private set; }
+
     /// <summary>
-    /// サンプルを追加し、保持上限を超えた古いデータを間引きます。
+    /// 中間訂正率サンプルを追加します。
     /// </summary>
-    public void AddSample(double errorRatePercent, ErrorRateFrameKind kind)
+    public void AddSample(double errorRatePercent, CoreEccDecoderKind decoderKind)
     {
+        if (!_clock.IsRunning)
+        {
+            _clock.Start();
+        }
+
         var value = Math.Clamp(errorRatePercent, 0.0, 100.0);
+        var t = _clock.Elapsed.TotalSeconds;
+        var decoderChanged = decoderKind != _lastDecoderKind;
+        if (!decoderChanged
+            && t - _lastSampleSeconds < MinSampleIntervalSeconds
+            && _lastSampleSeconds >= 0)
+        {
+            return;
+        }
+
         LatestPercent = value;
+        LatestDecoderKind = decoderKind;
+        _lastDecoderKind = decoderKind;
+        _lastSampleSeconds = t;
+        _windowEndSeconds = t;
+        var windowStart = t - WindowSeconds;
 
-        var x = _nextSampleIndex;
-        _nextSampleIndex++;
-        _kinds.Add(kind);
-
-        switch (kind)
+        var series = decoderKind == CoreEccDecoderKind.Turbo ? _turboValues : _viterbiValues;
+        // 時間ギャップが大きいときは線を切る（失敗試行の飛びを棘に見せない）
+        if (series.Count > 0)
         {
-            case ErrorRateFrameKind.Fh:
-                _fhValues.Add(new ObservablePoint(x, value));
-                break;
-            case ErrorRateFrameKind.Bh:
-                _bhValues.Add(new ObservablePoint(x, value));
-                break;
-            default:
-                _bdValues.Add(new ObservablePoint(x, value));
-                break;
+            var last = series[^1];
+            if (last.X is { } lastX && t - lastX > LineBreakGapSeconds)
+            {
+                series.Add(new ObservablePoint(t, null));
+            }
         }
 
-        while (_kinds.Count > MaxSamples)
-        {
-            _kinds.RemoveAt(0);
-            _firstSampleIndex++;
-        }
+        series.Add(new ObservablePoint(t, value));
 
-        TrimOldPoints(_fhValues);
-        TrimOldPoints(_bhValues);
-        TrimOldPoints(_bdValues);
+        TrimOldPoints(_viterbiValues, windowStart);
+        TrimOldPoints(_turboValues, windowStart);
+
+        // データ X は経過秒のまま、軸だけ相対表示（右端=0s）
+        XAxes[0].MinLimit = windowStart;
+        XAxes[0].MaxLimit = t;
     }
 
-    private void TrimOldPoints(ObservableCollection<ObservablePoint> series)
+    private static void TrimOldPoints(ObservableCollection<ObservablePoint> series, double windowStart)
     {
-        while (series.Count > 0 && series[0].X < _firstSampleIndex)
+        while (series.Count > 0 && series[0].X < windowStart)
         {
             series.RemoveAt(0);
         }
     }
 
-    private string LabelForSample(double value)
+    private string LabelForTime(double value)
     {
-        var index = (int)Math.Round(value);
-        var local = index - _firstSampleIndex;
-        if (local < 0 || local >= _kinds.Count)
+        // 右端=0s（現在）、左へ行くほど負（例: -60s … -10s 0s）
+        var age = _windowEndSeconds - value;
+        var secondsAgo = Math.Round(age / 10.0) * 10.0;
+        secondsAgo = Math.Clamp(secondsAgo, 0.0, WindowSeconds);
+        if (secondsAgo < 0.5)
         {
-            return string.Empty;
+            return "0s";
         }
 
-        return _kinds[local] switch
-        {
-            ErrorRateFrameKind.Fh => "FH",
-            ErrorRateFrameKind.Bh => "BH",
-            _ => "BD"
-        };
+        return $"{-secondsAgo:0}s";
     }
 
     public void Clear()
     {
-        _fhValues.Clear();
-        _bhValues.Clear();
-        _bdValues.Clear();
-        _kinds.Clear();
-        _firstSampleIndex = 0;
-        _nextSampleIndex = 0;
+        _viterbiValues.Clear();
+        _turboValues.Clear();
+        _clock.Reset();
+        _windowEndSeconds = 0;
+        _lastSampleSeconds = double.NegativeInfinity;
+        _lastDecoderKind = CoreEccDecoderKind.Viterbi;
         LatestPercent = 0;
+        LatestDecoderKind = CoreEccDecoderKind.Viterbi;
+        YAxes[0].MaxLimit = YMaxPercent;
+        XAxes[0].MinLimit = -WindowSeconds;
+        XAxes[0].MaxLimit = 0;
     }
 }
-
-

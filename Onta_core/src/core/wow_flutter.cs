@@ -65,30 +65,13 @@ public static class WowFlutterWarp
         var wowStep = 2.0 * Math.PI * WowFrequencyHz / sr;
         var flutterStep = 2.0 * Math.PI * FlutterFrequencyHz / sr;
 
-        var sinWow = Math.Sin(wowPhase);
-        var cosWow = Math.Cos(wowPhase);
-        var sinFlutter = Math.Sin(flutterPhase);
-        var cosFlutter = Math.Cos(flutterPhase);
-        var sinWowStep = Math.Sin(wowStep);
-        var cosWowStep = Math.Cos(wowStep);
-        var sinFlutterStep = Math.Sin(flutterStep);
-        var cosFlutterStep = Math.Cos(flutterStep);
-
+        // 漸化の sin/cos は長尺で解析解からドリフトし、CorrectPrefix（SumOfSines）と不一致になる。
         for (var i = 0; i < profile.Length; i++)
         {
-            var modulation = (0.65 * sinWow) + (0.35 * sinFlutter);
+            var modulation = (0.65 * Math.Sin(wowPhase + (i * wowStep)))
+                + (0.35 * Math.Sin(flutterPhase + (i * flutterStep)));
             var speed = 1.0 + (amount * modulation);
             profile[i] = speed < 0.05 ? 0.05 : speed;
-
-            var nextSinWow = (sinWow * cosWowStep) + (cosWow * sinWowStep);
-            var nextCosWow = (cosWow * cosWowStep) - (sinWow * sinWowStep);
-            sinWow = nextSinWow;
-            cosWow = nextCosWow;
-
-            var nextSinFlutter = (sinFlutter * cosFlutterStep) + (cosFlutter * sinFlutterStep);
-            var nextCosFlutter = (cosFlutter * cosFlutterStep) - (sinFlutter * sinFlutterStep);
-            sinFlutter = nextSinFlutter;
-            cosFlutter = nextCosFlutter;
         }
     }
 
@@ -113,19 +96,39 @@ public static class WowFlutterWarp
             return [];
         }
 
-        var profile = ArrayPool<double>.Shared.Rent(sampleCount);
+        sampleRate = Math.Max(1, sampleRate);
+        var wowOmega = 2.0 * Math.PI * WowFrequencyHz / sampleRate;
+        var flutterOmega = 2.0 * Math.PI * FlutterFrequencyHz / sampleRate;
+        var wowGain = amount * 0.65;
+        var flutterGain = amount * 0.35;
+
+        // CorrectPrefix / SumOfSines と同じ解析累積（FillSpeedProfile 漸化とは長尺でずれる）。
+        double CumulAt(int i)
+        {
+            if (i <= 0)
+            {
+                return 0.0;
+            }
+
+            return i
+                + (wowGain * SumOfSines(wowPhase, wowOmega, i))
+                + (flutterGain * SumOfSines(flutterPhase, flutterOmega, i));
+        }
+
         var count = ArrayPool<int>.Shared.Rent(sampleCount);
+        var cumul = ArrayPool<double>.Shared.Rent(sampleCount);
         try
         {
-            FillSpeedProfile(profile.AsSpan(0, sampleCount), sampleRate, amount, wowPhase, flutterPhase);
-            BuildCumul(profile.AsSpan(0, sampleCount), out var cumul, out var scale);
-            var map = new int[sampleCount];
             var last = sampleCount - 1;
+            var cumulEnd = CumulAt(last);
+            var scale = cumulEnd > 1e-12 ? last / cumulEnd : 1.0;
+            var map = new int[sampleCount];
             Array.Clear(count, 0, sampleCount);
             for (var i = 0; i < sampleCount; i++)
             {
-                var srcPos = cumul[i] * scale;
-                var idx = (int)Math.Round(srcPos, MidpointRounding.AwayFromZero);
+                var c = CumulAt(i);
+                cumul[i] = c;
+                var idx = (int)Math.Round(c * scale, MidpointRounding.AwayFromZero);
                 map[i] = Math.Clamp(idx, 0, last);
                 count[map[i]]++;
             }
@@ -181,14 +184,34 @@ public static class WowFlutterWarp
                 }
                 else
                 {
-                    var bestScore = double.PositiveInfinity;
-                    for (var i = 0; i < sampleCount; i++)
+                    // donors が尽きた場合の O(n) 全走査は長尺で固まるので最近傍へ丸める
+                    var approx = (int)Math.Round(target / Math.Max(scale, 1e-12), MidpointRounding.AwayFromZero);
+                    bestI = Math.Clamp(approx, 0, sampleCount - 1);
+                    if (count[map[bestI]] <= 1)
                     {
-                        var score = Math.Abs((cumul[i] * scale) - target);
-                        if (score < bestScore)
+                        var left = bestI;
+                        var right = bestI;
+                        while (left > 0 || right < sampleCount - 1)
                         {
-                            bestScore = score;
-                            bestI = i;
+                            if (left > 0)
+                            {
+                                left--;
+                                if (count[map[left]] > 1)
+                                {
+                                    bestI = left;
+                                    break;
+                                }
+                            }
+
+                            if (right < sampleCount - 1)
+                            {
+                                right++;
+                                if (count[map[right]] > 1)
+                                {
+                                    bestI = right;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -207,8 +230,8 @@ public static class WowFlutterWarp
         }
         finally
         {
-            ArrayPool<double>.Shared.Return(profile);
             ArrayPool<int>.Shared.Return(count);
+            ArrayPool<double>.Shared.Return(cumul);
         }
     }
 
@@ -370,6 +393,131 @@ public static class WowFlutterWarp
     {
         ArgumentNullException.ThrowIfNull(warped);
         CorrectInPlace(warped, warped.Length, sampleRate, amount, wowPhase, flutterPhase);
+    }
+
+    /// <summary>
+    /// 全波形長基準の scale で、指定プレフィックス区間だけを散乱 Correct して destination へ書きます。
+    /// Refine 採点用（先頭切り出し Correct の scale ずれを避けつつ全波形 Correct より軽量）。
+    /// </summary>
+    public static void CorrectPrefixWithReferenceLength(
+        Complex[] warped,
+        int referenceLength,
+        int prefixStart,
+        int prefixLength,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        Span<Complex> destination)
+    {
+        ArgumentNullException.ThrowIfNull(warped);
+        if (prefixLength <= 0)
+        {
+            return;
+        }
+
+        if (destination.Length < prefixLength)
+        {
+            throw new ArgumentException("Destination is shorter than prefix length.", nameof(destination));
+        }
+
+        if (amount == 0.0)
+        {
+            warped.AsSpan(prefixStart, prefixLength).CopyTo(destination);
+            return;
+        }
+
+        referenceLength = Math.Max(referenceLength, prefixStart + prefixLength);
+        referenceLength = Math.Max(referenceLength, 2);
+        sampleRate = Math.Max(1, sampleRate);
+
+        const double wowHz = WowFrequencyHz;
+        const double flutterHz = FlutterFrequencyHz;
+        var wowOmega = 2.0 * Math.PI * wowHz / sampleRate;
+        var flutterOmega = 2.0 * Math.PI * flutterHz / sampleRate;
+        var wowGain = amount * 0.65;
+        var flutterGain = amount * 0.35;
+
+        double CumulAt(int i)
+        {
+            if (i <= 0)
+            {
+                return 0.0;
+            }
+
+            return i
+                + (wowGain * SumOfSines(wowPhase, wowOmega, i))
+                + (flutterGain * SumOfSines(flutterPhase, flutterOmega, i));
+        }
+
+        var absEnd = referenceLength - 1;
+        var cumulEnd = CumulAt(absEnd);
+        var scale = cumulEnd > 1e-12 ? absEnd / cumulEnd : 1.0;
+        var prefixEnd = prefixStart + prefixLength;
+
+        // amount≈0.01 では map[i]≈i。プレフィックスへ寄与する i は近傍に閉じる。
+        var slack = Math.Max(sampleRate / 5, (int)(prefixLength * 0.05) + 64);
+        var iMin = Math.Max(0, prefixStart - slack);
+        var iMax = Math.Min(warped.Length, prefixEnd + slack);
+
+        var sum = ArrayPool<double>.Shared.Rent(prefixLength);
+        var count = ArrayPool<int>.Shared.Rent(prefixLength);
+        try
+        {
+            Array.Clear(sum, 0, prefixLength);
+            Array.Clear(count, 0, prefixLength);
+
+            // SumOfSines を毎サンプル呼ぶより、speed[i] を足し込む方が安い（sin 2回/サンプル）。
+            var cumul = CumulAt(iMin);
+            var wowAngle = wowPhase + (iMin * wowOmega);
+            var flutterAngle = flutterPhase + (iMin * flutterOmega);
+            for (var i = iMin; i < iMax; i++)
+            {
+                var src = (int)Math.Round(cumul * scale, MidpointRounding.AwayFromZero);
+                if (src >= prefixStart && src < prefixEnd)
+                {
+                    var local = src - prefixStart;
+                    sum[local] += warped[i].Real;
+                    count[local]++;
+                }
+
+                cumul += 1.0
+                    + (wowGain * Math.Sin(wowAngle))
+                    + (flutterGain * Math.Sin(flutterAngle));
+                wowAngle += wowOmega;
+                flutterAngle += flutterOmega;
+            }
+
+            for (var j = 0; j < prefixLength; j++)
+            {
+                destination[j] = count[j] > 0
+                    ? new Complex(sum[j] / count[j], 0.0)
+                    : warped[Math.Clamp(prefixStart + j, 0, warped.Length - 1)];
+            }
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(sum);
+            ArrayPool<int>.Shared.Return(count);
+        }
+    }
+
+    private static double SumOfSines(double phase0, double omega, int count)
+    {
+        if (count <= 0)
+        {
+            return 0.0;
+        }
+
+        var half = omega * 0.5;
+        var denom = Math.Sin(half);
+        if (Math.Abs(denom) < 1e-12)
+        {
+            return count * Math.Sin(phase0);
+        }
+
+        var numer = Math.Sin(count * half);
+        return numer / denom * Math.Sin(phase0 + ((count - 1) * half));
     }
 
     /// <summary>

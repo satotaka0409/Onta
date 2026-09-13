@@ -61,14 +61,12 @@ public sealed class OntaTest3
         var leftRef = ToFloat(leftSamples);
         var rightRef = ToFloat(rightSamples.Length == 0 ? leftSamples : rightSamples);
 
-        // 中間WAVを作る前にサンプルへ劣化を適用する。
-        double wowPhase = 0.0;
-        double flutterPhase = 0.0;
+        // 中間WAVを作る前にサンプルへ劣化を適用する（付与位相は受信側に渡さない）。
         Complex[] leftOut = leftSamples;
         Complex[] rightOut = rightSamples;
         if (wowAmount > 0.0)
         {
-            (leftOut, rightOut, wowPhase, flutterPhase) = NoisePlus.ApplyWowFlutterInMemory(
+            (leftOut, rightOut, _, _) = NoisePlus.ApplyWowFlutterInMemory(
                 leftSamples,
                 rightSamples,
                 Profile.SampleRate,
@@ -93,12 +91,11 @@ public sealed class OntaTest3
             ToComplex(rightF),
             Profile.SamplePeak);
 
-        (double Amount, double WowPhase, double FlutterPhase)? wowParams =
-            wowAmount > 0.0 ? (wowAmount, wowPhase, flutterPhase) : null;
+        // UI 受信と同じく、答えの位相は渡さず適応ワウで復元する。
         var decoded = codec.DecodeWavToFileBytes(
             wavPath,
-            correctWow: false,
-            wowParams: wowParams);
+            correctWow: wowAmount > 0.0,
+            wowParams: null);
         File.WriteAllBytes(restoredPath, decoded);
 
         PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);
@@ -166,6 +163,7 @@ public sealed class OntaTest3
     [Fact]
     public void WowFlutterWarp_ApplyCorrect_RoundTripsNearExact()
     {
+        // ワープ演算そのものの往復精度確認（復号に答え位相を渡すテストではない）。
         const int n = 44100;
         const int sampleRate = 44100;
         const double amount = 0.01;

@@ -460,6 +460,12 @@ public sealed class OfdmGenerator
     /// 現在のチャネルモードを返します。
     /// </summary>
     public ChannelMode ChannelMode => _config.ChannelMode;
+
+    /// <summary>
+    /// 有効サブキャリア数を返します。
+    /// </summary>
+    public int ActiveSubcarriers => _config.ActiveSubcarriers;
+
     private static readonly Complex UnmodulatedCarrierSymbol = Complex.One;
 
     /// <summary>
@@ -1199,8 +1205,10 @@ public sealed class OfdmGenerator
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
         var corrected = new Complex[analysisSampleCount];
-        ResampleSegmentWithInverseSpeed(
+        // Apply/Correct と同じ散乱モデルで採点する（区間リサンプルだと位相最適がずれる）。
+        WowFlutterWarp.CorrectPrefixWithReferenceLength(
             samples,
+            samples.Length,
             analysisStartSample,
             analysisSampleCount,
             Math.Max(1, _config.SampleRate),
@@ -1219,15 +1227,157 @@ public sealed class OfdmGenerator
             Complex[] samples,
             bool useRightChannel,
             int analysisStartSample,
-            int analysisSampleCount)
+            int analysisSampleCount,
+            Action<int, int>? onProgress = null)
     {
         return MatchWowByPreambleCorrelationParams(
-            samples, useRightChannel, analysisStartSample, analysisSampleCount);
+            samples, useRightChannel, analysisStartSample, analysisSampleCount, onProgress);
     }
 
     /// <summary>
-    /// 内部処理です。
+    /// Match 結果を散乱 Correct（Apply の逆）モデルで局所精密化します。
+    /// 採点は全長 scale のままプリアンブル近傍だけ散乱逆補正し、全波形 Correct より大幅に軽くします。
     /// </summary>
+    /// <param name="onProgress">探索進捗 (done, total)。省略可。</param>
+    public (double Amount, double WowPhase, double FlutterPhase) RefineWowParametersForCorrectModel(
+        Complex[] samples,
+        bool useRightChannel,
+        int analysisStartSample,
+        int analysisSampleCount,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        Action<int, int>? onProgress = null)
+    {
+        ArgumentNullException.ThrowIfNull(samples);
+        analysisStartSample = Math.Clamp(analysisStartSample, 0, Math.Max(0, samples.Length - 1));
+        analysisSampleCount = Math.Clamp(
+            analysisSampleCount,
+            SamplesPerOfdmSymbol,
+            Math.Max(SamplesPerOfdmSymbol, samples.Length - analysisStartSample));
+
+        var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
+        var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
+        var sampleRate = Math.Max(1, _config.SampleRate);
+        var slice = new Complex[analysisSampleCount];
+        var referenceLength = samples.Length;
+
+        double Score(double a, double w, double f)
+        {
+            WowFlutterWarp.CorrectPrefixWithReferenceLength(
+                samples,
+                referenceLength,
+                analysisStartSample,
+                analysisSampleCount,
+                sampleRate,
+                a,
+                w,
+                f,
+                slice);
+            return CorrelateReal(slice, ideal);
+        }
+
+        var bestAmount = amount;
+        var bestWow = wowPhase;
+        var bestFlutter = flutterPhase;
+        var bestScore = Score(bestAmount, bestWow, bestFlutter);
+
+        var amounts = new[] { 0.009, 0.01, 0.011 };
+        // Match 残差が ~0.15 rad でも拾える幅
+        var coarseF = Enumerable.Range(-24, 49).ToArray();
+        var coarseW = Enumerable.Range(-24, 49).ToArray();
+        var fineF = Enumerable.Range(-40, 81).ToArray();
+        var fineW = Enumerable.Range(-40, 81).ToArray();
+        var nanoF = Enumerable.Range(-16, 33).ToArray();
+        var nanoW = Enumerable.Range(-16, 33).ToArray();
+        const int jointPasses = 2;
+        const int jointRadius = 12;
+        var jointCells = ((2 * jointRadius) + 1) * ((2 * jointRadius) + 1);
+        var total = amounts.Length
+            + coarseF.Length + coarseW.Length
+            + (jointPasses * (fineF.Length + fineW.Length))
+            + nanoF.Length
+            + nanoW.Length
+            + jointCells;
+        var done = 0;
+
+        void Consider(double a, double w, double f)
+        {
+            var score = Score(a, w, f);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestAmount = a;
+                bestWow = w;
+                bestFlutter = f;
+            }
+
+            done++;
+            onProgress?.Invoke(done, total);
+        }
+
+        foreach (var trialAmount in amounts)
+        {
+            Consider(trialAmount, bestWow, bestFlutter);
+        }
+
+        var centerFlutter = bestFlutter;
+        foreach (var dF in coarseF)
+        {
+            Consider(bestAmount, bestWow, centerFlutter + (dF * Math.PI / 200.0));
+        }
+
+        var centerWow = bestWow;
+        foreach (var dW in coarseW)
+        {
+            Consider(bestAmount, centerWow + (dW * Math.PI / 200.0), bestFlutter);
+        }
+
+        // 軸ごとに中心固定。wow/flutter は結合最適なので交互に複数パスする。
+        for (var pass = 0; pass < jointPasses; pass++)
+        {
+            centerFlutter = bestFlutter;
+            foreach (var dF in fineF)
+            {
+                Consider(bestAmount, bestWow, centerFlutter + (dF * Math.PI / 4000.0));
+            }
+
+            centerWow = bestWow;
+            foreach (var dW in fineW)
+            {
+                Consider(bestAmount, centerWow + (dW * Math.PI / 4000.0), bestFlutter);
+            }
+        }
+
+        var centerFlutterNano = bestFlutter;
+        foreach (var dF in nanoF)
+        {
+            Consider(bestAmount, bestWow, centerFlutterNano + (dF * Math.PI / 20000.0));
+        }
+
+        var centerWowNano = bestWow;
+        foreach (var dW in nanoW)
+        {
+            Consider(bestAmount, centerWowNano + (dW * Math.PI / 20000.0), bestFlutter);
+        }
+
+        // 最終 2D 微調整（結合ズレの残りを潰す）
+        var jointWow = bestWow;
+        var jointFlutter = bestFlutter;
+        for (var dW = -jointRadius; dW <= jointRadius; dW++)
+        {
+            for (var dF = -jointRadius; dF <= jointRadius; dF++)
+            {
+                Consider(
+                    bestAmount,
+                    jointWow + (dW * Math.PI / 8000.0),
+                    jointFlutter + (dF * Math.PI / 8000.0));
+            }
+        }
+
+        return (bestAmount, WrapPhase(bestWow), WrapPhase(bestFlutter));
+    }
+
     public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         RefineWowParametersNearHintForDiagnostics(
             Complex[] samples,
@@ -1459,6 +1609,108 @@ public sealed class OfdmGenerator
     }
 
     /// <summary>
+    /// 全波形上の絶対時刻を保ったまま、指定区間だけをワウ逆補正して destination へ書き出します。
+    /// 先頭切り出しの CorrectInPlace は end-scale がずれるため使わず、source.Length 基準の scale を使います。
+    /// </summary>
+    /// <param name="streamBaseSample">
+    /// source[0] がストリーム先頭から何サンプル目か。圧縮バッファでは 0 以外になります。
+    /// </param>
+    public void CorrectWowFlutterSegmentTo(
+        Complex[] source,
+        int start,
+        int length,
+        Span<Complex> destination,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        long streamBaseSample = 0)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (length < SamplesPerOfdmSymbol || amount == 0.0)
+        {
+            if (length > 0)
+            {
+                source.AsSpan(start, length).CopyTo(destination);
+            }
+
+            return;
+        }
+
+        if (start < 0 || length <= 0 || start + length > source.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(start));
+        }
+
+        if (destination.Length < length)
+        {
+            throw new ArgumentException("Destination is shorter than segment length.", nameof(destination));
+        }
+
+        ResampleSegmentWithInverseSpeed(
+            source,
+            start,
+            length,
+            Math.Max(1, _config.SampleRate),
+            amount,
+            wowPhase,
+            flutterPhase,
+            destination.Slice(0, length),
+            stride: 1,
+            streamBaseSample: streamBaseSample);
+    }
+
+    /// <summary>
+    /// 全波形上の絶対時刻を保ったまま、指定区間だけをワウ逆補正します。
+    /// 適応ワウのテール再ワープ用（先頭切り出し補正は位相がずれるため使わない）。
+    /// </summary>
+    /// <param name="samples">全PCM（補正対象区間を含む）。</param>
+    /// <param name="start">補正開始サンプル（絶対位置）。</param>
+    /// <param name="length">補正サンプル長。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">wow 初期位相。</param>
+    /// <param name="flutterPhase">flutter 初期位相。</param>
+    /// <param name="streamBaseSample">samples[0] のストリーム絶対位置。</param>
+    public void CorrectWowFlutterSegmentInPlace(
+        Complex[] samples,
+        int start,
+        int length,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        long streamBaseSample = 0)
+    {
+        ArgumentNullException.ThrowIfNull(samples);
+        if (length < SamplesPerOfdmSymbol || amount == 0.0)
+        {
+            return;
+        }
+
+        if (start < 0 || length <= 0 || start + length > samples.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(start));
+        }
+
+        var rented = System.Buffers.ArrayPool<Complex>.Shared.Rent(length);
+        try
+        {
+            CorrectWowFlutterSegmentTo(
+                samples,
+                start,
+                length,
+                rented.AsSpan(0, length),
+                amount,
+                wowPhase,
+                flutterPhase,
+                streamBaseSample);
+            Array.Copy(rented, 0, samples, start, length);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<Complex>.Shared.Return(rented, clearArray: false);
+        }
+    }
+
+    /// <summary>
     /// MatchWowByPreambleCorrelation を実行します。
     /// </summary>
     /// <param name="samples">samples を指定します。</param>
@@ -1496,7 +1748,8 @@ public sealed class OfdmGenerator
             Complex[] samples,
             bool useRightChannel,
             int analysisStartSample,
-            int analysisSampleCount)
+            int analysisSampleCount,
+            Action<int, int>? onProgress = null)
     {
         if (analysisSampleCount < SamplesPerOfdmSymbol * 16)
         {
@@ -1518,28 +1771,25 @@ public sealed class OfdmGenerator
         var bestWowPhase = 0.0;
         var bestFlutterPhase = 0.0;
         var correctedPreambleBuffer = new Complex[analysisSampleCount];
+        // 全長 scale の Correct と同じモデル。プリアンブル近傍だけ散乱するので高速。
+        var referenceLength = samples.Length;
 
         var refStride1 = BuildCorrelationReference(ideal, 1);
         var refStride8 = BuildCorrelationReference(ideal, 8);
-        var refStride32 = BuildCorrelationReference(ideal, 32);
 
         double Evaluate(double amount, double wowPhase, double flutterPhase, int corrStride = 1)
         {
-            ResampleSegmentWithInverseSpeed(
+            WowFlutterWarp.CorrectPrefixWithReferenceLength(
                 samples,
+                referenceLength,
                 analysisStartSample,
                 analysisSampleCount,
                 sampleRate,
                 amount,
                 wowPhase,
                 flutterPhase,
-                correctedPreambleBuffer,
-                corrStride);
-            var reference = corrStride <= 1
-                ? refStride1
-                : corrStride <= 8
-                    ? refStride8
-                    : refStride32;
+                correctedPreambleBuffer);
+            var reference = corrStride <= 1 ? refStride1 : refStride8;
             var score = CorrelateRealStridedWithReference(
                 correctedPreambleBuffer,
                 ideal,
@@ -1547,6 +1797,7 @@ public sealed class OfdmGenerator
                 reference.Mean,
                 reference.Energy,
                 reference.Count);
+            // stride>1 は順位付け用。採用位相は stride=1 のみ更新する。
             if (corrStride <= 1 && score > bestScore)
             {
                 bestScore = score;
@@ -1558,8 +1809,18 @@ public sealed class OfdmGenerator
             return score;
         }
 
-        const int coarseStride = 32;
         const double earlyExitScore = 0.97;
+        const int progressTotal = 1200;
+        var progressDone = 0;
+        void ReportProgress()
+        {
+            progressDone++;
+            if ((progressDone & 7) == 0 || progressDone >= progressTotal)
+            {
+                onProgress?.Invoke(Math.Min(progressDone, progressTotal), progressTotal);
+            }
+        }
+
         var coarseHits = new List<(double Score, double Wow, double Flutter)>(64);
         for (var wi = 0; wi < 18; wi++)
         {
@@ -1567,7 +1828,9 @@ public sealed class OfdmGenerator
             for (var fi = 0; fi < 18; fi++)
             {
                 var flutterPhase = fi * Math.PI / 9.0;
-                var score = Evaluate(0.01, wowPhase, flutterPhase, coarseStride);
+                // 粗格子も Correct 真値付近を落とさないよう stride=1 で採点する。
+                var score = Evaluate(0.01, wowPhase, flutterPhase, corrStride: 1);
+                ReportProgress();
                 if (score > baseline + 0.02)
                 {
                     coarseHits.Add((score, wowPhase, flutterPhase));
@@ -1577,36 +1840,12 @@ public sealed class OfdmGenerator
 
         if (coarseHits.Count == 0)
         {
+            onProgress?.Invoke(progressTotal, progressTotal);
             return null;
         }
 
         coarseHits.Sort((a, b) => b.Score.CompareTo(a.Score));
-        var expandCount = Math.Min(12, coarseHits.Count);
-        for (var i = 0; i < expandCount; i++)
-        {
-            var center = coarseHits[i];
-            for (var dW = -1; dW <= 1; dW++)
-            {
-                for (var dF = -1; dF <= 1; dF++)
-                {
-                    if (dW == 0 && dF == 0)
-                    {
-                        continue;
-                    }
-
-                    var wowPhase = WrapPhase(center.Wow + (dW * Math.PI / 18.0));
-                    var flutterPhase = WrapPhase(center.Flutter + (dF * Math.PI / 18.0));
-                    var score = Evaluate(0.01, wowPhase, flutterPhase, coarseStride);
-                    if (score > baseline + 0.02)
-                    {
-                        coarseHits.Add((score, wowPhase, flutterPhase));
-                    }
-                }
-            }
-        }
-
-        coarseHits.Sort((a, b) => b.Score.CompareTo(a.Score));
-        var seeds = new List<(double Wow, double Flutter)>(4);
+        var seeds = new List<(double Wow, double Flutter)>(3);
         for (var i = 0; i < coarseHits.Count && seeds.Count < 3; i++)
         {
             var candidate = (coarseHits[i].Wow, coarseHits[i].Flutter);
@@ -1627,18 +1866,50 @@ public sealed class OfdmGenerator
             }
         }
 
+        // π/9 粗格子の隙間（鋭いピーク）を埋める。シード周辺を密に掃引する。
+        foreach (var seed in seeds)
+        {
+            for (var dW = -6; dW <= 6; dW++)
+            {
+                for (var dF = -6; dF <= 6; dF++)
+                {
+                    if (dW == 0 && dF == 0)
+                    {
+                        continue;
+                    }
+
+                    Evaluate(
+                        0.01,
+                        seed.Wow + (dW * Math.PI / 54.0),
+                        seed.Flutter + (dF * Math.PI / 54.0),
+                        corrStride: 1);
+                    ReportProgress();
+                }
+            }
+        }
+
         foreach (var seed in seeds)
         {
             var wow = seed.Wow;
             var flutter = seed.Flutter;
+            // 密探索後の最良点に近いシードから交互探索を始める。
+            if (Math.Abs(WrapPhase(bestWowPhase - seed.Wow)) < 0.35
+                && Math.Abs(WrapPhase(bestFlutterPhase - seed.Flutter)) < 0.35)
+            {
+                wow = bestWowPhase;
+                flutter = bestFlutterPhase;
+            }
+
             for (var pass = 0; pass < 2; pass++)
             {
+                // CorrectPrefix 採点は軽いので stride=1。π/45 だと鋭い真ピークを外す。
                 var bestLocal = double.NegativeInfinity;
                 var bestFlutter = flutter;
                 for (var fi = 0; fi < 180; fi++)
                 {
                     var trial = fi * Math.PI / 90.0;
-                    var score = Evaluate(0.01, wow, trial, corrStride: 8);
+                    var score = Evaluate(0.01, wow, trial, corrStride: 1);
+                    ReportProgress();
                     if (score > bestLocal)
                     {
                         bestLocal = score;
@@ -1647,43 +1918,13 @@ public sealed class OfdmGenerator
                 }
 
                 flutter = bestFlutter;
-
-                bestLocal = double.NegativeInfinity;
-                bestFlutter = flutter;
-                for (var dF = -2; dF <= 2; dF++)
-                {
-                    var trial = WrapPhase(flutter + (dF * Math.PI / 180.0));
-                    var score = Evaluate(0.01, wow, trial, corrStride: 8);
-                    if (score > bestLocal)
-                    {
-                        bestLocal = score;
-                        bestFlutter = trial;
-                    }
-                }
-
-                flutter = bestFlutter;
-
                 bestLocal = double.NegativeInfinity;
                 var bestWow = wow;
                 for (var wi = 0; wi < 180; wi++)
                 {
                     var trial = wi * Math.PI / 90.0;
-                    var score = Evaluate(0.01, trial, flutter, corrStride: 8);
-                    if (score > bestLocal)
-                    {
-                        bestLocal = score;
-                        bestWow = trial;
-                    }
-                }
-
-                wow = bestWow;
-
-                bestLocal = double.NegativeInfinity;
-                bestWow = wow;
-                for (var dW = -2; dW <= 2; dW++)
-                {
-                    var trial = WrapPhase(wow + (dW * Math.PI / 180.0));
-                    var score = Evaluate(0.01, trial, flutter, corrStride: 8);
+                    var score = Evaluate(0.01, trial, flutter, corrStride: 1);
+                    ReportProgress();
                     if (score > bestLocal)
                     {
                         bestLocal = score;
@@ -1695,16 +1936,17 @@ public sealed class OfdmGenerator
             }
 
             Evaluate(0.01, wow, flutter, corrStride: 1);
-
-            for (var dW = -5; dW <= 5; dW++)
+            ReportProgress();
+            for (var dW = -12; dW <= 12; dW++)
             {
-                for (var dF = -5; dF <= 5; dF++)
+                for (var dF = -12; dF <= 12; dF++)
                 {
                     Evaluate(
                         0.01,
-                        wow + (dW * Math.PI / 1200.0),
-                        flutter + (dF * Math.PI / 1200.0),
+                        wow + (dW * Math.PI / 900.0),
+                        flutter + (dF * Math.PI / 900.0),
                         corrStride: 1);
+                    ReportProgress();
                 }
             }
 
@@ -1716,12 +1958,14 @@ public sealed class OfdmGenerator
 
         if (bestScore <= baseline)
         {
+            onProgress?.Invoke(progressTotal, progressTotal);
             return null;
         }
 
         foreach (var amount in new[] { 0.008, 0.009, 0.01, 0.011, 0.012 })
         {
             Evaluate(amount, bestWowPhase, bestFlutterPhase, corrStride: 1);
+            ReportProgress();
         }
 
         var fineWow = bestWowPhase;
@@ -1729,21 +1973,27 @@ public sealed class OfdmGenerator
         for (var dF = -20; dF <= 20; dF++)
         {
             Evaluate(bestAmount, fineWow, fineFlutter + (dF * Math.PI / 4000.0), corrStride: 1);
+            ReportProgress();
         }
 
         fineFlutter = bestFlutterPhase;
         for (var dW = -20; dW <= 20; dW++)
         {
             Evaluate(bestAmount, fineWow + (dW * Math.PI / 4000.0), fineFlutter, corrStride: 1);
+            ReportProgress();
         }
 
-        if (bestScore < baseline + 0.02 || bestScore < 0.85)
+        onProgress?.Invoke(progressTotal, progressTotal);
+
+        // 呼び出し側は >=0.50。旧 0.85 だとノイズ付きで Match 失敗→超重い FH 推定へ落ちる。
+        if (bestScore < baseline + 0.02 || bestScore < 0.50)
         {
             return null;
         }
 
         return (baseline, bestScore, bestAmount, bestWowPhase, bestFlutterPhase);
     }
+
 
     /// <summary>
     /// WrapPhase を実行します。
@@ -1821,6 +2071,19 @@ public sealed class OfdmGenerator
         }
 
         stride = Math.Max(1, stride);
+        if (stride == 1 && a.Length >= count && b.Length >= count && count >= 8)
+        {
+            if (Avx.IsSupported)
+            {
+                return CorrelateRealDenseAvx(a, b, meanB, energyB, count);
+            }
+
+            if (AdvSimd.Arm64.IsSupported)
+            {
+                return CorrelateRealDenseAdvSimd(a, b, meanB, energyB, count);
+            }
+        }
+
         var sumA = 0.0;
         for (var i = 0; i < a.Length; i += stride)
         {
@@ -1834,6 +2097,121 @@ public sealed class OfdmGenerator
         {
             var xa = a[i].Real - meanA;
             var xb = b[i].Real - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
+    }
+
+    /// <summary>
+    /// stride=1 の正規化相関（AVX: Complex の Real レーンだけ畳み込み）。
+    /// </summary>
+    private static double CorrelateRealDenseAvx(
+        ReadOnlySpan<Complex> a,
+        ReadOnlySpan<Complex> b,
+        double meanB,
+        double energyB,
+        int count)
+    {
+        var ad = MemoryMarshal.Cast<Complex, double>(a);
+        var bd = MemoryMarshal.Cast<Complex, double>(b);
+        var sumVec = Vector256<double>.Zero;
+        var i = 0;
+        for (; i + 4 <= count; i += 4)
+        {
+            var baseIdx = i * 2;
+            var ra = Vector256.Create(ad[baseIdx], ad[baseIdx + 2], ad[baseIdx + 4], ad[baseIdx + 6]);
+            sumVec = Avx.Add(sumVec, ra);
+        }
+
+        var sumA = sumVec.GetElement(0) + sumVec.GetElement(1) + sumVec.GetElement(2) + sumVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            sumA += ad[i * 2];
+        }
+
+        var meanA = sumA / count;
+        var meanAVec = Vector256.Create(meanA);
+        var meanBVec = Vector256.Create(meanB);
+        var numVec = Vector256<double>.Zero;
+        var energyAVec = Vector256<double>.Zero;
+        i = 0;
+        for (; i + 4 <= count; i += 4)
+        {
+            var baseIdx = i * 2;
+            var ra = Vector256.Create(ad[baseIdx], ad[baseIdx + 2], ad[baseIdx + 4], ad[baseIdx + 6]);
+            var rb = Vector256.Create(bd[baseIdx], bd[baseIdx + 2], bd[baseIdx + 4], bd[baseIdx + 6]);
+            var xa = Avx.Subtract(ra, meanAVec);
+            var xb = Avx.Subtract(rb, meanBVec);
+            numVec = Avx.Add(numVec, Avx.Multiply(xa, xb));
+            energyAVec = Avx.Add(energyAVec, Avx.Multiply(xa, xa));
+        }
+
+        var num = numVec.GetElement(0) + numVec.GetElement(1) + numVec.GetElement(2) + numVec.GetElement(3);
+        var energyA = energyAVec.GetElement(0) + energyAVec.GetElement(1)
+            + energyAVec.GetElement(2) + energyAVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            var xa = ad[i * 2] - meanA;
+            var xb = bd[i * 2] - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
+    }
+
+    /// <summary>
+    /// stride=1 の正規化相関（ARM AdvSIMD）。
+    /// </summary>
+    private static double CorrelateRealDenseAdvSimd(
+        ReadOnlySpan<Complex> a,
+        ReadOnlySpan<Complex> b,
+        double meanB,
+        double energyB,
+        int count)
+    {
+        var ad = MemoryMarshal.Cast<Complex, double>(a);
+        var bd = MemoryMarshal.Cast<Complex, double>(b);
+        var sumVec = Vector128<double>.Zero;
+        var i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            var baseIdx = i * 2;
+            var ra = Vector128.Create(ad[baseIdx], ad[baseIdx + 2]);
+            sumVec = AdvSimd.Arm64.Add(sumVec, ra);
+        }
+
+        var sumA = sumVec.GetElement(0) + sumVec.GetElement(1);
+        for (; i < count; i++)
+        {
+            sumA += ad[i * 2];
+        }
+
+        var meanA = sumA / count;
+        var meanAVec = Vector128.Create(meanA);
+        var meanBVec = Vector128.Create(meanB);
+        var numVec = Vector128<double>.Zero;
+        var energyAVec = Vector128<double>.Zero;
+        i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            var baseIdx = i * 2;
+            var ra = Vector128.Create(ad[baseIdx], ad[baseIdx + 2]);
+            var rb = Vector128.Create(bd[baseIdx], bd[baseIdx + 2]);
+            var xa = AdvSimd.Arm64.Subtract(ra, meanAVec);
+            var xb = AdvSimd.Arm64.Subtract(rb, meanBVec);
+            numVec = AdvSimd.Arm64.Add(numVec, AdvSimd.Arm64.Multiply(xa, xb));
+            energyAVec = AdvSimd.Arm64.Add(energyAVec, AdvSimd.Arm64.Multiply(xa, xa));
+        }
+
+        var num = numVec.GetElement(0) + numVec.GetElement(1);
+        var energyA = energyAVec.GetElement(0) + energyAVec.GetElement(1);
+        for (; i < count; i++)
+        {
+            var xa = ad[i * 2] - meanA;
+            var xb = bd[i * 2] - meanB;
             num += xa * xb;
             energyA += xa * xa;
         }
@@ -2684,7 +3062,8 @@ public sealed class OfdmGenerator
         double wowPhase,
         double flutterPhase,
         Span<Complex> output,
-        int stride = 1)
+        int stride = 1,
+        long streamBaseSample = 0)
     {
         if (segmentLength <= 0)
         {
@@ -2710,45 +3089,63 @@ public sealed class OfdmGenerator
         var flutterOmega = 2.0 * Math.PI * flutterHz / sampleRate;
         var wowGain = amount * 0.65;
         var flutterGain = amount * 0.35;
+        var baseAbs = Math.Max(0L, streamBaseSample);
 
-        double CumulAt(int i) =>
-            CassetteCumulAtCached(i, wowGain, flutterGain, wowPhase, wowOmega, flutterPhase, flutterOmega);
+        double CumulAt(long absIndex)
+        {
+            if (absIndex <= 0)
+            {
+                return 0.0;
+            }
 
-        var cumulEnd = CumulAt(n - 1);
-        var scale = cumulEnd > 1e-12 ? (n - 1) / cumulEnd : 1.0;
+            return CassetteCumulAtCached(
+                (int)Math.Min(absIndex, int.MaxValue),
+                wowGain,
+                flutterGain,
+                wowPhase,
+                wowOmega,
+                flutterPhase,
+                flutterOmega);
+        }
+
+        // 圧縮バッファでもストリーム絶対時刻の scale を使う
+        var absEnd = Math.Max(1L, baseAbs + n - 1);
+        var cumulEnd = CumulAt(absEnd);
+        var scale = cumulEnd > 1e-12 ? absEnd / cumulEnd : 1.0;
 
         var i = 0;
-        var c0 = 0.0;
-        var c1 = CumulAt(1);
+        var c0 = CumulAt(baseAbs);
+        var c1 = CumulAt(baseAbs + 1);
         for (var j = 0; j < segmentLength; j += stride)
         {
-            var target = (segmentStart + j) / scale;
+            var absOut = baseAbs + segmentStart + j;
+            var target = absOut / scale;
             if (i >= n - 1)
             {
                 output[j] = samples[^1];
                 continue;
             }
 
-            var guess = (int)target;
+            var guess = (int)(target - baseAbs);
             if (guess > i + 8 && guess < n - 1)
             {
                 i = guess;
-                c0 = CumulAt(i);
-                c1 = CumulAt(i + 1);
+                c0 = CumulAt(baseAbs + i);
+                c1 = CumulAt(baseAbs + i + 1);
             }
 
             while (i < n - 2 && c1 <= target)
             {
                 i++;
                 c0 = c1;
-                c1 = CumulAt(i + 1);
+                c1 = CumulAt(baseAbs + i + 1);
             }
 
             while (i > 0 && c0 > target)
             {
                 i--;
                 c1 = c0;
-                c0 = CumulAt(i);
+                c0 = CumulAt(baseAbs + i);
             }
 
             if (i >= n - 1)
@@ -3362,7 +3759,8 @@ public sealed class OfdmGenerator
         int interleaveInitSeed = 0,
         Action<Complex>? onEqualizedDataSymbol = null,
         Action<Complex[], int>? onEqualizedDataSymbolFrame = null,
-        Action<Complex[], int>? onFftSymbolFrame = null)
+        Action<Complex[], int>? onFftSymbolFrame = null,
+        Action<int, int>? onOfdmSymbolProgress = null)
     {
         return DemodulateSoftLlrsFromStreamCore(
             samples,
@@ -3378,7 +3776,8 @@ public sealed class OfdmGenerator
             interleaveInitSeed,
             onEqualizedDataSymbol,
             onEqualizedDataSymbolFrame,
-            onFftSymbolFrame);
+            onFftSymbolFrame,
+            onOfdmSymbolProgress);
     }
 
     /// <summary>
@@ -3423,7 +3822,8 @@ public sealed class OfdmGenerator
                 interleaveInitSeed,
                 onEqualizedDataSymbol: null,
                 onEqualizedDataSymbolFrame: null,
-                onFftSymbolFrame: null);
+                onFftSymbolFrame: null,
+                onOfdmSymbolProgress: null);
         }
 
         if (leftSamples.Length != rightSamples.Length)
@@ -3445,7 +3845,8 @@ public sealed class OfdmGenerator
             interleaveInitSeed,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: null,
-            onFftSymbolFrame: null);
+            onFftSymbolFrame: null,
+            onOfdmSymbolProgress: null);
     }
 
     /// <summary>
@@ -3465,6 +3866,7 @@ public sealed class OfdmGenerator
     /// <param name="onEqualizedDataSymbol">onEqualizedDataSymbol を指定します。</param>
     /// <param name="onEqualizedDataSymbolFrame">onEqualizedDataSymbolFrame を指定します。</param>
     /// <param name="onFftSymbolFrame">onFftSymbolFrame を指定します。</param>
+    /// <param name="onOfdmSymbolProgress">OFDM シンボル進捗 (index, count)。</param>
     /// <returns>処理結果。</returns>
     private double[] DemodulateSoftLlrsFromStreamCore(
         Complex[] samples,
@@ -3480,7 +3882,8 @@ public sealed class OfdmGenerator
         int interleaveInitSeed,
         Action<Complex>? onEqualizedDataSymbol,
         Action<Complex[], int>? onEqualizedDataSymbolFrame,
-        Action<Complex[], int>? onFftSymbolFrame)
+        Action<Complex[], int>? onFftSymbolFrame,
+        Action<int, int>? onOfdmSymbolProgress)
     {
         if (bitCount < 0)
         {
@@ -3607,6 +4010,8 @@ public sealed class OfdmGenerator
                         onEqualizedDataSymbol,
                         onEqualizedDataSymbolFrame: null);
             }
+
+            onOfdmSymbolProgress?.Invoke(s, symbolCount);
 
             position = start + symbolLength;
         }

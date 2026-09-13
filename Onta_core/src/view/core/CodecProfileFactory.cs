@@ -30,6 +30,21 @@ internal static class CodecProfileFactory
     {
         var channels = WavReader.PeekChannelCount(wavPath);
         var channelMode = channels == 2 ? ChannelMode.Stereo : ChannelMode.Mono;
+        return ForReceive(channelMode);
+    }
+
+    /// <summary>
+    /// 音声入力受信用の既定プロファイルを生成します。
+    /// </summary>
+    /// <param name="channelMode">入力チャネル構成。</param>
+    /// <returns>音声受信用プロファイル。</returns>
+    public static FileWavCodecProfile ForAudioReceive(ChannelMode channelMode = ChannelMode.Stereo)
+    {
+        return ForReceive(channelMode);
+    }
+
+    private static FileWavCodecProfile ForReceive(ChannelMode channelMode)
+    {
         // 受信は安全側の既定値（BPSK / SC=9 / Interleave=1）で開始する。
         return Create(
             activeSubcarriers: 9,

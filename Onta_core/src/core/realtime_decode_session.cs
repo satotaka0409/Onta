@@ -3,54 +3,58 @@
 namespace Onta.Core;
 
 /// <summary>
-/// リアルタイムで受信PCMを蓄積し、段階的デコードを継続実行するセッションです。
+/// リアルタイム PCM を逐次取り込み、段階デコードするセッションです。
+/// 消費済み先頭は随時捨て、WAV 化や無制限蓄積は行いません。
 /// </summary>
 public sealed class RealtimeDecodeSession : IDisposable
 {
+    /// <summary>FH 取得前に保持する最大秒数（超えたら先頭を捨てて再同期）。</summary>
+    private const int MaxPreHeaderSeconds = 20;
+
+    /// <summary>カーソル後方に残すルックバック秒数。</summary>
+    private const double CompactLookbackSeconds = 0.5;
+
     private readonly FileWavCodec _codec;
     private readonly object _sync = new();
-    private readonly ComplexRingBuffer _left;
-    private readonly ComplexRingBuffer _right;
     private readonly int _sampleRate;
     private readonly DecodeRuntimeTuning _tuning;
     private readonly TimeSpan _pollInterval;
     private readonly int _minAttemptSamples;
     private readonly ProgressiveDecodeState _progressive = new();
-    private Complex[] _leftSnapshot = Array.Empty<Complex>();
-    private Complex[] _rightSnapshot = Array.Empty<Complex>();
+
+    private Complex[] _left = Array.Empty<Complex>();
+    private Complex[] _right = Array.Empty<Complex>();
+    private int _count;
+    private long _streamBase;
+    private bool _stereo;
 
     private CancellationTokenSource? _cts;
     private Task? _worker;
-    private int _lastAttemptSamples;
+    private int _lastAttemptCount;
     private bool _disposed;
-
+    private bool _inputCompleted;
+    private int _postInputStallCount;
+    private long _lastPostInputCursor;
+    private int _lastPostInputBuffered;
     private RealtimeDecodeSnapshot _snapshot = RealtimeDecodeSnapshot.Idle;
 
     /// <summary>
     /// デコードセッションを初期化します。
     /// </summary>
-    /// <param name="codec">段階的デコードを実行するコーデック。</param>
-    /// <param name="sampleRate">入力サンプルレート。</param>
-    /// <param name="tuning">復号時のランタイム調整値。null の場合は既定値。</param>
-    /// <param name="pollInterval">ワーカーループのポーリング間隔。null の場合は既定値。</param>
-    /// <param name="minAttemptSeconds">デコード試行を開始する最小蓄積秒数。</param>
-    /// <param name="maxBufferSeconds">内部リングバッファの最大保持秒数。</param>
     public RealtimeDecodeSession(
         FileWavCodec codec,
         int sampleRate,
+        ChannelMode channelMode,
         DecodeRuntimeTuning? tuning = null,
         TimeSpan? pollInterval = null,
-        int minAttemptSeconds = 2,
-        int maxBufferSeconds = 30)
+        int minAttemptSeconds = 2)
     {
         _codec = codec ?? throw new ArgumentNullException(nameof(codec));
         _sampleRate = Math.Max(1, sampleRate);
         _tuning = tuning ?? DecodeRuntimeTuning.Default;
-        _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(500);
+        _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(100);
         _minAttemptSamples = _sampleRate * Math.Max(1, minAttemptSeconds);
-        var maxBufferedSamples = _sampleRate * Math.Max(Math.Max(1, maxBufferSeconds), Math.Max(1, minAttemptSeconds));
-        _left = new ComplexRingBuffer(maxBufferedSamples);
-        _right = new ComplexRingBuffer(maxBufferedSamples);
+        _stereo = channelMode == ChannelMode.Stereo;
     }
 
     /// <summary>
@@ -68,17 +72,12 @@ public sealed class RealtimeDecodeSession : IDisposable
 
             _cts = new CancellationTokenSource();
             _worker = Task.Run(() => WorkerLoop(_cts.Token), _cts.Token);
-            _progressive.StatusBoard.BeginRun("(リアルタイム受信)");
-            _snapshot = _snapshot with
-            {
-                IsRunning = true,
-                LastError = null
-            };
+            _snapshot = _snapshot with { IsRunning = true, LastError = null };
         }
     }
 
     /// <summary>
-    /// デコードループを停止し、実行中タスクを終了します。
+    /// デコードループを停止します。
     /// </summary>
     public void Stop()
     {
@@ -93,12 +92,8 @@ public sealed class RealtimeDecodeSession : IDisposable
             _snapshot = _snapshot with { IsRunning = false };
         }
 
-        if (cts is not null)
-        {
-            cts.Cancel();
-            cts.Dispose();
-        }
-
+        cts?.Cancel();
+        cts?.Dispose();
         if (worker is not null)
         {
             try
@@ -113,43 +108,97 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// 新しい複素サンプル列をバッファへ追記します。
+    /// PCM チャンクを追記します（リング上書きではなく、消費後に先頭圧縮します）。
     /// </summary>
-    /// <param name="left">左チャンネルの複素サンプル列。</param>
-    /// <param name="right">右チャンネルの複素サンプル列。</param>
     public void AppendSamples(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
     {
         ThrowIfDisposed();
+        if (left.Length == 0)
+        {
+            return;
+        }
+
         lock (_sync)
         {
-            _left.Write(left);
-            _right.Write(right);
-            var buffered = Math.Min(_left.Count, _right.Count);
+            if (_stereo)
+            {
+                if (right.Length != left.Length)
+                {
+                    return;
+                }
+            }
+
+            EnsureCapacity(_count + left.Length);
+            left.CopyTo(_left.AsSpan(_count, left.Length));
+            if (_stereo)
+            {
+                right.CopyTo(_right.AsSpan(_count, right.Length));
+            }
+
+            _count += left.Length;
+
+            // FH 前の暴走蓄積を防ぐ（ライブ無信号時のみ。ファイル逐次は背圧で抑える）
+            var maxPre = _sampleRate * MaxPreHeaderSeconds;
+            if (!_inputCompleted && !_progressive.HeaderReady && _count > maxPre)
+            {
+                var drop = _count - (maxPre / 2);
+                DropFront(drop);
+                _progressive.Reset();
+                _progressive.StatusBoard.BeginRun("(リアルタイム受信 / 再同期)");
+                _lastAttemptCount = 0;
+            }
 
             _snapshot = _snapshot with
             {
-                BufferedSamples = buffered,
+                BufferedSamples = _count,
                 LastError = null
             };
         }
     }
 
     /// <summary>
-    /// 現在の実行スナップショットを返します。
+    /// 入力側の供給が終了したことを通知します（WAV EOF 等）。
     /// </summary>
-    /// <returns>現在の実行スナップショット。</returns>
-    public RealtimeDecodeSnapshot GetSnapshot()
+    public void NotifyInputCompleted()
     {
+        ThrowIfDisposed();
         lock (_sync)
         {
-            return _snapshot;
+            _inputCompleted = true;
+            _postInputStallCount = 0;
+            _lastPostInputCursor = _progressive.WarpedCursor;
+            _lastPostInputBuffered = _count;
         }
     }
 
     /// <summary>
-    /// 現在の詳細実行状態を返します。
+    /// 現在バッファ内のサンプル数です（背圧制御用）。
     /// </summary>
-    /// <returns>UI表示向けの実行状態。</returns>
+    public int BufferedSampleCount
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _count;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 現在の実行スナップショットを返します。
+    /// </summary>
+    public RealtimeDecodeSnapshot GetSnapshot()
+    {
+        lock (_sync)
+        {
+            return _snapshot with { BufferedSamples = _count };
+        }
+    }
+
+    /// <summary>
+    /// UI 向け実行状態を返します。
+    /// </summary>
     public CoreExecutionStatus QueryExecutionStatus()
     {
         lock (_sync)
@@ -159,10 +208,22 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
+    /// 内部の段階デコード状態です（完了ペイロード参照用）。
+    /// </summary>
+    public ProgressiveDecodeState ProgressiveState
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _progressive;
+            }
+        }
+    }
+
+    /// <summary>
     /// 復元済みバイト列がある場合に1回だけ取り出します。
     /// </summary>
-    /// <param name="decoded">成功時に取り出した復元バイト列。</param>
-    /// <returns>取り出しに成功した場合 true。</returns>
     public bool TryConsumeDecoded(out byte[] decoded)
     {
         lock (_sync)
@@ -179,138 +240,7 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
     }
 
-    /// <summary>
-    /// バッファ量に応じて段階的デコードを試行するワーカーループです。
-    /// </summary>
-    private async Task WorkerLoop(CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            try
-            {
-                Complex[]? left = null;
-                Complex[]? right = null;
-                var shouldTry = false;
-                lock (_sync)
-                {
-                    if (_progressive.Completed)
-                    {
-                        shouldTry = false;
-                    }
-                    else
-                    {
-                        var buffered = Math.Min(_left.Count, _right.Count);
-                        if (buffered >= _minAttemptSamples && buffered >= _lastAttemptSamples + (_sampleRate / 2))
-                        {
-                            if (_left.TryGetContiguousWindow(out var leftWindow, out var leftCount)
-                                && _right.TryGetContiguousWindow(out var rightWindow, out var rightCount)
-                                && leftCount == rightCount)
-                            {
-                                left = leftWindow;
-                                right = rightWindow;
-                                buffered = leftCount;
-                            }
-                            else
-                            {
-                                EnsureSnapshotCapacity(buffered);
-                                _left.CopyTo(_leftSnapshot.AsSpan(0, buffered));
-                                _right.CopyTo(_rightSnapshot.AsSpan(0, buffered));
-                                left = _leftSnapshot;
-                                right = _rightSnapshot;
-                            }
-
-                            _lastAttemptSamples = buffered;
-                            shouldTry = true;
-                        }
-                    }
-                }
-
-                if (shouldTry && left is not null && right is not null)
-                {
-                    ProgressiveDecodeState progressive;
-                    lock (_sync)
-                    {
-                        if (left.Length < _progressive.SourceLength)
-                        {
-                            _progressive.Reset();
-                        }
-
-                        progressive = _progressive;
-                    }
-
-                    var status = _codec.DecodePcmSamplesProgressive(
-                        left,
-                        right,
-                        progressive,
-                        correctWow: true,
-                        wowParams: null,
-                        tuning: _tuning);
-
-                    lock (_sync)
-                    {
-                        if (status == ProgressiveDecodeStatus.Completed && progressive.CompletedFile is not null)
-                        {
-                            _snapshot = _snapshot with
-                            {
-                                DecodedBytes = progressive.CompletedFile,
-                                LastDecodedAtUtc = DateTime.UtcNow,
-                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
-                                LastError = null
-                            };
-                        }
-                        else if (status == ProgressiveDecodeStatus.Failed)
-                        {
-                            _snapshot = _snapshot with
-                            {
-                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
-                                LastError = progressive.LastError
-                            };
-                            progressive.Reset();
-                            _lastAttemptSamples = 0;
-                        }
-                        else
-                        {
-                            _snapshot = _snapshot with
-                            {
-                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
-                                LastError = null
-                            };
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                lock (_sync)
-                {
-                    _progressive.Reset();
-                    _lastAttemptSamples = 0;
-                    _snapshot = _snapshot with
-                    {
-                        DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
-                        LastError = ex.Message
-                    };
-                }
-            }
-
-            await Task.Delay(_pollInterval, token).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// 破棄済みなら例外を送出します。
-    /// </summary>
-    private void ThrowIfDisposed()
-    {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(nameof(RealtimeDecodeSession));
-        }
-    }
-
-    /// <summary>
-    /// セッションを停止して関連リソースを解放します。
-    /// </summary>
+    /// <inheritdoc />
     public void Dispose()
     {
         if (_disposed)
@@ -322,116 +252,256 @@ public sealed class RealtimeDecodeSession : IDisposable
         _disposed = true;
     }
 
-    /// <summary>
-    /// スナップショット用配列の容量を現在サンプル数に合わせます。
-    /// </summary>
-    /// <param name="sampleCount">sampleCount を指定します。</param>
-    private void EnsureSnapshotCapacity(int sampleCount)
+    private async Task WorkerLoop(CancellationToken token)
     {
-        if (_leftSnapshot.Length != sampleCount)
+        while (!token.IsCancellationRequested)
         {
-            _leftSnapshot = new Complex[sampleCount];
-        }
+            try
+            {
+                Complex[]? left = null;
+                Complex[]? right = null;
+                var shouldTry = false;
+                ProgressiveDecodeState progressive;
 
-        if (_rightSnapshot.Length != sampleCount)
-        {
-            _rightSnapshot = new Complex[sampleCount];
+                var inputDone = false;
+                var allowIncomplete = true;
+                lock (_sync)
+                {
+                    progressive = _progressive;
+                    inputDone = _inputCompleted;
+                    if (progressive.Completed)
+                    {
+                        shouldTry = false;
+                    }
+                    else if (_count >= _minAttemptSamples
+                             && _count >= _lastAttemptCount + Math.Max(1, _sampleRate / 10))
+                    {
+                        shouldTry = true;
+                    }
+                    else if (inputDone && !progressive.Completed && _count > 0)
+                    {
+                        // EOF 後は増分条件を緩めて残バッファを吐き切る。
+                        // カーソルが微動してもバッファが増えなければ最終試行へ進める。
+                        shouldTry = true;
+                        allowIncomplete = _postInputStallCount < 5;
+                    }
+                    else if (inputDone && !progressive.Completed && _count <= 0)
+                    {
+                        progressive.LastError ??= "Incomplete PCM stream for decode.";
+                        progressive.StatusBoard.Complete(faulted: true, progressive.LastError);
+                        _snapshot = _snapshot with
+                        {
+                            IsRunning = false,
+                            LastError = progressive.LastError
+                        };
+                    }
+
+                    if (shouldTry)
+                    {
+                        left = new Complex[_count];
+                        Array.Copy(_left, 0, left, 0, _count);
+                        if (_stereo)
+                        {
+                            right = new Complex[_count];
+                            Array.Copy(_right, 0, right, 0, _count);
+                        }
+                        else
+                        {
+                            right = Array.Empty<Complex>();
+                        }
+
+                        progressive.StreamSampleBase = _streamBase;
+                        _lastAttemptCount = _count;
+                    }
+                }
+
+                if (shouldTry && left is not null && right is not null)
+                {
+                    var status = _codec.DecodePcmSamplesProgressive(
+                        left,
+                        right,
+                        progressive,
+                        correctWow: true,
+                        wowParams: null,
+                        tuning: _tuning,
+                        allowIncomplete: allowIncomplete);
+
+                    lock (_sync)
+                    {
+                        if (status == ProgressiveDecodeStatus.Completed
+                            && progressive.CompletedFile is not null)
+                        {
+                            _snapshot = _snapshot with
+                            {
+                                DecodedBytes = progressive.CompletedFile,
+                                LastDecodedAtUtc = DateTime.UtcNow,
+                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                                LastError = null,
+                                IsRunning = false
+                            };
+                            progressive.StatusBoard.Complete(faulted: false);
+                        }
+                        else if (status == ProgressiveDecodeStatus.Failed)
+                        {
+                            _snapshot = _snapshot with
+                            {
+                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                                LastError = progressive.LastError,
+                                IsRunning = !allowIncomplete ? false : _snapshot.IsRunning
+                            };
+                            if (!allowIncomplete)
+                            {
+                                progressive.StatusBoard.Complete(
+                                    faulted: true,
+                                    progressive.LastError ?? "Decode failed.");
+                            }
+                            else if (progressive.HeaderReady && !inputDone)
+                            {
+                                CompactLocked();
+                            }
+                        }
+                        else
+                        {
+                            _snapshot = _snapshot with
+                            {
+                                DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                                LastError = null
+                            };
+                            if (inputDone)
+                            {
+                                var cursor = progressive.WarpedCursor;
+                                if (cursor == _lastPostInputCursor && _count == _lastPostInputBuffered)
+                                {
+                                    _postInputStallCount++;
+                                }
+                                else
+                                {
+                                    _postInputStallCount = 0;
+                                    _lastPostInputCursor = cursor;
+                                    _lastPostInputBuffered = _count;
+                                }
+                            }
+
+                            // EOF 後に Compact すると末尾 BD に必要なサンプルを落としうる
+                            if (!inputDone)
+                            {
+                                CompactLocked();
+                            }
+                        }
+
+                        _snapshot = _snapshot with { BufferedSamples = _count };
+                    }
+                }
+                else if (inputDone)
+                {
+                    lock (_sync)
+                    {
+                        if (!_progressive.Completed && _snapshot.IsRunning && _postInputStallCount >= 8)
+                        {
+                            var err = _progressive.LastError ?? "Incomplete PCM stream for decode.";
+                            _progressive.LastError = err;
+                            _progressive.StatusBoard.Complete(faulted: true, err);
+                            _snapshot = _snapshot with { IsRunning = false, LastError = err };
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                lock (_sync)
+                {
+                    _snapshot = _snapshot with
+                    {
+                        DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                        LastError = ex.Message
+                    };
+                }
+            }
+
+            try
+            {
+                await Task.Delay(_pollInterval, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
     }
 
-    /// <summary>
-    /// 複素サンプルを固定長で保持するリングバッファです。
-    /// </summary>
-    private sealed class ComplexRingBuffer
+    private void CompactLocked()
     {
-        private readonly Complex[] _buffer;
-        private int _head;
-        private int _count;
-
-        /// <summary>
-        /// 指定容量でバッファを作成します。
-        /// </summary>
-        public ComplexRingBuffer(int capacity)
+        if (_count <= 0)
         {
-            if (capacity <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(capacity));
-            }
-
-            _buffer = new Complex[capacity];
+            return;
         }
 
-        /// <summary>
-        /// 現在バッファされているサンプル数です。
-        /// </summary>
-        public int Count => _count;
+        var lookback = (int)(_sampleRate * CompactLookbackSeconds);
+        var cursor = Math.Clamp(_progressive.WarpedCursor, 0, _count);
+        // 未処理サンプルは絶対に捨てない（高速 WAV 供給時の飛び越し防止）
+        var drop = Math.Max(0, cursor - lookback);
 
-        /// <summary>
-        /// サンプル列を書き込み、容量超過時は最古データを上書きします。
-        /// </summary>
-        public void Write(ReadOnlySpan<Complex> source)
+        // 小さすぎる圧縮は頻度だけ増えるのでスキップ
+        if (drop < _sampleRate / 20)
         {
-            var capacity = _buffer.Length;
-            for (var i = 0; i < source.Length; i++)
-            {
-                var tail = (_head + _count) % capacity;
-                _buffer[tail] = source[i];
-                if (_count < capacity)
-                {
-                    _count++;
-                }
-                else
-                {
-                    _head = (_head + 1) % capacity;
-                }
-            }
+            return;
         }
 
-        /// <summary>
-        /// 現在バッファされている内容を時系列順にコピーします。
-        /// </summary>
-        public void CopyTo(Span<Complex> destination)
+        DropFront(drop);
+        _progressive.WarpedCursor = Math.Max(0, _progressive.WarpedCursor - drop);
+        _progressive.SourceLength = _count;
+        _progressive.StreamSampleBase = _streamBase;
+        _lastAttemptCount = Math.Max(0, _lastAttemptCount - drop);
+    }
+
+    private void DropFront(int drop)
+    {
+        if (drop <= 0)
         {
-            if (destination.Length < _count)
-            {
-                throw new ArgumentException("Destination span is smaller than buffered sample count.", nameof(destination));
-            }
+            return;
+        }
 
-            if (_count == 0)
+        drop = Math.Min(drop, _count);
+        var remain = _count - drop;
+        if (remain > 0)
+        {
+            Array.Copy(_left, drop, _left, 0, remain);
+            if (_stereo)
             {
-                return;
-            }
-
-            var firstLength = Math.Min(_count, _buffer.Length - _head);
-            _buffer.AsSpan(_head, firstLength).CopyTo(destination);
-            var secondLength = _count - firstLength;
-            if (secondLength > 0)
-            {
-                _buffer.AsSpan(0, secondLength).CopyTo(destination.Slice(firstLength));
+                Array.Copy(_right, drop, _right, 0, remain);
             }
         }
 
-        /// <summary>
-        /// バッファ全体が連続領域として参照できる場合にその配列を返します。
-        /// </summary>
-        public bool TryGetContiguousWindow(out Complex[] buffer, out int count)
-        {
-            if (_head == 0 && _count == _buffer.Length)
-            {
-                buffer = _buffer;
-                count = _count;
-                return true;
-            }
+        _count = remain;
+        _streamBase += drop;
+    }
 
-            buffer = Array.Empty<Complex>();
-            count = 0;
-            return false;
+    private void EnsureCapacity(int needed)
+    {
+        if (_left.Length >= needed)
+        {
+            return;
+        }
+
+        var newSize = Math.Max(needed, Math.Max(1024, _left.Length * 2));
+        Array.Resize(ref _left, newSize);
+        if (_stereo)
+        {
+            Array.Resize(ref _right, newSize);
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(RealtimeDecodeSession));
         }
     }
 }
 
 /// <summary>
-/// リアルタイムデコード処理の公開スナップショットです。
+/// リアルタイムデコードの公開スナップショットです。
 /// </summary>
 public readonly record struct RealtimeDecodeSnapshot(
     bool IsRunning,
@@ -441,9 +511,6 @@ public readonly record struct RealtimeDecodeSnapshot(
     byte[]? DecodedBytes,
     string? LastError)
 {
-    /// <summary>
-    /// 停止状態の初期スナップショットです。
-    /// </summary>
     public static RealtimeDecodeSnapshot Idle { get; } = new(
         IsRunning: false,
         BufferedSamples: 0,
@@ -452,4 +519,3 @@ public readonly record struct RealtimeDecodeSnapshot(
         DecodedBytes: null,
         LastError: null);
 }
-

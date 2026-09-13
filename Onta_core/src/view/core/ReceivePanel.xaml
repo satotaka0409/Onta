@@ -178,7 +178,7 @@
 
             <!-- スタート -->
             <Button Grid.Column="3"
-                    Content="Start"
+                    Content="スタート"
                     Width="110"
                     Height="34"
                     HorizontalAlignment="Right"
@@ -189,53 +189,66 @@
 
         <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*"/>
-                <ColumnDefinition Width="0.5*"/>
+                <!-- FFT/エラーレート: I-Q 側を約5%詰めて右端の見切れを解消 -->
+                <ColumnDefinition Width="2.1*"/>
+                <ColumnDefinition Width="0.4*"/>
             </Grid.ColumnDefinitions>
 
-            <TabControl Margin="0,0,8,0">
-                <TabItem Header="Error Rate">
-                    <Border BorderBrush="{StaticResource BrushBorder}"
+            <!-- TabItem 内に置くと非選択時 ActualSize=0 になり LiveCharts が描画不能になるため、切替は Visibility で行う -->
+            <Grid Margin="0,0,8,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <RadioButton x:Name="ErrorRateTabRadio"
+                                 Content="エラーレート"
+                                 GroupName="ReceiveGraphTab"
+                                 IsChecked="True"
+                                 Margin="0,0,12,0"/>
+                    <RadioButton x:Name="FftTabRadio"
+                                 Content="FFT"
+                                 GroupName="ReceiveGraphTab"/>
+                </StackPanel>
+                <Border x:Name="ErrorChartHost"
+                        Grid.Row="1"
+                        BorderBrush="{StaticResource BrushBorder}"
+                        BorderThickness="1"
+                        Background="{StaticResource BrushInput}"
+                        CornerRadius="3"
+                        Padding="4"
+                        ClipToBounds="True">
+                    <lvc:CartesianChart x:Name="ErrorChart"
+                                        Background="{StaticResource BrushInput}"
+                                        AnimationsSpeed="0"
+                                        TooltipPosition="Hidden"/>
+                </Border>
+                <Grid x:Name="FftChartHost"
+                      Grid.Row="1"
+                      Opacity="0"
+                      IsHitTestVisible="False">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="FftTitle"
+                               Text="FFT"
+                               Margin="4,0,0,4"
+                               Foreground="{StaticResource BrushTextMuted}"/>
+                    <Border Grid.Row="1"
+                            BorderBrush="{StaticResource BrushBorder}"
                             BorderThickness="1"
                             Background="{StaticResource BrushInput}"
                             CornerRadius="3"
-                            Padding="4">
-                        <lvc:CartesianChart x:Name="ErrorChart"
+                            Padding="4"
+                            ClipToBounds="True">
+                        <lvc:CartesianChart x:Name="FftChart"
                                             Background="{StaticResource BrushInput}"
-                                            Series="{Binding Series}"
-                                            XAxes="{Binding XAxes}"
-                                            YAxes="{Binding YAxes}"
                                             AnimationsSpeed="0"
                                             TooltipPosition="Hidden"/>
                     </Border>
-                </TabItem>
-                <TabItem Header="FFT">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock x:Name="FftTitle"
-                                   Text="FFT"
-                                   Margin="4,0,0,4"
-                                   Foreground="{StaticResource BrushTextMuted}"/>
-                        <Border Grid.Row="1"
-                                BorderBrush="{StaticResource BrushBorder}"
-                                BorderThickness="1"
-                                Background="{StaticResource BrushInput}"
-                                CornerRadius="3"
-                                Padding="4">
-                            <lvc:CartesianChart x:Name="FftChart"
-                                                Background="{StaticResource BrushInput}"
-                                                Series="{Binding Series}"
-                                                XAxes="{Binding XAxes}"
-                                                YAxes="{Binding YAxes}"
-                                                AnimationsSpeed="0"
-                                                TooltipPosition="Hidden"/>
-                        </Border>
-                    </Grid>
-                </TabItem>
-            </TabControl>
+                </Grid>
+            </Grid>
 
             <Grid Grid.Column="1">
                 <Grid.RowDefinitions>
@@ -251,12 +264,10 @@
                         BorderThickness="1"
                         Background="{StaticResource BrushInput}"
                         CornerRadius="3"
-                        Padding="4">
+                        Padding="4"
+                        ClipToBounds="True">
                     <lvc:CartesianChart x:Name="IqChart"
                                         Background="{StaticResource BrushInput}"
-                                        Series="{Binding Series}"
-                                        XAxes="{Binding XAxes}"
-                                        YAxes="{Binding YAxes}"
                                         AnimationsSpeed="0"
                                         TooltipPosition="Hidden"/>
                 </Border>

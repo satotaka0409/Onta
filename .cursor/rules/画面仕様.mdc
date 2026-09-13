@@ -62,5 +62,6 @@ alwaysApply: true
   2. エラー率
   3. I-Q グラフ情報（等化後データキャリアの直近サンプル）
 - 入力側は、ワウフラッター(左右)、エラー率グラフも進捗状況に加える
-- エラー率グラフに、FH,BH,BD の属性も横軸に表示。グラフの色も別にする。
+- エラー率グラフに、誤り訂正の中間訂正率（ビタビ＝畳み込み / ターボ）を色分けして表示する。
+- 解析中（FH ワウ推定などヘッダー確定前）はエラー率グラフの更新を止める。
 - API: `CoreExecutionStatusBoard.Query()` / `InputCoreWorker.QueryExecutionStatus()` / `RealtimeDecodeSession.QueryExecutionStatus()`

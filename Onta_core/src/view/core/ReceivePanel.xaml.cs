@@ -1,6 +1,5 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
 using Microsoft.Win32;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
 using Onta.Core;
@@ -17,15 +16,12 @@ public partial class ReceivePanel : UserControl
     private readonly ErrorRateChartModel _errorChart = new();
     private readonly FftChartModel _fftChart = new();
     private readonly IqChartModel _iqChart = new();
-    private readonly DispatcherTimer _demoTimer;
-    private readonly Random _rng = new();
-    private bool _demoRunning;
-    private double _demoBias;
-    private double _demoTimeSec;
     private string? _selectedWavPath;
     private string _outputDir = AppPaths.OutputDir;
     private CoreFrameKind _lastErrorFrame = CoreFrameKind.Fh;
+    private CoreEccDecoderKind _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
     private double _lastErrorPercent = -1;
+    private int _lastErrorSequence = -1;
 
     /// <summary>
     /// 受信パネルを初期化します。
@@ -33,20 +29,18 @@ public partial class ReceivePanel : UserControl
     public ReceivePanel()
     {
         InitializeComponent();
-        ErrorChart.DataContext = _errorChart;
-        FftChart.DataContext = _fftChart;
-        IqChart.DataContext = _iqChart;
+        BindChart(ErrorChart, _errorChart.Series, _errorChart.XAxes, _errorChart.YAxes);
+        BindChart(FftChart, _fftChart.Series, _fftChart.XAxes, _fftChart.YAxes);
+        BindChart(IqChart, _iqChart.Series, _iqChart.XAxes, _iqChart.YAxes);
+        ErrorRateTabRadio.Checked += OnReceiveGraphTabChanged;
+        FftTabRadio.Checked += OnReceiveGraphTabChanged;
         InitializeAudioDevices();
         UpdateInputModePanels();
         OutputDirBox.Text = _outputDir;
-
-        // デモ表示用タイマー（実受信がないときの可視化確認向け）。
-        _demoTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-        _demoTimer.Tick += OnDemoTick;
+        UpdateReceiveGraphTabVisibility();
 
         Loaded += (_, _) =>
         {
-            StopDemoFeed();
             SetWowFlutterPercent(0, 0);
             ErrorGraph.Clear();
             _fftChart.Clear();
@@ -54,8 +48,42 @@ public partial class ReceivePanel : UserControl
             SetFileInfo("(未受信)", "-", "-");
             ProgressBox.Text = "-";
             UpdateInputModePanels();
+            UpdateReceiveGraphTabVisibility();
         };
-        Unloaded += (_, _) => StopDemoFeed();
+    }
+
+    private static void BindChart(
+        LiveChartsCore.SkiaSharpView.WPF.CartesianChart chart,
+        LiveChartsCore.ISeries[] series,
+        LiveChartsCore.SkiaSharpView.Axis[] xAxes,
+        LiveChartsCore.SkiaSharpView.Axis[] yAxes)
+    {
+        chart.Series = series;
+        chart.XAxes = xAxes;
+        chart.YAxes = yAxes;
+    }
+
+    private void OnReceiveGraphTabChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateReceiveGraphTabVisibility();
+    }
+
+    private void UpdateReceiveGraphTabVisibility()
+    {
+        // InitializeComponent 中に Checked が発火するため、未生成要素を参照しない
+        if (ErrorChartHost is null || FftChartHost is null || FftTabRadio is null)
+        {
+            return;
+        }
+
+        var showFft = FftTabRadio.IsChecked == true;
+        // Collapsed だとサイズ0になり LiveCharts が壊れるので、常にレイアウトしつつ Opacity で切替
+        ErrorChartHost.Opacity = showFft ? 0 : 1;
+        ErrorChartHost.IsHitTestVisible = !showFft;
+        FftChartHost.Opacity = showFft ? 1 : 0;
+        FftChartHost.IsHitTestVisible = showFft;
+        FftChartHost.Visibility = Visibility.Visible;
+        ErrorChartHost.Visibility = Visibility.Visible;
     }
 
     public event EventHandler? ReceiveStartRequested;
@@ -137,20 +165,7 @@ public partial class ReceivePanel : UserControl
 
         SetWowFlutterPercent(status.WowLeftPercent, status.WowRightPercent);
 
-        var err = status.ErrorRate.LatestPercent;
-        var errFrame = status.ErrorRate.FrameKind;
-        if (Math.Abs(err - _lastErrorPercent) > 1e-6 || errFrame != _lastErrorFrame)
-        {
-            _lastErrorPercent = err;
-            _lastErrorFrame = errFrame;
-            _errorChart.AddSample(err, errFrame switch
-            {
-                CoreFrameKind.Fh => ErrorRateFrameKind.Fh,
-                CoreFrameKind.Bh => ErrorRateFrameKind.Bh,
-                _ => ErrorRateFrameKind.Bd
-            });
-        }
-
+        // I-Q / FFT を先に更新する（エラーレート側の LiveCharts 更新で例外・遅延しても可視化を落とさない）
         _iqChart.ReplacePoints(status.IqGraph.Points);
         if (status.IqGraph.ActiveSubcarrierCount > 0)
         {
@@ -174,6 +189,45 @@ public partial class ReceivePanel : UserControl
         {
             FftTitle.Text = "FFT";
         }
+
+        var err = status.ErrorRate.LatestPercent;
+        var errFrame = status.ErrorRate.FrameKind;
+        var errDecoder = status.ErrorRate.DecoderKind;
+        var errSeq = status.ErrorRate.Sequence;
+        // 解析中は止め、訂正率サンプルが届いたときだけ追加
+        if (!status.IsAnalyzing && errSeq != _lastErrorSequence && errSeq > 0)
+        {
+            _lastErrorPercent = err;
+            _lastErrorFrame = errFrame;
+            _lastErrorDecoder = errDecoder;
+            _lastErrorSequence = errSeq;
+            try
+            {
+                _errorChart.AddSample(err, errDecoder);
+            }
+            catch
+            {
+                // エラーレート描画失敗で受信可視化全体を止めない
+            }
+        }
+    }
+
+    /// <summary>
+    /// 新しい受信開始時にグラフ／誤差ゲートを初期化します。
+    /// </summary>
+    public void PrepareForNewReceive()
+    {
+        _errorChart.Clear();
+        _fftChart.Clear();
+        _iqChart.Clear();
+        _lastErrorPercent = -1;
+        _lastErrorFrame = CoreFrameKind.Fh;
+        _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
+        _lastErrorSequence = -1;
+        SetWowFlutterPercent(0, 0);
+        IqTitle.Text = "I-Q";
+        FftTitle.Text = "FFT";
+        ProgressBox.Text = "開始中…";
     }
 
     /// <summary>
@@ -225,36 +279,6 @@ public partial class ReceivePanel : UserControl
     {
         WowLeft.AddSample(leftPercent);
         WowRight.AddSample(rightPercent);
-    }
-
-    /// <summary>
-    /// エラー率サンプルをグラフへ追加します。
-    /// </summary>
-    /// <param name="errorRatePercent">エラー率。</param>
-    /// <param name="frameKind">対象フレーム種別。</param>
-    public void AddErrorRateSample(double errorRatePercent, ErrorRateFrameKind frameKind)
-    {
-        _errorChart.AddSample(errorRatePercent, frameKind);
-    }
-
-    /// <summary>
-    /// デモ表示の更新を開始します。
-    /// </summary>
-    public void StartDemoFeed()
-    {
-        _demoRunning = true;
-        _demoBias = 1.5;
-        _demoTimeSec = 0.0;
-        _demoTimer.Start();
-    }
-
-    /// <summary>
-    /// デモ表示の更新を停止します。
-    /// </summary>
-    public void StopDemoFeed()
-    {
-        _demoRunning = false;
-        _demoTimer.Stop();
     }
 
     private void OnInputModeChanged(object sender, RoutedEventArgs e)
@@ -369,30 +393,6 @@ public partial class ReceivePanel : UserControl
     private void OnReceiveStartClick(object sender, RoutedEventArgs e)
     {
         ReceiveStartRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void OnDemoTick(object? sender, EventArgs e)
-    {
-        if (!_demoRunning)
-        {
-            return;
-        }
-
-        _demoTimeSec += _demoTimer.Interval.TotalSeconds;
-
-        _demoBias += (_rng.NextDouble() - 0.5) * 0.12;
-        _demoBias = Math.Clamp(_demoBias, 0.2, 4.0);
-        var spike = _rng.NextDouble() < 0.03 ? _rng.NextDouble() * 8.0 : 0.0;
-        var err = Math.Max(0.0, _demoBias + ((_rng.NextDouble() - 0.5) * 0.6) + spike);
-        _errorChart.AddSample(err, ErrorRateFrameKind.Bd);
-
-        var wowL = (1.2 * Math.Sin((2.0 * Math.PI * 0.5 * _demoTimeSec) + 0.3))
-                   + (0.35 * Math.Sin((2.0 * Math.PI * 6.0 * _demoTimeSec) + 1.1));
-        var wowR = (1.1 * Math.Sin((2.0 * Math.PI * 0.5 * _demoTimeSec) + 2.2))
-                   + (0.40 * Math.Sin((2.0 * Math.PI * 6.0 * _demoTimeSec) + 0.4));
-        wowL += (_rng.NextDouble() - 0.5) * 0.08;
-        wowR += (_rng.NextDouble() - 0.5) * 0.08;
-        SetWowFlutterPercent(wowL, wowR);
     }
 
     private sealed record AudioDeviceItem(int DeviceNumber, string Name);

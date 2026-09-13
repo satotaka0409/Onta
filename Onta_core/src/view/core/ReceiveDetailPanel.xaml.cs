@@ -25,6 +25,7 @@ public partial class ReceiveDetailPanel : UserControl
     private string _lastCompletionMessage = string.Empty;
     private string _lastOutputPath = string.Empty;
     private int _builtBlockCount = -1;
+    private bool _awaitingProgressReset;
 
     /// <summary>
     /// 受信詳細パネルを初期化します。
@@ -53,7 +54,46 @@ public partial class ReceiveDetailPanel : UserControl
         _fhRow = null;
         _totalRow = null;
         _builtBlockCount = -1;
+        _awaitingProgressReset = true;
         _rows.Add(DetailRow.Info("File Name", "(Not received)"));
+    }
+
+    /// <summary>
+    /// 同一ファイル再受信時にメーター／ブロック状態を必ずやり直します。
+    /// </summary>
+    private void ResetBlockProgressUi()
+    {
+        for (var i = 0; i < _blockStates.Length; i++)
+        {
+            _blockStates[i] = ReceiveBlockState.Unknown;
+            _blockErrors[i] = string.Empty;
+            if (i < _blockRows.Count)
+            {
+                _blockRows[i].SetSeconds("-");
+                _blockRows[i].SetProgressPercent(0, force: true);
+            }
+        }
+
+        if (_fhRow is not null)
+        {
+            _fhRow.SetProgressPercent(0, force: true);
+        }
+
+        if (_totalRow is not null)
+        {
+            _totalRow.SetProgressPercent(0, force: true);
+        }
+    }
+
+    private void ResetBlockProgressUiIfNeeded()
+    {
+        if (!_awaitingProgressReset)
+        {
+            return;
+        }
+
+        ResetBlockProgressUi();
+        _awaitingProgressReset = false;
     }
 
     /// <summary>
@@ -90,9 +130,10 @@ public partial class ReceiveDetailPanel : UserControl
         var size = string.IsNullOrWhiteSpace(fileSizeText) ? "-" : fileSizeText;
         var blocks = Math.Max(0, blockCount);
         EnsureRows(name, size, blocks > 0 ? blocks.ToString() : "-", blocks);
+        ResetBlockProgressUiIfNeeded();
         if (_fhRow is not null)
         {
-            _fhRow.ProgressPercent = 100;
+            _fhRow.SetProgressPercent(100);
         }
     }
 
@@ -112,7 +153,7 @@ public partial class ReceiveDetailPanel : UserControl
 
             if (_fhRow is not null && status.IsRunning)
             {
-                _fhRow.ProgressPercent = Math.Clamp(status.Progress.ProgressPercent, 0.0, 99.0);
+                _fhRow.SetProgressPercent(Math.Clamp(status.Progress.ProgressPercent, 0.0, 99.0));
             }
 
             return;
@@ -126,21 +167,22 @@ public partial class ReceiveDetailPanel : UserControl
         var totalBlocks = Math.Max(0, status.Progress.TotalBlockCount);
 
         EnsureRows(fileName, fileSize, blockCountText, totalBlocks);
+        ResetBlockProgressUiIfNeeded();
 
         // FH行はブロック総数の確定有無で表示を切り替える。
         if (_fhRow is not null)
         {
             if (totalBlocks > 0)
             {
-                _fhRow.ProgressPercent = 100;
+                _fhRow.SetProgressPercent(100);
             }
             else if (status.IsRunning)
             {
-                _fhRow.ProgressPercent = Math.Clamp(status.Progress.ProgressPercent, 0.0, 99.0);
+                _fhRow.SetProgressPercent(Math.Clamp(status.Progress.ProgressPercent, 0.0, 99.0));
             }
             else
             {
-                _fhRow.ProgressPercent = 0;
+                _fhRow.SetProgressPercent(0, force: true);
             }
         }
 
@@ -164,7 +206,7 @@ public partial class ReceiveDetailPanel : UserControl
         {
             if (_blockStates[i] == ReceiveBlockState.Accepted)
             {
-                _blockRows[i].ProgressPercent = 100;
+                _blockRows[i].SetProgressPercent(100);
             }
             else if (status.IsRunning
                      && i == currentBlock
@@ -177,7 +219,7 @@ public partial class ReceiveDetailPanel : UserControl
                 var local = totalBlocks <= 0
                     ? 0.0
                     : Math.Clamp((body - (i * perBlock)) / perBlock, 0.0, 0.99) * 100.0;
-                _blockRows[i].ProgressPercent = local;
+                _blockRows[i].SetProgressPercent(local);
 
                 if (status.ErrorRate.FrameKind == CoreFrameKind.Bd
                     && status.ErrorRate.LatestPercent >= 99.9
@@ -186,9 +228,9 @@ public partial class ReceiveDetailPanel : UserControl
                     SetBlockError(i, status.LastError);
                 }
             }
-            else
+            else if (_blockStates[i] != ReceiveBlockState.Error)
             {
-                _blockRows[i].ProgressPercent = 0;
+                _blockRows[i].SetProgressPercent(0, force: true);
             }
         }
 
@@ -196,15 +238,15 @@ public partial class ReceiveDetailPanel : UserControl
         {
             if (!status.IsRunning && !status.IsCompleted)
             {
-                _totalRow.ProgressPercent = 0;
+                _totalRow.SetProgressPercent(0, force: true);
             }
             else if (status.IsCompleted && !status.IsFaulted)
             {
-                _totalRow.ProgressPercent = 100;
+                _totalRow.SetProgressPercent(100);
             }
             else
             {
-                _totalRow.ProgressPercent = Math.Clamp(status.Progress.ProgressPercent, 0.0, 100.0);
+                _totalRow.SetProgressPercent(Math.Clamp(status.Progress.ProgressPercent, 0.0, 100.0));
             }
         }
 
@@ -555,17 +597,7 @@ public partial class ReceiveDetailPanel : UserControl
         public double ProgressPercent
         {
             get => _progressPercent;
-            set
-            {
-                var clamped = Math.Clamp(value, 0.0, 100.0);
-                if (Math.Abs(_progressPercent - clamped) < 0.001)
-                {
-                    return;
-                }
-
-                _progressPercent = clamped;
-                OnPropertyChanged();
-            }
+            set => SetProgressPercent(value);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -573,6 +605,23 @@ public partial class ReceiveDetailPanel : UserControl
         public static DetailRow Segment(string name) => new(name, "-", showMeter: true);
 
         public static DetailRow Info(string name, string value) => new(name, value, showMeter: false);
+
+        /// <summary>
+        /// 進捗メーター値を更新します。
+        /// </summary>
+        /// <param name="value">0..100 の進捗。</param>
+        /// <param name="force">true のとき同一値でも PropertyChanged を飛ばす。</param>
+        public void SetProgressPercent(double value, bool force = false)
+        {
+            var clamped = Math.Clamp(value, 0.0, 100.0);
+            if (!force && Math.Abs(_progressPercent - clamped) < 0.001)
+            {
+                return;
+            }
+
+            _progressPercent = clamped;
+            OnPropertyChanged(nameof(ProgressPercent));
+        }
 
         public void SetSeconds(string value)
         {

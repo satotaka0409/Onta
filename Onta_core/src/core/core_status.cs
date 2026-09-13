@@ -37,16 +37,29 @@ public readonly record struct CoreProgressInfo(
 }
 
 /// <summary>
+/// エラー率グラフ上の誤り訂正段階です。
+/// </summary>
+public enum CoreEccDecoderKind : byte
+{
+    /// <summary>畳み込み（ビタビ / BCJR）。</summary>
+    Viterbi = 0,
+    /// <summary>ターボ符号。</summary>
+    Turbo = 1
+}
+
+/// <summary>
 /// 最新エラー率と対象フレーム種別を保持します。
 /// </summary>
 public readonly record struct CoreErrorRateInfo(
     double LatestPercent,
-    CoreFrameKind FrameKind)
+    CoreFrameKind FrameKind,
+    CoreEccDecoderKind DecoderKind,
+    int Sequence)
 {
     /// <summary>
     /// 初期エラー率情報です。
     /// </summary>
-    public static CoreErrorRateInfo Idle { get; } = new(0, CoreFrameKind.Fh);
+    public static CoreErrorRateInfo Idle { get; } = new(0, CoreFrameKind.Fh, CoreEccDecoderKind.Viterbi, 0);
 }
 
 /// <summary>
@@ -99,6 +112,8 @@ public readonly record struct CoreExecutionStatus(
     bool IsRunning,
     bool IsCompleted,
     bool IsFaulted,
+    /// <summary>FH ワウ推定など、ヘッダー確定前の解析中は true。</summary>
+    bool IsAnalyzing,
     CoreProgressInfo Progress,
     CoreErrorRateInfo ErrorRate,
     CoreIqGraphInfo IqGraph,
@@ -117,6 +132,7 @@ public readonly record struct CoreExecutionStatus(
         IsRunning: false,
         IsCompleted: false,
         IsFaulted: false,
+        IsAnalyzing: false,
         Progress: CoreProgressInfo.Idle,
         ErrorRate: CoreErrorRateInfo.Idle,
         IqGraph: CoreIqGraphInfo.Empty,
@@ -134,14 +150,15 @@ public readonly record struct CoreExecutionStatus(
 /// </summary>
 public sealed class CoreExecutionStatusBoard
 {
-    public const int DefaultIqCapacity = 256;
-    public const int DefaultFftCapacity = 128;
+    public const int DefaultIqCapacity = 4096;
+    public const int DefaultFftCapacity = 256;
 
     private readonly object _sync = new();
     private CoreIqSample[] _iqRing;
     private int _iqCount;
     private int _iqWrite;
     private ModulationScheme _iqModulationScheme = ModulationScheme.Bpsk;
+    private int _iqActiveSubcarrierCount;
     private CoreFftSample[] _fftLeftBins;
     private CoreFftSample[] _fftRightBins;
     private int _fftLeftCount;
@@ -191,6 +208,7 @@ public sealed class CoreExecutionStatusBoard
             _iqCount = 0;
             _iqWrite = 0;
             _iqModulationScheme = ModulationScheme.Bpsk;
+            _iqActiveSubcarrierCount = 0;
             _fftLeftCount = 0;
             _fftRightCount = 0;
             _fftIsStereo = false;
@@ -212,6 +230,7 @@ public sealed class CoreExecutionStatusBoard
             _iqCount = 0;
             _iqWrite = 0;
             _iqModulationScheme = ModulationScheme.Bpsk;
+            _iqActiveSubcarrierCount = 0;
             _fftLeftCount = 0;
             _fftRightCount = 0;
             _fftIsStereo = false;
@@ -220,6 +239,7 @@ public sealed class CoreExecutionStatusBoard
                 IsRunning: true,
                 IsCompleted: false,
                 IsFaulted: false,
+                IsAnalyzing: true,
                 Progress: CoreProgressInfo.Idle,
                 ErrorRate: CoreErrorRateInfo.Idle,
                 IqGraph: CoreIqGraphInfo.Empty,
@@ -230,6 +250,18 @@ public sealed class CoreExecutionStatusBoard
                 FileSizeText: fileSizeText,
                 BlockCountText: blockCountText,
                 LastError: null);
+        }
+    }
+
+    /// <summary>
+    /// FH ワウ推定などの解析フェーズかどうかを設定します。
+    /// </summary>
+    /// <param name="analyzing">解析中なら true。</param>
+    public void SetAnalyzing(bool analyzing)
+    {
+        lock (_sync)
+        {
+            _status = _status with { IsAnalyzing = analyzing };
         }
     }
 
@@ -267,15 +299,23 @@ public sealed class CoreExecutionStatusBoard
     /// <summary>
     /// エラー率と対象フレーム種別を更新します。
     /// </summary>
-    /// <param name="percent">エラー率（0 から 100）。</param>
+    /// <param name="percent">誤り訂正段階の推定エラー率（0 から 100）。</param>
     /// <param name="frameKind">エラー率の対象フレーム種別。</param>
-    public void SetErrorRate(double percent, CoreFrameKind frameKind)
+    /// <param name="decoderKind">ビタビ / ターボの区別。</param>
+    public void SetErrorRate(
+        double percent,
+        CoreFrameKind frameKind,
+        CoreEccDecoderKind decoderKind = CoreEccDecoderKind.Viterbi)
     {
         lock (_sync)
         {
             _status = _status with
             {
-                ErrorRate = new CoreErrorRateInfo(Math.Clamp(percent, 0.0, 100.0), frameKind)
+                ErrorRate = new CoreErrorRateInfo(
+                    Math.Clamp(percent, 0.0, 100.0),
+                    frameKind,
+                    decoderKind,
+                    _status.ErrorRate.Sequence + 1)
             };
         }
     }
@@ -361,6 +401,22 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
+    /// IQ リングを空にして、新しいブロック／試行の取り込みを開始します。
+    /// </summary>
+    /// <param name="activeSubcarriers">データ部の有効サブキャリア数。</param>
+    /// <param name="modulationScheme">表示する変調方式。</param>
+    public void BeginIqCapture(int activeSubcarriers, ModulationScheme modulationScheme)
+    {
+        lock (_sync)
+        {
+            _iqCount = 0;
+            _iqWrite = 0;
+            _iqActiveSubcarrierCount = Math.Max(0, activeSubcarriers);
+            _iqModulationScheme = modulationScheme;
+        }
+    }
+
+    /// <summary>
     /// IQ表示用フレームを丸ごと差し替えます。
     /// </summary>
     /// <param name="equalizedSymbols">等化後シンボル列。</param>
@@ -369,7 +425,7 @@ public sealed class CoreExecutionStatusBoard
     {
         lock (_sync)
         {
-            EnsureIqCapacityUnlocked(equalizedSymbols.Length);
+            EnsureIqCapacityUnlocked(Math.Max(equalizedSymbols.Length, DefaultIqCapacity));
             _iqCount = 0;
             _iqWrite = 0;
             for (var n = 0; n < equalizedSymbols.Length; n++)
@@ -386,11 +442,30 @@ public sealed class CoreExecutionStatusBoard
             }
 
             _iqModulationScheme = modulationScheme;
+            if (_iqActiveSubcarrierCount <= 0)
+            {
+                _iqActiveSubcarrierCount = equalizedSymbols.Length;
+            }
         }
     }
 
     /// <summary>
+    /// 等化後シンボルを IQ リングへ追記します（コンスタレーション蓄積用）。
+    /// </summary>
+    /// <param name="equalizedSymbols">等化後シンボル列。</param>
+    public void AppendIqFrame(ReadOnlySpan<Complex> equalizedSymbols)
+    {
+        if (equalizedSymbols.IsEmpty)
+        {
+            return;
+        }
+
+        PushIqMany(equalizedSymbols);
+    }
+
+    /// <summary>
     /// FFT表示用フレームを更新します。
+    /// 横軸は fftshift 相当で、ビン0（DC）を中央（X=0）に置きます。
     /// </summary>
     /// <param name="freqBins">周波数ビン列。</param>
     /// <param name="isRightChannel">右チャネル更新時は true。</param>
@@ -398,37 +473,69 @@ public sealed class CoreExecutionStatusBoard
     {
         lock (_sync)
         {
-            _fftSize = freqBins.Length;
-            var positiveCount = Math.Max(0, (freqBins.Length / 2) - 1);
-            EnsureFftCapacityUnlocked(positiveCount, isRightChannel);
+            var n = freqBins.Length;
+            _fftSize = n;
+            if (n < 2)
+            {
+                if (isRightChannel)
+                {
+                    _fftRightCount = 0;
+                    _fftIsStereo = true;
+                }
+                else
+                {
+                    _fftLeftCount = 0;
+                    if (!_fftIsStereo)
+                    {
+                        _fftRightCount = 0;
+                    }
+                }
+
+                return;
+            }
+
+            var half = n / 2;
+            // 負側 (half+1..n-1) + DC(0) + 正側(1..half) = n 点
+            var pointCount = n;
+            EnsureFftCapacityUnlocked(pointCount, isRightChannel);
 
             if (isRightChannel)
             {
-                _fftRightCount = positiveCount;
+                _fftRightCount = pointCount;
                 _fftIsStereo = true;
             }
             else
             {
-                _fftLeftCount = positiveCount;
+                _fftLeftCount = pointCount;
                 if (!_fftIsStereo)
                 {
                     _fftRightCount = 0;
                 }
             }
 
-            for (var bin = 1; bin <= positiveCount; bin++)
+            var dest = isRightChannel ? _fftRightBins : _fftLeftBins;
+            var write = 0;
+
+            static CoreFftSample ToSample(Complex c, int signedBin)
             {
-                var c = freqBins[bin];
                 var magnitude = Math.Sqrt((c.Real * c.Real) + (c.Imaginary * c.Imaginary));
                 var magnitudeDb = 20.0 * Math.Log10(magnitude + 1e-12);
-                if (isRightChannel)
-                {
-                    _fftRightBins[bin - 1] = new CoreFftSample(bin, magnitudeDb);
-                }
-                else
-                {
-                    _fftLeftBins[bin - 1] = new CoreFftSample(bin, magnitudeDb);
-                }
+                return new CoreFftSample(signedBin, magnitudeDb);
+            }
+
+            // 左半分: 負周波数（ビン half+1 .. n-1 → X = bin-n）
+            for (var bin = half + 1; bin < n; bin++)
+            {
+                dest[write++] = ToSample(freqBins[bin], bin - n);
+            }
+
+            // 中央: DC（ビン 0 → X = 0）
+            dest[write++] = ToSample(freqBins[0], 0);
+
+            // 右半分: 正周波数（ビン 1 .. half → X = bin）
+            for (var bin = 1; bin <= half; bin++)
+            {
+                dest[write++] = ToSample(freqBins[bin], bin);
             }
         }
     }
@@ -469,6 +576,7 @@ public sealed class CoreExecutionStatusBoard
                 IsRunning = false,
                 IsCompleted = true,
                 IsFaulted = faulted,
+                IsAnalyzing = false,
                 Progress = progress,
                 LastError = lastError
             };
@@ -499,7 +607,7 @@ public sealed class CoreExecutionStatusBoard
             {
                 IqGraph = new CoreIqGraphInfo(
                     CopyIqPointsUnlocked(),
-                    _iqCount,
+                    _iqActiveSubcarrierCount > 0 ? _iqActiveSubcarrierCount : _iqCount,
                     _iqModulationScheme),
                 FftGraph = new CoreFftGraphInfo(
                     CopyFftPointsUnlocked(isRightChannel: false),

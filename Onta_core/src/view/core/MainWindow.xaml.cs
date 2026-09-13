@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _inputCoreWorker.FileHeaderReady -= OnReceiveFileHeaderReady;
+            _inputCoreWorker.Dispose();
             StopAudioPlayback();
         };
         LoadReceiveHistoryAtStartup();
@@ -101,7 +102,6 @@ public partial class MainWindow : Window
             // 送信開始前に既存の再生状態をリセットする。
             StopAudioPlayback();
 
-            ReceivePanel.StopDemoFeed();
             ReceivePanel.SetWowFlutterPercent(0, 0);
             // 新規送信開始に合わせて進捗表示を初期化する。
             EstimatePanel.ResetProgress();
@@ -165,31 +165,8 @@ public partial class MainWindow : Window
     /// <param name="e">イベント引数。</param>
     private void OnReceiveStartRequested(object? sender, EventArgs e)
     {
-        if (!ReceivePanel.UseWavInput)
-        {
-            MessageBox.Show(
-                this,
-                $"Audio input mode is not implemented yet. Device: {ReceivePanel.AudioDeviceName}",
-                "Onta",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            return;
-        }
-
         try
         {
-            if (string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
-            {
-                MessageBox.Show(this, "Please select a WAV input file.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            if (!File.Exists(ReceivePanel.SelectedWavPath))
-            {
-                MessageBox.Show(this, "WAV input file was not found.", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
             var outputDir = ReceivePanel.SelectedOutputDir;
             if (string.IsNullOrWhiteSpace(outputDir))
             {
@@ -207,12 +184,27 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (!ReceivePanel.UseWavInput)
+            {
+                StartAudioReceive(outputDir);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
+            {
+                MessageBox.Show(this, "Please select a WAV input file.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (!File.Exists(ReceivePanel.SelectedWavPath))
+            {
+                MessageBox.Show(this, "WAV input file was not found.", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             var profile = CodecProfileFactory.ForWavReceive(ReceivePanel.SelectedWavPath);
             ReceivePanel.SetWowChannelMode(profile.ChannelMode);
-            ReceivePanel.StopDemoFeed();
-            ReceivePanel.ErrorGraph.Clear();
-            ReceivePanel.FftGraph.Clear();
-            ReceivePanel.IqGraph.Clear();
+            ReceivePanel.PrepareForNewReceive();
             ReceiveDetailPanel.Clear();
             ReceiveDetailPanel.SetSourcePath(ReceivePanel.SelectedWavPath);
             _receiveDetailOpened = false;
@@ -240,15 +232,52 @@ public partial class MainWindow : Window
             ReceivePanel.SetProgressText("FH 待機中...");
 
             _pollingReceive = true;
-            if (!_progressPollTimer.IsEnabled)
-            {
-                _progressPollTimer.Start();
-            }
+            // 前回完了で止まっていても確実に再開する。
+            _progressPollTimer.Stop();
+            _progressPollTimer.Start();
+            // 開始直後の状態を1回分すぐ反映（完了済表示のまま残るのを防ぐ）。
+            ReceivePanel.ApplyExecutionStatus(_inputCoreWorker.QueryExecutionStatus());
+            ReceiveDetailPanel.ApplyStatus(_inputCoreWorker.QueryExecutionStatus());
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, $"受信開始に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    /// <summary>
+    /// 選択デバイスからのリアルタイム音声受信を開始します。
+    /// </summary>
+    private void StartAudioReceive(string outputDir)
+    {
+        // 音声入力はステレオ 44.1kHz 前提（ヘッダーは内部でモノラル扱い）
+        var profile = CodecProfileFactory.ForAudioReceive(Onta.Core.ChannelMode.Stereo);
+        ReceivePanel.SetWowChannelMode(profile.ChannelMode);
+        ReceivePanel.PrepareForNewReceive();
+        ReceiveDetailPanel.Clear();
+        ReceiveDetailPanel.SetSourcePath($"(音声入力: {ReceivePanel.AudioDeviceName})");
+        _receiveDetailOpened = false;
+        _lastReceiveHistorySnapshotKey = string.Empty;
+
+        if (!_inputCoreWorker.TryStartAudioDecode(ReceivePanel.AudioDeviceNumber, profile, outputDir))
+        {
+            MessageBox.Show(
+                this,
+                "Receive core is already running, or audio device failed to start.",
+                "Onta",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        ReceivePanel.SetFileInfo($"(音声入力: {ReceivePanel.AudioDeviceName})", "-", "-");
+        ReceivePanel.SetProgressText("音声入力中 / FH 待機...");
+
+        _pollingReceive = true;
+        _progressPollTimer.Stop();
+        _progressPollTimer.Start();
+        ReceivePanel.ApplyExecutionStatus(_inputCoreWorker.QueryExecutionStatus());
+        ReceiveDetailPanel.ApplyStatus(_inputCoreWorker.QueryExecutionStatus());
     }
 
     /// <summary>
@@ -266,7 +295,13 @@ public partial class MainWindow : Window
             var status = _inputCoreWorker.QueryExecutionStatus();
             ReceivePanel.ApplyExecutionStatus(status);
             ReceiveDetailPanel.ApplyStatus(status);
-            SaveReceiveHistoryIfChanged(force: false);
+
+            // 受信実行中は履歴保存を省略（ディスク I/O が画面更新を遅らせる）。
+            // FH 確定コールバックと完了時のみ保存する。
+            if (!status.IsRunning || status.IsCompleted)
+            {
+                SaveReceiveHistoryIfChanged(force: false);
+            }
 
             // FH確定後に未表示なら受信詳細タブへ遷移する。
             if (!_receiveDetailOpened && ReceiveDetailPanel.HasFileHeaderInfo(status))
@@ -282,19 +317,26 @@ public partial class MainWindow : Window
                 SaveReceiveHistoryIfChanged(force: true);
                 HistoryPanel.ReloadHistory();
 
-                if (success)
+                // MessageBox はモーダルなので Tick 内で出すとポーリングが止まる。完了後に遅延表示する。
+                var completionSuccess = success;
+                var completionMessage = message;
+                var completionPath = outputPath;
+                _ = Dispatcher.BeginInvoke(() =>
                 {
-                    MessageBox.Show(
-                        this,
-                        $"{message}\n出力: {outputPath}",
-                        "Onta",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                }
-                else
-                {
-                    MessageBox.Show(this, message, "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
+                    if (completionSuccess)
+                    {
+                        MessageBox.Show(
+                            this,
+                            $"{completionMessage}\n出力: {completionPath}",
+                            "Onta",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        MessageBox.Show(this, completionMessage, "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                });
             }
         }
 

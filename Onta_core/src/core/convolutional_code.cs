@@ -301,6 +301,26 @@ public static class ConvolutionalCode
         bool terminated = true,
         PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
+        return DecodeSoftToInfoLlrs(
+            codeLlrs,
+            originalByteLength,
+            out infoLlrs,
+            out _,
+            terminated,
+            punctureRate);
+    }
+
+    /// <summary>
+    /// ソフト判定LLRを復号し、チャネル硬判定との差分から訂正率メトリクスも返します。
+    /// </summary>
+    public static byte[] DecodeSoftToInfoLlrs(
+        ReadOnlySpan<double> codeLlrs,
+        int originalByteLength,
+        out double[] infoLlrs,
+        out DecodeMetrics metrics,
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
+    {
         if (originalByteLength < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(originalByteLength));
@@ -378,6 +398,7 @@ public static class ConvolutionalCode
                 {
                     betaNext[state] = negInf;
                 }
+
                 betaNext[0] = 0.0;
             }
             else
@@ -455,7 +476,13 @@ public static class ConvolutionalCode
                 betaCurr = betaSwap;
             }
 
-            return BitsToBytes(payloadBits);
+            var decoded = BitsToBytes(payloadBits);
+            metrics = MeasureSoftCorrectionRate(
+                codeLlrs[..expectedPuncturedBitLength],
+                decoded,
+                terminated,
+                punctureRate);
+            return decoded;
         }
         finally
         {
@@ -466,13 +493,45 @@ public static class ConvolutionalCode
     }
 
     /// <summary>
+    /// ソフト受信符号語と再符号化結果のハミング距離から訂正率を推定します。
+    /// </summary>
+    public static DecodeMetrics MeasureSoftCorrectionRate(
+        ReadOnlySpan<double> puncturedCodeLlrs,
+        byte[] decodedInfo,
+        bool terminated = true,
+        PunctureRate punctureRate = PunctureRate.Rate1_2)
+    {
+        ArgumentNullException.ThrowIfNull(decodedInfo);
+        var reencoded = Encode(decodedInfo, terminate: terminated, punctureRate: punctureRate);
+        var bitCount = Math.Min(
+            puncturedCodeLlrs.Length,
+            GetEncodedBitLength(decodedInfo.Length * 8, terminated, punctureRate));
+        var reBits = UnpackBits(reencoded, bitCount);
+        var corrected = 0;
+        for (var i = 0; i < bitCount; i++)
+        {
+            var rxHard = puncturedCodeLlrs[i] < 0.0;
+            if (rxHard != reBits[i])
+            {
+                corrected++;
+            }
+        }
+
+        return new DecodeMetrics(
+            PathHammingDistance: corrected,
+            ComparedCodeBitCount: bitCount,
+            CorrectedCodeBitCount: corrected,
+            CorrectionRate: bitCount == 0 ? 0.0 : (double)corrected / bitCount);
+    }
+
+    /// <summary>
     /// BranchLogLikelihood を実行します。
     /// </summary>
-    /// <param name="state">迴ｾ蝨ｨ迥ｶ諷九・/param>
+    /// <param name="state">現在状態。</param>
     /// <param name="inputBit">inputBit を指定します。</param>
     /// <param name="llr0">llr0 を指定します。</param>
     /// <param name="llr1">llr1 を指定します。</param>
-    /// <returns>譫昴・蟇ｾ謨ｰ蟆､蠎ｦ縲・/returns>
+    /// <returns>枝の対数尤度。</returns>
     private static double BranchLogLikelihood(int state, int inputBit, double llr0, double llr1)
     {
         var branch0 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]);
