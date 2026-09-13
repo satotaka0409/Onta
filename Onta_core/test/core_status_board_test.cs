@@ -1,4 +1,4 @@
-﻿using Onta.Core;
+using Onta.Core;
 using Xunit;
 
 namespace Onta.Core.Tests;

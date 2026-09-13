@@ -96,7 +96,7 @@ public sealed class OntaTest4
         File.WriteAllBytes(restoredPath, decoded);
 
         PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);
-        PrintBlockBitErrorRates(original, decoded, 4096, testTitle);
+        PrintBlockBitErrorRates(original, decoded, 8192, testTitle);
         Assert.Equal(original, decoded);
         HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, wavPath);
     }

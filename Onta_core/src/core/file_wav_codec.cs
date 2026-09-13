@@ -220,7 +220,7 @@ public sealed class FileWavCodec
     private static readonly byte[] HeaderVersion = [0x00, 0x01];
     private static readonly byte[] FileHeaderPilot = [0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5];
     private static readonly byte[] BlockHeaderPilot = [0x0F, 0x1E, 0x2D, 0x3C, 0x4B, 0x5A];
-    private const int DataBlockBytes = 4096;
+    private const int DataBlockBytes = 8192;
     private const int DataBlockWithCrcBytes = DataBlockBytes + CrcBytes;
     private const string DataTraceEnvVar = "ONTA_TRACE_DATA_ERRORS";
     private const int FileHeaderRepeatIntervalBlocks = 16;
@@ -1718,13 +1718,14 @@ public sealed class FileWavCodec
             AppendHeaderPair(leftPcm, rightPcm, unmodulated);
         }
 
-        var leftBits = ChannelBitInterleaver.Interleave(
-            BytesToBitsMsb(
-                ConvolutionalCode.Encode(
-                    ApplyReedSolomon(leftHeaderBytes),
-                    terminate: true,
-                    punctureRate: HeaderPunctureRate)),
-            ResolveBitInterleaveSeed(interleaveInitSeed));
+        var leftBits = BytesToBitsMsb(
+            ConvolutionalCode.Encode(
+                ApplyReedSolomon(
+                    ChannelBitInterleaver.InterleaveBytes(
+                        leftHeaderBytes,
+                        ResolveBitInterleaveSeed(interleaveInitSeed))),
+                terminate: true,
+                punctureRate: HeaderPunctureRate));
 
         var modulated = ofdm.ModulateBits(leftBits, leftPcm.Count, interleaveInitSeed);
         AppendHeaderPair(leftPcm, rightPcm, modulated);
@@ -2866,16 +2867,16 @@ public sealed class FileWavCodec
             }
 
             meanAbsLlr = llrs.Length > 0 ? absSum / llrs.Length : 0.0;
-            var deinterleavedLlrs = ChannelBitInterleaver.Deinterleave(
-                llrs,
-                ResolveBitInterleaveSeed(interleaveInitSeed));
             payload = DecodeHeaderFromSoftLlrs(
-                deinterleavedLlrs,
+                llrs,
                 payloadLength,
                 rsByteLength,
                 out var viterbiMetrics,
                 out var rsMetrics,
                 out _);
+            payload = ChannelBitInterleaver.DeinterleaveBytes(
+                payload,
+                ResolveBitInterleaveSeed(interleaveInitSeed));
             if (expectedPilot is not null && !HeaderPrefixMatches(payload, expectedPilot))
             {
                 return false;
@@ -3016,11 +3017,12 @@ public sealed class FileWavCodec
         ConvolutionalCode.PunctureRate punctureRate)
     {
         var packed = PackDataBlockWithCrc(payload);
-        var turboEncoded = EncodeTurboBlock(packed);
-        var convEncoded = ConvolutionalCode.Encode(turboEncoded, terminate: true, punctureRate: punctureRate);
-        var bits = ChannelBitInterleaver.Interleave(
-            BytesToBitsMsb(convEncoded),
+        var interleaved = ChannelBitInterleaver.InterleaveBytes(
+            packed,
             ResolveBitInterleaveSeed(interleaveInitSeed));
+        var turboEncoded = EncodeTurboBlock(interleaved);
+        var convEncoded = ConvolutionalCode.Encode(turboEncoded, terminate: true, punctureRate: punctureRate);
+        var bits = BytesToBitsMsb(convEncoded);
         if (ofdm.ChannelMode == ChannelMode.Stereo)
         {
             SplitBitsForStereo(bits, out var leftBits, out var rightBits);
@@ -3261,10 +3263,7 @@ public sealed class FileWavCodec
                         }
 
                         var turboEncoded = ConvolutionalCode.Decode(
-                            BitsToBytesMsb(
-                                ChannelBitInterleaver.Deinterleave(
-                                    bits,
-                                    ResolveBitInterleaveSeed(interleaveInitSeed))),
+                            BitsToBytesMsb(bits),
                             turboEncodedLength,
                             out var hardConvMetrics,
                             terminated: true,
@@ -3274,6 +3273,9 @@ public sealed class FileWavCodec
                             paddedLen,
                             tuning.TurboIterationsMax,
                             out var hardTurboRate);
+                        candidate = ChannelBitInterleaver.DeinterleaveBytes(
+                            candidate,
+                            ResolveBitInterleaveSeed(interleaveInitSeed));
                         if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
                         {
                             statusBoard?.SetErrorRate(
@@ -3307,11 +3309,8 @@ public sealed class FileWavCodec
                             statusBoard,
                             onSoftProgress);
                         end = cursor;
-                        var deinterleavedLlrs = ChannelBitInterleaver.Deinterleave(
-                            qamLlrs,
-                            ResolveBitInterleaveSeed(interleaveInitSeed));
                         var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                            deinterleavedLlrs,
+                            qamLlrs,
                             turboEncodedLength,
                             out var infoLlrs,
                             out var softConvMetrics,
@@ -3332,6 +3331,9 @@ public sealed class FileWavCodec
                             paddedLen,
                             turboIterations,
                             out var softTurboRate);
+                        softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
+                            softCandidate,
+                            ResolveBitInterleaveSeed(interleaveInitSeed));
                         double publishTurboRate = softTurboRate;
                         if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
                         {
@@ -3344,6 +3346,9 @@ public sealed class FileWavCodec
                                 paddedLen,
                                 turboIterations,
                                 out var fallbackTurboRate);
+                            hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
+                                hardCandidate,
+                                ResolveBitInterleaveSeed(interleaveInitSeed));
                             publishTurboRate = fallbackTurboRate;
                             candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                         }
@@ -3485,11 +3490,8 @@ public sealed class FileWavCodec
                 statusBoard);
             warpedCursor = cursor;
             logicalOffset += sampleCount;
-            var deinterleavedLlrs = ChannelBitInterleaver.Deinterleave(
-                qamLlrs,
-                ResolveBitInterleaveSeed(interleaveInitSeed));
             var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                deinterleavedLlrs,
+                qamLlrs,
                 turboEncodedLength,
                 out var infoLlrs,
                 out var fallbackConvMetrics,
@@ -3504,6 +3506,9 @@ public sealed class FileWavCodec
                 paddedLen,
                 turboIterations,
                 out var fallbackTurboRate);
+            softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
+                softCandidate,
+                ResolveBitInterleaveSeed(interleaveInitSeed));
             double publishTurboRate = fallbackTurboRate;
             if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
             {
@@ -3532,6 +3537,9 @@ public sealed class FileWavCodec
                     paddedLen,
                     turboIterations,
                     out var hardFallbackTurboRate);
+                hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
+                    hardCandidate,
+                    ResolveBitInterleaveSeed(interleaveInitSeed));
                 publishTurboRate = hardFallbackTurboRate;
                 var preferred = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                 if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))

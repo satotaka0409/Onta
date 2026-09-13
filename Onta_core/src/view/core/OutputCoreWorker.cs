@@ -190,7 +190,7 @@ internal sealed class OutputCoreWorker
             UpdateSnapshot(0, 0, 0, "入力読込中", ErrorRateFrameKind.Fh, false, false, "-", "-");
             cancellationToken.ThrowIfCancellationRequested();
             var bytes = File.ReadAllBytes(settings.InputFilePath);
-            var blockCount = Math.Max(1, (bytes.Length + 4095) / 4096);
+            var blockCount = Math.Max(1, (bytes.Length + 8191) / 8192);
             var fileSizeText = $"{bytes.Length:N0} bytes";
             var blockCountText = blockCount.ToString();
 

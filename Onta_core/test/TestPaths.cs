@@ -1,4 +1,4 @@
-﻿namespace Onta.Core.Tests;
+namespace Onta.Core.Tests;
 
 /// <summary>
 /// テスト入出力パス（in_files / out_files）を解決します。

@@ -12,7 +12,7 @@ namespace Onta.View.Core;
 /// </summary>
 public partial class FileEstimatePanel : UserControl
 {
-    private const int DataBlockBytes = 4096;
+    private const int DataBlockBytes = 8192;
     private readonly ObservableCollection<EstimateRow> _rows = [];
     private readonly List<SegmentTiming> _segmentTimings = [];
     private double _totalSeconds;

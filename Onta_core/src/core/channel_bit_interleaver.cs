@@ -3,8 +3,8 @@ using System.Collections.Concurrent;
 namespace Onta.Core;
 
 /// <summary>
-/// FH / BH / BD 共通のチャネル・ビットインターリーブです。
-/// 畳み込み符号化後〜変調前に適用し、復調 LLR（またはハードビット）を逆変換してから復号します。
+/// FH / BH / BD 共通のビットインターリーブです。
+/// 送信: RS/ターボ前段、受信: RS/ターボ後段。並び替えは 31bit M 系列で生成します。
 /// </summary>
 public static class ChannelBitInterleaver
 {
@@ -18,16 +18,43 @@ public static class ChannelBitInterleaver
     private static readonly ConcurrentDictionary<(int Length, int Seed), int[]> InverseCache = new();
 
     /// <summary>
-    /// 符号化ビット列をインターリーブします。
+    /// バイト列をビット単位でインターリーブします（MSB 先）。
     /// </summary>
-    /// <param name="bits">入力ビット列。</param>
-    /// <param name="seed">並び替えシード（FH と BH/BD で分ける）。</param>
-    /// <returns>インターリーブ後ビット列。</returns>
+    public static byte[] InterleaveBytes(ReadOnlySpan<byte> bytes, int seed)
+    {
+        if (bytes.Length == 0)
+        {
+            return [];
+        }
+
+        var bits = BytesToBitsMsb(bytes);
+        var interleaved = Interleave(bits, seed);
+        return BitsToBytesMsb(interleaved);
+    }
+
+    /// <summary>
+    /// インターリーブ済みバイト列をビット単位で元順へ戻します。
+    /// </summary>
+    public static byte[] DeinterleaveBytes(ReadOnlySpan<byte> bytes, int seed)
+    {
+        if (bytes.Length == 0)
+        {
+            return [];
+        }
+
+        var bits = BytesToBitsMsb(bytes);
+        var restored = Deinterleave(bits, seed);
+        return BitsToBytesMsb(restored);
+    }
+
+    /// <summary>
+    /// ビット列をインターリーブします。
+    /// </summary>
     public static bool[] Interleave(ReadOnlySpan<bool> bits, int seed)
     {
         if (bits.Length == 0)
         {
-            return Array.Empty<bool>();
+            return [];
         }
 
         var permutation = GetForward(bits.Length, seed);
@@ -41,16 +68,13 @@ public static class ChannelBitInterleaver
     }
 
     /// <summary>
-    /// インターリーブ済みハードビット列を元順へ戻します。
+    /// インターリーブ済みビット列を元順へ戻します。
     /// </summary>
-    /// <param name="bits">インターリーブ済みビット列。</param>
-    /// <param name="seed">並び替えシード。</param>
-    /// <returns>元順のビット列。</returns>
     public static bool[] Deinterleave(ReadOnlySpan<bool> bits, int seed)
     {
         if (bits.Length == 0)
         {
-            return Array.Empty<bool>();
+            return [];
         }
 
         var inverse = GetInverse(bits.Length, seed);
@@ -58,29 +82,6 @@ public static class ChannelBitInterleaver
         for (var i = 0; i < bits.Length; i++)
         {
             output[i] = bits[inverse[i]];
-        }
-
-        return output;
-    }
-
-    /// <summary>
-    /// インターリーブ済みソフト LLR を元順へ戻します（硬判定を挟まない）。
-    /// </summary>
-    /// <param name="llrs">インターリーブ済み LLR。</param>
-    /// <param name="seed">並び替えシード。</param>
-    /// <returns>元順の LLR。</returns>
-    public static double[] Deinterleave(ReadOnlySpan<double> llrs, int seed)
-    {
-        if (llrs.Length == 0)
-        {
-            return Array.Empty<double>();
-        }
-
-        var inverse = GetInverse(llrs.Length, seed);
-        var output = new double[llrs.Length];
-        for (var i = 0; i < llrs.Length; i++)
-        {
-            output[i] = llrs[inverse[i]];
         }
 
         return output;
@@ -104,6 +105,9 @@ public static class ChannelBitInterleaver
             });
     }
 
+    /// <summary>
+    /// 31bit M 系列（x^31+x^28+1）で Fisher–Yates 置換を構築します。
+    /// </summary>
     private static int[] BuildInterleaver(int length, int seed)
     {
         var permutation = new int[length];
@@ -112,10 +116,11 @@ public static class ChannelBitInterleaver
             permutation[i] = i;
         }
 
-        var random = new Random(seed);
+        var state = InitializeMSequence31(seed);
         for (var i = length - 1; i > 0; i--)
         {
-            var j = random.Next(i + 1);
+            var word = NextMSequenceWord(ref state);
+            var j = (int)(word % (uint)(i + 1));
             (permutation[i], permutation[j]) = (permutation[j], permutation[i]);
         }
 
@@ -131,5 +136,79 @@ public static class ChannelBitInterleaver
         }
 
         return deinterleaver;
+    }
+
+    private static uint InitializeMSequence31(int seed)
+    {
+        ulong x = unchecked((uint)seed);
+        x ^= 0xA5A5A5A5u;
+        x += 0x9E3779B97F4A7C15UL;
+        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
+        x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
+        x ^= x >> 31;
+        var state = (uint)(x & 0x7FFFFFFF);
+        return state == 0 ? 1u : state;
+    }
+
+    private static uint NextMSequenceWord(ref uint state)
+    {
+        var value = 0u;
+        for (var i = 0; i < 31; i++)
+        {
+            state = AdvanceMSequence31(state);
+            value = (value << 1) | (state & 1u);
+        }
+
+        return value;
+    }
+
+    private static uint AdvanceMSequence31(uint state)
+    {
+        // Primitive polynomial: x^31 + x^28 + 1（OFDM 周波数インターリーブと同じ）
+        var feedback = ((state >> 30) ^ (state >> 27)) & 1u;
+        state = ((state << 1) & 0x7FFFFFFF) | feedback;
+        return state == 0 ? 1u : state;
+    }
+
+    private static bool[] BytesToBitsMsb(ReadOnlySpan<byte> bytes)
+    {
+        var bits = new bool[bytes.Length * 8];
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            var b = bytes[i];
+            var baseIndex = i * 8;
+            for (var bit = 0; bit < 8; bit++)
+            {
+                bits[baseIndex + bit] = ((b >> (7 - bit)) & 1) != 0;
+            }
+        }
+
+        return bits;
+    }
+
+    private static byte[] BitsToBytesMsb(ReadOnlySpan<bool> bits)
+    {
+        if ((bits.Length & 7) != 0)
+        {
+            throw new ArgumentException("Bit length must be a multiple of 8.", nameof(bits));
+        }
+
+        var bytes = new byte[bits.Length / 8];
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            byte b = 0;
+            var baseIndex = i * 8;
+            for (var bit = 0; bit < 8; bit++)
+            {
+                if (bits[baseIndex + bit])
+                {
+                    b |= (byte)(1 << (7 - bit));
+                }
+            }
+
+            bytes[i] = b;
+        }
+
+        return bytes;
     }
 }

@@ -19,7 +19,7 @@ public sealed class OntaTestHistory1
     [Fact]
     public void Decode_BlockOnlyWav_RegistersOrphan()
     {
-        var input = BuildPayload(size: 5000);
+        var input = BuildPayload(size: 9000);
         var fileName = "history_orphan_input.bin";
         var tempDir = Path.Combine(Path.GetTempPath(), "onta_test_history");
         Directory.CreateDirectory(tempDir);
@@ -63,7 +63,7 @@ public sealed class OntaTestHistory1
         Assert.Empty(rightRead);
 
         var state = new ProgressiveDecodeState();
-        PrepareStateForBlockOnlyDecode(state, expectedBlockCount: 1, expectedFileSize: 4096);
+        PrepareStateForBlockOnlyDecode(state, expectedBlockCount: 1, expectedFileSize: 8192);
 
         var status = codec.DecodePcmSamplesProgressive(
             leftRead,

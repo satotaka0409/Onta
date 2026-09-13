@@ -177,7 +177,7 @@ internal static class CoreBackgroundHost
                 ActiveSubcarriers: 8,
                 ModulationScheme: ModulationScheme.Qpsk,
                 ChannelMode: ChannelMode.Mono);
-            _ = FileWavCodec.EstimateTransmissionDuration(profile, 4096);
+            _ = FileWavCodec.EstimateTransmissionDuration(profile, 8192);
 
             var config = new OfdmConfig(
                 fftSize: profile.DataFftSize,
