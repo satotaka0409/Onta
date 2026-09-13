@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
 using NAudioWaveOut = NAudio.Wave.WaveOut;
@@ -41,7 +41,7 @@ public partial class SendPanel : UserControl
         var writeWav = WriteWavRadio.IsChecked == true;
         return new SendSettingsSnapshot(
             ChannelMode: MonoRadio.IsChecked == true ? Onta.Core.ChannelMode.Mono : Onta.Core.ChannelMode.Stereo,
-            ActiveSubcarriers: ReadSelectedInt("Subcarrier", 9),
+            ActiveSubcarriers: ReadSelectedInt("Subcarrier", 8),
             ModulationScheme: ReadSelectedModulation(),
             BlockInterleaveFactor: ReadRepeatCount(),
             InputFilePath: InputPathBox.Text,

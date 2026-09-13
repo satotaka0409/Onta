@@ -415,20 +415,11 @@ internal sealed class InputCoreWorker : IDisposable
 
             try
             {
-                Directory.CreateDirectory(outputDirectory);
-                var name = !string.IsNullOrWhiteSpace(_state?.ReceivedFileName)
-                    ? Path.GetFileName(_state!.ReceivedFileName)
-                    : "audio_rx.bin";
-                name = string.Join("_", name.Split(Path.GetInvalidFileNameChars()));
-                if (string.IsNullOrWhiteSpace(name))
-                {
-                    name = "audio_rx.bin";
-                }
-
-                var outPath = Path.Combine(outputDirectory, name);
-                File.WriteAllBytes(outPath, decoded);
+                // 復号結果は履歴（Onta_history.bin）に保持する。out_files への自動ダンプはしない
+                //（必要なときだけ履歴画面から Payload を保存する）。
+                _ = outputDirectory;
                 _decodedBytes = decoded;
-                _lastDecodedPath = outPath;
+                _lastDecodedPath = null;
                 _lastError = null;
                 _completionPending = true;
                 _state?.StatusBoard.Complete(faulted: false);

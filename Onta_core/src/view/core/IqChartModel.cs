@@ -9,33 +9,55 @@ using SkiaSharp;
 namespace Onta.View.Core;
 
 /// <summary>
-/// 受信IQ点群を表示する散布図モデルです。
+/// 受信IQ点群を表示する散布図モデルです。グループ A/B/C/D ごとに色分けします。
 /// </summary>
 public sealed class IqChartModel
 {
     private const int MaxPoints = 4096;
     private const int MaxDisplayPoints = 512;
     private const double DefaultAxisLimit = 2.0;
-    private readonly ObservableCollection<ObservablePoint> _points = [];
-    private readonly ScatterSeries<ObservablePoint> _series;
-    private static readonly SKColor PointColor = new(166, 221, 176);
+    private const int GroupCount = 4;
+
+    // A=青, B=緑, C=白, D=オレンジ（modulation.mdc）
+    private static readonly SKColor[] GroupColors =
+    [
+        new(80, 140, 255),   // A 青
+        new(80, 200, 100),   // B 緑
+        new(230, 230, 230),  // C 白
+        new(255, 160, 40)    // D オレンジ
+    ];
+
     private static readonly SKColor GridColor = new(92, 97, 108);
+
+    private readonly ObservableCollection<ObservablePoint>[] _groupPoints =
+    [
+        [],
+        [],
+        [],
+        []
+    ];
+
+    private readonly ScatterSeries<ObservablePoint>[] _series;
 
     /// <summary>
     /// IQチャートモデルを初期化します。
     /// </summary>
     public IqChartModel()
     {
-        _series = new ScatterSeries<ObservablePoint>
+        _series = new ScatterSeries<ObservablePoint>[GroupCount];
+        for (var g = 0; g < GroupCount; g++)
         {
-            Values = _points,
-            Name = "I-Q",
-            GeometrySize = 3,
-            Fill = new SolidColorPaint(PointColor),
-            Stroke = null
-        };
+            _series[g] = new ScatterSeries<ObservablePoint>
+            {
+                Values = _groupPoints[g],
+                Name = $"GROUP {(char)('A' + g)}",
+                GeometrySize = 3,
+                Fill = new SolidColorPaint(GroupColors[g]),
+                Stroke = null
+            };
+        }
 
-        Series = [_series];
+        Series = _series;
 
         XAxes =
         [
@@ -65,7 +87,7 @@ public sealed class IqChartModel
     }
 
     /// <summary>
-    /// 描画系列です。
+    /// 描画系列です（GROUP A〜D）。
     /// </summary>
     public ISeries[] Series { get; }
 
@@ -85,7 +107,11 @@ public sealed class IqChartModel
     /// <param name="samples">描画対象のIQサンプル列。</param>
     public void ReplacePoints(IReadOnlyList<CoreIqSample> samples)
     {
-        _points.Clear();
+        for (var g = 0; g < GroupCount; g++)
+        {
+            _groupPoints[g].Clear();
+        }
+
         if (samples.Count == 0)
         {
             ResetAxisLimits();
@@ -99,19 +125,13 @@ public sealed class IqChartModel
         var maxAbs = DefaultAxisLimit;
         for (var i = start; i < samples.Count; i += stride)
         {
-            var s = samples[i];
-            _points.Add(new ObservablePoint(s.I, s.Q));
-            maxAbs = Math.Max(maxAbs, Math.Abs(s.I));
-            maxAbs = Math.Max(maxAbs, Math.Abs(s.Q));
+            maxAbs = Math.Max(maxAbs, AddSample(samples[i]));
         }
 
         // 末尾点は間引きで落ちやすいので必ず含める。
         if (stride > 1 && (samples.Count - 1 - start) % stride != 0)
         {
-            var last = samples[^1];
-            _points.Add(new ObservablePoint(last.I, last.Q));
-            maxAbs = Math.Max(maxAbs, Math.Abs(last.I));
-            maxAbs = Math.Max(maxAbs, Math.Abs(last.Q));
+            maxAbs = Math.Max(maxAbs, AddSample(samples[^1]));
         }
 
         var limit = Math.Clamp(Math.Ceiling(maxAbs * 1.15 * 2.0) / 2.0, DefaultAxisLimit, 8.0);
@@ -126,8 +146,19 @@ public sealed class IqChartModel
     /// </summary>
     public void Clear()
     {
-        _points.Clear();
+        for (var g = 0; g < GroupCount; g++)
+        {
+            _groupPoints[g].Clear();
+        }
+
         ResetAxisLimits();
+    }
+
+    private double AddSample(CoreIqSample s)
+    {
+        var group = s.Group < GroupCount ? s.Group : (byte)0;
+        _groupPoints[group].Add(new ObservablePoint(s.I, s.Q));
+        return Math.Max(Math.Abs(s.I), Math.Abs(s.Q));
     }
 
     private void ResetAxisLimits()

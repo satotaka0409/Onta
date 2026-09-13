@@ -1,4 +1,4 @@
-﻿using Onta.Core;
+using Onta.Core;
 
 namespace Onta.View.Core;
 
@@ -45,9 +45,9 @@ internal static class CodecProfileFactory
 
     private static FileWavCodecProfile ForReceive(ChannelMode channelMode)
     {
-        // 受信は安全側の既定値（BPSK / SC=9 / Interleave=1）で開始する。
+        // 受信は安全側の既定値（BPSK / SC=8 / Interleave=1）で開始する。
         return Create(
-            activeSubcarriers: 9,
+            activeSubcarriers: 8,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: channelMode,
             blockInterleaveFactor: 1);

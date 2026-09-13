@@ -236,8 +236,9 @@ public partial class MainWindow : Window
             _progressPollTimer.Stop();
             _progressPollTimer.Start();
             // 開始直後の状態を1回分すぐ反映（完了済表示のまま残るのを防ぐ）。
-            ReceivePanel.ApplyExecutionStatus(_inputCoreWorker.QueryExecutionStatus());
-            ReceiveDetailPanel.ApplyStatus(_inputCoreWorker.QueryExecutionStatus());
+            var startStatus = _inputCoreWorker.QueryExecutionStatus();
+            ReceivePanel.ApplyExecutionStatus(startStatus);
+            ReceiveDetailPanel.ApplyStatus(startStatus);
         }
         catch (Exception ex)
         {
@@ -276,8 +277,9 @@ public partial class MainWindow : Window
         _pollingReceive = true;
         _progressPollTimer.Stop();
         _progressPollTimer.Start();
-        ReceivePanel.ApplyExecutionStatus(_inputCoreWorker.QueryExecutionStatus());
-        ReceiveDetailPanel.ApplyStatus(_inputCoreWorker.QueryExecutionStatus());
+        var audioStartStatus = _inputCoreWorker.QueryExecutionStatus();
+        ReceivePanel.ApplyExecutionStatus(audioStartStatus);
+        ReceiveDetailPanel.ApplyStatus(audioStartStatus);
     }
 
     /// <summary>

@@ -1,11 +1,11 @@
-﻿using Onta.Core;
+using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ステレオ 27SC / QPSK の耐性テストです。
+/// ステレオ 24SC / QPSK の耐性テストです。
 /// wow/flutter + 7kHz LPF近似 + クロストーク + ノイズ付与後の復元を検証します。
 /// </summary>
 public sealed class OntaTest9
@@ -17,7 +17,7 @@ public sealed class OntaTest9
     private const int ImpairmentSeed = 20260911;
 
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 27,
+        ActiveSubcarriers: 24,
         ModulationScheme: ModulationScheme.Qpsk,
         ChannelMode: ChannelMode.Stereo);
 

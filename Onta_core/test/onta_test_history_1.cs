@@ -11,7 +11,7 @@ namespace Onta.Core.Tests;
 public sealed class OntaTestHistory1
 {
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 9,
+        ActiveSubcarriers: 8,
         ModulationScheme: ModulationScheme.Bpsk,
         ChannelMode: ChannelMode.Mono,
         BlockInterleaveFactor: 1);
@@ -21,8 +21,9 @@ public sealed class OntaTestHistory1
     {
         var input = BuildPayload(size: 5000);
         var fileName = "history_orphan_input.bin";
-        var outputDir = TestPaths.ResolveOutputDir();
-        var inputPath = Path.Combine(outputDir, fileName);
+        var tempDir = Path.Combine(Path.GetTempPath(), "onta_test_history");
+        Directory.CreateDirectory(tempDir);
+        var inputPath = Path.Combine(tempDir, fileName);
         var wavPath = TestPaths.ResolveOutputPath("history_orphan_block_only.wav");
         File.WriteAllBytes(inputPath, input);
 

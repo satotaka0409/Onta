@@ -1,11 +1,11 @@
-﻿using Onta.Core;
+using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ステレオ 18SC / 16QAM の劣化耐性往復テストです。
+/// ステレオ 16SC / 16QAM の劣化耐性往復テストです。
 /// ホワイトノイズと wow/flutter を付与して復元可否を検証します。
 /// </summary>
 public sealed class OntaTest3
@@ -15,7 +15,7 @@ public sealed class OntaTest3
     private const int ImpairmentSeed = 20260904;
 
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 18,
+        ActiveSubcarriers: 16,
         ModulationScheme: ModulationScheme.Qam16);
 
     [Fact]

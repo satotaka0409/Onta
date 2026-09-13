@@ -1,11 +1,11 @@
-﻿using Onta.Core;
+using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ステレオ 18SC / QPSK の耐性テストです。
+/// ステレオ 16SC / QPSK の耐性テストです。
 /// 周期的無音欠落 + wow/flutter + ノイズ付与後の復元を検証します。
 /// </summary>
 public sealed class OntaTest7
@@ -17,7 +17,7 @@ public sealed class OntaTest7
     private const int ImpairmentSeed = 20260910;
 
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 18,
+        ActiveSubcarriers: 16,
         ModulationScheme: ModulationScheme.Qpsk,
         ChannelMode: ChannelMode.Stereo);
 

@@ -1,11 +1,11 @@
-﻿using Onta.Core;
+using Onta.Core;
 using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// モノラル 27SC / QPSK の劣化耐性往復テストです。
+/// モノラル 24SC / QPSK の劣化耐性往復テストです。
 /// ホワイトノイズと wow/flutter を付与して復元可否を検証します。
 /// </summary>
 public sealed class OntaTest4
@@ -15,7 +15,7 @@ public sealed class OntaTest4
     private const int ImpairmentSeed = 20260905;
 
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 27,
+        ActiveSubcarriers: 24,
         ModulationScheme: ModulationScheme.Qpsk,
         ChannelMode: ChannelMode.Mono);
 

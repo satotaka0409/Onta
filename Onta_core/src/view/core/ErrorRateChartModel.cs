@@ -10,7 +10,7 @@ using SkiaSharp;
 namespace Onta.View.Core;
 
 /// <summary>
-/// 送信側フレーム種別（進捗イベント用。受信エラー率チャートはビタビ/ターボ）。
+/// 送信側フレーム種別（進捗イベント用。受信エラー率チャートはビタビ/RS・ターボ）。
 /// </summary>
 public enum ErrorRateFrameKind
 {
@@ -20,24 +20,25 @@ public enum ErrorRateFrameKind
 }
 
 /// <summary>
-/// 誤り訂正の中間訂正率を表示するチャートです（ビタビ / ターボを色分け）。
-/// 横軸 60 秒固定・右端が最新です。
+/// 誤り訂正の中間訂正率を表示するチャートです（ビタビ / RS・ターボを色分け）。
+/// 横軸 60 秒固定・右端が最新です。値は訂正過程の訂正ビット数から求めた訂正率。
 /// </summary>
 public sealed class ErrorRateChartModel
 {
     private const double WindowSeconds = 60.0;
-    private const double YMaxPercent = 10.0;
-    private const double MinSampleIntervalSeconds = 0.05;
+    private const double DefaultYMaxPercent = 10.0;
+    private const double MinSampleIntervalSeconds = 0.02;
     private const double LineBreakGapSeconds = 1.0;
     private readonly ObservableCollection<ObservablePoint> _viterbiValues = [];
-    private readonly ObservableCollection<ObservablePoint> _turboValues = [];
+    private readonly ObservableCollection<ObservablePoint> _outerValues = [];
     private readonly Stopwatch _clock = new();
     private double _windowEndSeconds;
     private double _lastSampleSeconds = double.NegativeInfinity;
     private CoreEccDecoderKind _lastDecoderKind = CoreEccDecoderKind.Viterbi;
+    private double _peakPercent;
 
-    private static readonly SKColor ViterbiColor = new(186, 215, 255);
-    private static readonly SKColor TurboColor = new(255, 170, 120);
+    private static readonly SKColor ViterbiColor = new(100, 170, 255);
+    private static readonly SKColor OuterColor = new(255, 150, 70);
     private static readonly SKColor AxisColor = new(210, 214, 220);
     private static readonly SKColor GridColor = new(92, 97, 108);
 
@@ -50,22 +51,18 @@ public sealed class ErrorRateChartModel
                 Values = _viterbiValues,
                 Name = "ビタビ",
                 Fill = null,
-                GeometrySize = 4,
-                GeometryFill = new SolidColorPaint(ViterbiColor),
-                GeometryStroke = null,
+                GeometrySize = 0,
                 LineSmoothness = 0,
                 Stroke = new SolidColorPaint(ViterbiColor, 2)
             },
             new LineSeries<ObservablePoint>
             {
-                Values = _turboValues,
-                Name = "ターボ",
+                Values = _outerValues,
+                Name = "RS/ターボ",
                 Fill = null,
-                GeometrySize = 4,
-                GeometryFill = new SolidColorPaint(TurboColor),
-                GeometryStroke = null,
+                GeometrySize = 0,
                 LineSmoothness = 0,
-                Stroke = new SolidColorPaint(TurboColor, 2)
+                Stroke = new SolidColorPaint(OuterColor, 2)
             }
         ];
 
@@ -73,9 +70,9 @@ public sealed class ErrorRateChartModel
         [
             new Axis
             {
-                Name = "推定エラー率(%)",
+                Name = "訂正率(%)",
                 MinLimit = 0,
-                MaxLimit = YMaxPercent,
+                MaxLimit = DefaultYMaxPercent,
                 MinStep = 2,
                 Labeler = value => $"{value:0}",
                 TextSize = 8,
@@ -116,7 +113,7 @@ public sealed class ErrorRateChartModel
     public CoreEccDecoderKind LatestDecoderKind { get; private set; }
 
     /// <summary>
-    /// 中間訂正率サンプルを追加します。
+    /// 訂正率サンプルを追加します（訂正ビット数 / 対象ビット数）。
     /// </summary>
     public void AddSample(double errorRatePercent, CoreEccDecoderKind decoderKind)
     {
@@ -142,8 +139,7 @@ public sealed class ErrorRateChartModel
         _windowEndSeconds = t;
         var windowStart = t - WindowSeconds;
 
-        var series = decoderKind == CoreEccDecoderKind.Turbo ? _turboValues : _viterbiValues;
-        // 時間ギャップが大きいときは線を切る（失敗試行の飛びを棘に見せない）
+        var series = IsOuterDecoder(decoderKind) ? _outerValues : _viterbiValues;
         if (series.Count > 0)
         {
             var last = series[^1];
@@ -154,13 +150,40 @@ public sealed class ErrorRateChartModel
         }
 
         series.Add(new ObservablePoint(t, value));
+        _peakPercent = Math.Max(_peakPercent, value);
 
         TrimOldPoints(_viterbiValues, windowStart);
-        TrimOldPoints(_turboValues, windowStart);
+        TrimOldPoints(_outerValues, windowStart);
+        RefreshPeakFromVisible();
 
-        // データ X は経過秒のまま、軸だけ相対表示（右端=0s）
+        var yMax = Math.Clamp(Math.Ceiling(Math.Max(DefaultYMaxPercent, _peakPercent * 1.25) / 2.0) * 2.0, DefaultYMaxPercent, 100.0);
+        YAxes[0].MaxLimit = yMax;
+
         XAxes[0].MinLimit = windowStart;
         XAxes[0].MaxLimit = t;
+    }
+
+    private static bool IsOuterDecoder(CoreEccDecoderKind kind) =>
+        kind is CoreEccDecoderKind.Turbo or CoreEccDecoderKind.ReedSolomon;
+
+    private void RefreshPeakFromVisible()
+    {
+        _peakPercent = 0;
+        foreach (var p in _viterbiValues)
+        {
+            if (p.Y is { } y)
+            {
+                _peakPercent = Math.Max(_peakPercent, y);
+            }
+        }
+
+        foreach (var p in _outerValues)
+        {
+            if (p.Y is { } y)
+            {
+                _peakPercent = Math.Max(_peakPercent, y);
+            }
+        }
     }
 
     private static void TrimOldPoints(ObservableCollection<ObservablePoint> series, double windowStart)
@@ -173,7 +196,6 @@ public sealed class ErrorRateChartModel
 
     private string LabelForTime(double value)
     {
-        // 右端=0s（現在）、左へ行くほど負（例: -60s … -10s 0s）
         var age = _windowEndSeconds - value;
         var secondsAgo = Math.Round(age / 10.0) * 10.0;
         secondsAgo = Math.Clamp(secondsAgo, 0.0, WindowSeconds);
@@ -188,14 +210,15 @@ public sealed class ErrorRateChartModel
     public void Clear()
     {
         _viterbiValues.Clear();
-        _turboValues.Clear();
+        _outerValues.Clear();
         _clock.Reset();
         _windowEndSeconds = 0;
         _lastSampleSeconds = double.NegativeInfinity;
         _lastDecoderKind = CoreEccDecoderKind.Viterbi;
+        _peakPercent = 0;
         LatestPercent = 0;
         LatestDecoderKind = CoreEccDecoderKind.Viterbi;
-        YAxes[0].MaxLimit = YMaxPercent;
+        YAxes[0].MaxLimit = DefaultYMaxPercent;
         XAxes[0].MinLimit = -WindowSeconds;
         XAxes[0].MaxLimit = 0;
     }

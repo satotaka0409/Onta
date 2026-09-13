@@ -43,8 +43,10 @@ public enum CoreEccDecoderKind : byte
 {
     /// <summary>畳み込み（ビタビ / BCJR）。</summary>
     Viterbi = 0,
-    /// <summary>ターボ符号。</summary>
-    Turbo = 1
+    /// <summary>ターボ符号（データ部）。</summary>
+    Turbo = 1,
+    /// <summary>Reed-Solomon（ヘッダー部）。グラフ上はターボと同色の外符号系列。</summary>
+    ReedSolomon = 2
 }
 
 /// <summary>
@@ -65,7 +67,10 @@ public readonly record struct CoreErrorRateInfo(
 /// <summary>
 /// I/Q 平面上の1サンプルです。
 /// </summary>
-public readonly record struct CoreIqSample(double I, double Q);
+/// <param name="I">同相成分。</param>
+/// <param name="Q">直交成分。</param>
+/// <param name="Group">サブキャリアグループ（0=A, 1=B, 2=C, 3=D）。</param>
+public readonly record struct CoreIqSample(double I, double Q, byte Group = 0);
 
 /// <summary>
 /// IQグラフ描画に必要な系列情報です。
@@ -116,6 +121,8 @@ public readonly record struct CoreExecutionStatus(
     bool IsAnalyzing,
     CoreProgressInfo Progress,
     CoreErrorRateInfo ErrorRate,
+    /// <summary>前回 Query 以降に積まれたエラー率サンプル（ビタビ/RS/ターボ）。</summary>
+    IReadOnlyList<CoreErrorRateInfo> ErrorRateSamples,
     CoreIqGraphInfo IqGraph,
     CoreFftGraphInfo FftGraph,
     double WowLeftPercent,
@@ -135,6 +142,7 @@ public readonly record struct CoreExecutionStatus(
         IsAnalyzing: false,
         Progress: CoreProgressInfo.Idle,
         ErrorRate: CoreErrorRateInfo.Idle,
+        ErrorRateSamples: Array.Empty<CoreErrorRateInfo>(),
         IqGraph: CoreIqGraphInfo.Empty,
         FftGraph: CoreFftGraphInfo.Empty,
         WowLeftPercent: 0,
@@ -154,6 +162,8 @@ public sealed class CoreExecutionStatusBoard
     public const int DefaultFftCapacity = 256;
 
     private readonly object _sync = new();
+    private readonly List<CoreErrorRateInfo> _errorRatePending = new(64);
+    private const int MaxPendingErrorRates = 256;
     private CoreIqSample[] _iqRing;
     private int _iqCount;
     private int _iqWrite;
@@ -213,6 +223,7 @@ public sealed class CoreExecutionStatusBoard
             _fftRightCount = 0;
             _fftIsStereo = false;
             _fftSize = 0;
+            _errorRatePending.Clear();
             _status = CoreExecutionStatus.Idle with { FileName = fileName };
         }
     }
@@ -235,6 +246,7 @@ public sealed class CoreExecutionStatusBoard
             _fftRightCount = 0;
             _fftIsStereo = false;
             _fftSize = 0;
+            _errorRatePending.Clear();
             _status = new CoreExecutionStatus(
                 IsRunning: true,
                 IsCompleted: false,
@@ -242,6 +254,7 @@ public sealed class CoreExecutionStatusBoard
                 IsAnalyzing: true,
                 Progress: CoreProgressInfo.Idle,
                 ErrorRate: CoreErrorRateInfo.Idle,
+                ErrorRateSamples: Array.Empty<CoreErrorRateInfo>(),
                 IqGraph: CoreIqGraphInfo.Empty,
                 FftGraph: CoreFftGraphInfo.Empty,
                 WowLeftPercent: 0,
@@ -309,14 +322,18 @@ public sealed class CoreExecutionStatusBoard
     {
         lock (_sync)
         {
-            _status = _status with
+            var info = new CoreErrorRateInfo(
+                Math.Clamp(percent, 0.0, 100.0),
+                frameKind,
+                decoderKind,
+                _status.ErrorRate.Sequence + 1);
+            _status = _status with { ErrorRate = info };
+            if (_errorRatePending.Count >= MaxPendingErrorRates)
             {
-                ErrorRate = new CoreErrorRateInfo(
-                    Math.Clamp(percent, 0.0, 100.0),
-                    frameKind,
-                    decoderKind,
-                    _status.ErrorRate.Sequence + 1)
-            };
+                _errorRatePending.RemoveAt(0);
+            }
+
+            _errorRatePending.Add(info);
         }
     }
 
@@ -366,11 +383,11 @@ public sealed class CoreExecutionStatusBoard
     /// </summary>
     /// <param name="i">同相成分 I。</param>
     /// <param name="q">直交成分 Q。</param>
-    public void PushIq(double i, double q)
+    public void PushIq(double i, double q, byte group = 0)
     {
         lock (_sync)
         {
-            _iqRing[_iqWrite] = new CoreIqSample(i, q);
+            _iqRing[_iqWrite] = new CoreIqSample(i, q, group);
             _iqWrite = (_iqWrite + 1) % _iqRing.Length;
             if (_iqCount < _iqRing.Length)
             {
@@ -383,14 +400,16 @@ public sealed class CoreExecutionStatusBoard
     /// 複数のIQサンプルをまとめて追加します。
     /// </summary>
     /// <param name="equalizedSymbols">等化後シンボル列。</param>
-    public void PushIqMany(ReadOnlySpan<Complex> equalizedSymbols)
+    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..3=D）。null 時は 0。</param>
+    public void PushIqMany(ReadOnlySpan<Complex> equalizedSymbols, ReadOnlySpan<byte> groups = default)
     {
         lock (_sync)
         {
             for (var n = 0; n < equalizedSymbols.Length; n++)
             {
                 var s = equalizedSymbols[n];
-                _iqRing[_iqWrite] = new CoreIqSample(s.Real, s.Imaginary);
+                var group = n < groups.Length ? groups[n] : (byte)0;
+                _iqRing[_iqWrite] = new CoreIqSample(s.Real, s.Imaginary, group);
                 _iqWrite = (_iqWrite + 1) % _iqRing.Length;
                 if (_iqCount < _iqRing.Length)
                 {
@@ -431,7 +450,7 @@ public sealed class CoreExecutionStatusBoard
             for (var n = 0; n < equalizedSymbols.Length; n++)
             {
                 var s = equalizedSymbols[n];
-                _iqRing[_iqWrite] = new CoreIqSample(s.Real, s.Imaginary);
+                _iqRing[_iqWrite] = new CoreIqSample(s.Real, s.Imaginary, 0);
                 _iqWrite++;
                 _iqCount++;
             }
@@ -453,14 +472,15 @@ public sealed class CoreExecutionStatusBoard
     /// 等化後シンボルを IQ リングへ追記します（コンスタレーション蓄積用）。
     /// </summary>
     /// <param name="equalizedSymbols">等化後シンボル列。</param>
-    public void AppendIqFrame(ReadOnlySpan<Complex> equalizedSymbols)
+    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..3=D）。</param>
+    public void AppendIqFrame(ReadOnlySpan<Complex> equalizedSymbols, ReadOnlySpan<byte> groups = default)
     {
         if (equalizedSymbols.IsEmpty)
         {
             return;
         }
 
-        PushIqMany(equalizedSymbols);
+        PushIqMany(equalizedSymbols, groups);
     }
 
     /// <summary>
@@ -603,17 +623,30 @@ public sealed class CoreExecutionStatusBoard
     {
         lock (_sync)
         {
+            CoreErrorRateInfo[] samples;
+            if (_errorRatePending.Count == 0)
+            {
+                samples = [];
+            }
+            else
+            {
+                samples = _errorRatePending.ToArray();
+                _errorRatePending.Clear();
+            }
+
+            var iqCount = _iqActiveSubcarrierCount > 0 ? _iqActiveSubcarrierCount : _iqCount;
+            var iqGraph = new CoreIqGraphInfo(CopyIqPointsUnlocked(), iqCount, _iqModulationScheme);
+            var fftGraph = new CoreFftGraphInfo(
+                CopyFftPointsUnlocked(false),
+                CopyFftPointsUnlocked(true),
+                _fftIsStereo,
+                _fftSize);
+
             return _status with
             {
-                IqGraph = new CoreIqGraphInfo(
-                    CopyIqPointsUnlocked(),
-                    _iqActiveSubcarrierCount > 0 ? _iqActiveSubcarrierCount : _iqCount,
-                    _iqModulationScheme),
-                FftGraph = new CoreFftGraphInfo(
-                    CopyFftPointsUnlocked(isRightChannel: false),
-                    CopyFftPointsUnlocked(isRightChannel: true),
-                    _fftIsStereo,
-                    _fftSize)
+                ErrorRateSamples = samples,
+                IqGraph = iqGraph,
+                FftGraph = fftGraph
             };
         }
     }

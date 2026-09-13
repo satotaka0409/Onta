@@ -190,24 +190,41 @@ public partial class ReceivePanel : UserControl
             FftTitle.Text = "FFT";
         }
 
-        var err = status.ErrorRate.LatestPercent;
-        var errFrame = status.ErrorRate.FrameKind;
-        var errDecoder = status.ErrorRate.DecoderKind;
-        var errSeq = status.ErrorRate.Sequence;
-        // 解析中は止め、訂正率サンプルが届いたときだけ追加
-        if (!status.IsAnalyzing && errSeq != _lastErrorSequence && errSeq > 0)
+        // 解析中は止め、積まれた訂正率サンプルを系列ごとに追加（ビタビ / RS・ターボ）
+        if (!status.IsAnalyzing && status.ErrorRateSamples.Count > 0)
         {
-            _lastErrorPercent = err;
-            _lastErrorFrame = errFrame;
-            _lastErrorDecoder = errDecoder;
-            _lastErrorSequence = errSeq;
+            foreach (var sample in status.ErrorRateSamples)
+            {
+                _lastErrorPercent = sample.LatestPercent;
+                _lastErrorFrame = sample.FrameKind;
+                _lastErrorDecoder = sample.DecoderKind;
+                _lastErrorSequence = sample.Sequence;
+                try
+                {
+                    _errorChart.AddSample(sample.LatestPercent, sample.DecoderKind);
+                }
+                catch
+                {
+                    // エラーレート描画失敗で受信可視化全体を止めない
+                }
+            }
+        }
+        else if (!status.IsAnalyzing
+                 && status.ErrorRate.Sequence != _lastErrorSequence
+                 && status.ErrorRate.Sequence > 0)
+        {
+            // 互換: サンプル列が空でも Latest があれば反映
+            var err = status.ErrorRate;
+            _lastErrorPercent = err.LatestPercent;
+            _lastErrorFrame = err.FrameKind;
+            _lastErrorDecoder = err.DecoderKind;
+            _lastErrorSequence = err.Sequence;
             try
             {
-                _errorChart.AddSample(err, errDecoder);
+                _errorChart.AddSample(err.LatestPercent, err.DecoderKind);
             }
             catch
             {
-                // エラーレート描画失敗で受信可視化全体を止めない
             }
         }
     }

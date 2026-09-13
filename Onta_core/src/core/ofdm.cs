@@ -55,9 +55,9 @@ public enum ChannelMode : byte
 /// </summary>
 public enum OfdmCarrierGrid : byte
 {
-    Sc9Family = 0,
+    Sc8Family = 0,
 
-    Sc27Family = 1
+    Sc24Family = 1
 }
 
 /// <summary>
@@ -71,7 +71,7 @@ public sealed record OfdmConfig
     public int FftSize { get; }
 
     /// <summary>
-    /// 有効サブキャリア数（9/18/27/36）。
+    /// 有効サブキャリア数（8/16/24/32）。
     /// </summary>
     public int ActiveSubcarriers { get; }
 
@@ -160,7 +160,7 @@ public sealed record OfdmConfig
         ModulationScheme modulationScheme = ModulationScheme.Qpsk,
         ChannelMode channelMode = ChannelMode.Mono,
         bool enableFrequencyInterleaving = true,
-        int pilotSpacing = 9,
+        int pilotSpacing = 8,
         int stereoFrequencyShiftBins = 1,
         int sampleRate = 44100,
         int frequencyInterleaveIntervalSymbols = 1,
@@ -188,10 +188,10 @@ public sealed record OfdmConfig
             throw new ArgumentException("FFT size must be a power of two and > 0.");
         }
 
-        if (ActiveSubcarriers is not (9 or 18 or 27 or 36))
+        if (ActiveSubcarriers is not (8 or 16 or 24 or 32))
         {
             throw new ArgumentException(
-                "Active subcarriers must be 9, 18, 27, or 36 (modulation.mdc).",
+                "Active subcarriers must be 8, 16, 24, or 32 (modulation.mdc).",
                 nameof(activeSubcarriers));
         }
 
@@ -253,42 +253,27 @@ public sealed record OfdmConfig
     /// </summary>
     private void ValidateCarrierBinsFitFft()
     {
-        if (CarrierGrid == OfdmCarrierGrid.Sc9Family)
+        foreach (var k in ConceptualLeftBins)
         {
-            foreach (var k in ConceptualLeftBins)
+            double leftHz;
+            double rightHz;
+            if (CarrierGrid == OfdmCarrierGrid.Sc8Family)
             {
-                var leftHz = LeftCarrierHzSc9(k - 1);
-                var rightHz = RightCarrierHzSc9(k - 1);
-                var leftBin = HzToPositiveBin(leftHz, FftSize, SampleRate);
-                var rightBin = HzToPositiveBin(rightHz, FftSize, SampleRate);
-                if (leftBin <= 0 || leftBin >= FftSize / 2 || rightBin <= 0 || rightBin >= FftSize / 2)
-                {
-                    throw new ArgumentException(
-                        $"SC-9 family carrier Hz (L={leftHz:F1}, R={rightHz:F1}) does not fit FFT={FftSize}.",
-                        nameof(FftSize));
-                }
+                leftHz = LeftCarrierHzSc8(k - 1);
+                rightHz = RightCarrierHzSc8(k - 1);
+            }
+            else
+            {
+                leftHz = LeftCarrierHzSc24(k);
+                rightHz = RightCarrierHzSc24(k);
             }
 
-            return;
-        }
-
-        var maxConcept = ConceptualLeftBins.Max();
-        if (ChannelMode == ChannelMode.Mono)
-        {
-            if (maxConcept >= FftSize / 2)
+            var leftBin = HzToPositiveBin(leftHz, FftSize, SampleRate);
+            var rightBin = HzToPositiveBin(rightHz, FftSize, SampleRate);
+            if (leftBin <= 0 || leftBin >= FftSize / 2 || rightBin <= 0 || rightBin >= FftSize / 2)
             {
                 throw new ArgumentException(
-                    $"FFT size {FftSize} is too small for conceptual L bin {maxConcept} (need < {FftSize / 2}).",
-                    nameof(FftSize));
-            }
-        }
-        else
-        {
-            var maxFineBin = (2 * maxConcept) + 1;
-            if (maxFineBin >= FftSize / 2)
-            {
-                throw new ArgumentException(
-                    $"FFT size {FftSize} is too small for stereo midpoint carriers (need max bin {maxFineBin} < {FftSize / 2}).",
+                    $"Carrier Hz (L={leftHz:F1}, R={rightHz:F1}) does not fit FFT={FftSize}.",
                     nameof(FftSize));
             }
         }
@@ -298,25 +283,25 @@ public sealed record OfdmConfig
     /// Group A の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group A のキャリア番号配列。</returns>
-    public static int[] ResolveGroupALeftBins() => Enumerable.Range(1, 9).ToArray();
+    public static int[] ResolveGroupALeftBins() => Enumerable.Range(1, 8).ToArray();
 
     /// <summary>
     /// Group B の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group B のキャリア番号配列。</returns>
-    public static int[] ResolveGroupBLeftBins() => Enumerable.Range(10, 9).ToArray();
+    public static int[] ResolveGroupBLeftBins() => Enumerable.Range(9, 8).ToArray();
 
     /// <summary>
     /// Group C の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group C のキャリア番号配列。</returns>
-    public static int[] ResolveGroupCLeftBins() => Enumerable.Range(19, 9).ToArray();
+    public static int[] ResolveGroupCLeftBins() => Enumerable.Range(17, 8).ToArray();
 
     /// <summary>
     /// Group D の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group D のキャリア番号配列。</returns>
-    public static int[] ResolveGroupDLeftBins() => Enumerable.Range(28, 9).ToArray();
+    public static int[] ResolveGroupDLeftBins() => Enumerable.Range(25, 8).ToArray();
 
     /// <summary>
     /// サブキャリア数に応じた概念左キャリア番号列を返します。
@@ -326,10 +311,10 @@ public sealed record OfdmConfig
     public static int[] ResolveConceptualLeftBins(int activeSubcarriers) =>
         activeSubcarriers switch
         {
-            9 => ResolveGroupBLeftBins(),
-            18 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).ToArray(),
-            27 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).Concat(ResolveGroupCLeftBins()).ToArray(),
-            36 => ResolveGroupALeftBins()
+            8 => ResolveGroupBLeftBins(),
+            16 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).ToArray(),
+            24 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).Concat(ResolveGroupCLeftBins()).ToArray(),
+            32 => ResolveGroupALeftBins()
                 .Concat(ResolveGroupBLeftBins())
                 .Concat(ResolveGroupCLeftBins())
                 .Concat(ResolveGroupDLeftBins())
@@ -337,7 +322,7 @@ public sealed record OfdmConfig
             _ => throw new ArgumentOutOfRangeException(
                 nameof(activeSubcarriers),
                 activeSubcarriers,
-                "Active subcarriers must be 9, 18, 27, or 36.")
+                "Active subcarriers must be 8, 16, 24, or 32.")
         };
 
     /// <summary>
@@ -348,31 +333,52 @@ public sealed record OfdmConfig
     public static int MaxConceptualLeftBin(int activeSubcarriers) =>
         ResolveConceptualLeftBins(activeSubcarriers)[^1];
 
-    /// <summary>SC-27/36 系列のキャリア間隔（Hz）を返します。</summary>
-    /// <param name="sampleRate">サンプルレート（Hz）。</param>
+    /// <summary>全 SC 共通の搬送波間隔（Hz）。</summary>
+    public const double CarrierSpacingHz = 223.9;
+
+    /// <summary>SC-24/32 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
+    /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア間隔（Hz）。</returns>
-    public static double DeltaF27(int sampleRate = 44100) => sampleRate / 128.0;
+    public static double DeltaF24(int sampleRate = 44100) => CarrierSpacingHz;
 
-    /// <summary>SC-9/18 系列のキャリア間隔（Hz）を返します。</summary>
-    /// <param name="sampleRate">サンプルレート（Hz）。</param>
+    /// <summary>SC-8/16 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
+    /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア間隔（Hz）。</returns>
-    public static double DeltaF9(int sampleRate = 44100) => DeltaF27(sampleRate) * 1.3;
+    public static double DeltaF8(int sampleRate = 44100) => CarrierSpacingHz;
 
-    public const double Sc9StartHz = 440.0;
+    /// <summary>SC-8/16 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
+    public const double Sc8StartHz = 650.0;
 
-    /// <summary>SC-9 系列の左チャネルキャリア周波数を返します。</summary>
-    /// <param name="zeroBasedChannelIndex">0 起点のチャネル番号。</param>
-    /// <param name="sampleRate">サンプルレート（Hz）。</param>
+    /// <summary>SC-24/32 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
+    public const double Sc24StartHz = 500.0;
+
+    /// <summary>SC-8/16 系列の左チャネルキャリア周波数を返します。</summary>
+    /// <param name="zeroBasedChannelIndex">0 起点のチャネル番号（A0=0, B0=8）。</param>
+    /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
-    public static double LeftCarrierHzSc9(int zeroBasedChannelIndex, int sampleRate = 44100) =>
-        Sc9StartHz + zeroBasedChannelIndex * DeltaF9(sampleRate);
+    public static double LeftCarrierHzSc8(int zeroBasedChannelIndex, int sampleRate = 44100) =>
+        Sc8StartHz + zeroBasedChannelIndex * CarrierSpacingHz;
 
-    /// <summary>SC-9 系列の右チャネルキャリア周波数を返します。</summary>
+    /// <summary>SC-8/16 系列の右チャネルキャリア周波数を返します。</summary>
     /// <param name="zeroBasedChannelIndex">0 起点のチャネル番号。</param>
-    /// <param name="sampleRate">サンプルレート（Hz）。</param>
+    /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
-    public static double RightCarrierHzSc9(int zeroBasedChannelIndex, int sampleRate = 44100) =>
-        LeftCarrierHzSc9(zeroBasedChannelIndex, sampleRate) + (DeltaF9(sampleRate) / 2.0);
+    public static double RightCarrierHzSc8(int zeroBasedChannelIndex, int sampleRate = 44100) =>
+        LeftCarrierHzSc8(zeroBasedChannelIndex, sampleRate) + (CarrierSpacingHz / 2.0);
+
+    /// <summary>SC-24/32 系列の左チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..32）。</param>
+    /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
+    /// <returns>キャリア周波数（Hz）。</returns>
+    public static double LeftCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
+        Sc24StartHz + (conceptualLeftBin - 1) * CarrierSpacingHz;
+
+    /// <summary>SC-24/32 系列の右チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..32）。</param>
+    /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
+    /// <returns>キャリア周波数（Hz）。</returns>
+    public static double RightCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
+        LeftCarrierHzSc24(conceptualLeftBin, sampleRate) + (CarrierSpacingHz / 2.0);
 
     /// <summary>周波数（Hz）を正側FFTビンへ変換します。</summary>
     /// <param name="hz">周波数（Hz）。</param>
@@ -391,25 +397,34 @@ public sealed record OfdmConfig
     /// <param name="activeSubcarriers">有効サブキャリア数。</param>
     /// <returns>キャリアグリッド種別。</returns>
     public static OfdmCarrierGrid ResolveCarrierGrid(int activeSubcarriers) =>
-        activeSubcarriers is 9 or 18 ? OfdmCarrierGrid.Sc9Family : OfdmCarrierGrid.Sc27Family;
+        activeSubcarriers is 8 or 16 ? OfdmCarrierGrid.Sc8Family : OfdmCarrierGrid.Sc24Family;
 
     /// <summary>
-    /// サブキャリア構成とチャネルモードから推奨FFTサイズを返します。
+    /// 概念左キャリア番号からサブキャリアグループ ID（0=A, 1=B, 2=C, 3=D）を返します。
     /// </summary>
-    /// <param name="activeSubcarriers">有効サブキャリア数。</param>
-    /// <param name="channelMode">チャネルモード。</param>
-    /// <returns>推奨FFTサイズ。</returns>
-    public static int ResolveFftSize(int activeSubcarriers, ChannelMode channelMode)
-    {
-        var grid = ResolveCarrierGrid(activeSubcarriers);
-        if (grid == OfdmCarrierGrid.Sc9Family)
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..32）。</param>
+    /// <returns>グループ ID。</returns>
+    public static byte ResolveSubcarrierGroupId(int conceptualLeftBin) =>
+        conceptualLeftBin switch
         {
-            return 128;
-        }
+            >= 1 and <= 8 => 0,
+            >= 9 and <= 16 => 1,
+            >= 17 and <= 24 => 2,
+            _ => 3
+        };
 
-        var mono = 128;
-        return channelMode == ChannelMode.Stereo ? mono * 2 : mono;
-    }
+    /// <summary>
+    /// 固定 FFT サイズ（SC 数・チャネル構成によらない）。
+    /// </summary>
+    public const int FixedFftSize = 256;
+
+    /// <summary>
+    /// サブキャリア構成とチャネルモードから推奨FFTサイズを返します（常に 256）。
+    /// </summary>
+    /// <param name="activeSubcarriers">有効サブキャリア数（互換のため残置。未使用）。</param>
+    /// <param name="channelMode">チャネルモード（互換のため残置。未使用）。</param>
+    /// <returns>固定 FFT サイズ 256。</returns>
+    public static int ResolveFftSize(int activeSubcarriers, ChannelMode channelMode) => FixedFftSize;
 }
 
 /// <summary>
@@ -429,6 +444,7 @@ public sealed class OfdmGenerator
     private readonly List<int> _leftPilotBins;
     private readonly List<int> _leftDataCarrierBase;
     private readonly Dictionary<int, ModulationScheme> _leftDataCarrierModulationByBin;
+    private readonly Dictionary<int, byte> _leftDataCarrierGroupByBin;
     private readonly int[] _leftDataCarrierNoInterleaveOrder;
     private readonly Dictionary<(long Epoch, int Seed), int[]> _leftInterleavedOrderCache;
     private readonly int[][] _leftPilotGroupedCarriers;
@@ -436,6 +452,7 @@ public sealed class OfdmGenerator
     private readonly List<int> _rightPilotBins;
     private readonly List<int> _rightDataCarrierBase;
     private readonly Dictionary<int, ModulationScheme> _rightDataCarrierModulationByBin;
+    private readonly Dictionary<int, byte> _rightDataCarrierGroupByBin;
     private readonly int[] _rightDataCarrierNoInterleaveOrder;
     private readonly Dictionary<(long Epoch, int Seed), int[]> _rightInterleavedOrderCache;
     private readonly int[][] _rightPilotGroupedCarriers;
@@ -466,6 +483,11 @@ public sealed class OfdmGenerator
     /// </summary>
     public int ActiveSubcarriers => _config.ActiveSubcarriers;
 
+    /// <summary>
+    /// キャリア周波数グリッド種別を返します。
+    /// </summary>
+    public OfdmCarrierGrid CarrierGrid => _config.CarrierGrid;
+
     private static readonly Complex UnmodulatedCarrierSymbol = Complex.One;
 
     /// <summary>
@@ -476,9 +498,9 @@ public sealed class OfdmGenerator
         _config = config;
         _random = config.RandomSeed == 0 ? Random.Shared : new Random(config.RandomSeed);
 
-        (_leftAllCarrierBins, _leftPilotBins, _leftDataCarrierBase, _leftDataCarrierModulationByBin) =
+        (_leftAllCarrierBins, _leftPilotBins, _leftDataCarrierBase, _leftDataCarrierModulationByBin, _leftDataCarrierGroupByBin) =
             BuildChannelLayout(CarrierChannel.Left);
-        (_rightAllCarrierBins, _rightPilotBins, _rightDataCarrierBase, _rightDataCarrierModulationByBin) =
+        (_rightAllCarrierBins, _rightPilotBins, _rightDataCarrierBase, _rightDataCarrierModulationByBin, _rightDataCarrierGroupByBin) =
             BuildChannelLayout(CarrierChannel.Right);
         _leftDataCarrierNoInterleaveOrder = _leftDataCarrierBase.ToArray();
         _rightDataCarrierNoInterleaveOrder = _rightDataCarrierBase.ToArray();
@@ -507,7 +529,7 @@ public sealed class OfdmGenerator
     /// <summary>
     /// 内部処理です。
     /// </summary>
-    private (List<int> All, List<int> Pilots, List<int> DataBase, Dictionary<int, ModulationScheme> DataModulationByBin)
+    private (List<int> All, List<int> Pilots, List<int> DataBase, Dictionary<int, ModulationScheme> DataModulationByBin, Dictionary<int, byte> DataGroupByBin)
         BuildChannelLayout(CarrierChannel channel)
     {
         var all = GetPositiveCarrierBins(channel);
@@ -521,6 +543,7 @@ public sealed class OfdmGenerator
         var pilots = pilotSet.OrderBy(x => x).ToList();
         var data = new List<int>(all.Count);
         var dataModulationByBin = new Dictionary<int, ModulationScheme>(all.Count);
+        var dataGroupByBin = new Dictionary<int, byte>(all.Count);
         for (var i = 0; i < all.Count; i++)
         {
             var bin = all[i];
@@ -532,9 +555,10 @@ public sealed class OfdmGenerator
             data.Add(bin);
             var conceptualLeftBin = _config.ConceptualLeftBins[i];
             dataModulationByBin[bin] = ResolveEffectiveCarrierModulation(_config.ModulationScheme, conceptualLeftBin);
+            dataGroupByBin[bin] = OfdmConfig.ResolveSubcarrierGroupId(conceptualLeftBin);
         }
 
-        return (all, pilots, data, dataModulationByBin);
+        return (all, pilots, data, dataModulationByBin, dataGroupByBin);
     }
 
     /// <summary>
@@ -576,7 +600,7 @@ public sealed class OfdmGenerator
     /// </summary>
     /// <param name="conceptualLeftBin">conceptualLeftBin を指定します。</param>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
-    private static bool IsGroupDConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 28 and <= 36;
+    private static bool IsGroupDConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 25 and <= 32;
 
     /// <summary>
     /// ResolveEffectiveCarrierModulation を解決します。
@@ -735,47 +759,28 @@ public sealed class OfdmGenerator
         var conceptBins = _config.ConceptualLeftBins;
         var bins = new List<int>(conceptBins.Count);
         var used = new HashSet<int>();
+        var useRight = channel == CarrierChannel.Right
+            && _config.ChannelMode == ChannelMode.Stereo;
 
-        if (_config.CarrierGrid == OfdmCarrierGrid.Sc9Family)
+        foreach (var k in conceptBins)
         {
-            var useRight = channel == CarrierChannel.Right
-                && _config.ChannelMode == ChannelMode.Stereo;
-            foreach (var k in conceptBins)
+            double hz;
+            if (_config.CarrierGrid == OfdmCarrierGrid.Sc8Family)
             {
-                var hz = useRight
-                    ? OfdmConfig.RightCarrierHzSc9(k - 1, _config.SampleRate)
-                    : OfdmConfig.LeftCarrierHzSc9(k - 1, _config.SampleRate);
-                var bin = OfdmConfig.HzToPositiveBin(hz, _config.FftSize, _config.SampleRate);
-                bin = EnsureUniquePositiveBin(bin, used);
-                AddPositiveBin(bins, bin);
+                hz = useRight
+                    ? OfdmConfig.RightCarrierHzSc8(k - 1, _config.SampleRate)
+                    : OfdmConfig.LeftCarrierHzSc8(k - 1, _config.SampleRate);
+            }
+            else
+            {
+                hz = useRight
+                    ? OfdmConfig.RightCarrierHzSc24(k, _config.SampleRate)
+                    : OfdmConfig.LeftCarrierHzSc24(k, _config.SampleRate);
             }
 
-            return bins;
-        }
-
-        if (_config.ChannelMode == ChannelMode.Mono)
-        {
-            foreach (var k in conceptBins)
-            {
-                AddPositiveBin(bins, k);
-            }
-
-            return bins;
-        }
-
-        if (channel == CarrierChannel.Left)
-        {
-            foreach (var k in conceptBins)
-            {
-                AddPositiveBin(bins, 2 * k);
-            }
-        }
-        else
-        {
-            foreach (var k in conceptBins)
-            {
-                AddPositiveBin(bins, (2 * k) + 1);
-            }
+            var bin = OfdmConfig.HzToPositiveBin(hz, _config.FftSize, _config.SampleRate);
+            bin = EnsureUniquePositiveBin(bin, used);
+            AddPositiveBin(bins, bin);
         }
 
         return bins;
@@ -1204,19 +1209,38 @@ public sealed class OfdmGenerator
         analysisSampleCount = Math.Clamp(analysisSampleCount, SamplesPerOfdmSymbol, samples.Length - analysisStartSample);
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
-        var corrected = new Complex[analysisSampleCount];
-        // Apply/Correct と同じ散乱モデルで採点する（区間リサンプルだと位相最適がずれる）。
-        WowFlutterWarp.CorrectPrefixWithReferenceLength(
-            samples,
-            samples.Length,
-            analysisStartSample,
-            analysisSampleCount,
-            Math.Max(1, _config.SampleRate),
-            amount,
-            wowPhase,
-            flutterPhase,
-            corrected);
-        return CorrelateReal(corrected, ideal);
+        var idealReals = new double[analysisSampleCount];
+        for (var i = 0; i < analysisSampleCount; i++)
+        {
+            idealReals[i] = ideal[i].Real;
+        }
+
+        var refCorr = BuildCorrelationReferenceReals(idealReals);
+        var sumScratch = System.Buffers.ArrayPool<double>.Shared.Rent(analysisSampleCount);
+        var countScratch = System.Buffers.ArrayPool<int>.Shared.Rent(analysisSampleCount);
+        try
+        {
+            // Apply/Correct と同じ散乱モデルで採点する（区間リサンプルだと位相最適がずれる）。
+            return WowFlutterWarp.CorrectPrefixCorrelateReal(
+                samples,
+                samples.Length,
+                analysisStartSample,
+                analysisSampleCount,
+                Math.Max(1, _config.SampleRate),
+                amount,
+                wowPhase,
+                flutterPhase,
+                idealReals,
+                refCorr.Mean,
+                refCorr.Energy,
+                sumScratch.AsSpan(0, analysisSampleCount),
+                countScratch.AsSpan(0, analysisSampleCount));
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<double>.Shared.Return(sumScratch);
+            System.Buffers.ArrayPool<int>.Shared.Return(countScratch);
+        }
     }
 
     /// <summary>
@@ -1258,124 +1282,137 @@ public sealed class OfdmGenerator
 
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
+        var idealReals = new double[analysisSampleCount];
+        for (var i = 0; i < analysisSampleCount; i++)
+        {
+            idealReals[i] = ideal[i].Real;
+        }
+
         var sampleRate = Math.Max(1, _config.SampleRate);
-        var slice = new Complex[analysisSampleCount];
+        var refCorr = BuildCorrelationReferenceReals(idealReals);
         var referenceLength = samples.Length;
+        var sumScratch = System.Buffers.ArrayPool<double>.Shared.Rent(analysisSampleCount);
+        var countScratch = System.Buffers.ArrayPool<int>.Shared.Rent(analysisSampleCount);
 
-        double Score(double a, double w, double f)
+        try
         {
-            WowFlutterWarp.CorrectPrefixWithReferenceLength(
-                samples,
-                referenceLength,
-                analysisStartSample,
-                analysisSampleCount,
-                sampleRate,
-                a,
-                w,
-                f,
-                slice);
-            return CorrelateReal(slice, ideal);
-        }
+            double Score(double a, double w, double f) =>
+                WowFlutterWarp.CorrectPrefixCorrelateReal(
+                    samples,
+                    referenceLength,
+                    analysisStartSample,
+                    analysisSampleCount,
+                    sampleRate,
+                    a,
+                    w,
+                    f,
+                    idealReals,
+                    refCorr.Mean,
+                    refCorr.Energy,
+                    sumScratch.AsSpan(0, analysisSampleCount),
+                    countScratch.AsSpan(0, analysisSampleCount));
 
-        var bestAmount = amount;
-        var bestWow = wowPhase;
-        var bestFlutter = flutterPhase;
-        var bestScore = Score(bestAmount, bestWow, bestFlutter);
+            var bestAmount = amount;
+            var bestWow = wowPhase;
+            var bestFlutter = flutterPhase;
+            var bestScore = Score(bestAmount, bestWow, bestFlutter);
 
-        var amounts = new[] { 0.009, 0.01, 0.011 };
-        // Match 残差が ~0.15 rad でも拾える幅
-        var coarseF = Enumerable.Range(-24, 49).ToArray();
-        var coarseW = Enumerable.Range(-24, 49).ToArray();
-        var fineF = Enumerable.Range(-40, 81).ToArray();
-        var fineW = Enumerable.Range(-40, 81).ToArray();
-        var nanoF = Enumerable.Range(-16, 33).ToArray();
-        var nanoW = Enumerable.Range(-16, 33).ToArray();
-        const int jointPasses = 2;
-        const int jointRadius = 12;
-        var jointCells = ((2 * jointRadius) + 1) * ((2 * jointRadius) + 1);
-        var total = amounts.Length
-            + coarseF.Length + coarseW.Length
-            + (jointPasses * (fineF.Length + fineW.Length))
-            + nanoF.Length
-            + nanoW.Length
-            + jointCells;
-        var done = 0;
+            var amounts = new[] { 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.011, 0.012, 0.015 };
+            // Match 残差が ~0.15 rad でも拾える幅
+            const int coarseRadius = 24;
+            const int fineRadius = 40;
+            const int nanoRadius = 16;
+            const int jointPasses = 2;
+            const int jointRadius = 12;
+            var jointCells = ((2 * jointRadius) + 1) * ((2 * jointRadius) + 1);
+            var total = amounts.Length
+                + (((2 * coarseRadius) + 1) * 2)
+                + (jointPasses * (((2 * fineRadius) + 1) * 2))
+                + (((2 * nanoRadius) + 1) * 2)
+                + jointCells;
+            var done = 0;
 
-        void Consider(double a, double w, double f)
-        {
-            var score = Score(a, w, f);
-            if (score > bestScore)
+            void Consider(double a, double w, double f)
             {
-                bestScore = score;
-                bestAmount = a;
-                bestWow = w;
-                bestFlutter = f;
+                var score = Score(a, w, f);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestAmount = a;
+                    bestWow = w;
+                    bestFlutter = f;
+                }
+
+                done++;
+                onProgress?.Invoke(done, total);
             }
 
-            done++;
-            onProgress?.Invoke(done, total);
-        }
-
-        foreach (var trialAmount in amounts)
-        {
-            Consider(trialAmount, bestWow, bestFlutter);
-        }
-
-        var centerFlutter = bestFlutter;
-        foreach (var dF in coarseF)
-        {
-            Consider(bestAmount, bestWow, centerFlutter + (dF * Math.PI / 200.0));
-        }
-
-        var centerWow = bestWow;
-        foreach (var dW in coarseW)
-        {
-            Consider(bestAmount, centerWow + (dW * Math.PI / 200.0), bestFlutter);
-        }
-
-        // 軸ごとに中心固定。wow/flutter は結合最適なので交互に複数パスする。
-        for (var pass = 0; pass < jointPasses; pass++)
-        {
-            centerFlutter = bestFlutter;
-            foreach (var dF in fineF)
+            foreach (var trialAmount in amounts)
             {
-                Consider(bestAmount, bestWow, centerFlutter + (dF * Math.PI / 4000.0));
+                Consider(trialAmount, bestWow, bestFlutter);
             }
 
-            centerWow = bestWow;
-            foreach (var dW in fineW)
+            var centerFlutter = bestFlutter;
+            for (var dF = -coarseRadius; dF <= coarseRadius; dF++)
             {
-                Consider(bestAmount, centerWow + (dW * Math.PI / 4000.0), bestFlutter);
+                Consider(bestAmount, bestWow, centerFlutter + (dF * Math.PI / 200.0));
             }
-        }
 
-        var centerFlutterNano = bestFlutter;
-        foreach (var dF in nanoF)
-        {
-            Consider(bestAmount, bestWow, centerFlutterNano + (dF * Math.PI / 20000.0));
-        }
-
-        var centerWowNano = bestWow;
-        foreach (var dW in nanoW)
-        {
-            Consider(bestAmount, centerWowNano + (dW * Math.PI / 20000.0), bestFlutter);
-        }
-
-        // 最終 2D 微調整（結合ズレの残りを潰す）
-        var jointWow = bestWow;
-        var jointFlutter = bestFlutter;
-        for (var dW = -jointRadius; dW <= jointRadius; dW++)
-        {
-            for (var dF = -jointRadius; dF <= jointRadius; dF++)
+            var centerWow = bestWow;
+            for (var dW = -coarseRadius; dW <= coarseRadius; dW++)
             {
-                Consider(
-                    bestAmount,
-                    jointWow + (dW * Math.PI / 8000.0),
-                    jointFlutter + (dF * Math.PI / 8000.0));
+                Consider(bestAmount, centerWow + (dW * Math.PI / 200.0), bestFlutter);
             }
-        }
 
-        return (bestAmount, WrapPhase(bestWow), WrapPhase(bestFlutter));
+            // 軸ごとに中心固定。wow/flutter は結合最適なので交互に複数パスする。
+            for (var pass = 0; pass < jointPasses; pass++)
+            {
+                centerFlutter = bestFlutter;
+                for (var dF = -fineRadius; dF <= fineRadius; dF++)
+                {
+                    Consider(bestAmount, bestWow, centerFlutter + (dF * Math.PI / 4000.0));
+                }
+
+                centerWow = bestWow;
+                for (var dW = -fineRadius; dW <= fineRadius; dW++)
+                {
+                    Consider(bestAmount, centerWow + (dW * Math.PI / 4000.0), bestFlutter);
+                }
+            }
+
+            var centerFlutterNano = bestFlutter;
+            for (var dF = -nanoRadius; dF <= nanoRadius; dF++)
+            {
+                Consider(bestAmount, bestWow, centerFlutterNano + (dF * Math.PI / 20000.0));
+            }
+
+            var centerWowNano = bestWow;
+            for (var dW = -nanoRadius; dW <= nanoRadius; dW++)
+            {
+                Consider(bestAmount, centerWowNano + (dW * Math.PI / 20000.0), bestFlutter);
+            }
+
+            // 最終 2D 微調整（結合ズレの残りを潰す）
+            var jointWow = bestWow;
+            var jointFlutter = bestFlutter;
+            for (var dW = -jointRadius; dW <= jointRadius; dW++)
+            {
+                for (var dF = -jointRadius; dF <= jointRadius; dF++)
+                {
+                    Consider(
+                        bestAmount,
+                        jointWow + (dW * Math.PI / 8000.0),
+                        jointFlutter + (dF * Math.PI / 8000.0));
+                }
+            }
+
+            return (bestAmount, WrapPhase(bestWow), WrapPhase(bestFlutter));
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<double>.Shared.Return(sumScratch);
+            System.Buffers.ArrayPool<int>.Shared.Return(countScratch);
+        }
     }
 
     public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
@@ -1761,237 +1798,313 @@ public sealed class OfdmGenerator
 
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
-        var observed = new Complex[analysisSampleCount];
-        Array.Copy(samples, analysisStartSample, observed, 0, analysisSampleCount);
+        var idealReals = new double[analysisSampleCount];
+        for (var i = 0; i < analysisSampleCount; i++)
+        {
+            idealReals[i] = ideal[i].Real;
+        }
 
         var sampleRate = Math.Max(1, _config.SampleRate);
-        var baseline = CorrelateReal(observed, ideal);
-        var bestScore = baseline;
+        var refCorr = BuildCorrelationReferenceReals(idealReals);
+        var bestScore = 0.0;
         var bestAmount = 0.01;
         var bestWowPhase = 0.0;
         var bestFlutterPhase = 0.0;
-        var correctedPreambleBuffer = new Complex[analysisSampleCount];
         // 全長 scale の Correct と同じモデル。プリアンブル近傍だけ散乱するので高速。
         var referenceLength = samples.Length;
 
-        var refStride1 = BuildCorrelationReference(ideal, 1);
-        var refStride8 = BuildCorrelationReference(ideal, 8);
-
-        double Evaluate(double amount, double wowPhase, double flutterPhase, int corrStride = 1)
+        var sumScratch = System.Buffers.ArrayPool<double>.Shared.Rent(analysisSampleCount);
+        var countScratch = System.Buffers.ArrayPool<int>.Shared.Rent(analysisSampleCount);
+        try
         {
-            WowFlutterWarp.CorrectPrefixWithReferenceLength(
-                samples,
-                referenceLength,
-                analysisStartSample,
-                analysisSampleCount,
-                sampleRate,
-                amount,
-                wowPhase,
-                flutterPhase,
-                correctedPreambleBuffer);
-            var reference = corrStride <= 1 ? refStride1 : refStride8;
-            var score = CorrelateRealStridedWithReference(
-                correctedPreambleBuffer,
-                ideal,
-                corrStride,
-                reference.Mean,
-                reference.Energy,
-                reference.Count);
-            // stride>1 は順位付け用。採用位相は stride=1 のみ更新する。
-            if (corrStride <= 1 && score > bestScore)
+            for (var i = 0; i < analysisSampleCount; i++)
             {
-                bestScore = score;
-                bestAmount = amount;
-                bestWowPhase = wowPhase;
-                bestFlutterPhase = flutterPhase;
+                sumScratch[i] = samples[analysisStartSample + i].Real;
             }
 
-            return score;
-        }
+            var baseline = WowFlutterWarp.CorrelateDenseReals(
+                sumScratch.AsSpan(0, analysisSampleCount),
+                idealReals,
+                refCorr.Mean,
+                refCorr.Energy);
+            bestScore = baseline;
 
-        const double earlyExitScore = 0.97;
-        const int progressTotal = 1200;
-        var progressDone = 0;
-        void ReportProgress()
-        {
-            progressDone++;
-            if ((progressDone & 7) == 0 || progressDone >= progressTotal)
+            double Evaluate(double amount, double wowPhase, double flutterPhase)
             {
-                onProgress?.Invoke(Math.Min(progressDone, progressTotal), progressTotal);
-            }
-        }
-
-        var coarseHits = new List<(double Score, double Wow, double Flutter)>(64);
-        for (var wi = 0; wi < 18; wi++)
-        {
-            var wowPhase = wi * Math.PI / 9.0;
-            for (var fi = 0; fi < 18; fi++)
-            {
-                var flutterPhase = fi * Math.PI / 9.0;
-                // 粗格子も Correct 真値付近を落とさないよう stride=1 で採点する。
-                var score = Evaluate(0.01, wowPhase, flutterPhase, corrStride: 1);
-                ReportProgress();
-                if (score > baseline + 0.02)
+                var score = WowFlutterWarp.CorrectPrefixCorrelateReal(
+                    samples,
+                    referenceLength,
+                    analysisStartSample,
+                    analysisSampleCount,
+                    sampleRate,
+                    amount,
+                    wowPhase,
+                    flutterPhase,
+                    idealReals,
+                    refCorr.Mean,
+                    refCorr.Energy,
+                    sumScratch.AsSpan(0, analysisSampleCount),
+                    countScratch.AsSpan(0, analysisSampleCount));
+                if (score > bestScore)
                 {
-                    coarseHits.Add((score, wowPhase, flutterPhase));
+                    bestScore = score;
+                    bestAmount = amount;
+                    bestWowPhase = wowPhase;
+                    bestFlutterPhase = flutterPhase;
+                }
+
+                return score;
+            }
+
+            const double earlyExitScore = 0.97;
+            const int progressTotal = 1200;
+            var progressDone = 0;
+            void ReportProgress()
+            {
+                progressDone++;
+                if ((progressDone & 7) == 0 || progressDone >= progressTotal)
+                {
+                    onProgress?.Invoke(Math.Min(progressDone, progressTotal), progressTotal);
                 }
             }
-        }
 
-        if (coarseHits.Count == 0)
-        {
-            onProgress?.Invoke(progressTotal, progressTotal);
-            return null;
-        }
+            var coarseHits = new List<(double Score, double Wow, double Flutter)>(64);
 
-        coarseHits.Sort((a, b) => b.Score.CompareTo(a.Score));
-        var seeds = new List<(double Wow, double Flutter)>(3);
-        for (var i = 0; i < coarseHits.Count && seeds.Count < 3; i++)
-        {
-            var candidate = (coarseHits[i].Wow, coarseHits[i].Flutter);
-            var far = true;
-            foreach (var existing in seeds)
+            // 粗探索: amount=0.01 は π/9 で十分広い。amount=0.005 は相関ピークが鋭く
+            // π/9 では真値近傍でも baseline を下回るため、失敗時は π/18 で再掃引する。
+            void CoarsePhaseSweep(double amount, int halfTurnDivisions)
             {
-                if (Math.Abs(WrapPhase(candidate.Wow - existing.Wow)) < 0.25 &&
-                    Math.Abs(WrapPhase(candidate.Flutter - existing.Flutter)) < 0.25)
+                var step = Math.PI / halfTurnDivisions;
+                var count = halfTurnDivisions * 2;
+                for (var wi = 0; wi < count; wi++)
                 {
-                    far = false;
+                    var wowPhase = wi * step;
+                    for (var fi = 0; fi < count; fi++)
+                    {
+                        var flutterPhase = fi * step;
+                        // 粗格子も Correct 真値付近を落とさないよう stride=1 で採点する。
+                        var score = Evaluate(amount, wowPhase, flutterPhase);
+                        ReportProgress();
+                        if (score > baseline + 0.02)
+                        {
+                            coarseHits.Add((score, wowPhase, flutterPhase));
+                        }
+
+                        if (bestScore >= earlyExitScore)
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+
+            CoarsePhaseSweep(0.01, halfTurnDivisions: 9);
+            // amount=0.01 の弱い偽ピークに捕まると 0.005 真値を逃すため、
+            // 高スコア未達なら鋭峰向けの密格子を必ず追加する。
+            if (bestScore < 0.90)
+            {
+                CoarsePhaseSweep(0.005, halfTurnDivisions: 18);
+            }
+
+            if (bestScore < 0.90)
+            {
+                CoarsePhaseSweep(0.003, halfTurnDivisions: 18);
+            }
+
+            if (coarseHits.Count == 0)
+            {
+                onProgress?.Invoke(progressTotal, progressTotal);
+                return null;
+            }
+
+            coarseHits.Sort((a, b) => b.Score.CompareTo(a.Score));
+            var seeds = new List<(double Wow, double Flutter)>(3);
+            for (var i = 0; i < coarseHits.Count && seeds.Count < 3; i++)
+            {
+                var candidate = (coarseHits[i].Wow, coarseHits[i].Flutter);
+                var far = true;
+                foreach (var existing in seeds)
+                {
+                    if (Math.Abs(WrapPhase(candidate.Wow - existing.Wow)) < 0.25 &&
+                        Math.Abs(WrapPhase(candidate.Flutter - existing.Flutter)) < 0.25)
+                    {
+                        far = false;
+                        break;
+                    }
+                }
+
+                if (far)
+                {
+                    seeds.Add(candidate);
+                }
+            }
+
+            // 以降の位相精密化は粗探索で更新された bestAmount を使う（0.01 固定だと 0.005 真値を壊す）。
+            double PhaseAmount() => bestAmount > 1e-12 ? bestAmount : 0.01;
+
+            // π/9 粗格子の隙間（鋭いピーク）を埋める。シード周辺を密に掃引する。
+            foreach (var seed in seeds)
+            {
+                for (var dW = -6; dW <= 6; dW++)
+                {
+                    for (var dF = -6; dF <= 6; dF++)
+                    {
+                        if (dW == 0 && dF == 0)
+                        {
+                            continue;
+                        }
+
+                        Evaluate(
+                            PhaseAmount(),
+                            seed.Wow + (dW * Math.PI / 54.0),
+                            seed.Flutter + (dF * Math.PI / 54.0));
+                        ReportProgress();
+                    }
+                }
+
+                if (bestScore >= earlyExitScore)
+                {
                     break;
                 }
             }
 
-            if (far)
+            foreach (var seed in seeds)
             {
-                seeds.Add(candidate);
-            }
-        }
-
-        // π/9 粗格子の隙間（鋭いピーク）を埋める。シード周辺を密に掃引する。
-        foreach (var seed in seeds)
-        {
-            for (var dW = -6; dW <= 6; dW++)
-            {
-                for (var dF = -6; dF <= 6; dF++)
+                var wow = seed.Wow;
+                var flutter = seed.Flutter;
+                // 密探索後の最良点に近いシードから交互探索を始める。
+                if (Math.Abs(WrapPhase(bestWowPhase - seed.Wow)) < 0.35
+                    && Math.Abs(WrapPhase(bestFlutterPhase - seed.Flutter)) < 0.35)
                 {
-                    if (dW == 0 && dF == 0)
-                    {
-                        continue;
-                    }
-
-                    Evaluate(
-                        0.01,
-                        seed.Wow + (dW * Math.PI / 54.0),
-                        seed.Flutter + (dF * Math.PI / 54.0),
-                        corrStride: 1);
-                    ReportProgress();
-                }
-            }
-        }
-
-        foreach (var seed in seeds)
-        {
-            var wow = seed.Wow;
-            var flutter = seed.Flutter;
-            // 密探索後の最良点に近いシードから交互探索を始める。
-            if (Math.Abs(WrapPhase(bestWowPhase - seed.Wow)) < 0.35
-                && Math.Abs(WrapPhase(bestFlutterPhase - seed.Flutter)) < 0.35)
-            {
-                wow = bestWowPhase;
-                flutter = bestFlutterPhase;
-            }
-
-            for (var pass = 0; pass < 2; pass++)
-            {
-                // CorrectPrefix 採点は軽いので stride=1。π/45 だと鋭い真ピークを外す。
-                var bestLocal = double.NegativeInfinity;
-                var bestFlutter = flutter;
-                for (var fi = 0; fi < 180; fi++)
-                {
-                    var trial = fi * Math.PI / 90.0;
-                    var score = Evaluate(0.01, wow, trial, corrStride: 1);
-                    ReportProgress();
-                    if (score > bestLocal)
-                    {
-                        bestLocal = score;
-                        bestFlutter = trial;
-                    }
+                    wow = bestWowPhase;
+                    flutter = bestFlutterPhase;
                 }
 
-                flutter = bestFlutter;
-                bestLocal = double.NegativeInfinity;
-                var bestWow = wow;
-                for (var wi = 0; wi < 180; wi++)
+                for (var pass = 0; pass < 2; pass++)
                 {
-                    var trial = wi * Math.PI / 90.0;
-                    var score = Evaluate(0.01, trial, flutter, corrStride: 1);
-                    ReportProgress();
-                    if (score > bestLocal)
+                    // CorrectPrefix 採点は軽いので stride=1。π/45 だと鋭い真ピークを外す。
+                    var bestLocal = double.NegativeInfinity;
+                    var bestFlutter = flutter;
+                    for (var fi = 0; fi < 180; fi++)
                     {
-                        bestLocal = score;
-                        bestWow = trial;
+                        var trial = fi * Math.PI / 90.0;
+                        var score = Evaluate(PhaseAmount(), wow, trial);
+                        ReportProgress();
+                        if (score > bestLocal)
+                        {
+                            bestLocal = score;
+                            bestFlutter = trial;
+                        }
+                    }
+
+                    flutter = bestFlutter;
+                    bestLocal = double.NegativeInfinity;
+                    var bestWow = wow;
+                    for (var wi = 0; wi < 180; wi++)
+                    {
+                        var trial = wi * Math.PI / 90.0;
+                        var score = Evaluate(PhaseAmount(), trial, flutter);
+                        ReportProgress();
+                        if (score > bestLocal)
+                        {
+                            bestLocal = score;
+                            bestWow = trial;
+                        }
+                    }
+
+                    wow = bestWow;
+                }
+
+                Evaluate(PhaseAmount(), wow, flutter);
+                ReportProgress();
+                for (var dW = -12; dW <= 12; dW++)
+                {
+                    for (var dF = -12; dF <= 12; dF++)
+                    {
+                        Evaluate(
+                            PhaseAmount(),
+                            wow + (dW * Math.PI / 900.0),
+                            flutter + (dF * Math.PI / 900.0));
+                        ReportProgress();
                     }
                 }
 
-                wow = bestWow;
-            }
-
-            Evaluate(0.01, wow, flutter, corrStride: 1);
-            ReportProgress();
-            for (var dW = -12; dW <= 12; dW++)
-            {
-                for (var dF = -12; dF <= 12; dF++)
+                if (bestScore >= earlyExitScore)
                 {
-                    Evaluate(
-                        0.01,
-                        wow + (dW * Math.PI / 900.0),
-                        flutter + (dF * Math.PI / 900.0),
-                        corrStride: 1);
-                    ReportProgress();
+                    break;
                 }
             }
 
-            if (bestScore >= earlyExitScore)
+            if (bestScore <= baseline)
             {
-                break;
+                onProgress?.Invoke(progressTotal, progressTotal);
+                return null;
             }
-        }
 
-        if (bestScore <= baseline)
-        {
+            // 0.005（test7/8/9）〜 0.012（従来中心）をカバー。粗探索が拾った量の近傍も再掃引。
+            foreach (var amount in new[]
+                     {
+                         0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.011, 0.012, 0.015
+                     })
+            {
+                Evaluate(amount, bestWowPhase, bestFlutterPhase);
+                ReportProgress();
+            }
+
+            var fineWow = bestWowPhase;
+            var fineFlutter = bestFlutterPhase;
+            for (var dF = -20; dF <= 20; dF++)
+            {
+                Evaluate(bestAmount, fineWow, fineFlutter + (dF * Math.PI / 4000.0));
+                ReportProgress();
+            }
+
+            fineFlutter = bestFlutterPhase;
+            for (var dW = -20; dW <= 20; dW++)
+            {
+                Evaluate(bestAmount, fineWow + (dW * Math.PI / 4000.0), fineFlutter);
+                ReportProgress();
+            }
+
             onProgress?.Invoke(progressTotal, progressTotal);
-            return null;
-        }
 
-        foreach (var amount in new[] { 0.008, 0.009, 0.01, 0.011, 0.012 })
+            // 呼び出し側は >=0.50。旧 0.85 だとノイズ付きで Match 失敗→超重い FH 推定へ落ちる。
+            if (bestScore < baseline + 0.02 || bestScore < 0.50)
+            {
+                return null;
+            }
+
+            return (baseline, bestScore, bestAmount, bestWowPhase, bestFlutterPhase);
+        }
+        finally
         {
-            Evaluate(amount, bestWowPhase, bestFlutterPhase, corrStride: 1);
-            ReportProgress();
+            System.Buffers.ArrayPool<double>.Shared.Return(sumScratch);
+            System.Buffers.ArrayPool<int>.Shared.Return(countScratch);
         }
+    }
 
-        var fineWow = bestWowPhase;
-        var fineFlutter = bestFlutterPhase;
-        for (var dF = -20; dF <= 20; dF++)
+    private static (double Mean, double Energy, int Count) BuildCorrelationReferenceReals(ReadOnlySpan<double> reference)
+    {
+        if (reference.Length <= 1)
         {
-            Evaluate(bestAmount, fineWow, fineFlutter + (dF * Math.PI / 4000.0), corrStride: 1);
-            ReportProgress();
+            return (0.0, 0.0, reference.Length);
         }
 
-        fineFlutter = bestFlutterPhase;
-        for (var dW = -20; dW <= 20; dW++)
+        var sum = 0.0;
+        for (var i = 0; i < reference.Length; i++)
         {
-            Evaluate(bestAmount, fineWow + (dW * Math.PI / 4000.0), fineFlutter, corrStride: 1);
-            ReportProgress();
+            sum += reference[i];
         }
 
-        onProgress?.Invoke(progressTotal, progressTotal);
-
-        // 呼び出し側は >=0.50。旧 0.85 だとノイズ付きで Match 失敗→超重い FH 推定へ落ちる。
-        if (bestScore < baseline + 0.02 || bestScore < 0.50)
+        var mean = sum / reference.Length;
+        var energy = 0.0;
+        for (var i = 0; i < reference.Length; i++)
         {
-            return null;
+            var centered = reference[i] - mean;
+            energy += centered * centered;
         }
 
-        return (baseline, bestScore, bestAmount, bestWowPhase, bestFlutterPhase);
+        return (mean, energy, reference.Length);
     }
 
 
@@ -2116,13 +2229,20 @@ public sealed class OfdmGenerator
     {
         var ad = MemoryMarshal.Cast<Complex, double>(a);
         var bd = MemoryMarshal.Cast<Complex, double>(b);
+        ref var aRef = ref MemoryMarshal.GetReference(ad);
+        ref var bRef = ref MemoryMarshal.GetReference(bd);
         var sumVec = Vector256<double>.Zero;
         var i = 0;
+        // Complex = [R,I,R,I,...]。2複素×2ロード後、VSHUFPD(0) で Real だけ取り出す。
         for (; i + 4 <= count; i += 4)
         {
             var baseIdx = i * 2;
-            var ra = Vector256.Create(ad[baseIdx], ad[baseIdx + 2], ad[baseIdx + 4], ad[baseIdx + 6]);
-            sumVec = Avx.Add(sumVec, ra);
+            var a0 = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref aRef, baseIdx)));
+            var a1 = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref aRef, baseIdx + 4)));
+            // a0=[R0,I0,R1,I1], a1=[R2,I2,R3,I3] → [R0,R1,R2,R3]
+            sumVec = Avx.Add(sumVec, Avx.Shuffle(a0, a1, 0b0000));
         }
 
         var sumA = sumVec.GetElement(0) + sumVec.GetElement(1) + sumVec.GetElement(2) + sumVec.GetElement(3);
@@ -2140,8 +2260,16 @@ public sealed class OfdmGenerator
         for (; i + 4 <= count; i += 4)
         {
             var baseIdx = i * 2;
-            var ra = Vector256.Create(ad[baseIdx], ad[baseIdx + 2], ad[baseIdx + 4], ad[baseIdx + 6]);
-            var rb = Vector256.Create(bd[baseIdx], bd[baseIdx + 2], bd[baseIdx + 4], bd[baseIdx + 6]);
+            var a0 = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref aRef, baseIdx)));
+            var a1 = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref aRef, baseIdx + 4)));
+            var b0 = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref bRef, baseIdx)));
+            var b1 = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref bRef, baseIdx + 4)));
+            var ra = Avx.Shuffle(a0, a1, 0b0000);
+            var rb = Avx.Shuffle(b0, b1, 0b0000);
             var xa = Avx.Subtract(ra, meanAVec);
             var xb = Avx.Subtract(rb, meanBVec);
             numVec = Avx.Add(numVec, Avx.Multiply(xa, xb));
@@ -3758,7 +3886,7 @@ public sealed class OfdmGenerator
         double noiseVariance = 0.05,
         int interleaveInitSeed = 0,
         Action<Complex>? onEqualizedDataSymbol = null,
-        Action<Complex[], int>? onEqualizedDataSymbolFrame = null,
+        Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame = null,
         Action<Complex[], int>? onFftSymbolFrame = null,
         Action<int, int>? onOfdmSymbolProgress = null)
     {
@@ -3881,7 +4009,7 @@ public sealed class OfdmGenerator
         bool estimateNoiseFromPilots,
         int interleaveInitSeed,
         Action<Complex>? onEqualizedDataSymbol,
-        Action<Complex[], int>? onEqualizedDataSymbolFrame,
+        Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame,
         Action<Complex[], int>? onFftSymbolFrame,
         Action<int, int>? onOfdmSymbolProgress)
     {
@@ -4098,14 +4226,18 @@ public sealed class OfdmGenerator
         bool addToExisting,
         int interleaveInitSeed,
         Action<Complex>? onEqualizedDataSymbol,
-        Action<Complex[], int>? onEqualizedDataSymbolFrame)
+        Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame)
     {
         var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
         var dataModulationByBin = useRightChannel
             ? _rightDataCarrierModulationByBin
             : _leftDataCarrierModulationByBin;
+        var dataGroupByBin = useRightChannel
+            ? _rightDataCarrierGroupByBin
+            : _leftDataCarrierGroupByBin;
         Span<double> softLlrScratch = stackalloc double[6];
         Complex[]? frameSnapshot = onEqualizedDataSymbolFrame is null ? null : new Complex[dataOrder.Length];
+        byte[]? groupSnapshot = onEqualizedDataSymbolFrame is null ? null : new byte[dataOrder.Length];
         var frameCount = 0;
         foreach (var dataBin in dataOrder)
         {
@@ -4116,9 +4248,11 @@ public sealed class OfdmGenerator
 
             var equalized = freqBins[dataBin] * equalizers[dataBin];
             onEqualizedDataSymbol?.Invoke(equalized);
-            if (frameSnapshot is not null)
+            if (frameSnapshot is not null && groupSnapshot is not null)
             {
-                frameSnapshot[frameCount++] = equalized;
+                frameSnapshot[frameCount] = equalized;
+                groupSnapshot[frameCount] = dataGroupByBin.TryGetValue(dataBin, out var group) ? group : (byte)0;
+                frameCount++;
             }
 
             if (addToExisting)
@@ -4148,9 +4282,9 @@ public sealed class OfdmGenerator
             }
         }
 
-        if (frameSnapshot is not null && frameCount > 0)
+        if (frameSnapshot is not null && groupSnapshot is not null && frameCount > 0)
         {
-            onEqualizedDataSymbolFrame?.Invoke(frameSnapshot, frameCount);
+            onEqualizedDataSymbolFrame?.Invoke(frameSnapshot, groupSnapshot, frameCount);
         }
     }
 
@@ -5326,17 +5460,31 @@ public sealed class OfdmGenerator
     /// <returns>処理結果。</returns>
     private static HashSet<int> SelectPilotBins(List<int> orderedBins, int spacing)
     {
+        // グループ内 CH1/CH5（0起点で index 1 と 5）をパイロットにする（modulation.mdc）。
         var pilots = new HashSet<int>();
-        for (var start = 0; start < orderedBins.Count; start += spacing)
+        var groupSize = spacing > 0 ? spacing : 8;
+        for (var start = 0; start < orderedBins.Count; start += groupSize)
         {
-            var length = Math.Min(spacing, orderedBins.Count - start);
-            if (length <= 0)
+            var length = Math.Min(groupSize, orderedBins.Count - start);
+            if (length <= 1)
             {
                 continue;
             }
 
-            var center = start + (length / 2);
-            pilots.Add(orderedBins[center]);
+            if (1 < length)
+            {
+                pilots.Add(orderedBins[start + 1]);
+            }
+
+            if (5 < length)
+            {
+                pilots.Add(orderedBins[start + 5]);
+            }
+            else if (length >= 3)
+            {
+                // 短いグループ向けフォールバック（通常は groupSize=8）
+                pilots.Add(orderedBins[start + (length / 2)]);
+            }
         }
 
         return pilots;

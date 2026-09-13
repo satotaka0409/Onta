@@ -1,15 +1,15 @@
-﻿using Onta.Core;
+using Onta.Core;
 using Xunit;
 
 namespace Onta.Core.Tests;
 
 /// <summary>
-/// ステレオ 36SC / 64QAM の往復テストです。
+/// ステレオ 32SC / 64QAM の往復テストです。
 /// </summary>
 public sealed class OntaTest2
 {
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 36,
+        ActiveSubcarriers: 32,
         ModulationScheme: ModulationScheme.Qam64);
 
     [Fact]

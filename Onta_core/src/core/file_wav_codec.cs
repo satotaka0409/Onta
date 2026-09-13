@@ -31,8 +31,8 @@ public sealed record FileWavCodecProfile(
     ModulationScheme ModulationScheme,
     int SampleRate = 44100,
     double SamplePeak = 0.8,
-    int HeaderFftSize = 128,
-    int DataFftSize = 128,
+    int HeaderFftSize = 256,
+    int DataFftSize = 256,
     int HeaderCyclicPrefixLength = 32,
     int DataCyclicPrefixLength = 16,
     int RandomSeed = 20260904,
@@ -228,6 +228,11 @@ public sealed class FileWavCodec
     private const int InterleaveInitSeedBlock = unchecked((int)0x2468ACE1);
     private static readonly ConvolutionalCode.PunctureRate HeaderPunctureRate = ConvolutionalCode.PunctureRate.Rate1_2;
 
+    private static int ResolveBitInterleaveSeed(int frequencyInterleaveInitSeed) =>
+        frequencyInterleaveInitSeed == InterleaveInitSeedFileHeader
+            ? ChannelBitInterleaver.SeedFileHeader
+            : ChannelBitInterleaver.SeedBlock;
+
     private readonly FileWavCodecProfile _profile;
 
     public DecodeStageMetrics LastDecodeStageMetrics { get; private set; } = DecodeStageMetrics.Empty;
@@ -395,10 +400,10 @@ public sealed class FileWavCodec
                 pass,
                 _profile.ActiveSubcarriers,
                 _profile.ModulationScheme);
-            var headerOfdm = CreateHeaderOfdm();
+            // BH / パス内 mid-FH は、そのパスのデータ SC 族に周波数グリッドを合わせる。
+            var headerOfdm = CreateHeaderOfdm(OfdmConfig.ResolveCarrierGrid(passSc));
             var dataOfdm = CreateDataOfdm(passSc, passMod);
             var dataPunctureRate = ResolveDataPunctureRate(passMod);
-            trailingHeaderOfdm = headerOfdm;
             var order = GetBlockEmissionOrder(blocks.Count, pass);
             for (var local = 0; local < order.Length; local++)
             {
@@ -443,7 +448,8 @@ public sealed class FileWavCodec
             }
         }
 
-        AppendFileHeaderPacket(leftPcm, rightPcm, trailingHeaderOfdm!, fileHeader);
+        // 末尾 FH は先頭 FH と同じくプロファイル基準 SC 族を使う。
+        AppendFileHeaderPacket(leftPcm, rightPcm, openingHeaderOfdm, fileHeader);
         EnsureStereoParity("trailing file header");
         FlushPcmChunk();
         onFrameTransmitted?.Invoke(TransmissionFrameKind.Fh);
@@ -1029,12 +1035,12 @@ public sealed class FileWavCodec
                 byte[] fileHeader;
                 try
                 {
-                    fileHeader = DecodeHeaderPacketSynced(
+                    fileHeader = DecodeHeaderPacketSyncedTryingGrids(
+                        ref headerOfdm,
                         leftSamples,
                         rightSamples,
                         ref warpedCursor,
                         ref logicalOffset,
-                        headerOfdm,
                         FileHeaderBytes,
                         FileHeaderPilot,
                         coarseRadius,
@@ -1162,8 +1168,16 @@ public sealed class FileWavCodec
 
             for (var pass = state.Pass; pass < _profile.BlockInterleaveFactor; pass++)
             {
-                var passFhPacketSamples = fhPacketSamples;
-                var passBhPacketSamples = bhPacketSamplesBase;
+                var (passSc, _) = ResolveInterleavePassModulation(
+                    pass,
+                    _profile.ActiveSubcarriers,
+                    _profile.ModulationScheme);
+                // パスごとのデータ SC 族にヘッダーグリッドを合わせる（×2 の SC-24/32→16 など）。
+                headerOfdm = CreateHeaderOfdm(OfdmConfig.ResolveCarrierGrid(passSc));
+                var passFhPacketSamples = HeaderPacketSamples(
+                    headerOfdm, FileHeaderBytes, _profile.FileHeaderUnmodulatedSamples);
+                var passBhPacketSamples = HeaderPacketSamples(
+                    headerOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
 
                 var order = GetBlockEmissionOrder(blockCountReady, pass);
                 var localStart = pass == state.Pass ? state.Local : 0;
@@ -1211,12 +1225,12 @@ public sealed class FileWavCodec
                                 ref logicalOffset,
                                 _profile.FileHeaderUnmodulatedSamples);
                             ApplyAdaptiveWowCorrectionPair();
-                            var midFh = DecodeHeaderPacketSynced(
+                            var midFh = DecodeHeaderPacketSyncedTryingGrids(
+                                ref headerOfdm,
                                 leftSamples,
                                 rightSamples,
                                 ref warpedCursor,
                                 ref logicalOffset,
-                                headerOfdm,
                                 FileHeaderBytes,
                                 FileHeaderPilot,
                                 fineRadius,
@@ -1237,12 +1251,12 @@ public sealed class FileWavCodec
                             ApplyAdaptiveWowCorrectionPair();
                         }
 
-                        var blockHeader = DecodeHeaderPacketSynced(
+                        var blockHeader = DecodeHeaderPacketSyncedTryingGrids(
+                            ref headerOfdm,
                             leftSamples,
                             rightSamples,
                             ref warpedCursor,
                             ref logicalOffset,
-                            headerOfdm,
                             BlockHeaderBytes,
                             BlockHeaderPilot,
                             fineRadius,
@@ -1419,12 +1433,12 @@ public sealed class FileWavCodec
                         ref logicalOffset,
                         _profile.FileHeaderUnmodulatedSamples);
                     ApplyAdaptiveWowCorrectionPair();
-                    var endFh = DecodeHeaderPacketSynced(
+                    var endFh = DecodeHeaderPacketSyncedTryingGrids(
+                        ref headerOfdm,
                         leftSamples,
                         rightSamples,
                         ref warpedCursor,
                         ref logicalOffset,
-                        headerOfdm,
                         FileHeaderBytes,
                         FileHeaderPilot,
                         fineRadius,
@@ -1555,12 +1569,12 @@ public sealed class FileWavCodec
         }
     }
 
-    private OfdmGenerator CreateHeaderOfdm()
+    private OfdmGenerator CreateHeaderOfdm(OfdmCarrierGrid? carrierGrid = null)
     {
         var groupB = OfdmConfig.ResolveGroupBLeftBins();
-        const int headerSubcarriers = 9;
-        var grid = OfdmConfig.ResolveCarrierGrid(headerSubcarriers);
-        var fftSize = OfdmConfig.ResolveFftSize(headerSubcarriers, _profile.ChannelMode);
+        // ヘッダーは常に GROUP-B・8SC。周波数グリッドはデータ部 SC 族に合わせる（明示指定時はそのグリッド）。
+        var grid = carrierGrid ?? OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
+        var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
             activeSubcarriers: groupB.Length,
@@ -1569,7 +1583,7 @@ public sealed class FileWavCodec
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
             enableFrequencyInterleaving: true,
-            pilotSpacing: 9,
+            pilotSpacing: 8,
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
             frequencyInterleaveIntervalSymbols: 1,
@@ -1578,6 +1592,66 @@ public sealed class FileWavCodec
             carrierGrid: grid);
 
         return new OfdmGenerator(config);
+    }
+
+    private static OfdmCarrierGrid AlternateCarrierGrid(OfdmCarrierGrid grid) =>
+        grid == OfdmCarrierGrid.Sc8Family ? OfdmCarrierGrid.Sc24Family : OfdmCarrierGrid.Sc8Family;
+
+    /// <summary>
+    /// ヘッダー復号を試し、失敗時はもう一方の SC 族グリッドで再試行します。
+    /// （受信プロファイルの SC が送信と不一致でも FH 同期できるようにする）
+    /// </summary>
+    private byte[] DecodeHeaderPacketSyncedTryingGrids(
+        ref OfdmGenerator headerOfdm,
+        Complex[] leftSamples,
+        Complex[] rightSamples,
+        ref int warpedCursor,
+        ref long logicalOffset,
+        int payloadLength,
+        byte[]? expectedPilot,
+        int searchRadius,
+        int interleaveInitSeed,
+        Action<int, int>? onSyncProgress = null,
+        CoreExecutionStatusBoard? statusBoard = null,
+        CoreFrameKind frameKind = CoreFrameKind.Fh)
+    {
+        var savedCursor = warpedCursor;
+        var savedLogical = logicalOffset;
+        try
+        {
+            return DecodeHeaderPacketSynced(
+                leftSamples,
+                rightSamples,
+                ref warpedCursor,
+                ref logicalOffset,
+                headerOfdm,
+                payloadLength,
+                expectedPilot,
+                searchRadius,
+                interleaveInitSeed,
+                onSyncProgress,
+                statusBoard,
+                frameKind);
+        }
+        catch (InvalidDataException)
+        {
+            warpedCursor = savedCursor;
+            logicalOffset = savedLogical;
+            headerOfdm = CreateHeaderOfdm(AlternateCarrierGrid(headerOfdm.CarrierGrid));
+            return DecodeHeaderPacketSynced(
+                leftSamples,
+                rightSamples,
+                ref warpedCursor,
+                ref logicalOffset,
+                headerOfdm,
+                payloadLength,
+                expectedPilot,
+                searchRadius,
+                interleaveInitSeed,
+                onSyncProgress,
+                statusBoard,
+                frameKind);
+        }
     }
 
     private OfdmGenerator CreateDataOfdm(int activeSubcarriers, ModulationScheme modulationScheme)
@@ -1592,7 +1666,7 @@ public sealed class FileWavCodec
             modulationScheme: modulationScheme,
             channelMode: _profile.ChannelMode,
             enableFrequencyInterleaving: true,
-            pilotSpacing: 9,
+            pilotSpacing: 8,
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
             frequencyInterleaveIntervalSymbols: 1,
@@ -1644,11 +1718,13 @@ public sealed class FileWavCodec
             AppendHeaderPair(leftPcm, rightPcm, unmodulated);
         }
 
-        var leftBits = BytesToBitsMsb(
-            ConvolutionalCode.Encode(
-                ApplyReedSolomon(leftHeaderBytes),
-                terminate: true,
-                punctureRate: HeaderPunctureRate));
+        var leftBits = ChannelBitInterleaver.Interleave(
+            BytesToBitsMsb(
+                ConvolutionalCode.Encode(
+                    ApplyReedSolomon(leftHeaderBytes),
+                    terminate: true,
+                    punctureRate: HeaderPunctureRate)),
+            ResolveBitInterleaveSeed(interleaveInitSeed));
 
         var modulated = ofdm.ModulateBits(leftBits, leftPcm.Count, interleaveInitSeed);
         AppendHeaderPair(leftPcm, rightPcm, modulated);
@@ -1714,8 +1790,8 @@ public sealed class FileWavCodec
             + bhSampleCount
             + (searchRadius * 4)
             + (headerOfdm.SamplesPerOfdmSymbol * 32));
-        // BD0 最悪寄り（SC9 BPSK）の見積り。BH 後に実長へ縮める。
-        var maxDataOfdm = CreateDataOfdm(9, ModulationScheme.Bpsk);
+        // BD0 最悪寄り（SC8 BPSK）の見積り。BH 後に実長へ縮める。
+        var maxDataOfdm = CreateDataOfdm(8, ModulationScheme.Bpsk);
         var maxBdSamples = DataPacketSamples(
             maxDataOfdm,
             DataBlockBytes,
@@ -2790,23 +2866,30 @@ public sealed class FileWavCodec
             }
 
             meanAbsLlr = llrs.Length > 0 ? absSum / llrs.Length : 0.0;
-            payload = DecodeHeaderFromSoftLlrs(
+            var deinterleavedLlrs = ChannelBitInterleaver.Deinterleave(
                 llrs,
+                ResolveBitInterleaveSeed(interleaveInitSeed));
+            payload = DecodeHeaderFromSoftLlrs(
+                deinterleavedLlrs,
                 payloadLength,
                 rsByteLength,
-                out _,
-                out var infoLlrs);
+                out var viterbiMetrics,
+                out var rsMetrics,
+                out _);
             if (expectedPilot is not null && !HeaderPrefixMatches(payload, expectedPilot))
             {
                 return false;
             }
 
-            // チャネル符号語ハミングは 10% 超になりやすく天井張り付きになるため、
-            // BCJR 後の情報 LLR から推定 BER を表示する。
+            // 訂正過程の訂正ビット数から求めた訂正率（残差 BER 推定は使わない）。
             statusBoard?.SetErrorRate(
-                EstimateSoftBitErrorPercent(infoLlrs),
+                viterbiMetrics.CorrectionRate * 100.0,
                 frameKind,
                 CoreEccDecoderKind.Viterbi);
+            statusBoard?.SetErrorRate(
+                rsMetrics.PayloadCorrectionRate * 100.0,
+                frameKind,
+                CoreEccDecoderKind.ReedSolomon);
             return true;
         }
         catch (Exception)
@@ -2820,6 +2903,7 @@ public sealed class FileWavCodec
         int payloadLength,
         int rsByteLength,
         out ConvolutionalCode.DecodeMetrics viterbiMetrics,
+        out RsEcc256.DecodeMetrics rsMetrics,
         out double[] infoLlrs)
     {
         var rsEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
@@ -2829,7 +2913,7 @@ public sealed class FileWavCodec
             out viterbiMetrics,
             terminated: true,
             punctureRate: HeaderPunctureRate);
-        var paddedPayload = ApplyReedSolomonDecode(rsEncoded);
+        var paddedPayload = ApplyReedSolomonDecode(rsEncoded, out rsMetrics);
         var payload = new byte[payloadLength];
         Buffer.BlockCopy(paddedPayload, 0, payload, 0, payloadLength);
         return payload;
@@ -2934,7 +3018,9 @@ public sealed class FileWavCodec
         var packed = PackDataBlockWithCrc(payload);
         var turboEncoded = EncodeTurboBlock(packed);
         var convEncoded = ConvolutionalCode.Encode(turboEncoded, terminate: true, punctureRate: punctureRate);
-        var bits = BytesToBitsMsb(convEncoded);
+        var bits = ChannelBitInterleaver.Interleave(
+            BytesToBitsMsb(convEncoded),
+            ResolveBitInterleaveSeed(interleaveInitSeed));
         if (ofdm.ChannelMode == ChannelMode.Stereo)
         {
             SplitBitsForStereo(bits, out var leftBits, out var rightBits);
@@ -3040,8 +3126,8 @@ public sealed class FileWavCodec
 
         var sc = baseSubcarriers switch
         {
-            36 or 27 => 18,
-            18 or 9 => 9,
+            32 or 24 => 16,
+            16 or 8 => 8,
             _ => throw new ArgumentOutOfRangeException(nameof(baseSubcarriers), baseSubcarriers, "Unsupported subcarrier count.")
         };
         var mod = baseModulation switch
@@ -3175,7 +3261,10 @@ public sealed class FileWavCodec
                         }
 
                         var turboEncoded = ConvolutionalCode.Decode(
-                            BitsToBytesMsb(bits),
+                            BitsToBytesMsb(
+                                ChannelBitInterleaver.Deinterleave(
+                                    bits,
+                                    ResolveBitInterleaveSeed(interleaveInitSeed))),
                             turboEncodedLength,
                             out var hardConvMetrics,
                             terminated: true,
@@ -3218,8 +3307,11 @@ public sealed class FileWavCodec
                             statusBoard,
                             onSoftProgress);
                         end = cursor;
-                        var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
+                        var deinterleavedLlrs = ChannelBitInterleaver.Deinterleave(
                             qamLlrs,
+                            ResolveBitInterleaveSeed(interleaveInitSeed));
+                        var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
+                            deinterleavedLlrs,
                             turboEncodedLength,
                             out var infoLlrs,
                             out var softConvMetrics,
@@ -3263,7 +3355,7 @@ public sealed class FileWavCodec
                         if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
                         {
                             statusBoard?.SetErrorRate(
-                                EstimateSoftBitErrorPercent(infoLlrs),
+                                softConvMetrics.CorrectionRate * 100.0,
                                 CoreFrameKind.Bd,
                                 CoreEccDecoderKind.Viterbi);
                             statusBoard?.SetErrorRate(
@@ -3393,8 +3485,11 @@ public sealed class FileWavCodec
                 statusBoard);
             warpedCursor = cursor;
             logicalOffset += sampleCount;
-            var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
+            var deinterleavedLlrs = ChannelBitInterleaver.Deinterleave(
                 qamLlrs,
+                ResolveBitInterleaveSeed(interleaveInitSeed));
+            var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
+                deinterleavedLlrs,
                 turboEncodedLength,
                 out var infoLlrs,
                 out var fallbackConvMetrics,
@@ -3414,7 +3509,7 @@ public sealed class FileWavCodec
             {
                 softMatchSucceeded = true;
                 statusBoard?.SetErrorRate(
-                    EstimateSoftBitErrorPercent(infoLlrs),
+                    fallbackConvMetrics.CorrectionRate * 100.0,
                     CoreFrameKind.Bd,
                     CoreEccDecoderKind.Viterbi);
                 statusBoard?.SetErrorRate(
@@ -3442,7 +3537,7 @@ public sealed class FileWavCodec
                 if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))
                 {
                     statusBoard?.SetErrorRate(
-                        EstimateSoftBitErrorPercent(infoLlrs),
+                        fallbackConvMetrics.CorrectionRate * 100.0,
                         CoreFrameKind.Bd,
                         CoreEccDecoderKind.Viterbi);
                     statusBoard?.SetErrorRate(
@@ -3558,9 +3653,10 @@ public sealed class FileWavCodec
         statusBoard?.SetFftStereoMode(stereoSplit);
         statusBoard?.BeginIqCapture(ofdm.ActiveSubcarriers, modulationScheme);
 
-        Action<Complex[], int>? onIqFrame = statusBoard is null
+        Action<Complex[], byte[], int>? onIqFrame = statusBoard is null
             ? null
-            : (symbols, count) => statusBoard.AppendIqFrame(symbols.AsSpan(0, count));
+            : (symbols, groups, count) =>
+                statusBoard.AppendIqFrame(symbols.AsSpan(0, count), groups.AsSpan(0, count));
         Action<Complex[], int>? onFftLeftFrame = statusBoard is null
             ? null
             : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: false);
@@ -3938,7 +4034,7 @@ public sealed class FileWavCodec
         }
 
         var subcarriers = blockHeader[8];
-        if (subcarriers is not (9 or 18 or 27 or 36))
+        if (subcarriers is not (8 or 16 or 24 or 32))
         {
             throw new InvalidDataException($"Invalid block header subcarrier count: {subcarriers}.");
         }
@@ -3980,7 +4076,10 @@ public sealed class FileWavCodec
         return output;
     }
 
-    private static byte[] ApplyReedSolomonDecode(byte[] encoded)
+    private static byte[] ApplyReedSolomonDecode(byte[] encoded) =>
+        ApplyReedSolomonDecode(encoded, out _);
+
+    private static byte[] ApplyReedSolomonDecode(byte[] encoded, out RsEcc256.DecodeMetrics metrics)
     {
         if (encoded.Length % RsEcc256.EncodedUnitSize != 0)
         {
@@ -3991,13 +4090,25 @@ public sealed class FileWavCodec
         var output = new byte[unitCount * RsEcc256.DataUnitSize];
         var unit = new byte[RsEcc256.EncodedUnitSize];
         var writeOffset = 0;
+        long correctedBits = 0;
+        long payloadBits = 0;
         for (var offset = 0; offset < encoded.Length; offset += RsEcc256.EncodedUnitSize)
         {
             Buffer.BlockCopy(encoded, offset, unit, 0, RsEcc256.EncodedUnitSize);
-            var decoded = RsEcc256.Decode(unit);
+            var decoded = RsEcc256.Decode(unit, out var unitMetrics);
+            correctedBits += unitMetrics.PayloadCorrectedBitCount;
+            payloadBits += unitMetrics.PayloadBitLength;
             Buffer.BlockCopy(decoded, 0, output, writeOffset, decoded.Length);
             writeOffset += decoded.Length;
         }
+
+        metrics = new RsEcc256.DecodeMetrics(
+            PayloadCorrectedBitCount: (int)Math.Min(int.MaxValue, correctedBits),
+            PayloadCorrectedByteCount: 0,
+            CodewordCorrectedSymbolCount: 0,
+            CodewordCorrectedBitCount: 0,
+            PayloadBitLength: (int)Math.Min(int.MaxValue, payloadBits),
+            PayloadCorrectionRate: payloadBits == 0 ? 0.0 : correctedBits / (double)payloadBits);
 
         return output;
     }
@@ -4296,16 +4407,14 @@ public sealed class FileWavCodec
         var openingFhSamples = HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
         AddSegment(segments, "FH", openingFhSamples, profile.SampleRate, ref totalSamples);
 
-        OfdmGenerator? trailingHeaderOfdm = openingHeaderOfdm;
         for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
         {
             var (passSc, passMod) = ResolveInterleavePassModulation(
                 pass,
                 profile.ActiveSubcarriers,
                 profile.ModulationScheme);
-            var headerOfdm = codec.CreateHeaderOfdm();
+            var headerOfdm = codec.CreateHeaderOfdm(OfdmConfig.ResolveCarrierGrid(passSc));
             var dataOfdm = codec.CreateDataOfdm(passSc, passMod);
-            trailingHeaderOfdm = headerOfdm;
             var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
             var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, profile.BlockHeaderUnmodulatedSamples);
             var order = GetBlockEmissionOrder(payloadLengths.Length, pass);
@@ -4333,7 +4442,7 @@ public sealed class FileWavCodec
         AddSegment(
             segments,
             "FH",
-            HeaderPacketSamples(trailingHeaderOfdm!, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples),
+            HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples),
             profile.SampleRate,
             ref totalSamples);
         AddSegment(segments, "TAIL", profile.TrailingSilenceSamples, profile.SampleRate, ref totalSamples);

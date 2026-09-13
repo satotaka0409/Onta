@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 using Onta.Core;
@@ -174,7 +174,7 @@ internal static class CoreBackgroundHost
             cancellationToken.ThrowIfCancellationRequested();
 
             var profile = new FileWavCodecProfile(
-                ActiveSubcarriers: 9,
+                ActiveSubcarriers: 8,
                 ModulationScheme: ModulationScheme.Qpsk,
                 ChannelMode: ChannelMode.Mono);
             _ = FileWavCodec.EstimateTransmissionDuration(profile, 4096);

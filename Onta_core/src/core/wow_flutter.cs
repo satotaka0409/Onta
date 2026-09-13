@@ -1,5 +1,10 @@
 ﻿using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
 
 namespace Onta.Core;
 
@@ -65,13 +70,44 @@ public static class WowFlutterWarp
         var wowStep = 2.0 * Math.PI * WowFrequencyHz / sr;
         var flutterStep = 2.0 * Math.PI * FlutterFrequencyHz / sr;
 
-        // 漸化の sin/cos は長尺で解析解からドリフトし、CorrectPrefix（SumOfSines）と不一致になる。
+        // 複素回転で sin を進め、512 サンプルごとに解析角へ再同期（長尺の 2×Sin/サンプルを回避）。
+        var cosWowStep = Math.Cos(wowStep);
+        var sinWowStep = Math.Sin(wowStep);
+        var cosFlutterStep = Math.Cos(flutterStep);
+        var sinFlutterStep = Math.Sin(flutterStep);
+        var wowSin = Math.Sin(wowPhase);
+        var wowCos = Math.Cos(wowPhase);
+        var flutterSin = Math.Sin(flutterPhase);
+        var flutterCos = Math.Cos(flutterPhase);
+        const int reanchorEvery = 512;
+        var untilReanchor = reanchorEvery;
+
         for (var i = 0; i < profile.Length; i++)
         {
-            var modulation = (0.65 * Math.Sin(wowPhase + (i * wowStep)))
-                + (0.35 * Math.Sin(flutterPhase + (i * flutterStep)));
+            var modulation = (0.65 * wowSin) + (0.35 * flutterSin);
             var speed = 1.0 + (amount * modulation);
             profile[i] = speed < 0.05 ? 0.05 : speed;
+
+            var nextWowSin = (wowSin * cosWowStep) + (wowCos * sinWowStep);
+            var nextWowCos = (wowCos * cosWowStep) - (wowSin * sinWowStep);
+            wowSin = nextWowSin;
+            wowCos = nextWowCos;
+
+            var nextFlutterSin = (flutterSin * cosFlutterStep) + (flutterCos * sinFlutterStep);
+            var nextFlutterCos = (flutterCos * cosFlutterStep) - (flutterSin * sinFlutterStep);
+            flutterSin = nextFlutterSin;
+            flutterCos = nextFlutterCos;
+
+            if (--untilReanchor == 0)
+            {
+                untilReanchor = reanchorEvery;
+                var wowAngle = wowPhase + ((i + 1) * wowStep);
+                var flutterAngle = flutterPhase + ((i + 1) * flutterStep);
+                wowSin = Math.Sin(wowAngle);
+                wowCos = Math.Cos(wowAngle);
+                flutterSin = Math.Sin(flutterAngle);
+                flutterCos = Math.Cos(flutterAngle);
+            }
         }
     }
 
@@ -102,7 +138,8 @@ public static class WowFlutterWarp
         var wowGain = amount * 0.65;
         var flutterGain = amount * 0.35;
 
-        // CorrectPrefix / SumOfSines と同じ解析累積（FillSpeedProfile 漸化とは長尺でずれる）。
+        // SumOfSines と同じ解析累積。長尺は速度漸化＋512 サンプル再同期で近似し、
+        // 再同期点では CumulAt で累積を解析値へ戻す。
         double CumulAt(int i)
         {
             if (i <= 0)
@@ -124,13 +161,58 @@ public static class WowFlutterWarp
             var scale = cumulEnd > 1e-12 ? last / cumulEnd : 1.0;
             var map = new int[sampleCount];
             Array.Clear(count, 0, sampleCount);
+
+            var cosWowStep = Math.Cos(wowOmega);
+            var sinWowStep = Math.Sin(wowOmega);
+            var cosFlutterStep = Math.Cos(flutterOmega);
+            var sinFlutterStep = Math.Sin(flutterOmega);
+            var wowSin = Math.Sin(wowPhase);
+            var wowCos = Math.Cos(wowPhase);
+            var flutterSin = Math.Sin(flutterPhase);
+            var flutterCos = Math.Cos(flutterPhase);
+            var c = 0.0;
+            const int reanchorEvery = 512;
+            var untilReanchor = reanchorEvery;
+
             for (var i = 0; i < sampleCount; i++)
             {
-                var c = CumulAt(i);
                 cumul[i] = c;
-                var idx = (int)Math.Round(c * scale, MidpointRounding.AwayFromZero);
-                map[i] = Math.Clamp(idx, 0, last);
-                count[map[i]]++;
+                var idx = RoundAwayFromZeroPositive(c * scale);
+                if ((uint)idx > (uint)last)
+                {
+                    idx = idx < 0 ? 0 : last;
+                }
+
+                map[i] = idx;
+                count[idx]++;
+
+                c += 1.0 + (wowGain * wowSin) + (flutterGain * flutterSin);
+
+                var nextWowSin = (wowSin * cosWowStep) + (wowCos * sinWowStep);
+                var nextWowCos = (wowCos * cosWowStep) - (wowSin * sinWowStep);
+                wowSin = nextWowSin;
+                wowCos = nextWowCos;
+
+                var nextFlutterSin = (flutterSin * cosFlutterStep) + (flutterCos * sinFlutterStep);
+                var nextFlutterCos = (flutterCos * cosFlutterStep) - (flutterSin * sinFlutterStep);
+                flutterSin = nextFlutterSin;
+                flutterCos = nextFlutterCos;
+
+                if (--untilReanchor == 0)
+                {
+                    untilReanchor = reanchorEvery;
+                    var next = i + 1;
+                    if (next < sampleCount)
+                    {
+                        c = CumulAt(next);
+                        var wowAngle = wowPhase + (next * wowOmega);
+                        var flutterAngle = flutterPhase + (next * flutterOmega);
+                        wowSin = Math.Sin(wowAngle);
+                        wowCos = Math.Cos(wowAngle);
+                        flutterSin = Math.Sin(flutterAngle);
+                        flutterCos = Math.Cos(flutterAngle);
+                    }
+                }
             }
 
             var missing = new List<int>();
@@ -185,7 +267,7 @@ public static class WowFlutterWarp
                 else
                 {
                     // donors が尽きた場合の O(n) 全走査は長尺で固まるので最近傍へ丸める
-                    var approx = (int)Math.Round(target / Math.Max(scale, 1e-12), MidpointRounding.AwayFromZero);
+                    var approx = RoundAwayFromZeroPositive(target / Math.Max(scale, 1e-12));
                     bestI = Math.Clamp(approx, 0, sampleCount - 1);
                     if (count[map[bestI]] <= 1)
                     {
@@ -427,14 +509,119 @@ public static class WowFlutterWarp
             return;
         }
 
+        var sum = ArrayPool<double>.Shared.Rent(prefixLength);
+        var count = ArrayPool<int>.Shared.Rent(prefixLength);
+        try
+        {
+            ScatterCorrectPrefix(
+                warped,
+                referenceLength,
+                prefixStart,
+                prefixLength,
+                sampleRate,
+                amount,
+                wowPhase,
+                flutterPhase,
+                sum.AsSpan(0, prefixLength),
+                count.AsSpan(0, prefixLength));
+
+            for (var j = 0; j < prefixLength; j++)
+            {
+                destination[j] = count[j] > 0
+                    ? new Complex(sum[j] / count[j], 0.0)
+                    : warped[Math.Clamp(prefixStart + j, 0, warped.Length - 1)];
+            }
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(sum);
+            ArrayPool<int>.Shared.Return(count);
+        }
+    }
+
+    /// <summary>
+    /// CorrectPrefix と同じ散乱補正を行い、補正後実部と ideal の正規化相関を返します。
+    /// MatchWow / Refine の大量採点向け（Complex 書き出しと ArrayPool 毎回 Rent を省略）。
+    /// </summary>
+    public static double CorrectPrefixCorrelateReal(
+        Complex[] warped,
+        int referenceLength,
+        int prefixStart,
+        int prefixLength,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        ReadOnlySpan<double> idealReals,
+        double meanIdeal,
+        double energyIdeal,
+        Span<double> sumScratch,
+        Span<int> countScratch)
+    {
+        ArgumentNullException.ThrowIfNull(warped);
+        if (prefixLength <= 0 || idealReals.Length < prefixLength)
+        {
+            return double.NegativeInfinity;
+        }
+
+        if (sumScratch.Length < prefixLength || countScratch.Length < prefixLength)
+        {
+            throw new ArgumentException("Scratch buffers are shorter than prefix length.");
+        }
+
+        if (amount == 0.0)
+        {
+            for (var j = 0; j < prefixLength; j++)
+            {
+                sumScratch[j] = warped[Math.Clamp(prefixStart + j, 0, warped.Length - 1)].Real;
+            }
+
+            return CorrelateDenseReals(sumScratch[..prefixLength], idealReals[..prefixLength], meanIdeal, energyIdeal);
+        }
+
+        ScatterCorrectPrefix(
+            warped,
+            referenceLength,
+            prefixStart,
+            prefixLength,
+            sampleRate,
+            amount,
+            wowPhase,
+            flutterPhase,
+            sumScratch[..prefixLength],
+            countScratch[..prefixLength]);
+
+        for (var j = 0; j < prefixLength; j++)
+        {
+            sumScratch[j] = countScratch[j] > 0
+                ? sumScratch[j] / countScratch[j]
+                : warped[Math.Clamp(prefixStart + j, 0, warped.Length - 1)].Real;
+        }
+
+        return CorrelateDenseReals(sumScratch[..prefixLength], idealReals[..prefixLength], meanIdeal, energyIdeal);
+    }
+
+    /// <summary>
+    /// 散乱 Correct の sum/count を埋めます（呼び出し側で Clear 済み scratch を渡す必要なし）。
+    /// </summary>
+    private static void ScatterCorrectPrefix(
+        Complex[] warped,
+        int referenceLength,
+        int prefixStart,
+        int prefixLength,
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        Span<double> sum,
+        Span<int> count)
+    {
         referenceLength = Math.Max(referenceLength, prefixStart + prefixLength);
         referenceLength = Math.Max(referenceLength, 2);
         sampleRate = Math.Max(1, sampleRate);
 
-        const double wowHz = WowFrequencyHz;
-        const double flutterHz = FlutterFrequencyHz;
-        var wowOmega = 2.0 * Math.PI * wowHz / sampleRate;
-        var flutterOmega = 2.0 * Math.PI * flutterHz / sampleRate;
+        var wowOmega = 2.0 * Math.PI * WowFrequencyHz / sampleRate;
+        var flutterOmega = 2.0 * Math.PI * FlutterFrequencyHz / sampleRate;
         var wowGain = amount * 0.65;
         var flutterGain = amount * 0.35;
 
@@ -460,46 +647,212 @@ public static class WowFlutterWarp
         var iMin = Math.Max(0, prefixStart - slack);
         var iMax = Math.Min(warped.Length, prefixEnd + slack);
 
-        var sum = ArrayPool<double>.Shared.Rent(prefixLength);
-        var count = ArrayPool<int>.Shared.Rent(prefixLength);
-        try
+        sum.Clear();
+        count.Clear();
+
+        // SumOfSines 毎サンプルより speed 漸化が安い。さらに Math.Sin 連打を避け、
+        // 複素回転で sin を進め、512 サンプルごとに解析角へ再同期してドリフトを抑える。
+        var cumul = CumulAt(iMin);
+        var cosWowStep = Math.Cos(wowOmega);
+        var sinWowStep = Math.Sin(wowOmega);
+        var cosFlutterStep = Math.Cos(flutterOmega);
+        var sinFlutterStep = Math.Sin(flutterOmega);
+        var wowAngle = wowPhase + (iMin * wowOmega);
+        var flutterAngle = flutterPhase + (iMin * flutterOmega);
+        var wowSin = Math.Sin(wowAngle);
+        var wowCos = Math.Cos(wowAngle);
+        var flutterSin = Math.Sin(flutterAngle);
+        var flutterCos = Math.Cos(flutterAngle);
+        const int reanchorEvery = 512;
+        var untilReanchor = reanchorEvery;
+
+        for (var i = iMin; i < iMax; i++)
         {
-            Array.Clear(sum, 0, prefixLength);
-            Array.Clear(count, 0, prefixLength);
-
-            // SumOfSines を毎サンプル呼ぶより、speed[i] を足し込む方が安い（sin 2回/サンプル）。
-            var cumul = CumulAt(iMin);
-            var wowAngle = wowPhase + (iMin * wowOmega);
-            var flutterAngle = flutterPhase + (iMin * flutterOmega);
-            for (var i = iMin; i < iMax; i++)
+            var src = RoundAwayFromZeroPositive(cumul * scale);
+            if ((uint)(src - prefixStart) < (uint)prefixLength)
             {
-                var src = (int)Math.Round(cumul * scale, MidpointRounding.AwayFromZero);
-                if (src >= prefixStart && src < prefixEnd)
-                {
-                    var local = src - prefixStart;
-                    sum[local] += warped[i].Real;
-                    count[local]++;
-                }
-
-                cumul += 1.0
-                    + (wowGain * Math.Sin(wowAngle))
-                    + (flutterGain * Math.Sin(flutterAngle));
-                wowAngle += wowOmega;
-                flutterAngle += flutterOmega;
+                var local = src - prefixStart;
+                sum[local] += warped[i].Real;
+                count[local]++;
             }
 
-            for (var j = 0; j < prefixLength; j++)
+            cumul += 1.0 + (wowGain * wowSin) + (flutterGain * flutterSin);
+
+            var nextWowSin = (wowSin * cosWowStep) + (wowCos * sinWowStep);
+            var nextWowCos = (wowCos * cosWowStep) - (wowSin * sinWowStep);
+            wowSin = nextWowSin;
+            wowCos = nextWowCos;
+
+            var nextFlutterSin = (flutterSin * cosFlutterStep) + (flutterCos * sinFlutterStep);
+            var nextFlutterCos = (flutterCos * cosFlutterStep) - (flutterSin * sinFlutterStep);
+            flutterSin = nextFlutterSin;
+            flutterCos = nextFlutterCos;
+
+            if (--untilReanchor == 0)
             {
-                destination[j] = count[j] > 0
-                    ? new Complex(sum[j] / count[j], 0.0)
-                    : warped[Math.Clamp(prefixStart + j, 0, warped.Length - 1)];
+                untilReanchor = reanchorEvery;
+                wowAngle = wowPhase + ((i + 1) * wowOmega);
+                flutterAngle = flutterPhase + ((i + 1) * flutterOmega);
+                wowSin = Math.Sin(wowAngle);
+                wowCos = Math.Cos(wowAngle);
+                flutterSin = Math.Sin(flutterAngle);
+                flutterCos = Math.Cos(flutterAngle);
             }
         }
-        finally
+    }
+
+    /// <summary>
+    /// 連続 double 系列の正規化相関係数（ideal 側 mean/energy 既知）。
+    /// </summary>
+    public static double CorrelateDenseReals(
+        ReadOnlySpan<double> a,
+        ReadOnlySpan<double> b,
+        double meanB,
+        double energyB)
+    {
+        var count = Math.Min(a.Length, b.Length);
+        if (count <= 1 || energyB <= 1e-18)
         {
-            ArrayPool<double>.Shared.Return(sum);
-            ArrayPool<int>.Shared.Return(count);
+            return double.NegativeInfinity;
         }
+
+        if (Avx.IsSupported && count >= 8)
+        {
+            return CorrelateDenseRealsAvx(a, b, meanB, energyB, count);
+        }
+
+        if (AdvSimd.Arm64.IsSupported && count >= 4)
+        {
+            return CorrelateDenseRealsAdvSimd(a, b, meanB, energyB, count);
+        }
+
+        var sumA = 0.0;
+        for (var i = 0; i < count; i++)
+        {
+            sumA += a[i];
+        }
+
+        var meanA = sumA / count;
+        var num = 0.0;
+        var energyA = 0.0;
+        for (var i = 0; i < count; i++)
+        {
+            var xa = a[i] - meanA;
+            var xb = b[i] - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
+    }
+
+    private static Vector256<double> LoadAvx(ReadOnlySpan<double> source, int index)
+    {
+        ref var first = ref MemoryMarshal.GetReference(source);
+        ref var at = ref Unsafe.Add(ref first, index);
+        return Unsafe.ReadUnaligned<Vector256<double>>(ref Unsafe.As<double, byte>(ref at));
+    }
+
+    private static Vector128<double> LoadNeon(ReadOnlySpan<double> source, int index)
+    {
+        ref var first = ref MemoryMarshal.GetReference(source);
+        ref var at = ref Unsafe.Add(ref first, index);
+        return Unsafe.ReadUnaligned<Vector128<double>>(ref Unsafe.As<double, byte>(ref at));
+    }
+
+    private static double CorrelateDenseRealsAvx(
+        ReadOnlySpan<double> a,
+        ReadOnlySpan<double> b,
+        double meanB,
+        double energyB,
+        int count)
+    {
+        var sumVec = Vector256<double>.Zero;
+        var i = 0;
+        for (; i + 4 <= count; i += 4)
+        {
+            sumVec = Avx.Add(sumVec, LoadAvx(a, i));
+        }
+
+        var sumA = sumVec.GetElement(0) + sumVec.GetElement(1) + sumVec.GetElement(2) + sumVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            sumA += a[i];
+        }
+
+        var meanA = sumA / count;
+        var meanAVec = Vector256.Create(meanA);
+        var meanBVec = Vector256.Create(meanB);
+        var numVec = Vector256<double>.Zero;
+        var energyAVec = Vector256<double>.Zero;
+        i = 0;
+        for (; i + 4 <= count; i += 4)
+        {
+            var xa = Avx.Subtract(LoadAvx(a, i), meanAVec);
+            var xb = Avx.Subtract(LoadAvx(b, i), meanBVec);
+            numVec = Avx.Add(numVec, Avx.Multiply(xa, xb));
+            energyAVec = Avx.Add(energyAVec, Avx.Multiply(xa, xa));
+        }
+
+        var num = numVec.GetElement(0) + numVec.GetElement(1) + numVec.GetElement(2) + numVec.GetElement(3);
+        var energyA = energyAVec.GetElement(0) + energyAVec.GetElement(1)
+            + energyAVec.GetElement(2) + energyAVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            var xa = a[i] - meanA;
+            var xb = b[i] - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
+    }
+
+    private static double CorrelateDenseRealsAdvSimd(
+        ReadOnlySpan<double> a,
+        ReadOnlySpan<double> b,
+        double meanB,
+        double energyB,
+        int count)
+    {
+        var sumVec = Vector128<double>.Zero;
+        var i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            sumVec = AdvSimd.Arm64.Add(sumVec, LoadNeon(a, i));
+        }
+
+        var sumA = sumVec.GetElement(0) + sumVec.GetElement(1);
+        for (; i < count; i++)
+        {
+            sumA += a[i];
+        }
+
+        var meanA = sumA / count;
+        var meanAVec = Vector128.Create(meanA);
+        var meanBVec = Vector128.Create(meanB);
+        var numVec = Vector128<double>.Zero;
+        var energyAVec = Vector128<double>.Zero;
+        i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            var xa = AdvSimd.Arm64.Subtract(LoadNeon(a, i), meanAVec);
+            var xb = AdvSimd.Arm64.Subtract(LoadNeon(b, i), meanBVec);
+            numVec = AdvSimd.Arm64.Add(numVec, AdvSimd.Arm64.Multiply(xa, xb));
+            energyAVec = AdvSimd.Arm64.Add(energyAVec, AdvSimd.Arm64.Multiply(xa, xa));
+        }
+
+        var num = numVec.GetElement(0) + numVec.GetElement(1);
+        var energyA = energyAVec.GetElement(0) + energyAVec.GetElement(1);
+        for (; i < count; i++)
+        {
+            var xa = a[i] - meanA;
+            var xb = b[i] - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
     }
 
     private static double SumOfSines(double phase0, double omega, int count)
@@ -519,6 +872,13 @@ public static class WowFlutterWarp
         var numer = Math.Sin(count * half);
         return numer / denom * Math.Sin(phase0 + ((count - 1) * half));
     }
+
+    /// <summary>
+    /// 非負値向けの AwayFromZero 丸め（Math.Round より軽量）。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int RoundAwayFromZeroPositive(double value) =>
+        (int)(value + 0.5);
 
     /// <summary>
     /// 複素波形の先頭指定長だけをインプレースで逆補正します。
