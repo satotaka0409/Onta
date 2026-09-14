@@ -116,10 +116,10 @@ public static class ChannelBitInterleaver
             permutation[i] = i;
         }
 
-        var state = InitializeMSequence31(seed);
+        var state = MSequence31.InitializeState(MSequenceUsage.ChannelBitInterleave, seed);
         for (var i = length - 1; i > 0; i--)
         {
-            var word = NextMSequenceWord(ref state);
+            var word = MSequence31.NextWord(ref state);
             var j = (int)(word % (uint)(i + 1));
             (permutation[i], permutation[j]) = (permutation[j], permutation[i]);
         }
@@ -136,38 +136,6 @@ public static class ChannelBitInterleaver
         }
 
         return deinterleaver;
-    }
-
-    private static uint InitializeMSequence31(int seed)
-    {
-        ulong x = unchecked((uint)seed);
-        x ^= 0xA5A5A5A5u;
-        x += 0x9E3779B97F4A7C15UL;
-        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
-        x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
-        x ^= x >> 31;
-        var state = (uint)(x & 0x7FFFFFFF);
-        return state == 0 ? 1u : state;
-    }
-
-    private static uint NextMSequenceWord(ref uint state)
-    {
-        var value = 0u;
-        for (var i = 0; i < 31; i++)
-        {
-            state = AdvanceMSequence31(state);
-            value = (value << 1) | (state & 1u);
-        }
-
-        return value;
-    }
-
-    private static uint AdvanceMSequence31(uint state)
-    {
-        // Primitive polynomial: x^31 + x^28 + 1（OFDM 周波数インターリーブと同じ）
-        var feedback = ((state >> 30) ^ (state >> 27)) & 1u;
-        state = ((state << 1) & 0x7FFFFFFF) | feedback;
-        return state == 0 ? 1u : state;
     }
 
     private static bool[] BytesToBitsMsb(ReadOnlySpan<byte> bytes)

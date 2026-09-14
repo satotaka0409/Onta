@@ -430,7 +430,7 @@ public sealed record OfdmConfig
 /// <summary>
 /// OFDM 変調/復調の本体実装です。
 /// </summary>
-public sealed class OfdmGenerator
+public sealed partial class OfdmGenerator
 {
     private enum CarrierChannel
     {
@@ -472,6 +472,11 @@ public sealed class OfdmGenerator
     private static readonly Complex PilotSymbol = Complex.One;
     private static readonly Vector256<double> RealLaneMask = Vector256.Create(1.0, 0.0, 1.0, 0.0);
     private static readonly Vector<double> ConjugateSignMask = CreateConjugateSignMask();
+    private const int TrigQuarterTableSize = 4096;
+    private const double HalfPi = Math.PI * 0.5;
+    private const double TwoPi = Math.PI * 2.0;
+    private static readonly double[] SinQuarterLut = BuildSinQuarterLut();
+    private static readonly double TrigQuarterIndexScale = TrigQuarterTableSize / HalfPi;
 
     /// <summary>
     /// 現在のチャネルモードを返します。
@@ -678,12 +683,19 @@ public sealed class OfdmGenerator
         }
 
         var order = baseOrder.ToArray();
-        var state = CreateMSequenceState(epoch, useRightChannel, interleaveInitSeed);
+        var usage = useRightChannel
+            ? MSequenceUsage.OfdmFrequencyInterleaveRight
+            : MSequenceUsage.OfdmFrequencyInterleaveLeft;
+        var state = MSequence31.InitializeState(
+            usage,
+            _config.RandomSeed,
+            interleaveInitSeed,
+            epoch);
         var keys = new uint[order.Length];
 
         for (var i = 0; i < keys.Length; i++)
         {
-            keys[i] = NextMSequenceWord(ref state);
+            keys[i] = MSequence31.NextWord(ref state);
         }
 
         Array.Sort(keys, order);
@@ -695,58 +707,6 @@ public sealed class OfdmGenerator
 
         cache[cacheKey] = order;
         return order;
-    }
-
-    /// <summary>
-    /// CreateMSequenceState を生成します。
-    /// </summary>
-    /// <param name="epoch">epoch を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private uint CreateMSequenceState(long epoch, bool useRightChannel, int interleaveInitSeed)
-    {
-        ulong x = (uint)(_config.RandomSeed == 0 ? 1 : _config.RandomSeed);
-        x ^= (uint)interleaveInitSeed;
-        x ^= useRightChannel ? 0xA5A5A5A5u : 0x5A5A5A5Au;
-        x ^= unchecked((ulong)epoch * 0x9E3779B97F4A7C15UL);
-        x += 0x9E3779B97F4A7C15UL;
-        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
-        x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
-        x ^= x >> 31;
-
-        var state = (uint)(x & 0x7FFFFFFF);
-        return state == 0 ? 1u : state;
-    }
-
-    /// <summary>
-    /// NextMSequenceWord を実行します。
-    /// </summary>
-    /// <param name="state">state を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static uint NextMSequenceWord(ref uint state)
-    {
-        var value = 0u;
-        for (var i = 0; i < 31; i++)
-        {
-            state = AdvanceMSequence31(state);
-            value = (value << 1) | (state & 1u);
-        }
-
-        return value;
-    }
-
-    /// <summary>
-    /// AdvanceMSequence31 を実行します。
-    /// </summary>
-    /// <param name="state">LFSR 迥ｶ諷九・/param>
-    /// <returns>処理結果。</returns>
-    private static uint AdvanceMSequence31(uint state)
-    {
-        // Primitive polynomial: x^31 + x^28 + 1
-        var feedback = ((state >> 30) ^ (state >> 27)) & 1u;
-        state = ((state << 1) & 0x7FFFFFFF) | feedback;
-        return state == 0 ? 1u : state;
     }
 
     /// <summary>
@@ -1060,104 +1020,9 @@ public sealed class OfdmGenerator
     }
 
     /// <summary>
-    /// ModulateBits を実行します。
-    /// </summary>
-    public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0, int interleaveInitSeed = 0)
-    {
-        return ModulateBitStreams(bits, bits, absoluteSampleOffset, interleaveInitSeed);
-    }
-
-    /// <summary>
-    /// ModulateBitStreams を実行します。
-    /// </summary>
-    public (Complex[] Left, Complex[] Right) ModulateBitStreams(
-        ReadOnlySpan<bool> leftBits,
-        ReadOnlySpan<bool> rightBits,
-        long absoluteSampleOffset = 0,
-        int interleaveInitSeed = 0)
-    {
-        if (BitsPerOfdmSymbol <= 0)
-        {
-            throw new InvalidOperationException("No data carriers available for modulation.");
-        }
-
-        var left = ModulateBitsOnChannel(leftBits, useRightChannel: false, absoluteSampleOffset, interleaveInitSeed);
-        if (_config.ChannelMode == ChannelMode.Mono)
-        {
-            return (left, Array.Empty<Complex>());
-        }
-
-        var right = ModulateBitsOnChannel(rightBits, useRightChannel: true, absoluteSampleOffset, interleaveInitSeed);
-        if (left.Length != right.Length)
-        {
-            throw new InvalidOperationException(
-                $"L/R modulated length mismatch: L={left.Length}, R={right.Length}.");
-        }
-
-        return (left, right);
-    }
-
-    /// <summary>
-    /// ModulateBitsOnChannel を実行します。
-    /// </summary>
-    /// <param name="bits">bits を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="absoluteSampleOffset">absoluteSampleOffset を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private Complex[] ModulateBitsOnChannel(
-        ReadOnlySpan<bool> bits,
-        bool useRightChannel,
-        long absoluteSampleOffset,
-        int interleaveInitSeed)
-    {
-        var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
-        var dataModulationByBin = useRightChannel
-            ? _rightDataCarrierModulationByBin
-            : _leftDataCarrierModulationByBin;
-        var symbolCount = (bits.Length + BitsPerOfdmSymbol - 1) / BitsPerOfdmSymbol;
-        if (symbolCount == 0)
-        {
-            symbolCount = 1;
-        }
-
-        var symbolLength = SamplesPerOfdmSymbol;
-        var samples = new Complex[symbolCount * symbolLength];
-        var write = 0;
-        var bitIndex = 0;
-        var freqBins = new Complex[_config.FftSize];
-
-        for (var s = 0; s < symbolCount; s++)
-        {
-            _ = absoluteSampleOffset;
-            var symbolOffset = (long)s * SamplesPerOfdmSymbol;
-            var dataCarrierOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
-
-            Array.Clear(freqBins);
-            foreach (var pilotBin in pilotBins)
-            {
-                freqBins[pilotBin] = PilotSymbol;
-            }
-
-            foreach (var dataBin in dataCarrierOrder)
-            {
-                freqBins[dataBin] = ConsumeModulatedSymbol(
-                    dataModulationByBin[dataBin],
-                    ref bitIndex,
-                    bits);
-            }
-
-            EmitRealTimeSymbolWithCp(freqBins, samples.AsSpan(write, symbolLength));
-            write += symbolLength;
-        }
-
-        return samples;
-    }
-
-    /// <summary>
     /// CopyWithCyclicPrefix を実行します。
     /// </summary>
-    /// <param name="destination">CP 莉倥″蜃ｺ蜉帛・縲・/param>
+    /// <param name="destination">CP 付き出力先を指定します。</param>
     /// <param name="symbol">symbol を指定します。</param>
     /// <param name="cpLength">cpLength を指定します。</param>
     private static void CopyWithCyclicPrefix(ReadOnlySpan<Complex> symbol, int cpLength, Span<Complex> destination)
@@ -2111,29 +1976,89 @@ public sealed class OfdmGenerator
     /// <summary>
     /// WrapPhase を実行します。
     /// </summary>
-    /// <param name="phase">謚倥ｊ霑斐☆菴咲嶌 (rad)縲・/param>
+    /// <param name="phase">折り返し正規化する位相 (rad)。</param>
     /// <returns>処理結果。</returns>
     private static double WrapPhase(double phase)
     {
-        var twoPi = 2.0 * Math.PI;
-        phase %= twoPi;
+        phase %= TwoPi;
         if (phase > Math.PI)
         {
-            phase -= twoPi;
+            phase -= TwoPi;
         }
         else if (phase < -Math.PI)
         {
-            phase += twoPi;
+            phase += TwoPi;
         }
 
         return phase;
     }
 
+    private static double[] BuildSinQuarterLut()
+    {
+        var table = new double[TrigQuarterTableSize + 1];
+        for (var i = 0; i <= TrigQuarterTableSize; i++)
+        {
+            table[i] = Math.Sin((i / (double)TrigQuarterTableSize) * HalfPi);
+        }
+
+        return table;
+    }
+
+    private static double SinFromQuarterLut(double angle)
+    {
+        var x = angle % TwoPi;
+        if (x < 0.0)
+        {
+            x += TwoPi;
+        }
+
+        var quadrant = (int)(x / HalfPi);
+        if (quadrant >= 4)
+        {
+            quadrant = 3;
+        }
+
+        var offset = x - (quadrant * HalfPi);
+        if ((quadrant & 1) != 0)
+        {
+            offset = HalfPi - offset;
+        }
+
+        var index = offset * TrigQuarterIndexScale;
+        var i0 = (int)index;
+        if (i0 >= TrigQuarterTableSize)
+        {
+            i0 = TrigQuarterTableSize - 1;
+        }
+
+        var frac = index - i0;
+        var v0 = SinQuarterLut[i0];
+        var v1 = SinQuarterLut[i0 + 1];
+        var baseValue = v0 + ((v1 - v0) * frac);
+        return quadrant >= 2 ? -baseValue : baseValue;
+    }
+
+    private static void SinCosFromQuarterLut(double angle, out double sin, out double cos)
+    {
+        sin = SinFromQuarterLut(angle);
+        cos = SinFromQuarterLut(angle + HalfPi);
+    }
+
     /// <summary>
     /// BuildCorrelationReference を構築します。
     /// </summary>
-    /// <param name="reference">reference縲・/param>
+    /// <param name="reference">参照シーケンスを指定します。</param>
     private static (double Mean, double Energy, int Count) BuildCorrelationReference(Complex[] reference, int stride)
+    {
+        return BuildCorrelationReference(reference.AsSpan(), stride);
+    }
+
+    /// <summary>
+    /// BuildCorrelationReference を構築します。
+    /// </summary>
+    /// <param name="reference">reference を指定します。</param>
+    /// <param name="stride">stride を指定します。</param>
+    private static (double Mean, double Energy, int Count) BuildCorrelationReference(ReadOnlySpan<Complex> reference, int stride)
     {
         stride = Math.Max(1, stride);
         var sum = 0.0;
@@ -2184,6 +2109,12 @@ public sealed class OfdmGenerator
         }
 
         stride = Math.Max(1, stride);
+        var requiredLength = ((count - 1) * stride) + 1;
+        if (a.Length < requiredLength || b.Length < requiredLength)
+        {
+            return double.NegativeInfinity;
+        }
+
         if (stride == 1 && a.Length >= count && b.Length >= count && count >= 8)
         {
             if (Avx.IsSupported)
@@ -2197,19 +2128,33 @@ public sealed class OfdmGenerator
             }
         }
 
-        var sumA = 0.0;
-        for (var i = 0; i < a.Length; i += stride)
+        if (stride > 1)
         {
-            sumA += a[i].Real;
+            if (Avx.IsSupported && count >= 8)
+            {
+                return CorrelateRealStridedAvx(a, b, stride, meanB, energyB, count);
+            }
+
+            if (AdvSimd.Arm64.IsSupported && count >= 4)
+            {
+                return CorrelateRealStridedAdvSimd(a, b, stride, meanB, energyB, count);
+            }
+        }
+
+        var sumA = 0.0;
+        for (var i = 0; i < count; i++)
+        {
+            sumA += a[i * stride].Real;
         }
 
         var meanA = sumA / count;
         var num = 0.0;
         var energyA = 0.0;
-        for (var i = 0; i < a.Length; i += stride)
+        for (var i = 0; i < count; i++)
         {
-            var xa = a[i].Real - meanA;
-            var xb = b[i].Real - meanB;
+            var idx = i * stride;
+            var xa = a[idx].Real - meanA;
+            var xb = b[idx].Real - meanB;
             num += xa * xb;
             energyA += xa * xa;
         }
@@ -2348,6 +2293,147 @@ public sealed class OfdmGenerator
     }
 
     /// <summary>
+    /// stride&gt;1 の正規化相関（AVX: 間引きロード対応）。
+    /// </summary>
+    private static double CorrelateRealStridedAvx(
+        ReadOnlySpan<Complex> a,
+        ReadOnlySpan<Complex> b,
+        int stride,
+        double meanB,
+        double energyB,
+        int count)
+    {
+        var ad = MemoryMarshal.Cast<Complex, double>(a);
+        var bd = MemoryMarshal.Cast<Complex, double>(b);
+        var sumVec = Vector256<double>.Zero;
+        var i = 0;
+
+        for (; i + 4 <= count; i += 4)
+        {
+            var s0 = i * stride;
+            var ra = Vector256.Create(
+                ad[s0 * 2],
+                ad[(s0 + stride) * 2],
+                ad[(s0 + (2 * stride)) * 2],
+                ad[(s0 + (3 * stride)) * 2]);
+            sumVec = Avx.Add(sumVec, ra);
+        }
+
+        var sumA = sumVec.GetElement(0) + sumVec.GetElement(1) + sumVec.GetElement(2) + sumVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            sumA += ad[(i * stride) * 2];
+        }
+
+        var meanA = sumA / count;
+        var meanAVec = Vector256.Create(meanA);
+        var meanBVec = Vector256.Create(meanB);
+        var numVec = Vector256<double>.Zero;
+        var energyAVec = Vector256<double>.Zero;
+        i = 0;
+
+        for (; i + 4 <= count; i += 4)
+        {
+            var s0 = i * stride;
+            var ra = Vector256.Create(
+                ad[s0 * 2],
+                ad[(s0 + stride) * 2],
+                ad[(s0 + (2 * stride)) * 2],
+                ad[(s0 + (3 * stride)) * 2]);
+            var rb = Vector256.Create(
+                bd[s0 * 2],
+                bd[(s0 + stride) * 2],
+                bd[(s0 + (2 * stride)) * 2],
+                bd[(s0 + (3 * stride)) * 2]);
+            var xa = Avx.Subtract(ra, meanAVec);
+            var xb = Avx.Subtract(rb, meanBVec);
+            numVec = Avx.Add(numVec, Avx.Multiply(xa, xb));
+            energyAVec = Avx.Add(energyAVec, Avx.Multiply(xa, xa));
+        }
+
+        var num = numVec.GetElement(0) + numVec.GetElement(1) + numVec.GetElement(2) + numVec.GetElement(3);
+        var energyA = energyAVec.GetElement(0) + energyAVec.GetElement(1)
+            + energyAVec.GetElement(2) + energyAVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            var realIndex = (i * stride) * 2;
+            var xa = ad[realIndex] - meanA;
+            var xb = bd[realIndex] - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
+    }
+
+    /// <summary>
+    /// stride&gt;1 の正規化相関（ARM AdvSIMD: 間引きロード対応）。
+    /// </summary>
+    private static double CorrelateRealStridedAdvSimd(
+        ReadOnlySpan<Complex> a,
+        ReadOnlySpan<Complex> b,
+        int stride,
+        double meanB,
+        double energyB,
+        int count)
+    {
+        var ad = MemoryMarshal.Cast<Complex, double>(a);
+        var bd = MemoryMarshal.Cast<Complex, double>(b);
+        var sumVec = Vector128<double>.Zero;
+        var i = 0;
+
+        for (; i + 2 <= count; i += 2)
+        {
+            var s0 = i * stride;
+            var ra = Vector128.Create(
+                ad[s0 * 2],
+                ad[(s0 + stride) * 2]);
+            sumVec = AdvSimd.Arm64.Add(sumVec, ra);
+        }
+
+        var sumA = sumVec.GetElement(0) + sumVec.GetElement(1);
+        for (; i < count; i++)
+        {
+            sumA += ad[(i * stride) * 2];
+        }
+
+        var meanA = sumA / count;
+        var meanAVec = Vector128.Create(meanA);
+        var meanBVec = Vector128.Create(meanB);
+        var numVec = Vector128<double>.Zero;
+        var energyAVec = Vector128<double>.Zero;
+        i = 0;
+
+        for (; i + 2 <= count; i += 2)
+        {
+            var s0 = i * stride;
+            var ra = Vector128.Create(
+                ad[s0 * 2],
+                ad[(s0 + stride) * 2]);
+            var rb = Vector128.Create(
+                bd[s0 * 2],
+                bd[(s0 + stride) * 2]);
+            var xa = AdvSimd.Arm64.Subtract(ra, meanAVec);
+            var xb = AdvSimd.Arm64.Subtract(rb, meanBVec);
+            numVec = AdvSimd.Arm64.Add(numVec, AdvSimd.Arm64.Multiply(xa, xb));
+            energyAVec = AdvSimd.Arm64.Add(energyAVec, AdvSimd.Arm64.Multiply(xa, xa));
+        }
+
+        var num = numVec.GetElement(0) + numVec.GetElement(1);
+        var energyA = energyAVec.GetElement(0) + energyAVec.GetElement(1);
+        for (; i < count; i++)
+        {
+            var realIndex = (i * stride) * 2;
+            var xa = ad[realIndex] - meanA;
+            var xb = bd[realIndex] - meanB;
+            num += xa * xb;
+            energyA += xa * xa;
+        }
+
+        return num / Math.Sqrt((energyA * energyB) + 1e-18);
+    }
+
+    /// <summary>
     /// BuildCassetteSpeedProfilePerSample を構築します。
     /// </summary>
     /// <param name="sampleCount">sampleCount を指定します。</param>
@@ -2366,14 +2452,34 @@ public sealed class OfdmGenerator
         const double wowHz = 0.5;
         const double flutterHz = 6.0;
         var profile = new double[sampleCount];
+        var sr = Math.Max(1, sampleRate);
+        var wowStep = 2.0 * Math.PI * wowHz / sr;
+        var flutterStep = 2.0 * Math.PI * flutterHz / sr;
+        var wowSinStep = Math.Sin(wowStep);
+        var wowCosStep = Math.Cos(wowStep);
+        var flutterSinStep = Math.Sin(flutterStep);
+        var flutterCosStep = Math.Cos(flutterStep);
+        var wowGain = amount * 0.65;
+        var flutterGain = amount * 0.35;
+        var wowSin = Math.Sin(wowPhase);
+        var wowCos = Math.Cos(wowPhase);
+        var flutterSin = Math.Sin(flutterPhase);
+        var flutterCos = Math.Cos(flutterPhase);
+
         for (var i = 0; i < sampleCount; i++)
         {
-            var t = i / (double)sampleRate;
-            var modulation =
-                (0.65 * Math.Sin((2.0 * Math.PI * wowHz * t) + wowPhase)) +
-                (0.35 * Math.Sin((2.0 * Math.PI * flutterHz * t) + flutterPhase));
-            var speed = 1.0 + (amount * modulation);
+            var speed = 1.0 + (wowGain * wowSin) + (flutterGain * flutterSin);
             profile[i] = speed < 0.05 ? 0.05 : speed;
+
+            var nextWowSin = (wowSin * wowCosStep) + (wowCos * wowSinStep);
+            var nextWowCos = (wowCos * wowCosStep) - (wowSin * wowSinStep);
+            wowSin = nextWowSin;
+            wowCos = nextWowCos;
+
+            var nextFlutterSin = (flutterSin * flutterCosStep) + (flutterCos * flutterSinStep);
+            var nextFlutterCos = (flutterCos * flutterCosStep) - (flutterSin * flutterSinStep);
+            flutterSin = nextFlutterSin;
+            flutterCos = nextFlutterCos;
         }
 
         return profile;
@@ -2402,13 +2508,35 @@ public sealed class OfdmGenerator
         const double wowHz = 0.5;
         const double flutterHz = 6.0;
         var profile = new double[symbolCount];
+        var sr = Math.Max(1, sampleRate);
+        var wowStep = 2.0 * Math.PI * wowHz * symbolLength / sr;
+        var flutterStep = 2.0 * Math.PI * flutterHz * symbolLength / sr;
+        var startWow = wowPhase + (firstSymbol * wowStep);
+        var startFlutter = flutterPhase + (firstSymbol * flutterStep);
+        var wowSinStep = Math.Sin(wowStep);
+        var wowCosStep = Math.Cos(wowStep);
+        var flutterSinStep = Math.Sin(flutterStep);
+        var flutterCosStep = Math.Cos(flutterStep);
+        var wowGain = amount * 0.65;
+        var flutterGain = amount * 0.35;
+        var wowSin = Math.Sin(startWow);
+        var wowCos = Math.Cos(startWow);
+        var flutterSin = Math.Sin(startFlutter);
+        var flutterCos = Math.Cos(startFlutter);
+
         for (var s = 0; s < symbolCount; s++)
         {
-            var t = ((firstSymbol + s) * symbolLength) / (double)sampleRate;
-            var modulation =
-                (0.65 * Math.Sin((2.0 * Math.PI * wowHz * t) + wowPhase)) +
-                (0.35 * Math.Sin((2.0 * Math.PI * flutterHz * t) + flutterPhase));
-            profile[s] = 1.0 + (amount * modulation);
+            profile[s] = 1.0 + (wowGain * wowSin) + (flutterGain * flutterSin);
+
+            var nextWowSin = (wowSin * wowCosStep) + (wowCos * wowSinStep);
+            var nextWowCos = (wowCos * wowCosStep) - (wowSin * wowSinStep);
+            wowSin = nextWowSin;
+            wowCos = nextWowCos;
+
+            var nextFlutterSin = (flutterSin * flutterCosStep) + (flutterCos * flutterSinStep);
+            var nextFlutterCos = (flutterCos * flutterCosStep) - (flutterSin * flutterSinStep);
+            flutterSin = nextFlutterSin;
+            flutterCos = nextFlutterCos;
         }
 
         NormalizeSpeedProfileMean(profile);
@@ -2442,36 +2570,16 @@ public sealed class OfdmGenerator
         }
 
         stride = Math.Max(1, stride);
-        var meanA = 0.0;
-        var meanB = 0.0;
-        var count = 0;
-        for (var i = 0; i < n; i += stride)
-        {
-            meanA += a[i].Real;
-            meanB += b[i].Real;
-            count++;
-        }
-
-        if (count <= 1)
-        {
-            return double.NegativeInfinity;
-        }
-
-        meanA /= count;
-        meanB /= count;
-        var num = 0.0;
-        var da = 0.0;
-        var db = 0.0;
-        for (var i = 0; i < n; i += stride)
-        {
-            var xa = a[i].Real - meanA;
-            var xb = b[i].Real - meanB;
-            num += xa * xb;
-            da += xa * xa;
-            db += xb * xb;
-        }
-
-        return num / Math.Sqrt((da * db) + 1e-18);
+        var aSpan = a.AsSpan(0, n);
+        var bSpan = b.AsSpan(0, n);
+        var reference = BuildCorrelationReference(bSpan, stride);
+        return CorrelateRealStridedWithReference(
+            aSpan,
+            bSpan,
+            stride,
+            reference.Mean,
+            reference.Energy,
+            reference.Count);
     }
 
     /// <summary>
@@ -2707,7 +2815,7 @@ public sealed class OfdmGenerator
         var w2 = 2.0 * Math.PI * flutterHz;
         var sampleRate = Math.Max(1, _config.SampleRate);
 
-        // 豁｣隕乗婿遞句ｼ・4x4
+        // 正規方程式を構築（4x4）
         var ata = new double[4, 4];
         var atb = new double[4];
         Span<double> row = stackalloc double[4];
@@ -2715,10 +2823,8 @@ public sealed class OfdmGenerator
         {
             var t = ((firstSymbol + i) * symbolLength) / (double)sampleRate;
             var y = measured[i] - 1.0;
-            row[0] = Math.Sin(w1 * t);
-            row[1] = Math.Cos(w1 * t);
-            row[2] = Math.Sin(w2 * t);
-            row[3] = Math.Cos(w2 * t);
+            SinCosFromQuarterLut(w1 * t, out row[0], out row[1]);
+            SinCosFromQuarterLut(w2 * t, out row[2], out row[3]);
             for (var r = 0; r < 4; r++)
             {
                 atb[r] += row[r] * y;
@@ -2745,11 +2851,13 @@ public sealed class OfdmGenerator
         for (var i = 0; i < measured.Length; i++)
         {
             var t = ((firstSymbol + i) * symbolLength) / (double)sampleRate;
+            SinCosFromQuarterLut(w1 * t, out var sinW1, out var cosW1);
+            SinCosFromQuarterLut(w2 * t, out var sinW2, out var cosW2);
             fitted[i] = 1.0
-                + (coef[0] * Math.Sin(w1 * t))
-                + (coef[1] * Math.Cos(w1 * t))
-                + (coef[2] * Math.Sin(w2 * t))
-                + (coef[3] * Math.Cos(w2 * t));
+                + (coef[0] * sinW1)
+                + (coef[1] * cosW1)
+                + (coef[2] * sinW2)
+                + (coef[3] * cosW2);
         }
 
         var measRms = 0.0;
@@ -2780,7 +2888,7 @@ public sealed class OfdmGenerator
     /// <summary>
     /// TrySolve4x4 を試行します。
     /// </summary>
-    /// <param name="a">4ﾃ・ 菫よ焚陦悟・縲・/param>
+    /// <param name="a">4x4 係数行列。</param>
     /// <param name="b">b を指定します。</param>
     /// <param name="x">x を指定します。</param>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
@@ -2883,7 +2991,7 @@ public sealed class OfdmGenerator
     /// <summary>
     /// FindBestSymbolOffset を実行します。
     /// </summary>
-    /// <param name="window">謗｢邏｢遯薙・/param>
+    /// <param name="window">評価ウィンドウ。</param>
     /// <param name="maxSearch">maxSearch を指定します。</param>
     /// <param name="requireStrongCpImprovement">requireStrongCpImprovement を指定します。</param>
     /// <returns>処理結果。</returns>
@@ -3067,7 +3175,7 @@ public sealed class OfdmGenerator
     /// <summary>
     /// ComplexMagnitude を実行します。
     /// </summary>
-    /// <param name="value">隍・ｴ蛟､縲・/param>
+    /// <param name="value">複素数値。</param>
     /// <returns>処理結果。</returns>
     private static double ComplexMagnitude(Complex value)
     {
@@ -3294,7 +3402,7 @@ public sealed class OfdmGenerator
     /// <summary>
     /// CassetteCumulAt を実行します。
     /// </summary>
-    /// <param name="i">i縲・/param>
+    /// <param name="i">サンプルインデックス。</param>
     /// <param name="sampleRate">sampleRate を指定します。</param>
     /// <param name="amount">amount を指定します。</param>
     /// <param name="wowPhase">wowPhase を指定します。</param>
@@ -3329,11 +3437,11 @@ public sealed class OfdmGenerator
     /// <summary>
     /// CassetteCumulAtCached を実行します。
     /// </summary>
-    /// <param name="i">i縲・/param>
-    /// <param name="wowGain">wowGain縲・/param>
-    /// <param name="flutterGain">flutterGain縲・/param>
-    /// <param name="wowOmega">wowOmega縲・/param>
-    /// <param name="flutterOmega">flutterOmega縲・/param>
+    /// <param name="i">サンプルインデックス。</param>
+    /// <param name="wowGain">wow の振幅係数。</param>
+    /// <param name="flutterGain">flutter の振幅係数。</param>
+    /// <param name="wowOmega">wow 角周波数。</param>
+    /// <param name="flutterOmega">flutter 角周波数。</param>
     /// <param name="wowPhase">wowPhase を指定します。</param>
     /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <returns>処理結果。</returns>
@@ -3359,8 +3467,8 @@ public sealed class OfdmGenerator
     /// <summary>
     /// SumOfSines を実行します。
     /// </summary>
-    /// <param name="phase0">phase0縲・/param>
-    /// <param name="omega">omega縲・/param>
+    /// <param name="phase0">初期位相。</param>
+    /// <param name="omega">角周波数。</param>
     /// <param name="count">count を指定します。</param>
     /// <returns>処理結果。</returns>
     private static double SumOfSines(double phase0, double omega, int count)
@@ -3383,7 +3491,7 @@ public sealed class OfdmGenerator
     /// <summary>
     /// FindCassetteCumulIndex を実行します。
     /// </summary>
-    /// <param name="target">target縲・/param>
+    /// <param name="target">目標累積値。</param>
     /// <param name="sampleCount">sampleCount を指定します。</param>
     /// <param name="sampleRate">sampleRate を指定します。</param>
     /// <param name="amount">amount を指定します。</param>
@@ -3419,8 +3527,8 @@ public sealed class OfdmGenerator
     /// <summary>
     /// BuildInverseCumul を構築します。
     /// </summary>
-    /// <param name="cumul">cumul縲・/param>
-    /// <param name="speedHop">speedHop縲・/param>
+    /// <param name="cumul">累積配列。</param>
+    /// <param name="speedHop">速度サンプルの間引き間隔。</param>
     /// <param name="sampleCount">sampleCount を指定します。</param>
     /// <param name="speedProfile">speedProfile を指定します。</param>
     /// <param name="scale">scale を指定します。</param>
@@ -3459,12 +3567,12 @@ public sealed class OfdmGenerator
     /// <summary>
     /// SampleWarpedAtCumul を実行します。
     /// </summary>
-    /// <param name="cumul">cumul縲・/param>
-    /// <param name="outputIndex">outputIndex縲・/param>
-    /// <param name="warpedIndex">warpedIndex縲・/param>
+    /// <param name="cumul">累積配列。</param>
+    /// <param name="outputIndex">出力サンプル位置。</param>
+    /// <param name="warpedIndex">逆写像後の実数サンプル位置。</param>
     /// <param name="samples">samples を指定します。</param>
     /// <param name="scale">scale を指定します。</param>
-    /// <returns>隍・ｴ蛟､縲・/returns>
+    /// <returns>補間後サンプル。</returns>
     private static Complex SampleWarpedAtCumul(
         Complex[] samples,
         double[] cumul,
@@ -3492,9 +3600,9 @@ public sealed class OfdmGenerator
     /// <summary>
     /// SampleHermite を実行します。
     /// </summary>
-    /// <param name="position">position縲・/param>
+    /// <param name="position">補間位置。</param>
     /// <param name="samples">samples を指定します。</param>
-    /// <returns>隍・ｴ蛟､縲・/returns>
+    /// <returns>補間後サンプル。</returns>
     private static Complex SampleHermite(Complex[] samples, double position)
     {
         if (samples.Length == 0)
@@ -3528,156 +3636,6 @@ public sealed class OfdmGenerator
             (((-2 * t3) + (3 * t2)) * y2) +
             ((t3 - t2) * m2);
         return new Complex(value, 0.0);
-    }
-
-    /// <summary>
-    /// ScoreLock を実行します。
-    /// </summary>
-    /// <param name="start">start縲・/param>
-    public double ScoreLock(Complex[] samples, int start, int symbolCount, bool useRightChannel = false)
-    {
-        ArgumentNullException.ThrowIfNull(samples);
-        if (symbolCount <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(symbolCount));
-        }
-
-        var symbolLength = SamplesPerOfdmSymbol;
-        if (start < 0 || start + (symbolCount * symbolLength) > samples.Length)
-        {
-            return double.NegativeInfinity;
-        }
-
-        var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
-        var timeNoCp = _scoreTimeNoCpScratch;
-        var freqBins = _scoreFreqBinsScratch;
-        var score = 0.0;
-        for (var s = 0; s < symbolCount; s++)
-        {
-            var symbolStart = start + (s * symbolLength);
-            score += ScoreSingleSymbolLock(samples.AsSpan(symbolStart, symbolLength), pilotBins, timeNoCp, freqBins);
-        }
-
-        return score / symbolCount;
-    }
-
-    /// <summary>
-    /// FindBestSymbolStart を実行します。
-    /// </summary>
-    /// <param name="expectedStart">expectedStart縲・/param>
-    public int FindBestSymbolStart(
-        Complex[] samples,
-        int expectedStart,
-        int searchRadius,
-        bool useRightChannel = false)
-    {
-        ArgumentNullException.ThrowIfNull(samples);
-        var symbolLength = SamplesPerOfdmSymbol;
-        expectedStart = Math.Clamp(expectedStart, 0, Math.Max(0, samples.Length - symbolLength));
-        if (searchRadius <= 0)
-        {
-            return expectedStart;
-        }
-
-        var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
-        var timeNoCp = _scoreTimeNoCpScratch;
-        var freqBins = _scoreFreqBinsScratch;
-        var back = Math.Min(searchRadius, expectedStart);
-        var forward = Math.Min(searchRadius, samples.Length - symbolLength - expectedStart);
-        var cpAtExpected = ScoreSingleSymbolCpLock(samples.AsSpan(expectedStart, symbolLength));
-        var scoreAtExpected = ScoreSingleSymbolLock(samples.AsSpan(expectedStart, symbolLength), pilotBins, timeNoCp, freqBins);
-        var bestDelta = 0;
-        var bestScore = scoreAtExpected;
-        var candidateCount = back + forward + 1;
-
-        if (candidateCount <= 7)
-        {
-            for (var delta = -back; delta <= forward; delta++)
-            {
-                if (delta == 0)
-                {
-                    continue;
-                }
-
-                var score = ScoreSingleSymbolLock(samples.AsSpan(expectedStart + delta, symbolLength), pilotBins, timeNoCp, freqBins);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestDelta = delta;
-                }
-            }
-
-            const double smallRangeLockMargin = 0.15;
-            if (bestDelta != 0 && bestScore < scoreAtExpected + smallRangeLockMargin)
-            {
-                return expectedStart;
-            }
-
-            return expectedStart + bestDelta;
-        }
-
-        var topCandidateCount = Math.Min(candidateCount - 1, 4);
-        Span<int> topDeltas = stackalloc int[topCandidateCount];
-        Span<double> topCpScores = stackalloc double[topCandidateCount];
-        for (var i = 0; i < topCandidateCount; i++)
-        {
-            topDeltas[i] = 0;
-            topCpScores[i] = double.NegativeInfinity;
-        }
-
-        for (var delta = -back; delta <= forward; delta++)
-        {
-            if (delta == 0)
-            {
-                continue;
-            }
-
-            var cpScore = ScoreSingleSymbolCpLock(samples.AsSpan(expectedStart + delta, symbolLength));
-            if (cpScore < cpAtExpected - 0.2)
-            {
-                continue;
-            }
-
-            if (cpScore <= topCpScores[^1])
-            {
-                continue;
-            }
-
-            var insertIndex = topCandidateCount - 1;
-            while (insertIndex > 0 && cpScore > topCpScores[insertIndex - 1])
-            {
-                topCpScores[insertIndex] = topCpScores[insertIndex - 1];
-                topDeltas[insertIndex] = topDeltas[insertIndex - 1];
-                insertIndex--;
-            }
-
-            topCpScores[insertIndex] = cpScore;
-            topDeltas[insertIndex] = delta;
-        }
-
-        for (var i = 0; i < topCandidateCount; i++)
-        {
-            var delta = topDeltas[i];
-            if (delta == 0)
-            {
-                continue;
-            }
-
-            var score = ScoreSingleSymbolLock(samples.AsSpan(expectedStart + delta, symbolLength), pilotBins, timeNoCp, freqBins);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestDelta = delta;
-            }
-        }
-
-        const double lockMargin = 0.15;
-        if (bestDelta != 0 && bestScore < scoreAtExpected + lockMargin)
-        {
-            return expectedStart;
-        }
-
-        return expectedStart + bestDelta;
     }
 
     /// <summary>
@@ -3770,214 +3728,6 @@ public sealed class OfdmGenerator
     }
 
     /// <summary>
-    /// ストリームからハード判定ビットを復調します。
-    /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="logicalSampleOffset">論理サンプルオフセット。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <returns>復調したビット列。</returns>
-    public bool[] DemodulateBitsFromStream(
-        Complex[] samples,
-        ref int cursor,
-        int bitCount,
-        bool useRightChannel,
-        long logicalSampleOffset,
-        int searchRadius = 16,
-        int interleaveInitSeed = 0)
-    {
-        if (bitCount < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(bitCount));
-        }
-
-        if (useRightChannel && _config.ChannelMode != ChannelMode.Stereo)
-        {
-            throw new InvalidOperationException("Right channel demodulation requires stereo mode.");
-        }
-
-        ArgumentNullException.ThrowIfNull(samples);
-        var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
-        var dataModulationByBin = useRightChannel
-            ? _rightDataCarrierModulationByBin
-            : _leftDataCarrierModulationByBin;
-        var symbolLength = SamplesPerOfdmSymbol;
-        var symbolCount = bitCount == 0
-            ? 1
-            : (bitCount + BitsPerOfdmSymbol - 1) / BitsPerOfdmSymbol;
-
-        var bits = new bool[bitCount];
-        var bitIndex = 0;
-        _ = logicalSampleOffset;
-        var agcState = new PilotGroupAgcState(pilotBins.Count);
-        var fftSize = _config.FftSize;
-        var timeNoCp = new Complex[fftSize];
-        var freqBins = new Complex[fftSize];
-        var equalizers = new Complex[fftSize];
-        var followRadius = Math.Max(searchRadius, 2);
-        var position = cursor;
-
-        for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
-        {
-            var start = FindBestSymbolStart(samples, position, followRadius, useRightChannel);
-            if (start + symbolLength > samples.Length)
-            {
-                throw new InvalidDataException("WAV ended while synchronizing OFDM symbol.");
-            }
-
-            var symbol = samples.AsSpan(start, symbolLength);
-            PrepareSymbolFrequency(
-                symbol,
-                pilotBins,
-                useRightChannel,
-                agcState,
-                timeNoCp,
-                freqBins,
-                equalizers);
-            var symbolOffset = (long)s * symbolLength;
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
-
-            foreach (var dataBin in dataOrder)
-            {
-                if (bitIndex >= bitCount)
-                {
-                    break;
-                }
-
-                EmitSymbolBits(
-                    freqBins[dataBin] * equalizers[dataBin],
-                    dataModulationByBin[dataBin],
-                    ref bitIndex,
-                    bits);
-            }
-
-            position = start + symbolLength;
-        }
-
-        cursor = position;
-        return bits;
-    }
-
-    /// <summary>
-    /// ストリームからソフト判定 LLR を復調します。
-    /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="logicalSampleOffset">論理サンプルオフセット。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
-    /// <param name="noiseVariance">既知雑音分散。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <param name="onEqualizedDataSymbol">等化後データシンボルの通知先。</param>
-    /// <param name="onEqualizedDataSymbolFrame">等化後シンボル列の通知先。</param>
-    /// <param name="onFftSymbolFrame">FFTシンボル列の通知先。</param>
-    /// <returns>復調した LLR 列。</returns>
-    public double[] DemodulateSoftLlrsFromStream(
-        Complex[] samples,
-        ref int cursor,
-        int bitCount,
-        bool useRightChannel,
-        long logicalSampleOffset,
-        int searchRadius = 16,
-        double noiseVariance = 0.05,
-        int interleaveInitSeed = 0,
-        Action<Complex>? onEqualizedDataSymbol = null,
-        Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame = null,
-        Action<Complex[], int>? onFftSymbolFrame = null,
-        Action<int, int>? onOfdmSymbolProgress = null)
-    {
-        return DemodulateSoftLlrsFromStreamCore(
-            samples,
-            secondarySamples: null,
-            ref cursor,
-            bitCount,
-            useRightChannel,
-            secondaryUseRightChannel: false,
-            logicalSampleOffset,
-            searchRadius,
-            noiseVariance,
-            estimateNoiseFromPilots: true,
-            interleaveInitSeed,
-            onEqualizedDataSymbol,
-            onEqualizedDataSymbolFrame,
-            onFftSymbolFrame,
-            onOfdmSymbolProgress);
-    }
-
-    /// <summary>
-    /// 左右チャネルを統合してソフト判定 LLR を復調します。
-    /// </summary>
-    /// <param name="leftSamples">左チャネルサンプル列。</param>
-    /// <param name="rightSamples">右チャネルサンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="logicalSampleOffset">論理サンプルオフセット。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
-    /// <param name="noiseVariance">既知雑音分散。</param>
-    /// <param name="estimateNoiseFromPilots">パイロットから雑音推定する場合 true。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <returns>復調した LLR 列。</returns>
-    public double[] DemodulateSoftLlrsStereoCombined(
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        ref int cursor,
-        int bitCount,
-        long logicalSampleOffset,
-        int searchRadius = 16,
-        double noiseVariance = 0.05,
-        bool estimateNoiseFromPilots = true,
-        int interleaveInitSeed = 0)
-    {
-        ArgumentNullException.ThrowIfNull(leftSamples);
-        ArgumentNullException.ThrowIfNull(rightSamples);
-        if (_config.ChannelMode != ChannelMode.Stereo || rightSamples.Length == 0)
-        {
-            return DemodulateSoftLlrsFromStreamCore(
-                leftSamples,
-                secondarySamples: null,
-                ref cursor,
-                bitCount,
-                useRightChannel: false,
-                secondaryUseRightChannel: false,
-                logicalSampleOffset,
-                searchRadius,
-                noiseVariance,
-                estimateNoiseFromPilots,
-                interleaveInitSeed,
-                onEqualizedDataSymbol: null,
-                onEqualizedDataSymbolFrame: null,
-                onFftSymbolFrame: null,
-                onOfdmSymbolProgress: null);
-        }
-
-        if (leftSamples.Length != rightSamples.Length)
-        {
-            throw new ArgumentException("Left/right sample lengths must match for stereo soft combine.");
-        }
-
-        return DemodulateSoftLlrsFromStreamCore(
-            leftSamples,
-            rightSamples,
-            ref cursor,
-            bitCount,
-            useRightChannel: false,
-            secondaryUseRightChannel: true,
-            logicalSampleOffset,
-            searchRadius,
-            noiseVariance,
-            estimateNoiseFromPilots,
-            interleaveInitSeed,
-            onEqualizedDataSymbol: null,
-            onEqualizedDataSymbolFrame: null,
-            onFftSymbolFrame: null,
-            onOfdmSymbolProgress: null);
-    }
-
-    /// <summary>
     /// DemodulateSoftLlrsFromStreamCore を実行します。
     /// </summary>
     /// <param name="samples">samples を指定します。</param>
@@ -4018,13 +3768,13 @@ public sealed class OfdmGenerator
             throw new ArgumentOutOfRangeException(nameof(bitCount));
         }
 
-        if (useRightChannel && _config.ChannelMode != ChannelMode.Stereo)
+        ArgumentNullException.ThrowIfNull(samples);
+        if (secondarySamples is not null && secondarySamples.Length != samples.Length)
         {
-            throw new InvalidOperationException("Right channel demodulation requires stereo mode.");
+            throw new ArgumentException("Primary/secondary sample lengths must match.", nameof(secondarySamples));
         }
 
-        ArgumentNullException.ThrowIfNull(samples);
-        var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var primaryPilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
         var secondaryPilotBins = secondaryUseRightChannel ? _rightPilotBins : _leftPilotBins;
         var symbolLength = SamplesPerOfdmSymbol;
         var symbolCount = bitCount == 0
@@ -4034,7 +3784,7 @@ public sealed class OfdmGenerator
         var llrs = new double[bitCount];
         var bitIndex = 0;
         _ = logicalSampleOffset;
-        var primaryAgcState = new PilotGroupAgcState(pilotBins.Count);
+        var primaryAgcState = new PilotGroupAgcState(primaryPilotBins.Count);
         var secondaryAgcState = new PilotGroupAgcState(secondaryPilotBins.Count);
         var fftSize = _config.FftSize;
         var primaryTimeNoCp = new Complex[fftSize];
@@ -4043,57 +3793,50 @@ public sealed class OfdmGenerator
         var secondaryTimeNoCp = new Complex[fftSize];
         var secondaryFreqBins = new Complex[fftSize];
         var secondaryEqualizers = new Complex[fftSize];
-        var followRadius = Math.Max(searchRadius, 2);
         var position = cursor;
-        var noiseAccum = 0.0;
-        var noiseCount = 0;
-
-        var effectiveVariance = Math.Max(1e-6, noiseVariance);
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
-            var start = FindBestSymbolStart(samples, position, followRadius, useRightChannel);
+            var start = FindBestSymbolStart(samples, position, searchRadius, useRightChannel);
             if (start + symbolLength > samples.Length)
             {
                 throw new InvalidDataException("WAV ended while synchronizing OFDM symbol.");
             }
 
+            var symbol = samples.AsSpan(start, symbolLength);
             PrepareSymbolFrequency(
-                samples.AsSpan(start, symbolLength),
-                pilotBins,
+                symbol,
+                primaryPilotBins,
                 useRightChannel,
                 primaryAgcState,
                 primaryTimeNoCp,
                 primaryFreqBins,
                 primaryEqualizers);
             onFftSymbolFrame?.Invoke(primaryFreqBins, primaryFreqBins.Length);
+
+            var effectiveVariance = noiseVariance;
             if (estimateNoiseFromPilots)
             {
+                var noiseAccum = 0.0;
+                var noiseCount = 0;
                 AccumulatePilotNoiseFromPrepared(
                     primaryFreqBins,
                     primaryEqualizers,
-                    pilotBins,
+                    primaryPilotBins,
                     ref noiseAccum,
                     ref noiseCount);
-            }
 
-            if (secondarySamples is not null)
-            {
-                if (start + symbolLength > secondarySamples.Length)
+                if (secondarySamples is not null)
                 {
-                    throw new InvalidDataException("Secondary WAV ended while synchronizing OFDM symbol.");
-                }
-
-                PrepareSymbolFrequency(
-                    secondarySamples.AsSpan(start, symbolLength),
-                    secondaryPilotBins,
-                    secondaryUseRightChannel,
-                    secondaryAgcState,
-                    secondaryTimeNoCp,
-                    secondaryFreqBins,
-                    secondaryEqualizers);
-                if (estimateNoiseFromPilots)
-                {
+                    var secondarySymbol = secondarySamples.AsSpan(start, symbolLength);
+                    PrepareSymbolFrequency(
+                        secondarySymbol,
+                        secondaryPilotBins,
+                        secondaryUseRightChannel,
+                        secondaryAgcState,
+                        secondaryTimeNoCp,
+                        secondaryFreqBins,
+                        secondaryEqualizers);
                     AccumulatePilotNoiseFromPrepared(
                         secondaryFreqBins,
                         secondaryEqualizers,
@@ -4101,11 +3844,11 @@ public sealed class OfdmGenerator
                         ref noiseAccum,
                         ref noiseCount);
                 }
-            }
 
-            if (estimateNoiseFromPilots && noiseCount > 0)
-            {
-                effectiveVariance = Math.Clamp(noiseAccum / noiseCount, 1e-4, 0.5);
+                if (noiseCount > 0)
+                {
+                    effectiveVariance = Math.Clamp(noiseAccum / noiseCount, 1e-4, 0.5);
+                }
             }
 
             var symbolBitStart = bitIndex;
@@ -4124,6 +3867,16 @@ public sealed class OfdmGenerator
 
             if (secondarySamples is not null)
             {
+                var secondarySymbol = secondarySamples.AsSpan(start, symbolLength);
+                PrepareSymbolFrequency(
+                    secondarySymbol,
+                    secondaryPilotBins,
+                    secondaryUseRightChannel,
+                    secondaryAgcState,
+                    secondaryTimeNoCp,
+                    secondaryFreqBins,
+                    secondaryEqualizers);
+
                 var secondaryBitIndex = symbolBitStart;
                 EmitSymbolSoftLlrsFromPrepared(
                     secondaryFreqBins,
@@ -4135,12 +3888,11 @@ public sealed class OfdmGenerator
                     effectiveVariance,
                     addToExisting: true,
                     interleaveInitSeed,
-                        onEqualizedDataSymbol,
-                        onEqualizedDataSymbolFrame: null);
+                    onEqualizedDataSymbol,
+                    onEqualizedDataSymbolFrame: null);
             }
 
             onOfdmSymbolProgress?.Invoke(s, symbolCount);
-
             position = start + symbolLength;
         }
 
@@ -4342,120 +4094,6 @@ public sealed class OfdmGenerator
             noiseAccum += 0.5 * ((err.Real * err.Real) + (err.Imaginary * err.Imaginary));
             noiseCount++;
         }
-    }
-
-    /// <summary>
-    /// タイミング追従しながら指定シンボル数を読み飛ばします。
-    /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="symbolCount">読み飛ばすシンボル数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
-    public void SkipSymbolsWithTimingTracking(
-        Complex[] samples,
-        ref int cursor,
-        int symbolCount,
-        bool useRightChannel = false,
-        int searchRadius = 24)
-    {
-        ArgumentNullException.ThrowIfNull(samples);
-        if (symbolCount < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(symbolCount));
-        }
-
-        var symbolLength = SamplesPerOfdmSymbol;
-        for (var s = 0; s < symbolCount; s++)
-        {
-            var start = FindBestSymbolStart(samples, cursor, searchRadius, useRightChannel);
-            if (start + symbolLength > samples.Length)
-            {
-                throw new InvalidDataException("WAV ended while skipping OFDM preamble symbols.");
-            }
-
-            cursor = start + symbolLength;
-        }
-    }
-
-    /// <summary>
-    /// OFDM シンボル列からハード判定ビットを復調します。
-    /// </summary>
-    /// <param name="samples">OFDM シンボル列（CP 付き）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="absoluteSampleOffset">絶対サンプルオフセット。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <returns>復調したビット列。</returns>
-    public bool[] DemodulateBits(
-        ReadOnlySpan<Complex> samples,
-        int bitCount,
-        bool useRightChannel = false,
-        long absoluteSampleOffset = 0,
-        int interleaveInitSeed = 0)
-    {
-        if (bitCount < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(bitCount));
-        }
-
-        if (useRightChannel && _config.ChannelMode != ChannelMode.Stereo)
-        {
-            throw new InvalidOperationException("Right channel demodulation requires stereo mode.");
-        }
-
-        var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
-        var dataModulationByBin = useRightChannel
-            ? _rightDataCarrierModulationByBin
-            : _leftDataCarrierModulationByBin;
-
-        var symbolLength = SamplesPerOfdmSymbol;
-        if (samples.Length % symbolLength != 0)
-        {
-            throw new ArgumentException("Sample length must be a multiple of OFDM symbol length.", nameof(samples));
-        }
-
-        var bits = new bool[bitCount];
-        var bitIndex = 0;
-        var symbolCount = samples.Length / symbolLength;
-        var agcState = new PilotGroupAgcState(pilotBins.Count);
-        var fftSize = _config.FftSize;
-        var timeNoCp = new Complex[fftSize];
-        var freqBins = new Complex[fftSize];
-        var equalizers = new Complex[fftSize];
-
-        for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
-        {
-            _ = absoluteSampleOffset;
-            var symbolOffset = (long)s * symbolLength;
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
-
-            var symbol = samples.Slice(s * symbolLength, symbolLength);
-            PrepareSymbolFrequency(
-                symbol,
-                pilotBins,
-                useRightChannel,
-                agcState,
-                timeNoCp,
-                freqBins,
-                equalizers);
-
-            foreach (var dataBin in dataOrder)
-            {
-                if (bitIndex >= bitCount)
-                {
-                    break;
-                }
-
-                EmitSymbolBits(
-                    freqBins[dataBin] * equalizers[dataBin],
-                    dataModulationByBin[dataBin],
-                    ref bitIndex,
-                    bits);
-            }
-        }
-
-        return bits;
     }
 
     /// <summary>
@@ -5643,315 +5281,5 @@ public sealed class OfdmGenerator
         return result;
     }
 
-    /// <summary>
-    /// EnsureIfftScratch を実行します。
-    /// </summary>
-    /// <param name="n">n を指定します。</param>
-    private void EnsureIfftScratch(int n)
-    {
-        if (_ifftConjugateScratch is not null && _ifftConjugateScratch.Length == n)
-        {
-            return;
-        }
-
-        _ifftConjugateScratch = new Complex[n];
-        _ifftWorkScratch = new Complex[n];
-    }
-
-    /// <summary>
-    /// InverseFftInto を実行します。
-    /// </summary>
-    /// <param name="frequency">frequency を指定します。</param>
-    /// <param name="destination">destination を指定します。</param>
-    private void InverseFftInto(Complex[] frequency, Complex[] destination)
-    {
-        if (destination.Length < frequency.Length)
-        {
-            throw new ArgumentException("Destination is shorter than frequency bins.", nameof(destination));
-        }
-
-        EnsureIfftScratch(frequency.Length);
-        var scratch = _ifftConjugateScratch!;
-        ConjugateInto(frequency, scratch);
-        Array.Copy(scratch, destination, frequency.Length);
-        FftInPlace(destination);
-        ConjugateAndScaleInPlace(destination, 1.0 / frequency.Length);
-    }
-
-    /// <summary>
-    /// InverseFft を実行します。
-    /// </summary>
-    /// <param name="frequency">frequency を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private Complex[] InverseFft(Complex[] frequency)
-    {
-        EnsureIfftScratch(frequency.Length);
-        InverseFftInto(frequency, _ifftWorkScratch!);
-        var result = new Complex[frequency.Length];
-        Array.Copy(_ifftWorkScratch!, result, frequency.Length);
-        return result;
-    }
-
-    /// <summary>
-    /// CreateConjugateSignMask を生成します。
-    /// </summary>
-    /// <returns>処理結果。</returns>
-    private static Vector<double> CreateConjugateSignMask()
-    {
-        var values = new double[Vector<double>.Count];
-        for (var i = 0; i < values.Length; i++)
-        {
-            values[i] = (i & 1) == 0 ? 1.0 : -1.0;
-        }
-
-        return new Vector<double>(values);
-    }
-
-    /// <summary>
-    /// ConjugateInto を実行します。
-    /// </summary>
-    /// <param name="source">source を指定します。</param>
-    /// <param name="destination">destination を指定します。</param>
-    private static void ConjugateInto(Complex[] source, Complex[] destination)
-    {
-        ReadOnlySpan<double> src = MemoryMarshal.Cast<Complex, double>(source.AsSpan());
-        Span<double> dst = MemoryMarshal.Cast<Complex, double>(destination.AsSpan());
-        var width = Vector<double>.Count;
-        var i = 0;
-        for (; i <= src.Length - width; i += width)
-        {
-            var chunk = LoadVector(src, i);
-            StoreVector(dst, i, chunk * ConjugateSignMask);
-        }
-
-        for (; i < src.Length; i++)
-        {
-            dst[i] = (i & 1) == 0 ? src[i] : -src[i];
-        }
-    }
-
-    /// <summary>
-    /// ConjugateAndScaleInPlace を実行します。
-    /// </summary>
-    /// <param name="values">values を指定します。</param>
-    /// <param name="scale">scale を指定します。</param>
-    private static void ConjugateAndScaleInPlace(Complex[] values, double scale)
-    {
-        Span<double> data = MemoryMarshal.Cast<Complex, double>(values.AsSpan());
-        var mask = ConjugateSignMask * new Vector<double>(scale);
-        var width = Vector<double>.Count;
-        var i = 0;
-        for (; i <= data.Length - width; i += width)
-        {
-            var chunk = LoadVector(data, i);
-            StoreVector(data, i, chunk * mask);
-        }
-
-        for (; i < data.Length; i++)
-        {
-            var sign = (i & 1) == 0 ? 1.0 : -1.0;
-            data[i] *= sign * scale;
-        }
-    }
-
-    /// <summary>
-    /// LoadVector を実行します。
-    /// </summary>
-    /// <param name="index">開始インデックス。</param>
-    /// <param name="source">source を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static Vector<double> LoadVector(ReadOnlySpan<double> source, int index)
-    {
-        ref var first = ref MemoryMarshal.GetReference(source);
-        ref var at = ref Unsafe.Add(ref first, index);
-        return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
-    }
-
-    /// <summary>
-    /// LoadVector を実行します。
-    /// </summary>
-    /// <param name="index">開始インデックス。</param>
-    /// <param name="source">source を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static Vector<double> LoadVector(Span<double> source, int index)
-    {
-        ref var first = ref MemoryMarshal.GetReference(source);
-        ref var at = ref Unsafe.Add(ref first, index);
-        return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
-    }
-
-    /// <summary>
-    /// StoreVector を実行します。
-    /// </summary>
-    /// <param name="index">開始インデックス。</param>
-    /// <param name="destination">destination を指定します。</param>
-    /// <param name="value">value を指定します。</param>
-    private static void StoreVector(Span<double> destination, int index, Vector<double> value)
-    {
-        ref var first = ref MemoryMarshal.GetReference(destination);
-        ref var at = ref Unsafe.Add(ref first, index);
-        Unsafe.WriteUnaligned(ref Unsafe.As<double, byte>(ref at), value);
-    }
-
-    /// <summary>
-    /// Fft を実行します。
-    /// </summary>
-    /// <param name="input">input を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static Complex[] Fft(Complex[] input)
-    {
-        var output = new Complex[input.Length];
-        Array.Copy(input, output, input.Length);
-        FftInPlace(output);
-        return output;
-    }
-
-    /// <summary>
-    /// FftInPlace を実行します。
-    /// </summary>
-    /// <param name="output">output を指定します。</param>
-    private static void FftInPlace(Complex[] output)
-    {
-        var n = output.Length;
-
-        var bits = (int)Math.Log2(n);
-
-        for (var i = 0; i < n; i++)
-        {
-            var j = ReverseBits(i, bits);
-            if (j > i)
-            {
-                (output[i], output[j]) = (output[j], output[i]);
-            }
-        }
-
-        for (var len = 2; len <= n; len <<= 1)
-        {
-            var angle = -2.0 * Math.PI / len;
-            var wLen = Complex.FromPolarCoordinates(1.0, angle);
-            var useAvx = Avx.IsSupported && len >= 4;
-            var useArm64Simd = AdvSimd.Arm64.IsSupported && len >= 4;
-
-            for (var i = 0; i < n; i += len)
-            {
-                var w = Complex.One;
-                var halfLen = len >> 1;
-                for (var j = 0; j < halfLen; j++)
-                {
-                    var upperIndex = i + j;
-                    var lowerIndex = upperIndex + halfLen;
-
-                    if (useAvx && (j + 1) < halfLen)
-                    {
-                        var upperIndex2 = upperIndex + 1;
-                        var lowerIndex2 = lowerIndex + 1;
-
-                        var lowerVec = Vector256.Create(
-                            output[lowerIndex].Real,
-                            output[lowerIndex].Imaginary,
-                            output[lowerIndex2].Real,
-                            output[lowerIndex2].Imaginary);
-
-                        var w2 = w * wLen;
-                        var wrVec = Vector256.Create(w.Real, w.Real, w2.Real, w2.Real);
-                        var wiVec = Vector256.Create(w.Imaginary, w.Imaginary, w2.Imaginary, w2.Imaginary);
-                        var swapped = Vector256.Create(
-                            lowerVec.GetElement(1),
-                            lowerVec.GetElement(0),
-                            lowerVec.GetElement(3),
-                            lowerVec.GetElement(2));
-                        var signedImag = Avx.Multiply(swapped, Vector256.Create(-1.0, 1.0, -1.0, 1.0));
-                        var twiddled = Avx.Add(Avx.Multiply(lowerVec, wrVec), Avx.Multiply(signedImag, wiVec));
-
-                        var upperVec = Vector256.Create(
-                            output[upperIndex].Real,
-                            output[upperIndex].Imaginary,
-                            output[upperIndex2].Real,
-                            output[upperIndex2].Imaginary);
-                        var sum = Avx.Add(upperVec, twiddled);
-                        var diff = Avx.Subtract(upperVec, twiddled);
-
-                        output[upperIndex] = new Complex(sum.GetElement(0), sum.GetElement(1));
-                        output[lowerIndex] = new Complex(diff.GetElement(0), diff.GetElement(1));
-                        output[upperIndex2] = new Complex(sum.GetElement(2), sum.GetElement(3));
-                        output[lowerIndex2] = new Complex(diff.GetElement(2), diff.GetElement(3));
-
-                        j++;
-                        w = w2;
-                    }
-                    else if (useArm64Simd && (j + 1) < halfLen)
-                    {
-                        var upperIndex2 = upperIndex + 1;
-                        var lowerIndex2 = lowerIndex + 1;
-
-                        var lower1 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[lowerIndex]));
-                        var lower2 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[lowerIndex2]));
-
-                        var w2 = w * wLen;
-                        var wr1 = Vector128.Create(w.Real);
-                        var wi1 = Vector128.Create(w.Imaginary);
-                        var wr2 = Vector128.Create(w2.Real);
-                        var wi2 = Vector128.Create(w2.Imaginary);
-
-                        var swappedSigned1 = Vector128.Create(-lower1.GetElement(1), lower1.GetElement(0));
-                        var swappedSigned2 = Vector128.Create(-lower2.GetElement(1), lower2.GetElement(0));
-                        var twiddled1 = AdvSimd.Arm64.Add(
-                            AdvSimd.Arm64.Multiply(lower1, wr1),
-                            AdvSimd.Arm64.Multiply(swappedSigned1, wi1));
-                        var twiddled2 = AdvSimd.Arm64.Add(
-                            AdvSimd.Arm64.Multiply(lower2, wr2),
-                            AdvSimd.Arm64.Multiply(swappedSigned2, wi2));
-
-                        var upper1 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[upperIndex]));
-                        var upper2 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[upperIndex2]));
-
-                        var sum1 = AdvSimd.Arm64.Add(upper1, twiddled1);
-                        var diff1 = AdvSimd.Arm64.Subtract(upper1, twiddled1);
-                        var sum2 = AdvSimd.Arm64.Add(upper2, twiddled2);
-                        var diff2 = AdvSimd.Arm64.Subtract(upper2, twiddled2);
-
-                        output[upperIndex] = new Complex(sum1.GetElement(0), sum1.GetElement(1));
-                        output[lowerIndex] = new Complex(diff1.GetElement(0), diff1.GetElement(1));
-                        output[upperIndex2] = new Complex(sum2.GetElement(0), sum2.GetElement(1));
-                        output[lowerIndex2] = new Complex(diff2.GetElement(0), diff2.GetElement(1));
-
-                        j++;
-                        w = w2;
-                    }
-                    else
-                    {
-                        var u = output[upperIndex];
-                        var v = output[lowerIndex] * w;
-                        output[upperIndex] = u + v;
-                        output[lowerIndex] = u - v;
-                    }
-
-                    w *= wLen;
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// ReverseBits を実行します。
-    /// </summary>
-    /// <param name="value">value を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static int ReverseBits(int value, int bitCount)
-    {
-        var reversed = 0;
-        for (var i = 0; i < bitCount; i++)
-        {
-            reversed = (reversed << 1) | (value & 1);
-            value >>= 1;
-        }
-
-        return reversed;
-    }
 }
 

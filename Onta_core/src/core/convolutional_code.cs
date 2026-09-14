@@ -1003,7 +1003,7 @@ public static class ConvolutionalCode
     /// <summary>
     /// Parity を実行します。
     /// </summary>
-    /// <param name="value">蟇ｾ雎｡謨ｴ謨ｰ縲・/param>
+    /// <param name="value">入力値。</param>
     /// <returns>処理結果。</returns>
     private static int Parity(int value)
     {

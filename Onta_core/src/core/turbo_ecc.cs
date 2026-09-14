@@ -620,10 +620,10 @@ public static class TurboEcc1024
             permutation[i] = i;
         }
 
-        var random = new Random(seed);
+        var state = MSequence31.InitializeState(MSequenceUsage.TurboEccInterleaver, seed);
         for (var i = length - 1; i > 0; i--)
         {
-            var j = random.Next(i + 1);
+            var j = (int)(MSequence31.NextWord(ref state) % (uint)(i + 1));
             (permutation[i], permutation[j]) = (permutation[j], permutation[i]);
         }
 

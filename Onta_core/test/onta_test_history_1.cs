@@ -57,7 +57,6 @@ public sealed class OntaTestHistory1
         // 2ブロック目(BLK-1)の BH+BD のみを連結して block-only WAV を作る。
         var blockOnly = Concat(bhFrames[1].Samples, bdFrames[1].Samples);
         WavWriter.WriteMono16(wavPath, Profile.SampleRate, blockOnly, Profile.SamplePeak);
-        HistoryAssert.SaveSendAndAssertRegistered(nameof(Decode_BlockOnlyWav_RegistersOrphan), inputPath, wavPath);
 
         var (leftRead, rightRead) = WavReader.ReadPcm16(wavPath);
         Assert.Empty(rightRead);

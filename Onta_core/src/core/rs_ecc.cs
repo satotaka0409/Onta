@@ -873,7 +873,7 @@ internal static class ReedSolomonCodec
     /// GfInverse を実行します。
     /// </summary>
     /// <param name="value">value を指定します。</param>
-    /// <returns>荵玲ｳ暮・・縲・/returns>
+    /// <returns>処理結果。</returns>
     private static int GfInverse(int value)
     {
         if (value == 0)
@@ -885,11 +885,11 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// GfPower を実行します。
+    /// GF(256) 上で value の power 乗を計算します。
     /// </summary>
-    /// <param name="value">蠎輔・/param>
-    /// <param name="power">謖・焚縲・/param>
-    /// <returns>value^power縲・/returns>
+    /// <param name="value">べき乗する元。</param>
+    /// <param name="power">指数。</param>
+    /// <returns>GF(256) 上でのべき乗結果。</returns>
     private static int GfPower(int value, int power)
     {
         if (power == 0)

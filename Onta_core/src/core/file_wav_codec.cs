@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 namespace Onta.Core;
 
 /// <summary>
-/// 送信処理で扱うフレーム種別です。
+/// 送受信で扱うフレーム種別です。
 /// </summary>
 public enum TransmissionFrameKind
 {
@@ -19,12 +19,12 @@ public enum TransmissionFrameKind
 }
 
 /// <summary>
-/// 生成されたPCMチャンクを受け取るコールバックです。
+/// 受信した PCM チャンクを処理するコールバックです。
 /// </summary>
 public delegate void PcmChunkHandler(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right);
 
 /// <summary>
-/// ファイル送受信に使う OFDM / 変調 / 音声条件のプロファイルです。
+/// ファイル伝送に使用する OFDM/変調パラメータです。
 /// </summary>
 public sealed record FileWavCodecProfile(
     int ActiveSubcarriers,
@@ -50,7 +50,7 @@ public sealed record FileWavCodecProfile(
 }
 
 /// <summary>
-/// 段階デコード時の探索・復号アルゴリズム調整値です。
+/// 段階デコード時の探索・復号チューニング値です。
 /// </summary>
 public sealed record DecodeRuntimeTuning(
     int TurboIterationsMin = 8,
@@ -72,7 +72,7 @@ public sealed record DecodeRuntimeTuning(
     double SoftLlrAbortMeanAbsWhenWowLocked = 0.55,
     double SoftHardFallbackMinMeanAbsLlr = 1.0,
     /// <summary>
-    /// 適応再ワープ時に先読みする秒数です。
+    /// WOW 再補正時に先読みする秒数です。
     /// </summary>
     double WowRewarpLookaheadSeconds = 8.0)
 {
@@ -80,7 +80,7 @@ public sealed record DecodeRuntimeTuning(
 }
 
 /// <summary>
-/// 段階デコードの進行状態と中間結果を保持します。
+/// 段階デコードの進捗状態と中間結果を保持します。
 /// </summary>
 public sealed class ProgressiveDecodeState
 {
@@ -100,19 +100,19 @@ public sealed class ProgressiveDecodeState
     internal int WarpedCursor;
     internal long LogicalOffset;
     /// <summary>
-    /// 現在の PCM バッファ先頭が、ストリーム先頭から何サンプル目かに相当するかです。
-    /// リアルタイム受信で消費済み先頭を捨てるときに進めます。
+    /// 現在の PCM バッファ先頭が、元ストリーム全体の何サンプル目に相当するかを示します。
+    /// ストリーミング受信で先頭を破棄した場合でも時刻基準を維持します。
     /// </summary>
     internal long StreamSampleBase;
     internal byte[]?[]? OutputSlots;
     internal bool[]? SlotAccepted;
     internal (double Amount, double WowPhase, double FlutterPhase)? TrackedWow;
     internal bool HasTrackedWow;
-    /// <summary>true のとき絶対時刻セグメント補正、false のとき Correct モデル。</summary>
+    /// <summary>true のとき区間補正モデル、false のとき全体補正モデルを使用します。</summary>
     internal bool UseSegmentWowModel;
-    /// <summary>開口ワウ探索（Match/FH推定）を少なくとも1回試したか。</summary>
+    /// <summary>オープニング区間での WOW 探索を実施済みかを示します。</summary>
     internal bool OpeningWowSearchDone;
-    /// <summary>前回の FH ワウ再推定時のバッファ長（サンプル）。</summary>
+    /// <summary>最後にオープニング WOW 推定を行った入力長（サンプル）です。</summary>
     internal int LastOpeningWowEstimateAtSamples;
     internal CoreFrameKind CurrentFrame = CoreFrameKind.Fh;
     internal int CurrentBlockIndex = -1;
@@ -132,7 +132,7 @@ public sealed class ProgressiveDecodeState
     internal ModulationScheme? DetectedModulationScheme;
 
     /// <summary>
-    /// FH確定時にファイル名/サイズ/ブロック数を通知します。
+    /// FH 確定時にファイル名・サイズ・ブロック数を通知します。
     /// </summary>
     public Action<string, long, int>? FileHeaderReady;
 
@@ -190,7 +190,7 @@ public enum ProgressiveDecodeStatus
 }
 
 /// <summary>
-/// 復号処理の統計情報です。
+/// デコード処理の集計メトリクスです。
 /// </summary>
 public readonly record struct DecodeStageMetrics(
     int HeaderRsDecodeCount,
@@ -205,9 +205,9 @@ public readonly record struct DecodeStageMetrics(
 }
 
 /// <summary>
-/// ファイルとWAVの相互変換・段階デコードを提供する中核コーデックです。
+/// ファイルと WAV の相互変換および段階デコードを提供するコーデックです。
 /// </summary>
-public sealed class FileWavCodec
+public sealed partial class FileWavCodec
 {
     private const int FileHeaderBytes = 880;
     private const int FileNameBytes = 768;
@@ -238,7 +238,7 @@ public sealed class FileWavCodec
     public DecodeStageMetrics LastDecodeStageMetrics { get; private set; } = DecodeStageMetrics.Empty;
 
     /// <summary>指定したプロファイルでコーデックを初期化します。</summary>
-    /// <param name="profile">送受信の変調・OFDM条件を含むプロファイル。</param>
+    /// <param name="profile">profile を指定します。</param>
     public FileWavCodec(FileWavCodecProfile profile)
     {
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
@@ -252,12 +252,12 @@ public sealed class FileWavCodec
     }
 
     /// <summary>
-    /// 入力ファイルをWAVへエンコードし、再デコードして復元バイト列を返します。
+    /// 入力ファイルを WAV へ符号化し、再度復号して結果バイト列を返します。
     /// </summary>
-    /// <param name="inputPath">送信元ファイルのパス。</param>
-    /// <param name="wavPath">中間WAVの出力先パス。</param>
-    /// <param name="restoredPath">復元したバイト列を保存する先。null の場合は保存しません。</param>
-    /// <returns>復元されたファイルのバイト列。</returns>
+    /// <param name="inputPath">inputPath を指定します。</param>
+    /// <param name="wavPath">wavPath を指定します。</param>
+    /// <param name="restoredPath">restoredPath を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public byte[] EncodeDecodeRoundTrip(string inputPath, string wavPath, string? restoredPath = null)
     {
         if (!File.Exists(inputPath))
@@ -292,14 +292,14 @@ public sealed class FileWavCodec
         return decodedBytes;
     }
 
-    /// <summary>ファイルバイト列をOFDMのPCMサンプルへエンコードします。</summary>
-    /// <param name="fileBytes">送信するファイルのバイト列。</param>
-    /// <param name="fileInfo">ファイル名などヘッダー生成に使う情報。</param>
-    /// <param name="onFrameTransmitted">フレーム送信時に呼ばれるコールバック。</param>
-    /// <param name="onPcmChunk">生成PCMチャンクごとのコールバック（L/Rサンプル）。</param>
-    /// <param name="retainAllSamples">true の場合、全PCMを戻り値にも保持します。</param>
-    /// <param name="cancellationToken">処理中断用トークン。</param>
-    /// <returns>L/R のOFDM PCMサンプル。</returns>
+    /// <summary>ファイルバイト列を OFDM の PCM サンプルへ変調します。</summary>
+    /// <param name="fileBytes">fileBytes を指定します。</param>
+    /// <param name="fileInfo">fileInfo を指定します。</param>
+    /// <param name="onFrameTransmitted">onFrameTransmitted を指定します。</param>
+    /// <param name="onPcmChunk">onPcmChunk を指定します。</param>
+    /// <param name="retainAllSamples">retainAllSamples を指定します。</param>
+    /// <param name="cancellationToken">cancellationToken を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public (Complex[] Left, Complex[] Right) EncodeFileToSamples(
         byte[] fileBytes,
         FileInfo fileInfo,
@@ -400,7 +400,7 @@ public sealed class FileWavCodec
                 pass,
                 _profile.ActiveSubcarriers,
                 _profile.ModulationScheme);
-            // BH / パス内 mid-FH は、そのパスのデータ SC 族に周波数グリッドを合わせる。
+            // 補足。
             var headerOfdm = CreateHeaderOfdm(OfdmConfig.ResolveCarrierGrid(passSc));
             var dataOfdm = CreateDataOfdm(passSc, passMod);
             var dataPunctureRate = ResolveDataPunctureRate(passMod);
@@ -448,7 +448,7 @@ public sealed class FileWavCodec
             }
         }
 
-        // 末尾 FH は先頭 FH と同じくプロファイル基準 SC 族を使う。
+        // 補足。
         AppendFileHeaderPacket(leftPcm, rightPcm, openingHeaderOfdm, fileHeader);
         EnsureStereoParity("trailing file header");
         FlushPcmChunk();
@@ -515,16 +515,16 @@ public sealed class FileWavCodec
     }
 
     /// <summary>
-    /// PCM配列を入力として段階デコードを実行します。
+    /// PCM サンプル列を入力として段階デコードを実行します。
     /// </summary>
-    /// <param name="leftSamples">左チャネルPCMサンプル列。</param>
-    /// <param name="rightSamples">右チャネルPCMサンプル列（モノラル時は空配列）。</param>
-    /// <param name="state">呼び出し間で保持する段階デコード状態。</param>
-    /// <param name="correctWow">true の場合、WOW/Flutter補正を有効化します。</param>
-    /// <param name="wowParams">既知のWOW/Flutter補正パラメータ。</param>
-    /// <param name="tuning">復号探索の調整パラメータ。</param>
-    /// <param name="allowIncomplete">true の場合、不足サンプル時に NeedMoreSamples を返します。</param>
-    /// <returns>段階デコードの結果状態。</returns>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="state">state を指定します。</param>
+    /// <param name="correctWow">correctWow を指定します。</param>
+    /// <param name="wowParams">wowParams を指定します。</param>
+    /// <param name="tuning">tuning を指定します。</param>
+    /// <param name="allowIncomplete">allowIncomplete を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public ProgressiveDecodeStatus DecodePcmSamplesProgressive(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -545,19 +545,19 @@ public sealed class FileWavCodec
 
         if (_profile.ChannelMode == ChannelMode.Mono && rightSamples.Length != 0)
         {
-            state.LastError = "モノラル受信には1ch WAVが必要です。";
+            state.LastError = "モノラル送信には 1ch WAV が必要です。";
             return ProgressiveDecodeStatus.Failed;
         }
 
         if (_profile.ChannelMode == ChannelMode.Stereo && rightSamples.Length != leftSamples.Length)
         {
-            state.LastError = "ステレオ受信にはL/R同長の2ch WAVが必要です。";
+            state.LastError = "ステレオ送信には L/R の 2ch WAV が必要です。";
             return ProgressiveDecodeStatus.Failed;
         }
 
         if (leftSamples.Length < state.SourceLength)
         {
-            // StreamSampleBase が進んでいる場合は先頭圧縮なので状態を維持する。
+            // 補足。
             if (state.StreamSampleBase <= 0)
             {
                 state.Reset();
@@ -610,8 +610,8 @@ public sealed class FileWavCodec
         }
         else if (adaptiveWow)
         {
-            // 段階デコードでは毎回 Match すると FH 前に数分×N で固まる。
-            // プリアンブルが揃ってから1回だけ Match→Refine / FH推定し、失敗時のみ間引き再試行する。
+            // 補足。
+            // 補足。
             var minForOpeningWow = _profile.LeadingSilenceSamples
                 + _profile.UnmodulatedPreambleSamples
                 + Math.Max(headerOfdm.SamplesPerOfdmSymbol * 16, _profile.SampleRate / 4);
@@ -641,7 +641,7 @@ public sealed class FileWavCodec
                     _profile.UnmodulatedPreambleSamples,
                     Math.Max(0, leftSamples.Length - preambleStart));
 
-                // Match の scale は samples.Length 基準。切り出し窓だと全長 wow と合わず失敗する。
+                // 補足。
                 var rawPreambleScore = preambleCount >= headerOfdm.SamplesPerOfdmSymbol * 16
                     ? headerOfdm.ScorePreambleMatchForDiagnostics(
                         leftSamples,
@@ -652,7 +652,7 @@ public sealed class FileWavCodec
 
                 if (rawPreambleScore >= 0.70)
                 {
-                    // ワウ無し（または既に十分きれい）— 重い Match を省略
+                    // 補足。
                     lockedWow = (0.0, 0.0, 0.0);
                     useSegmentCorrectModel = false;
                     state.StatusBoard.SetProgress(new CoreProgressInfo(
@@ -687,7 +687,7 @@ public sealed class FileWavCodec
                         : null;
                     if (openingDiag is { } d && d.BestScore >= 0.50)
                     {
-                        // Match / Refine / Apply はいずれも散乱 Correct（全長 scale）。
+                        // 補足。
                         lockedWow = headerOfdm.RefineWowParametersForCorrectModel(
                             leftSamples,
                             useRightChannel: false,
@@ -711,8 +711,8 @@ public sealed class FileWavCodec
                     }
                     else
                     {
-                        // 長尺 WAV で Match 失敗後の FH/BD 総当たりは固まるので省略する。
-                        // （短いバッファ／LPF 用途の FH 推定のみ残す）
+                        // 補足。
+                        // 補足。
                         if (leftSamples.Length <= _profile.SampleRate * 12)
                         {
                             lockedWow = TryEstimateWowByOpeningFileHeader(
@@ -742,7 +742,7 @@ public sealed class FileWavCodec
 
                 if (lockedWow is { } wow)
                 {
-                    // amount=0 は補正不要（きれいな WAV の高速経路）
+                    // 補足。
                     if (Math.Abs(wow.Amount) > 1e-12)
                     {
                         state.StatusBoard.SetProgress(new CoreProgressInfo(
@@ -930,8 +930,8 @@ public sealed class FileWavCodec
             double wowPhase,
             double flutterPhase)
         {
-            // 切り出しバッファを t=0 として補正すると位相がずれるため、
-            // 全波形上の絶対時刻で区間補正する（Match と同じ逆写像）。
+            // 補足。
+            // 補足。
             headerOfdm.CorrectWowFlutterSegmentInPlace(
                 channelSamples,
                 start,
@@ -1172,7 +1172,7 @@ public sealed class FileWavCodec
                     pass,
                     _profile.ActiveSubcarriers,
                     _profile.ModulationScheme);
-                // パスごとのデータ SC 族にヘッダーグリッドを合わせる（×2 の SC-24/32→16 など）。
+                // 補足。
                 headerOfdm = CreateHeaderOfdm(OfdmConfig.ResolveCarrierGrid(passSc));
                 var passFhPacketSamples = HeaderPacketSamples(
                     headerOfdm, FileHeaderBytes, _profile.FileHeaderUnmodulatedSamples);
@@ -1373,12 +1373,12 @@ public sealed class FileWavCodec
                                 effectiveBlockIndex = resolvedOwner;
                                 acceptedForStatus = true;
                                 state.LastError =
-                                    $"ORPHAN-RESOLVED hash一致で BLK-{resolvedOwner} に組み込み (pass {pass}, local {local})";
+                                    $"ORPHAN-RESOLVED hash一致で BLK-{resolvedOwner} に再割当 (pass {pass}, local {local})";
                             }
                             else
                             {
                                 var detail = ownerKnown
-                                    ? $"孤立BLK-{ownerBlockIndex} 未一致 (pass {pass}, local {local})"
+                                    ? $"管理BLK-{ownerBlockIndex} と不一致 (pass {pass}, local {local})"
                                     : $"孤立ブロック index={blockIndex} (pass {pass}, local {local})";
                                 SaveOrphanPayload(payload, detail);
                             }
@@ -1407,7 +1407,7 @@ public sealed class FileWavCodec
                     }
                     catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                     {
-                        MarkBlockError($"BLK-{expectedBlockIndex} 復号エラー: {ex.Message}");
+                        MarkBlockError($"BLK-{expectedBlockIndex} デコードエラー: {ex.Message}");
                         if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol <= leftSamples.Length)
                         {
                             warpedCursor += headerOfdm.SamplesPerOfdmSymbol;
@@ -1569,90 +1569,6 @@ public sealed class FileWavCodec
         }
     }
 
-    private OfdmGenerator CreateHeaderOfdm(OfdmCarrierGrid? carrierGrid = null)
-    {
-        var groupB = OfdmConfig.ResolveGroupBLeftBins();
-        // ヘッダーは常に GROUP-B・8SC。周波数グリッドはデータ部 SC 族に合わせる（明示指定時はそのグリッド）。
-        var grid = carrierGrid ?? OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
-        var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
-        var config = new OfdmConfig(
-            fftSize: fftSize,
-            activeSubcarriers: groupB.Length,
-            cyclicPrefixLength: _profile.HeaderCyclicPrefixLength,
-            ofdmSymbolCount: 1,
-            modulationScheme: ModulationScheme.Bpsk,
-            channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
-            pilotSpacing: 8,
-            stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
-            sampleRate: _profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
-            randomSeed: _profile.RandomSeed,
-            conceptualLeftBins: groupB,
-            carrierGrid: grid);
-
-        return new OfdmGenerator(config);
-    }
-
-    private static OfdmCarrierGrid AlternateCarrierGrid(OfdmCarrierGrid grid) =>
-        grid == OfdmCarrierGrid.Sc8Family ? OfdmCarrierGrid.Sc24Family : OfdmCarrierGrid.Sc8Family;
-
-    /// <summary>
-    /// ヘッダー復号を試し、失敗時はもう一方の SC 族グリッドで再試行します。
-    /// （受信プロファイルの SC が送信と不一致でも FH 同期できるようにする）
-    /// </summary>
-    private byte[] DecodeHeaderPacketSyncedTryingGrids(
-        ref OfdmGenerator headerOfdm,
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        ref int warpedCursor,
-        ref long logicalOffset,
-        int payloadLength,
-        byte[]? expectedPilot,
-        int searchRadius,
-        int interleaveInitSeed,
-        Action<int, int>? onSyncProgress = null,
-        CoreExecutionStatusBoard? statusBoard = null,
-        CoreFrameKind frameKind = CoreFrameKind.Fh)
-    {
-        var savedCursor = warpedCursor;
-        var savedLogical = logicalOffset;
-        try
-        {
-            return DecodeHeaderPacketSynced(
-                leftSamples,
-                rightSamples,
-                ref warpedCursor,
-                ref logicalOffset,
-                headerOfdm,
-                payloadLength,
-                expectedPilot,
-                searchRadius,
-                interleaveInitSeed,
-                onSyncProgress,
-                statusBoard,
-                frameKind);
-        }
-        catch (InvalidDataException)
-        {
-            warpedCursor = savedCursor;
-            logicalOffset = savedLogical;
-            headerOfdm = CreateHeaderOfdm(AlternateCarrierGrid(headerOfdm.CarrierGrid));
-            return DecodeHeaderPacketSynced(
-                leftSamples,
-                rightSamples,
-                ref warpedCursor,
-                ref logicalOffset,
-                headerOfdm,
-                payloadLength,
-                expectedPilot,
-                searchRadius,
-                interleaveInitSeed,
-                onSyncProgress,
-                statusBoard,
-                frameKind);
-        }
-    }
 
     private OfdmGenerator CreateDataOfdm(int activeSubcarriers, ModulationScheme modulationScheme)
     {
@@ -1676,78 +1592,9 @@ public sealed class FileWavCodec
         return new OfdmGenerator(config);
     }
 
-    private void AppendFileHeaderPacket(
-        List<Complex> leftPcm,
-        List<Complex> rightPcm,
-        OfdmGenerator headerOfdm,
-        byte[] fileHeader)
-    {
-        AppendHeaderPackets(
-            leftPcm,
-            rightPcm,
-            headerOfdm,
-            fileHeader,
-            fileHeader,
-            _profile.FileHeaderUnmodulatedSamples,
-            InterleaveInitSeedFileHeader);
-    }
-
-    /// <summary>
-    /// ヘッダー前置無変調区間と符号化ヘッダーをPCMへ追加します。
-    /// </summary>
-    /// <param name="leftPcm">左チャネル出力バッファ。</param>
-    /// <param name="rightPcm">右チャネル出力バッファ。</param>
-    /// <param name="ofdm">ヘッダー変調に使うOFDM生成器。</param>
-    /// <param name="leftHeaderBytes">送信するヘッダーバイト列。</param>
-    /// <param name="rightHeaderBytes">将来拡張用の右ヘッダーバイト列。</param>
-    /// <param name="unmodulatedSamples">前置の無変調サンプル数。</param>
-    /// <param name="interleaveInitSeed">周波数インタリーブ初期シード。</param>
-    private void AppendHeaderPackets(
-        List<Complex> leftPcm,
-        List<Complex> rightPcm,
-        OfdmGenerator ofdm,
-        byte[] leftHeaderBytes,
-        byte[] rightHeaderBytes,
-        int unmodulatedSamples,
-        int interleaveInitSeed)
-    {
-        _ = rightHeaderBytes;
-        if (unmodulatedSamples > 0)
-        {
-            var unmodulated = ofdm.GenerateUnmodulated(unmodulatedSamples);
-            AppendHeaderPair(leftPcm, rightPcm, unmodulated);
-        }
-
-        var leftBits = BytesToBitsMsb(
-            ConvolutionalCode.Encode(
-                ApplyReedSolomon(
-                    ChannelBitInterleaver.InterleaveBytes(
-                        leftHeaderBytes,
-                        ResolveBitInterleaveSeed(interleaveInitSeed))),
-                terminate: true,
-                punctureRate: HeaderPunctureRate));
-
-        var modulated = ofdm.ModulateBits(leftBits, leftPcm.Count, interleaveInitSeed);
-        AppendHeaderPair(leftPcm, rightPcm, modulated);
-    }
-
-    private void AppendHeaderPair(List<Complex> leftPcm, List<Complex> rightPcm, (Complex[] Left, Complex[] Right) pair)
-    {
-        AppendPair(leftPcm, rightPcm, pair);
-        if (_profile.ChannelMode == ChannelMode.Stereo && pair.Right.Length == 0)
-        {
-            rightPcm.AddRange(pair.Left);
-        }
-    }
-
-    private int HeaderUnmodulatedSamplesFor(int packetLength) =>
-        packetLength == FileHeaderBytes
-            ? _profile.FileHeaderUnmodulatedSamples
-            : _profile.BlockHeaderUnmodulatedSamples;
-
     /// <summary>
     /// 先頭 FH の同期成功を指標にワウパラメータを探索します。
-    /// プリアンブル相関が LPF 等で壊れる場合のフォールバックです。
+    /// プリアンブル相関が LPF 等で崩れる場合のフォールバックです。
     /// prefix Correct で粗い位置を掴み、最終適用と同じ全波形 Correct で精密化します。
     /// </summary>
     private (double Amount, double WowPhase, double FlutterPhase)? TryEstimateWowByOpeningFileHeader(
@@ -1781,7 +1628,7 @@ public sealed class FileWavCodec
         var searchRadius = Math.Max(2, headerOfdm.SamplesPerOfdmSymbol / 8);
         var stereo = rightSamples.Length >= leftSamples.Length && rightSamples.Length > 0;
 
-        // FH+BH まで（末尾に同期ゆとり）。全波形 Correct は 59MB WAV で致命的に遅い。
+        // 補足。
         var headerNeedLen = Math.Min(
             leftSamples.Length,
             expectedFhStart
@@ -1791,7 +1638,7 @@ public sealed class FileWavCodec
             + bhSampleCount
             + (searchRadius * 4)
             + (headerOfdm.SamplesPerOfdmSymbol * 32));
-        // BD0 最悪寄り（SC8 BPSK）の見積り。BH 後に実長へ縮める。
+        // 補足。
         var maxDataOfdm = CreateDataOfdm(8, ModulationScheme.Bpsk);
         var maxBdSamples = DataPacketSamples(
             maxDataOfdm,
@@ -1806,7 +1653,7 @@ public sealed class FileWavCodec
 
         var workLeft = new Complex[dataNeedLen];
         var workRight = stereo ? new Complex[dataNeedLen] : Array.Empty<Complex>();
-        // OfdmGenerator はスクラッチ持ちなので並列時はスレッドごとに別インスタンスを使う。
+        // 補足。
         (Complex[] Left, Complex[] Right, OfdmGenerator Ofdm) CreateWorker() =>
             (new Complex[dataNeedLen], stereo ? new Complex[dataNeedLen] : Array.Empty<Complex>(), CreateHeaderOfdm());
 
@@ -1820,7 +1667,7 @@ public sealed class FileWavCodec
             double flutterPhase)
         {
             needLen = Math.Clamp(needLen, 1, dataNeedLen);
-            // 全長基準の scale で先頭区間だけ逆補正（切り出し CorrectInPlace は位相がずれる）
+            // 補足。
             ofdm.CorrectWowFlutterSegmentTo(
                 leftSamples,
                 0,
@@ -1962,7 +1809,7 @@ public sealed class FileWavCodec
                 return null;
             }
 
-            // BH0 まで通る候補を強く優先（LPF 下では FH だけの最適がデータ部に足りない）
+            // 補足。
             var score = fhLlr;
             var bhStart = fhEnd + _profile.BlockHeaderUnmodulatedSamples;
             if (bhStart + bhSampleCount > need
@@ -1990,7 +1837,7 @@ public sealed class FileWavCodec
                 return (amount, wowPhase, flutterPhase, score);
             }
 
-            // BD0 ハッシュ一致まで見ないと LPF+QPSK では位相が足りない
+            // 補足。
             try
             {
                 var blockSize = BinaryPrimitives.ReadInt32BigEndian(bhPayload.AsSpan(20, 4));
@@ -2016,7 +1863,7 @@ public sealed class FileWavCodec
                 if (bdNeed > need)
                 {
                     PrepareWork(destLeft, destRight, ofdm, bdNeed, amount, wowPhase, flutterPhase);
-                    // 再 Correct 後は FH/BH カーソルは同じ相対位置のまま使える
+                    // 補足。
                     if (!TryHeader(
                             destLeft,
                             destRight,
@@ -2079,7 +1926,7 @@ public sealed class FileWavCodec
                 {
                     score += 1_000_000.0;
 
-                    // BD1 まで通る候補をさらに優先（位相が甘いと途中ブロックで落ちる）
+                    // 補足。
                     try
                     {
                         var bh1Start = dataCursor + _profile.BlockHeaderUnmodulatedSamples;
@@ -2203,13 +2050,13 @@ public sealed class FileWavCodec
                     }
                     catch
                     {
-                        // BD1 失敗は BD0 成功スコアのまま
+                        // 補足。
                     }
                 }
             }
             catch
             {
-                // BD 失敗はスコア加算なし
+                // 補足。
             }
 
             return (amount, wowPhase, flutterPhase, score);
@@ -2233,7 +2080,7 @@ public sealed class FileWavCodec
             }
         }
 
-        // --- Stage1: prefix で FH 成功候補を収集（位相グリッド並列） ---
+        // 補足。
         var prefixHits = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
         foreach (var amount in amounts)
         {
@@ -2280,11 +2127,11 @@ public sealed class FileWavCodec
             }
             catch (OperationCanceledException)
             {
-                // 十分な候補が集まった早期終了
+                // 補足。
             }
             catch (AggregateException ae) when (ae.InnerExceptions.All(static e => e is OperationCanceledException))
             {
-                // Parallel.For 経由のキャンセル
+                // 補足。
             }
 
             var foundForAmount = prefixHits.Count - foundBefore;
@@ -2293,7 +2140,7 @@ public sealed class FileWavCodec
                 break;
             }
 
-            // 0.005 で十分な FH 成功があれば 0.01 は省略
+            // 補足。
             if (amount == 0.005 && foundForAmount >= 3)
             {
                 break;
@@ -2333,7 +2180,7 @@ public sealed class FileWavCodec
             }
         }
 
-        // --- Stage2: 各中心で wow 密探索（k ループ並列、BH CRC） ---
+        // 補足。
         (double Amount, double WowPhase, double FlutterPhase, double Score)? bestBh = null;
         foreach (var center in centers)
         {
@@ -2426,7 +2273,7 @@ public sealed class FileWavCodec
             }
         }
 
-        // --- Stage3: BD0（螺旋をチャンク並列。成功後の精密化は逐次） ---
+        // 補足。
         static IEnumerable<int> SpiralOffsets(int maxAbs)
         {
             yield return 0;
@@ -2480,7 +2327,7 @@ public sealed class FileWavCodec
 
             if (bestWithData is { } early && early.Score >= 1_000_000.0)
             {
-                // BD0/BD1 成功帯を wow/flutter 双方で精密化（後続ブロック耐性のため）
+                // 補足。
                 var refined = early;
                 foreach (var dw in SpiralOffsets(12))
                 {
@@ -2608,1726 +2455,8 @@ public sealed class FileWavCodec
         }
     }
 
-    /// <summary>
-    /// ヘッダー前置無変調サンプルを読み飛ばします。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="warpedCursor">warpedCursor を指定します。</param>
-    /// <param name="logicalOffset">logicalOffset を指定します。</param>
-    /// <param name="unmodulatedSamples">unmodulatedSamples を指定します。</param>
-    private static void SkipHeaderUnmodulatedPreamble(
-        Complex[] samples,
-        ref int warpedCursor,
-        ref long logicalOffset,
-        int unmodulatedSamples)
-    {
-        warpedCursor = SkipSamples(samples, warpedCursor, unmodulatedSamples);
-        logicalOffset += unmodulatedSamples;
-    }
 
-    /// <summary>
-    /// 現在カーソル近傍でヘッダーパケット同期復号を行います。
-    /// </summary>
-    /// <param name="leftSamples">leftSamples を指定します。</param>
-    /// <param name="rightSamples">rightSamples を指定します。</param>
-    /// <param name="warpedCursor">warpedCursor を指定します。</param>
-    /// <param name="logicalOffset">logicalOffset を指定します。</param>
-    /// <param name="ofdm">ofdm を指定します。</param>
-    /// <param name="payloadLength">payloadLength を指定します。</param>
-    /// <param name="expectedPilot">expectedPilot を指定します。</param>
-    /// <param name="searchRadius">searchRadius を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static byte[] DecodeHeaderPacketSynced(
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        ref int warpedCursor,
-        ref long logicalOffset,
-        OfdmGenerator ofdm,
-        int payloadLength,
-        byte[]? expectedPilot,
-        int searchRadius,
-        int interleaveInitSeed,
-        Action<int, int>? onSyncProgress = null,
-        CoreExecutionStatusBoard? statusBoard = null,
-        CoreFrameKind frameKind = CoreFrameKind.Fh)
-    {
-        var rsByteLength = GetReedSolomonEncodedLength(payloadLength);
-        var convByteLength = GetConvolutionalEncodedLength(rsByteLength, HeaderPunctureRate);
-        var bitCount = convByteLength * 8;
-        var stereoSplit = false;
-        var channelBitCount = stereoSplit ? (bitCount + 1) / 2 : bitCount;
-        var sampleCount = ofdm.SampleCountForBitCount(channelBitCount);
-        var symbolLength = ofdm.SamplesPerOfdmSymbol;
-        var probeSymbols = Math.Clamp(sampleCount / symbolLength, 1, 4);
 
-        onSyncProgress?.Invoke(0, 1);
-        if (TryDecodeHeaderAt(
-                leftSamples,
-                rightSamples,
-                warpedCursor,
-                logicalOffset,
-                ofdm,
-                bitCount,
-                channelBitCount,
-                sampleCount,
-                payloadLength,
-                rsByteLength,
-                expectedPilot,
-                stereoSplit,
-                perSymbolSearchRadius: 0,
-                interleaveInitSeed,
-                out var exactPayload,
-                out var exactEnd,
-                out _,
-                statusBoard,
-                frameKind))
-        {
-            warpedCursor = exactEnd;
-            logicalOffset += sampleCount;
-            onSyncProgress?.Invoke(1, 1);
-            return exactPayload;
-        }
-
-        var candidateStarts = CollectSyncCandidates(
-            leftSamples,
-            warpedCursor,
-            sampleCount,
-            searchRadius,
-            ofdm,
-            probeSymbols,
-            useRightChannel: false);
-
-        Exception? lastError = null;
-        for (var i = 0; i < candidateStarts.Count; i++)
-        {
-            var start = candidateStarts[i];
-            onSyncProgress?.Invoke(i + 1, Math.Max(1, candidateStarts.Count));
-            if (start == warpedCursor)
-            {
-                continue;
-            }
-
-            try
-            {
-                if (TryDecodeHeaderAt(
-                        leftSamples,
-                        rightSamples,
-                        start,
-                        logicalOffset,
-                        ofdm,
-                        bitCount,
-                        channelBitCount,
-                        sampleCount,
-                        payloadLength,
-                        rsByteLength,
-                        expectedPilot,
-                        stereoSplit,
-                        perSymbolSearchRadius: Math.Min(2, Math.Max(0, symbolLength / 16)),
-                        interleaveInitSeed,
-                        out var payload,
-                        out var endCursor,
-                        out _,
-                        statusBoard,
-                        frameKind))
-                {
-                    warpedCursor = endCursor;
-                    logicalOffset += sampleCount;
-                    return payload;
-                }
-            }
-            catch (Exception ex)
-            {
-                lastError = ex;
-            }
-        }
-
-        throw new InvalidDataException(
-            $"ヘッダー同期に失敗しました（sample≈{warpedCursor}, payload={payloadLength}）。" +
-            "プリアンブル位置のずれ、またはワウ／ノイズが強い可能性があります。",
-            lastError);
-    }
-
-    private static bool TryDecodeHeaderAt(
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        int start,
-        long logicalOffset,
-        OfdmGenerator ofdm,
-        int totalBitCount,
-        int channelBitCount,
-        int sampleCount,
-        int payloadLength,
-        int rsByteLength,
-        byte[]? expectedPilot,
-        bool stereoSplit,
-        int perSymbolSearchRadius,
-        int interleaveInitSeed,
-        out byte[] payload,
-        out int endCursor)
-    {
-        return TryDecodeHeaderAt(
-            leftSamples,
-            rightSamples,
-            start,
-            logicalOffset,
-            ofdm,
-            totalBitCount,
-            channelBitCount,
-            sampleCount,
-            payloadLength,
-            rsByteLength,
-            expectedPilot,
-            stereoSplit,
-            perSymbolSearchRadius,
-            interleaveInitSeed,
-            out payload,
-            out endCursor,
-            out _);
-    }
-
-    private static bool TryDecodeHeaderAt(
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        int start,
-        long logicalOffset,
-        OfdmGenerator ofdm,
-        int totalBitCount,
-        int channelBitCount,
-        int sampleCount,
-        int payloadLength,
-        int rsByteLength,
-        byte[]? expectedPilot,
-        bool stereoSplit,
-        int perSymbolSearchRadius,
-        int interleaveInitSeed,
-        out byte[] payload,
-        out int endCursor,
-        out double meanAbsLlr,
-        CoreExecutionStatusBoard? statusBoard = null,
-        CoreFrameKind frameKind = CoreFrameKind.Fh)
-    {
-        payload = Array.Empty<byte>();
-        endCursor = start;
-        meanAbsLlr = 0.0;
-        if (start < 0 || start + sampleCount > leftSamples.Length)
-        {
-            return false;
-        }
-
-        if (stereoSplit && start + sampleCount > rightSamples.Length)
-        {
-            return false;
-        }
-
-        try
-        {
-            double[] llrs;
-            if (perSymbolSearchRadius <= 0)
-            {
-                var cursor = start;
-                llrs = DemodulateDataSoftLlrsFromStream(
-                    ofdm,
-                    leftSamples,
-                    rightSamples,
-                    ref cursor,
-                    channelBitCount,
-                    totalBitCount,
-                    stereoSplit,
-                    logicalOffset,
-                    searchRadius: Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
-                    noiseVariance: 0.05,
-                    interleaveInitSeed,
-                    ModulationScheme.Bpsk);
-                endCursor = cursor;
-            }
-            else
-            {
-                var cursor = start;
-                llrs = DemodulateDataSoftLlrsFromStream(
-                    ofdm,
-                    leftSamples,
-                    rightSamples,
-                    ref cursor,
-                    channelBitCount,
-                    totalBitCount,
-                    stereoSplit,
-                    logicalOffset,
-                    perSymbolSearchRadius,
-                    noiseVariance: 0.05,
-                    interleaveInitSeed,
-                    ModulationScheme.Bpsk);
-                endCursor = cursor;
-            }
-
-            var absSum = 0.0;
-            for (var i = 0; i < llrs.Length; i++)
-            {
-                absSum += Math.Abs(llrs[i]);
-            }
-
-            meanAbsLlr = llrs.Length > 0 ? absSum / llrs.Length : 0.0;
-            payload = DecodeHeaderFromSoftLlrs(
-                llrs,
-                payloadLength,
-                rsByteLength,
-                out var viterbiMetrics,
-                out var rsMetrics,
-                out _);
-            payload = ChannelBitInterleaver.DeinterleaveBytes(
-                payload,
-                ResolveBitInterleaveSeed(interleaveInitSeed));
-            if (expectedPilot is not null && !HeaderPrefixMatches(payload, expectedPilot))
-            {
-                return false;
-            }
-
-            // 訂正過程の訂正ビット数から求めた訂正率（残差 BER 推定は使わない）。
-            statusBoard?.SetErrorRate(
-                viterbiMetrics.CorrectionRate * 100.0,
-                frameKind,
-                CoreEccDecoderKind.Viterbi);
-            statusBoard?.SetErrorRate(
-                rsMetrics.PayloadCorrectionRate * 100.0,
-                frameKind,
-                CoreEccDecoderKind.ReedSolomon);
-            return true;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
-
-    private static byte[] DecodeHeaderFromSoftLlrs(
-        double[] llrs,
-        int payloadLength,
-        int rsByteLength,
-        out ConvolutionalCode.DecodeMetrics viterbiMetrics,
-        out RsEcc256.DecodeMetrics rsMetrics,
-        out double[] infoLlrs)
-    {
-        var rsEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-            llrs,
-            rsByteLength,
-            out infoLlrs,
-            out viterbiMetrics,
-            terminated: true,
-            punctureRate: HeaderPunctureRate);
-        var paddedPayload = ApplyReedSolomonDecode(rsEncoded, out rsMetrics);
-        var payload = new byte[payloadLength];
-        Buffer.BlockCopy(paddedPayload, 0, payload, 0, payloadLength);
-        return payload;
-    }
-
-    private static List<int> CollectSyncCandidates(
-        Complex[] samples,
-        int expectedStart,
-        int sampleCount,
-        int searchRadius,
-        OfdmGenerator ofdm,
-        int probeSymbols,
-        bool useRightChannel)
-    {
-        var symbolLength = ofdm.SamplesPerOfdmSymbol;
-        var step = Math.Max(1, symbolLength / 16);
-        var unique = new List<int>();
-        var seen = new HashSet<int>();
-
-        void Add(int start)
-        {
-            if (start < 0 || start + sampleCount > samples.Length)
-            {
-                return;
-            }
-
-            if (seen.Add(start))
-            {
-                unique.Add(start);
-            }
-        }
-
-        // 全半径を総当たりすると候補が数百になり UI が無反応に見えるため、
-        // 期待位置・局所最良・スコア上位のみに絞る。
-        Add(expectedStart);
-        Add(ofdm.FindBestSymbolStart(samples, expectedStart, Math.Min(searchRadius, symbolLength), useRightChannel));
-
-        var scored = new List<(int Start, double Score)>();
-        for (var radius = 0; radius <= searchRadius; radius += Math.Max(step, symbolLength / 4))
-        {
-            foreach (var start in new[] { expectedStart - radius, expectedStart + radius })
-            {
-                if (start < 0 || start + sampleCount > samples.Length)
-                {
-                    continue;
-                }
-
-                scored.Add((start, ofdm.ScoreLock(samples, start, probeSymbols, useRightChannel)));
-            }
-        }
-
-        scored.Sort((a, b) => b.Score.CompareTo(a.Score));
-        var top = Math.Min(8, scored.Count);
-        for (var i = 0; i < top; i++)
-        {
-            Add(scored[i].Start);
-            Add(ofdm.FindBestSymbolStart(samples, scored[i].Start, step, useRightChannel));
-        }
-
-        return unique;
-    }
-
-    private static bool HeaderPrefixMatches(byte[] header, byte[] expectedPilot)
-    {
-        if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)
-        {
-            return false;
-        }
-
-        if (header.Length < HeaderPrefixBytes)
-        {
-            return false;
-        }
-
-        for (var i = 0; i < expectedPilot.Length; i++)
-        {
-            if (header[i] != expectedPilot[i])
-            {
-                return false;
-            }
-        }
-
-        for (var i = 0; i < HeaderVersionBytes; i++)
-        {
-            if (header[HeaderPilotBytes + i] != HeaderVersion[i])
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static void AppendModulatedDataBlock(
-        List<Complex> leftPcm,
-        List<Complex> rightPcm,
-        OfdmGenerator ofdm,
-        byte[] payload,
-        int interleaveInitSeed,
-        ConvolutionalCode.PunctureRate punctureRate)
-    {
-        var packed = PackDataBlockWithCrc(payload);
-        var interleaved = ChannelBitInterleaver.InterleaveBytes(
-            packed,
-            ResolveBitInterleaveSeed(interleaveInitSeed));
-        var turboEncoded = EncodeTurboBlock(interleaved);
-        var convEncoded = ConvolutionalCode.Encode(turboEncoded, terminate: true, punctureRate: punctureRate);
-        var bits = BytesToBitsMsb(convEncoded);
-        if (ofdm.ChannelMode == ChannelMode.Stereo)
-        {
-            SplitBitsForStereo(bits, out var leftBits, out var rightBits);
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(leftBits, rightBits, leftPcm.Count, interleaveInitSeed));
-        }
-        else
-        {
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(bits, leftPcm.Count, interleaveInitSeed));
-        }
-    }
-
-    /// <summary>
-    /// データペイロードにCRCを付与し Turbo 入力長へパディングします。
-    /// </summary>
-    /// <param name="payload">payload を指定します。</param>
-    /// <returns>処理結果。</returns>
-    private static byte[] PackDataBlockWithCrc(byte[] payload)
-    {
-        if (payload.Length > DataBlockBytes)
-        {
-            throw new ArgumentException($"Payload exceeds {DataBlockBytes} bytes.", nameof(payload));
-        }
-
-        var withCrcLen = payload.Length + CrcBytes;
-        var paddedLen = TurboPaddedLength(withCrcLen);
-        var packed = new byte[paddedLen];
-        Buffer.BlockCopy(payload, 0, packed, 0, payload.Length);
-        var crc = Crc32.Compute(payload);
-        Crc32.WriteBigEndian(packed.AsSpan(payload.Length, CrcBytes), crc);
-        return packed;
-    }
-
-    private static int TurboPaddedLength(int contentLength)
-    {
-        var unit = TurboEcc1024.DataUnitBytes;
-        return ((Math.Max(contentLength, 1) + unit - 1) / unit) * unit;
-    }
-
-    /// <summary>
-    /// 指定パスのブロック送信順序を返します。
-    /// </summary>
-    /// <param name="blockCount">ブロック総数。</param>
-    /// <param name="passIndex">送信パス番号。</param>
-    /// <returns>送信順序のブロック番号配列。</returns>
-    public static int[] GetBlockEmissionOrder(int blockCount, int passIndex)
-    {
-        if (blockCount < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(blockCount));
-        }
-
-        if (passIndex < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(passIndex));
-        }
-
-        var order = new int[blockCount];
-        if ((passIndex & 1) == 0)
-        {
-            for (var i = 0; i < blockCount; i++)
-            {
-                order[i] = i;
-            }
-
-            return order;
-        }
-
-        var write = 0;
-        for (var i = 0; i < blockCount; i += 2)
-        {
-            if (i + 1 < blockCount)
-            {
-                order[write++] = i + 1;
-            }
-
-            order[write++] = i;
-        }
-
-        return order;
-    }
-
-    /// <summary>
-    /// 再送パスに応じたサブキャリア数と変調方式を決定します。
-    /// </summary>
-    /// <param name="passIndex">送信パス番号。</param>
-    /// <param name="baseSubcarriers">基準サブキャリア数。</param>
-    /// <param name="baseModulation">基準変調方式。</param>
-    /// <returns>当該パスで使うサブキャリア数と変調方式。</returns>
-    public static (int Subcarriers, ModulationScheme Modulation) ResolveInterleavePassModulation(
-        int passIndex,
-        int baseSubcarriers,
-        ModulationScheme baseModulation)
-    {
-        if (passIndex < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(passIndex));
-        }
-
-        if (passIndex == 0)
-        {
-            return (baseSubcarriers, baseModulation);
-        }
-
-        var sc = baseSubcarriers switch
-        {
-            32 or 24 => 16,
-            16 or 8 => 8,
-            _ => throw new ArgumentOutOfRangeException(nameof(baseSubcarriers), baseSubcarriers, "Unsupported subcarrier count.")
-        };
-        var mod = baseModulation switch
-        {
-            ModulationScheme.Qam64 or ModulationScheme.Qam16 => ModulationScheme.Qpsk,
-            ModulationScheme.Qpsk or ModulationScheme.Bpsk => ModulationScheme.Bpsk,
-            _ => throw new ArgumentOutOfRangeException(nameof(baseModulation), baseModulation, "Unsupported modulation scheme.")
-        };
-        return (sc, mod);
-    }
-
-    private static void SplitBitsForStereo(bool[] bits, out bool[] leftBits, out bool[] rightBits)
-    {
-        var half = (bits.Length + 1) / 2;
-        leftBits = new bool[half];
-        rightBits = new bool[half];
-        Array.Copy(bits, 0, leftBits, 0, Math.Min(half, bits.Length));
-        if (bits.Length > half)
-        {
-            Array.Copy(bits, half, rightBits, 0, bits.Length - half);
-        }
-    }
-
-    private static bool[] JoinStereoBits(bool[] leftBits, bool[] rightBits, int totalBits)
-    {
-        var joined = new bool[totalBits];
-        var half = (totalBits + 1) / 2;
-        Array.Copy(leftBits, 0, joined, 0, Math.Min(half, leftBits.Length));
-        var rightCount = Math.Min(totalBits - half, rightBits.Length);
-        if (rightCount > 0)
-        {
-            Array.Copy(rightBits, 0, joined, half, rightCount);
-        }
-
-        return joined;
-    }
-
-    private static byte[] DecodeDataBlockSynced(
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        ref int warpedCursor,
-        ref long logicalOffset,
-        OfdmGenerator ofdm,
-        int searchRadius,
-        byte[] expectedBlockHash,
-        int payloadLength,
-        ModulationScheme modulationScheme,
-        DecodeRuntimeTuning tuning,
-        int interleaveInitSeed,
-        ConvolutionalCode.PunctureRate punctureRate,
-        bool wowLocked,
-        CoreExecutionStatusBoard? statusBoard,
-        out DataDecodeDiag diag,
-        Action<double>? onSoftProgress = null)
-    {
-        var paddedLen = TurboPaddedLength(payloadLength + CrcBytes);
-        var turboEncodedLength = (paddedLen / TurboEcc1024.DataUnitBytes) * TurboEcc1024.EncodedBytes;
-        var convByteLength = GetConvolutionalEncodedLength(turboEncodedLength, punctureRate);
-        var bitCount = convByteLength * 8;
-        var useStereoSplit = ofdm.ChannelMode == ChannelMode.Stereo
-            && rightSamples.Length == leftSamples.Length
-            && rightSamples.Length > 0;
-        var channelBitCount = useStereoSplit ? (bitCount + 1) / 2 : bitCount;
-        var sampleCount = ofdm.SampleCountForBitCount(channelBitCount);
-        var symbolSearchRadius = Math.Max(2, ofdm.SamplesPerOfdmSymbol / 8);
-        var expectedStart = warpedCursor;
-        var totalAttempts = 0;
-        var hardMatchSucceeded = false;
-        var softMatchSucceeded = false;
-        var fallbackUsed = false;
-        var startDeltaSamples = 0;
-
-        var logical = logicalOffset;
-        Exception? lastError = null;
-        var step = Math.Max(1, ofdm.SamplesPerOfdmSymbol / 8);
-        var softLlrAbortMeanAbs = wowLocked
-            ? tuning.SoftLlrAbortMeanAbsWhenWowLocked
-            : tuning.SoftLlrAbortMeanAbs;
-        var maxFullAttempts = wowLocked
-            ? tuning.DataSyncMaxFullAttemptsWhenWowLocked
-            : tuning.DataSyncMaxFullAttempts;
-        var maxSoftOnlyAttempts = wowLocked
-            ? tuning.DataSyncMaxSoftOnlyAttemptsWhenWowLocked
-            : tuning.DataSyncMaxSoftOnlyAttempts;
-
-        bool TryAt(int start, int perSymbolRadius, out byte[] padded, out int endCursor, bool allowHardFallback = true)
-        {
-            padded = Array.Empty<byte>();
-            endCursor = start;
-            if (start < 0 || start + ofdm.SamplesPerOfdmSymbol > leftSamples.Length)
-            {
-                return false;
-            }
-
-            try
-            {
-                foreach (var useSoft in allowHardFallback ? new[] { true, false } : new[] { true })
-                {
-                    totalAttempts++;
-                    var cursor = start;
-                    byte[] candidate;
-                    int end;
-                    if (!useSoft)
-                    {
-                        bool[] bits;
-                        if (perSymbolRadius <= 0)
-                        {
-                            if (start + sampleCount > leftSamples.Length)
-                            {
-                                continue;
-                            }
-
-                            bits = DemodulateDataBitsFixed(
-                                ofdm, leftSamples, rightSamples, start, channelBitCount, bitCount, useStereoSplit, logical, interleaveInitSeed);
-                            end = start + sampleCount;
-                        }
-                        else
-                        {
-                            bits = DemodulateDataBitsFromStream(
-                                ofdm,
-                                leftSamples,
-                                rightSamples,
-                                ref cursor,
-                                channelBitCount,
-                                bitCount,
-                                useStereoSplit,
-                                logical,
-                                perSymbolRadius,
-                                interleaveInitSeed);
-                            end = cursor;
-                        }
-
-                        var turboEncoded = ConvolutionalCode.Decode(
-                            BitsToBytesMsb(bits),
-                            turboEncodedLength,
-                            out var hardConvMetrics,
-                            terminated: true,
-                            punctureRate: punctureRate);
-                        candidate = DecodeTurboBlock(
-                            turboEncoded,
-                            paddedLen,
-                            tuning.TurboIterationsMax,
-                            out var hardTurboRate);
-                        candidate = ChannelBitInterleaver.DeinterleaveBytes(
-                            candidate,
-                            ResolveBitInterleaveSeed(interleaveInitSeed));
-                        if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
-                        {
-                            statusBoard?.SetErrorRate(
-                                hardConvMetrics.CorrectionRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Viterbi);
-                            statusBoard?.SetErrorRate(
-                                hardTurboRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Turbo);
-                        }
-                    }
-                    else
-                    {
-                        var radius = perSymbolRadius <= 0
-                            ? Math.Max(8, ofdm.SamplesPerOfdmSymbol / 4)
-                            : perSymbolRadius;
-                        var qamLlrs = DemodulateDataSoftLlrsFromStream(
-                            ofdm,
-                            leftSamples,
-                            rightSamples,
-                            ref cursor,
-                            channelBitCount,
-                            bitCount,
-                            useStereoSplit,
-                            logical,
-                            radius,
-                            noiseVariance: 0.05,
-                            interleaveInitSeed,
-                            modulationScheme,
-                            statusBoard,
-                            onSoftProgress);
-                        end = cursor;
-                        var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                            qamLlrs,
-                            turboEncodedLength,
-                            out var infoLlrs,
-                            out var softConvMetrics,
-                            terminated: true,
-                            punctureRate: punctureRate);
-                        ClampLlrsInPlace(infoLlrs, 16.0);
-
-                        var meanAbs = MeanAbsLlrs(infoLlrs);
-                        if (meanAbs < softLlrAbortMeanAbs)
-                        {
-                            continue;
-                        }
-
-                        var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
-                        var softCandidate = DecodeTurboBlockFromLlrs(
-                            infoLlrs,
-                            turboEncoded,
-                            paddedLen,
-                            turboIterations,
-                            out var softTurboRate);
-                        softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                            softCandidate,
-                            ResolveBitInterleaveSeed(interleaveInitSeed));
-                        double publishTurboRate = softTurboRate;
-                        if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
-                        {
-                            candidate = softCandidate;
-                        }
-                        else if (meanAbs >= tuning.SoftHardFallbackMinMeanAbsLlr)
-                        {
-                            var hardCandidate = DecodeTurboBlock(
-                                turboEncoded,
-                                paddedLen,
-                                turboIterations,
-                                out var fallbackTurboRate);
-                            hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                                hardCandidate,
-                                ResolveBitInterleaveSeed(interleaveInitSeed));
-                            publishTurboRate = fallbackTurboRate;
-                            candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
-                        }
-                        else
-                        {
-                            candidate = softCandidate;
-                        }
-
-                        if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
-                        {
-                            statusBoard?.SetErrorRate(
-                                softConvMetrics.CorrectionRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Viterbi);
-                            statusBoard?.SetErrorRate(
-                                publishTurboRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Turbo);
-                        }
-                    }
-
-                    if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
-                    {
-                        if (useSoft)
-                        {
-                            softMatchSucceeded = true;
-                        }
-                        else
-                        {
-                            hardMatchSucceeded = true;
-                        }
-
-                        startDeltaSamples = start - expectedStart;
-                        padded = candidate;
-                        endCursor = end;
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-            catch (Exception ex)
-            {
-                lastError = ex;
-                return false;
-            }
-        }
-
-        if (TryAt(warpedCursor, 0, out var hit, out var hitEnd))
-        {
-            warpedCursor = hitEnd;
-            logicalOffset += sampleCount;
-            diag = new DataDecodeDiag(
-                totalAttempts,
-                hardMatchSucceeded,
-                softMatchSucceeded,
-                fallbackUsed,
-                startDeltaSamples);
-            return hit;
-        }
-
-        var rankedStarts = new List<(int Start, double Score)>(32);
-        for (var delta = 0; delta <= searchRadius; delta += step)
-        {
-            foreach (var start in delta == 0
-                         ? new[] { warpedCursor }
-                         : new[] { warpedCursor - delta, warpedCursor + delta })
-            {
-                if (start < 0 || start + (ofdm.SamplesPerOfdmSymbol * 2) > leftSamples.Length)
-                {
-                    continue;
-                }
-
-                if (delta == 0)
-                {
-                    // 既に直近カーソルで復号失敗済みの開始位置は除外する。
-                    continue;
-                }
-
-                var score = ofdm.ScoreLock(leftSamples, start, symbolCount: 2, useRightChannel: false);
-                rankedStarts.Add((start, score));
-            }
-        }
-
-        rankedStarts.Sort((a, b) => b.Score.CompareTo(a.Score));
-        var fullAttempts = Math.Min(rankedStarts.Count, Math.Max(1, maxFullAttempts));
-        for (var i = 0; i < fullAttempts; i++)
-        {
-            var allowHard = i < Math.Min(4, fullAttempts);
-            if (TryAt(rankedStarts[i].Start, symbolSearchRadius, out hit, out hitEnd, allowHard))
-            {
-                warpedCursor = hitEnd;
-                logicalOffset += sampleCount;
-                diag = new DataDecodeDiag(
-                    totalAttempts,
-                    hardMatchSucceeded,
-                    softMatchSucceeded,
-                    fallbackUsed,
-                    startDeltaSamples);
-                return hit;
-            }
-        }
-
-        var softOnlyLimit = fullAttempts + Math.Max(0, maxSoftOnlyAttempts);
-        for (var i = fullAttempts; i < rankedStarts.Count && i < softOnlyLimit; i++)
-        {
-            if (TryAt(rankedStarts[i].Start, symbolSearchRadius, out hit, out hitEnd, allowHardFallback: false))
-            {
-                warpedCursor = hitEnd;
-                logicalOffset += sampleCount;
-                diag = new DataDecodeDiag(
-                    totalAttempts,
-                    hardMatchSucceeded,
-                    softMatchSucceeded,
-                    fallbackUsed,
-                    startDeltaSamples);
-                return hit;
-            }
-        }
-
-        if (warpedCursor >= 0 && warpedCursor + ofdm.SamplesPerOfdmSymbol <= leftSamples.Length)
-        {
-            fallbackUsed = true;
-            totalAttempts++;
-            var cursor = warpedCursor;
-            var qamLlrs = DemodulateDataSoftLlrsFromStream(
-                ofdm,
-                leftSamples,
-                rightSamples,
-                ref cursor,
-                channelBitCount,
-                bitCount,
-                useStereoSplit,
-                logicalOffset,
-                Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
-                noiseVariance: 0.08,
-                interleaveInitSeed,
-                modulationScheme,
-                statusBoard);
-            warpedCursor = cursor;
-            logicalOffset += sampleCount;
-            var turboEncoded = ConvolutionalCode.DecodeSoftToInfoLlrs(
-                qamLlrs,
-                turboEncodedLength,
-                out var infoLlrs,
-                out var fallbackConvMetrics,
-                terminated: true,
-                punctureRate: punctureRate);
-            ClampLlrsInPlace(infoLlrs, 16.0);
-            _ = lastError;
-            var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
-            var softCandidate = DecodeTurboBlockFromLlrs(
-                infoLlrs,
-                turboEncoded,
-                paddedLen,
-                turboIterations,
-                out var fallbackTurboRate);
-            softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                softCandidate,
-                ResolveBitInterleaveSeed(interleaveInitSeed));
-            double publishTurboRate = fallbackTurboRate;
-            if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
-            {
-                softMatchSucceeded = true;
-                statusBoard?.SetErrorRate(
-                    fallbackConvMetrics.CorrectionRate * 100.0,
-                    CoreFrameKind.Bd,
-                    CoreEccDecoderKind.Viterbi);
-                statusBoard?.SetErrorRate(
-                    publishTurboRate * 100.0,
-                    CoreFrameKind.Bd,
-                    CoreEccDecoderKind.Turbo);
-                diag = new DataDecodeDiag(
-                    totalAttempts,
-                    hardMatchSucceeded,
-                    softMatchSucceeded,
-                    fallbackUsed,
-                    startDeltaSamples);
-                return softCandidate;
-            }
-
-            if (MeanAbsLlrs(infoLlrs) >= tuning.SoftHardFallbackMinMeanAbsLlr)
-            {
-                var hardCandidate = DecodeTurboBlock(
-                    turboEncoded,
-                    paddedLen,
-                    turboIterations,
-                    out var hardFallbackTurboRate);
-                hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                    hardCandidate,
-                    ResolveBitInterleaveSeed(interleaveInitSeed));
-                publishTurboRate = hardFallbackTurboRate;
-                var preferred = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
-                if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))
-                {
-                    statusBoard?.SetErrorRate(
-                        fallbackConvMetrics.CorrectionRate * 100.0,
-                        CoreFrameKind.Bd,
-                        CoreEccDecoderKind.Viterbi);
-                    statusBoard?.SetErrorRate(
-                        publishTurboRate * 100.0,
-                        CoreFrameKind.Bd,
-                        CoreEccDecoderKind.Turbo);
-                    if (ReferenceEquals(preferred, hardCandidate))
-                    {
-                        hardMatchSucceeded = true;
-                    }
-                    else
-                    {
-                        softMatchSucceeded = true;
-                    }
-                }
-
-                diag = new DataDecodeDiag(
-                    totalAttempts,
-                    hardMatchSucceeded,
-                    softMatchSucceeded,
-                    fallbackUsed,
-                    startDeltaSamples);
-                return preferred;
-            }
-
-            diag = new DataDecodeDiag(
-                totalAttempts,
-                hardMatchSucceeded,
-                softMatchSucceeded,
-                fallbackUsed,
-                startDeltaSamples);
-            return softCandidate;
-        }
-
-        diag = new DataDecodeDiag(
-            totalAttempts,
-            hardMatchSucceeded,
-            softMatchSucceeded,
-            fallbackUsed,
-            startDeltaSamples);
-        throw new InvalidDataException("Data block sync failed.", lastError);
-    }
-
-    private static bool[] DemodulateDataBitsFixed(
-        OfdmGenerator ofdm,
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        int start,
-        int channelBitCount,
-        int totalBitCount,
-        bool stereoSplit,
-        long logical,
-        int interleaveInitSeed)
-    {
-        var sliceL = new Complex[ofdm.SampleCountForBitCount(channelBitCount)];
-        Array.Copy(leftSamples, start, sliceL, 0, sliceL.Length);
-        if (!stereoSplit)
-        {
-            return ofdm.DemodulateBits(sliceL, totalBitCount, useRightChannel: false, logical, interleaveInitSeed);
-        }
-
-        var sliceR = new Complex[sliceL.Length];
-        Array.Copy(rightSamples, start, sliceR, 0, sliceR.Length);
-        var leftBits = ofdm.DemodulateBits(sliceL, channelBitCount, useRightChannel: false, logical, interleaveInitSeed);
-        var rightBits = ofdm.DemodulateBits(sliceR, channelBitCount, useRightChannel: true, logical, interleaveInitSeed);
-        return JoinStereoBits(leftBits, rightBits, totalBitCount);
-    }
-
-    private static bool[] DemodulateDataBitsFromStream(
-        OfdmGenerator ofdm,
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        ref int cursor,
-        int channelBitCount,
-        int totalBitCount,
-        bool stereoSplit,
-        long logical,
-        int searchRadius,
-        int interleaveInitSeed)
-    {
-        if (!stereoSplit)
-        {
-            return ofdm.DemodulateBitsFromStream(
-                leftSamples, ref cursor, totalBitCount, useRightChannel: false, logical, searchRadius, interleaveInitSeed);
-        }
-
-        var leftCursor = cursor;
-        var rightCursor = cursor;
-        var leftBits = ofdm.DemodulateBitsFromStream(
-            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, interleaveInitSeed);
-        var rightBits = ofdm.DemodulateBitsFromStream(
-            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, interleaveInitSeed);
-        cursor = leftCursor;
-        return JoinStereoBits(leftBits, rightBits, totalBitCount);
-    }
-
-    private static double[] DemodulateDataSoftLlrsFromStream(
-        OfdmGenerator ofdm,
-        Complex[] leftSamples,
-        Complex[] rightSamples,
-        ref int cursor,
-        int channelBitCount,
-        int totalBitCount,
-        bool stereoSplit,
-        long logical,
-        int searchRadius,
-        double noiseVariance,
-        int interleaveInitSeed,
-        ModulationScheme modulationScheme,
-        CoreExecutionStatusBoard? statusBoard = null,
-        Action<double>? onBlockProgress = null)
-    {
-        statusBoard?.SetFftStereoMode(stereoSplit);
-        statusBoard?.BeginIqCapture(ofdm.ActiveSubcarriers, modulationScheme);
-
-        Action<Complex[], byte[], int>? onIqFrame = statusBoard is null
-            ? null
-            : (symbols, groups, count) =>
-                statusBoard.AppendIqFrame(symbols.AsSpan(0, count), groups.AsSpan(0, count));
-        Action<Complex[], int>? onFftLeftFrame = statusBoard is null
-            ? null
-            : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: false);
-        Action<Complex[], int>? onFftRightFrame = statusBoard is null
-            ? null
-            : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: true);
-
-        // 送信側の ~33ms ポーリングに合わせ、ブロック内進捗を間引き通知する。
-        var progressClock = System.Diagnostics.Stopwatch.StartNew();
-        Action<int, int>? onSymbolProgress = onBlockProgress is null
-            ? null
-            : (symbolIndex, symbolCount) =>
-            {
-                if (symbolCount <= 0)
-                {
-                    return;
-                }
-
-                var isLast = symbolIndex + 1 >= symbolCount;
-                if (!isLast && progressClock.ElapsedMilliseconds < 33)
-                {
-                    return;
-                }
-
-                progressClock.Restart();
-                onBlockProgress((symbolIndex + 1.0) / symbolCount);
-            };
-
-        if (!stereoSplit)
-        {
-            return ofdm.DemodulateSoftLlrsFromStream(
-                leftSamples,
-                ref cursor,
-                totalBitCount,
-                useRightChannel: false,
-                logical,
-                searchRadius,
-                noiseVariance,
-                interleaveInitSeed,
-                onEqualizedDataSymbol: null,
-                onEqualizedDataSymbolFrame: onIqFrame,
-                onFftSymbolFrame: onFftLeftFrame,
-                onOfdmSymbolProgress: onSymbolProgress);
-        }
-
-        var leftCursor = cursor;
-        var rightCursor = cursor;
-        var leftLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            leftSamples,
-            ref leftCursor,
-            channelBitCount,
-            useRightChannel: false,
-            logical,
-            searchRadius,
-            noiseVariance,
-            interleaveInitSeed,
-            onEqualizedDataSymbol: null,
-            onEqualizedDataSymbolFrame: onIqFrame,
-            onFftSymbolFrame: onFftLeftFrame,
-            onOfdmSymbolProgress: onSymbolProgress);
-        var rightLlrs = ofdm.DemodulateSoftLlrsFromStream(
-            rightSamples,
-            ref rightCursor,
-            channelBitCount,
-            useRightChannel: true,
-            logical,
-            searchRadius,
-            noiseVariance,
-            interleaveInitSeed,
-            onEqualizedDataSymbol: null,
-            onEqualizedDataSymbolFrame: onIqFrame,
-            onFftSymbolFrame: onFftRightFrame,
-            onOfdmSymbolProgress: null);
-        cursor = leftCursor;
-        var joined = new double[totalBitCount];
-        var half = (totalBitCount + 1) / 2;
-        Array.Copy(leftLlrs, 0, joined, 0, Math.Min(half, leftLlrs.Length));
-        var rightCount = Math.Min(totalBitCount - half, rightLlrs.Length);
-        if (rightCount > 0)
-        {
-            Array.Copy(rightLlrs, 0, joined, half, rightCount);
-        }
-
-        return joined;
-    }
-
-    private static void ClampLlrsInPlace(double[] llrs, double maxAbs)
-    {
-        for (var i = 0; i < llrs.Length; i++)
-        {
-            if (llrs[i] > maxAbs)
-            {
-                llrs[i] = maxAbs;
-            }
-            else if (llrs[i] < -maxAbs)
-            {
-                llrs[i] = -maxAbs;
-            }
-        }
-    }
-
-    private static double MeanAbsLlrs(ReadOnlySpan<double> llrs)
-    {
-        if (llrs.Length == 0)
-        {
-            return 0.0;
-        }
-
-        var sum = 0.0;
-        for (var i = 0; i < llrs.Length; i++)
-        {
-            sum += Math.Abs(llrs[i]);
-        }
-
-        return sum / llrs.Length;
-    }
-
-    /// <summary>
-    /// LLR の大きさからビット誤り確率を推定し、パーセントで返します（グラフ用）。
-    /// </summary>
-    private static double EstimateSoftBitErrorPercent(ReadOnlySpan<double> llrs)
-    {
-        if (llrs.Length == 0)
-        {
-            return 0.0;
-        }
-
-        var sum = 0.0;
-        for (var i = 0; i < llrs.Length; i++)
-        {
-            var a = Math.Abs(llrs[i]);
-            if (a >= 40.0)
-            {
-                continue;
-            }
-
-            sum += 1.0 / (1.0 + Math.Exp(a));
-        }
-
-        return 100.0 * sum / llrs.Length;
-    }
-
-    private static byte[] PreferHashMatch(
-        byte[] softCandidate,
-        byte[] hardCandidate,
-        byte[] expectedBlockHash,
-        int payloadLength)
-    {
-        if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
-        {
-            return softCandidate;
-        }
-
-        if (IsDataBlockAcceptable(hardCandidate, expectedBlockHash, payloadLength))
-        {
-            return hardCandidate;
-        }
-
-        return softCandidate;
-    }
-
-    private static bool IsDataBlockAcceptable(byte[] candidate, byte[] expectedBlockHash, int payloadLength)
-    {
-        var actualLen = Math.Clamp(payloadLength, 0, DataBlockBytes);
-        if (candidate.Length < actualLen + CrcBytes)
-        {
-            return false;
-        }
-
-        var hash = Hash.ComputeSha256(candidate.AsSpan(0, actualLen));
-        if (!hash.AsSpan().SequenceEqual(expectedBlockHash))
-        {
-            return false;
-        }
-
-        return Crc32.Matches(
-            candidate.AsSpan(0, actualLen),
-            candidate.AsSpan(actualLen, CrcBytes));
-    }
-
-    private static byte[] EncodeTurboBlock(byte[] padded)
-    {
-        if (padded.Length == 0 || padded.Length % TurboEcc1024.DataUnitBytes != 0)
-        {
-            throw new ArgumentException(
-                $"Turbo payload length must be a positive multiple of {TurboEcc1024.DataUnitBytes}.",
-                nameof(padded));
-        }
-
-        var unitCount = padded.Length / TurboEcc1024.DataUnitBytes;
-        var output = new byte[unitCount * TurboEcc1024.EncodedBytes];
-        var unit = new byte[TurboEcc1024.DataUnitBytes];
-        var writeOffset = 0;
-        for (var offset = 0; offset < padded.Length; offset += TurboEcc1024.DataUnitBytes)
-        {
-            Buffer.BlockCopy(padded, offset, unit, 0, TurboEcc1024.DataUnitBytes);
-            var encoded = TurboEcc1024.Encode(unit);
-            Buffer.BlockCopy(encoded, 0, output, writeOffset, encoded.Length);
-            writeOffset += encoded.Length;
-        }
-
-        return output;
-    }
-
-    private static int ResolveTurboIterations(double[] infoLlrs, DecodeRuntimeTuning tuning)
-    {
-        var minIter = Math.Clamp(Math.Min(tuning.TurboIterationsMin, tuning.TurboIterationsMax), 1, 32);
-        var maxIter = Math.Clamp(Math.Max(tuning.TurboIterationsMin, tuning.TurboIterationsMax), minIter, 32);
-        if (infoLlrs.Length == 0)
-        {
-            return maxIter;
-        }
-
-        var sum = 0.0;
-        for (var i = 0; i < infoLlrs.Length; i++)
-        {
-            sum += Math.Abs(infoLlrs[i]);
-        }
-
-        var meanAbs = sum / infoLlrs.Length;
-        if (meanAbs <= tuning.TurboLowConfidenceLlr)
-        {
-            return maxIter;
-        }
-
-        if (meanAbs >= tuning.TurboHighConfidenceLlr)
-        {
-            return minIter;
-        }
-
-        var span = Math.Max(1e-9, tuning.TurboHighConfidenceLlr - tuning.TurboLowConfidenceLlr);
-        var t = (meanAbs - tuning.TurboLowConfidenceLlr) / span;
-        var value = maxIter - ((maxIter - minIter) * t);
-        return (int)Math.Round(Math.Clamp(value, minIter, maxIter));
-    }
-
-    private static byte[] DecodeTurboBlock(
-        byte[] turboEncoded,
-        int paddedLength,
-        int iterations,
-        out double meanCorrectionRate)
-    {
-        var padded = new byte[paddedLength];
-        var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
-        var encoded = new byte[TurboEcc1024.EncodedBytes];
-        var rateSum = 0.0;
-        for (var i = 0; i < unitCount; i++)
-        {
-            Buffer.BlockCopy(turboEncoded, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-            var decoded = TurboEcc1024.Decode(
-                encoded,
-                out var metrics,
-                iterations: iterations,
-                channelReliability: 1.25);
-            rateSum += metrics.CorrectionRate;
-            Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
-        }
-
-        meanCorrectionRate = unitCount == 0 ? 0.0 : rateSum / unitCount;
-        return padded;
-    }
-
-    private static byte[] DecodeTurboBlock(byte[] turboEncoded, int paddedLength, int iterations)
-    {
-        return DecodeTurboBlock(turboEncoded, paddedLength, iterations, out _);
-    }
-
-    /// <summary>
-    /// Turbo情報LLRを単位ごとに復号し、失敗時はハード判定にフォールバックします。
-    /// </summary>
-    private static byte[] DecodeTurboBlockFromLlrs(
-        double[] infoLlrs,
-        byte[] turboEncodedHard,
-        int paddedLength,
-        int iterations,
-        out double meanCorrectionRate)
-    {
-        var padded = new byte[paddedLength];
-        var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
-        var bitsPerUnit = TurboEcc1024.EncodedBits;
-        var encoded = new byte[TurboEcc1024.EncodedBytes];
-        var rateSum = 0.0;
-        for (var i = 0; i < unitCount; i++)
-        {
-            var offset = i * bitsPerUnit;
-            byte[] decoded;
-            TurboEcc1024.DecodeMetrics metrics;
-            if (infoLlrs.Length >= offset + bitsPerUnit)
-            {
-                try
-                {
-                    decoded = TurboEcc1024.DecodeFromChannelLlrs(
-                        infoLlrs.AsSpan(offset, bitsPerUnit),
-                        out metrics,
-                        iterations: iterations);
-                }
-                catch
-                {
-                    Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-                    decoded = TurboEcc1024.Decode(
-                        encoded,
-                        out metrics,
-                        iterations: iterations,
-                        channelReliability: 1.25);
-                }
-            }
-            else
-            {
-                Buffer.BlockCopy(turboEncodedHard, i * TurboEcc1024.EncodedBytes, encoded, 0, TurboEcc1024.EncodedBytes);
-                decoded = TurboEcc1024.Decode(
-                    encoded,
-                    out metrics,
-                    iterations: iterations,
-                    channelReliability: 1.25);
-            }
-
-            rateSum += metrics.CorrectionRate;
-            Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
-        }
-
-        meanCorrectionRate = unitCount == 0 ? 0.0 : rateSum / unitCount;
-        return padded;
-    }
-
-    private static byte[] DecodeTurboBlockFromLlrs(
-        double[] infoLlrs,
-        byte[] turboEncodedHard,
-        int paddedLength,
-        int iterations)
-    {
-        return DecodeTurboBlockFromLlrs(infoLlrs, turboEncodedHard, paddedLength, iterations, out _);
-    }
-
-    private readonly record struct DataDecodeDiag(
-        int TotalAttempts,
-        bool HardMatchSucceeded,
-        bool SoftMatchSucceeded,
-        bool FallbackUsed,
-        int StartDeltaSamples);
-
-    private static int GetReedSolomonEncodedLength(int payloadLength)
-    {
-        var paddedLength = ((payloadLength + RsEcc256.DataUnitSize - 1) / RsEcc256.DataUnitSize) * RsEcc256.DataUnitSize;
-        if (paddedLength == 0)
-        {
-            paddedLength = RsEcc256.DataUnitSize;
-        }
-
-        return (paddedLength / RsEcc256.DataUnitSize) * RsEcc256.EncodedUnitSize;
-    }
-
-    private static int GetConvolutionalEncodedLength(int inputByteLength, ConvolutionalCode.PunctureRate punctureRate)
-    {
-        var encodedBits = ConvolutionalCode.GetEncodedBitLength(inputByteLength * 8, terminated: true, punctureRate: punctureRate);
-        return (encodedBits + 7) / 8;
-    }
-
-    private static ConvolutionalCode.PunctureRate ResolveDataPunctureRate(ModulationScheme modulationScheme)
-    {
-        return modulationScheme switch
-        {
-            ModulationScheme.Bpsk => ConvolutionalCode.PunctureRate.Rate1_2,
-            ModulationScheme.Qpsk => ConvolutionalCode.PunctureRate.Rate1_2,
-            ModulationScheme.Qam16 => ConvolutionalCode.PunctureRate.Rate2_3,
-            ModulationScheme.Qam64 => ConvolutionalCode.PunctureRate.Rate3_4,
-            _ => throw new ArgumentOutOfRangeException(nameof(modulationScheme), modulationScheme, "Unsupported modulation scheme for puncture rate.")
-        };
-    }
-
-    private static (int Subcarriers, ModulationScheme Modulation) ReadBlockDataModulation(byte[] blockHeader)
-    {
-        if (blockHeader.Length <= 9)
-        {
-            throw new InvalidDataException("Invalid block header: missing modulation fields.");
-        }
-
-        var subcarriers = blockHeader[8];
-        if (subcarriers is not (8 or 16 or 24 or 32))
-        {
-            throw new InvalidDataException($"Invalid block header subcarrier count: {subcarriers}.");
-        }
-
-        var modulation = blockHeader[9] switch
-        {
-            1 => ModulationScheme.Bpsk,
-            2 => ModulationScheme.Qpsk,
-            3 => ModulationScheme.Qam16,
-            4 => ModulationScheme.Qam64,
-            _ => throw new InvalidDataException($"Invalid block header modulation mode: {blockHeader[9]}.")
-        };
-        return (subcarriers, modulation);
-    }
-
-    private static byte[] ApplyReedSolomon(byte[] payload)
-    {
-        var paddedLength = ((payload.Length + RsEcc256.DataUnitSize - 1) / RsEcc256.DataUnitSize) * RsEcc256.DataUnitSize;
-        if (paddedLength == 0)
-        {
-            paddedLength = RsEcc256.DataUnitSize;
-        }
-
-        var padded = new byte[paddedLength];
-        Buffer.BlockCopy(payload, 0, padded, 0, payload.Length);
-
-        var unitCount = paddedLength / RsEcc256.DataUnitSize;
-        var output = new byte[unitCount * RsEcc256.EncodedUnitSize];
-        var unit = new byte[RsEcc256.DataUnitSize];
-        var writeOffset = 0;
-        for (var offset = 0; offset < padded.Length; offset += RsEcc256.DataUnitSize)
-        {
-            Buffer.BlockCopy(padded, offset, unit, 0, RsEcc256.DataUnitSize);
-            var encoded = RsEcc256.Encode(unit);
-            Buffer.BlockCopy(encoded, 0, output, writeOffset, encoded.Length);
-            writeOffset += encoded.Length;
-        }
-
-        return output;
-    }
-
-    private static byte[] ApplyReedSolomonDecode(byte[] encoded) =>
-        ApplyReedSolomonDecode(encoded, out _);
-
-    private static byte[] ApplyReedSolomonDecode(byte[] encoded, out RsEcc256.DecodeMetrics metrics)
-    {
-        if (encoded.Length % RsEcc256.EncodedUnitSize != 0)
-        {
-            throw new ArgumentException("RS encoded length is invalid.", nameof(encoded));
-        }
-
-        var unitCount = encoded.Length / RsEcc256.EncodedUnitSize;
-        var output = new byte[unitCount * RsEcc256.DataUnitSize];
-        var unit = new byte[RsEcc256.EncodedUnitSize];
-        var writeOffset = 0;
-        long correctedBits = 0;
-        long payloadBits = 0;
-        for (var offset = 0; offset < encoded.Length; offset += RsEcc256.EncodedUnitSize)
-        {
-            Buffer.BlockCopy(encoded, offset, unit, 0, RsEcc256.EncodedUnitSize);
-            var decoded = RsEcc256.Decode(unit, out var unitMetrics);
-            correctedBits += unitMetrics.PayloadCorrectedBitCount;
-            payloadBits += unitMetrics.PayloadBitLength;
-            Buffer.BlockCopy(decoded, 0, output, writeOffset, decoded.Length);
-            writeOffset += decoded.Length;
-        }
-
-        metrics = new RsEcc256.DecodeMetrics(
-            PayloadCorrectedBitCount: (int)Math.Min(int.MaxValue, correctedBits),
-            PayloadCorrectedByteCount: 0,
-            CodewordCorrectedSymbolCount: 0,
-            CodewordCorrectedBitCount: 0,
-            PayloadBitLength: (int)Math.Min(int.MaxValue, payloadBits),
-            PayloadCorrectionRate: payloadBits == 0 ? 0.0 : correctedBits / (double)payloadBits);
-
-        return output;
-    }
-
-    private static string ReadFileHeaderFileName(ReadOnlySpan<byte> fileHeader)
-    {
-        if (fileHeader.Length < HeaderPrefixBytes + FileNameBytes)
-        {
-            return string.Empty;
-        }
-
-        var nameBytes = fileHeader.Slice(HeaderPrefixBytes, FileNameBytes);
-        var end = nameBytes.IndexOf((byte)0);
-        if (end < 0)
-        {
-            end = nameBytes.Length;
-        }
-        else if (end == 0)
-        {
-            return string.Empty;
-        }
-
-        return Encoding.UTF8.GetString(nameBytes[..end]).Trim();
-    }
-
-    private static byte[] BuildFileHeader(FileInfo fileInfo, long fileSize, int blockCount, byte[] fileHash)
-    {
-        if (fileHash.Length != 64)
-        {
-            throw new ArgumentException("File hash must be SHA-512 (64 bytes).", nameof(fileHash));
-        }
-
-        var header = new byte[FileHeaderBytes];
-        Buffer.BlockCopy(FileHeaderPilot, 0, header, 0, HeaderPilotBytes);
-        Buffer.BlockCopy(HeaderVersion, 0, header, HeaderPilotBytes, HeaderVersionBytes);
-
-        var nameBytes = Encoding.UTF8.GetBytes(fileInfo.Name);
-        var copyLen = Math.Min(nameBytes.Length, FileNameBytes);
-        Buffer.BlockCopy(nameBytes, 0, header, HeaderPrefixBytes, copyLen);
-        Buffer.BlockCopy(fileHash, 0, header, HeaderPrefixBytes + FileNameBytes, 64);
-
-        WriteFileAttributes(header.AsSpan(840, 20), fileInfo);
-        BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(860, 8), fileSize);
-        BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(868, 8), blockCount);
-        var crc = Crc32.Compute(header.AsSpan(HeaderCrcDataOffset, FileHeaderBytes - HeaderCrcDataOffset - CrcBytes));
-        Crc32.WriteBigEndian(header.AsSpan(FileHeaderBytes - CrcBytes, CrcBytes), crc);
-        return header;
-    }
-
-    private static void WriteFileAttributes(Span<byte> dest, FileInfo fileInfo)
-    {
-        WriteTimestamp(dest.Slice(0, 7), fileInfo.CreationTime);
-        WriteTimestamp(dest.Slice(7, 7), fileInfo.LastWriteTime);
-
-        var attrs = new byte[6];
-        byte flags = 0;
-        if (fileInfo.IsReadOnly)
-        {
-            flags |= 0x01;
-        }
-
-        var ext = fileInfo.Extension;
-        if (ext.Equals(".exe", StringComparison.OrdinalIgnoreCase)
-            || ext.Equals(".dll", StringComparison.OrdinalIgnoreCase)
-            || ext.Equals(".bat", StringComparison.OrdinalIgnoreCase)
-            || ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
-        {
-            flags |= 0x02;
-        }
-
-        attrs[0] = flags;
-        attrs.CopyTo(dest.Slice(14, 6));
-    }
-
-    private static void WriteTimestamp(Span<byte> dest, DateTime timestamp)
-    {
-        var local = timestamp.ToLocalTime();
-        BinaryPrimitives.WriteUInt16BigEndian(dest, (ushort)local.Year);
-        dest[2] = (byte)local.Month;
-        dest[3] = (byte)local.Day;
-        dest[4] = (byte)local.Hour;
-        dest[5] = (byte)local.Minute;
-        dest[6] = (byte)local.Second;
-    }
-
-    private static byte[] BuildBlockHeader(
-        byte subcarriers,
-        byte modulationMode,
-        byte channelMode,
-        long blockIndex,
-        int blockSize,
-        byte[] blockHash,
-        byte[] fileHash)
-    {
-        if (blockHash.Length != 32)
-        {
-            throw new ArgumentException("Block hash must be SHA-256 (32 bytes).", nameof(blockHash));
-        }
-
-        if (fileHash.Length != 64)
-        {
-            throw new ArgumentException("File hash must be SHA-512 (64 bytes).", nameof(fileHash));
-        }
-
-        var header = new byte[BlockHeaderBytes];
-        Buffer.BlockCopy(BlockHeaderPilot, 0, header, 0, HeaderPilotBytes);
-        Buffer.BlockCopy(HeaderVersion, 0, header, HeaderPilotBytes, HeaderVersionBytes);
-        header[8] = subcarriers;
-        header[9] = modulationMode;
-        header[10] = channelMode;
-        header[11] = 0;
-        BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(12, 8), blockIndex);
-        BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(20, 4), blockSize);
-        Buffer.BlockCopy(blockHash, 0, header, 24, 32);
-        Buffer.BlockCopy(fileHash, 0, header, 56, 64);
-        var crc = Crc32.Compute(header.AsSpan(HeaderCrcDataOffset, BlockHeaderBytes - HeaderCrcDataOffset - CrcBytes));
-        Crc32.WriteBigEndian(header.AsSpan(BlockHeaderBytes - CrcBytes, CrcBytes), crc);
-        return header;
-    }
-
-    private static void EnsureHeaderCrc(byte[] header, string headerName)
-    {
-        if (header.Length < HeaderCrcDataOffset + CrcBytes)
-        {
-            throw new InvalidDataException($"Invalid {headerName}: too short for CRC.");
-        }
-
-        var dataLen = header.Length - HeaderCrcDataOffset - CrcBytes;
-        if (!Crc32.Matches(header.AsSpan(HeaderCrcDataOffset, dataLen), header.AsSpan(header.Length - CrcBytes, CrcBytes)))
-        {
-            throw new InvalidDataException($"Invalid {headerName}: CRC-32 mismatch.");
-        }
-    }
-
-    private static void EnsureHeaderPilot(byte[] header, byte[] expectedPilot, string headerName)
-    {
-        if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)
-        {
-            throw new InvalidDataException($"Invalid {headerName}: pilot/version definition mismatch.");
-        }
-
-        if (header.Length < HeaderPrefixBytes)
-        {
-            throw new InvalidDataException($"Invalid {headerName}: too short for pilot.");
-        }
-
-        for (var i = 0; i < expectedPilot.Length; i++)
-        {
-            if (header[i] != expectedPilot[i])
-            {
-                throw new InvalidDataException($"Invalid {headerName} pilot at byte {i}.");
-            }
-        }
-
-        for (var i = 0; i < HeaderVersionBytes; i++)
-        {
-            if (header[HeaderPilotBytes + i] != HeaderVersion[i])
-            {
-                throw new InvalidDataException($"Invalid {headerName} version at byte {HeaderPilotBytes + i}.");
-            }
-        }
-    }
-
-    private static List<DataBlock> SplitDataBlocks(byte[] fileBytes)
-    {
-        var blocks = new List<DataBlock>();
-        for (var offset = 0; offset < fileBytes.Length; offset += DataBlockBytes)
-        {
-            var length = Math.Min(DataBlockBytes, fileBytes.Length - offset);
-            var payload = new byte[length];
-            Buffer.BlockCopy(fileBytes, offset, payload, 0, length);
-            blocks.Add(new DataBlock(payload, length));
-        }
-
-        if (blocks.Count == 0)
-        {
-            blocks.Add(new DataBlock(Array.Empty<byte>(), 0));
-        }
-
-        return blocks;
-    }
-
-    private static bool[] BytesToBitsMsb(byte[] bytes)
-    {
-        var bits = new bool[bytes.Length * 8];
-        for (var i = 0; i < bytes.Length; i++)
-        {
-            for (var b = 0; b < 8; b++)
-            {
-                bits[(i * 8) + b] = ((bytes[i] >> (7 - b)) & 1) == 1;
-            }
-        }
-
-        return bits;
-    }
-
-    private static byte[] BitsToBytesMsb(bool[] bits)
-    {
-        var bytes = new byte[(bits.Length + 7) / 8];
-        for (var i = 0; i < bits.Length; i++)
-        {
-            if (!bits[i])
-            {
-                continue;
-            }
-
-            bytes[i / 8] |= (byte)(1 << (7 - (i % 8)));
-        }
-
-        return bytes;
-    }
 
     private static void AppendSilence(List<Complex> leftPcm, List<Complex> rightPcm, int sampleCount, bool stereo)
     {
@@ -4376,183 +2505,6 @@ public sealed class FileWavCodec
         return slice;
     }
 
-    /// <summary>
-    /// 送信時間内訳の1セグメントです。
-    /// </summary>
-    public readonly record struct TransmissionDurationSegment(string Label, long Samples, double Seconds);
-
-    /// <summary>
-    /// 送信時間見積り結果です。
-    /// </summary>
-    public sealed record TransmissionDurationEstimate(
-        int SampleRate,
-        long TotalSamples,
-        double TotalSeconds,
-        IReadOnlyList<TransmissionDurationSegment> Segments);
-
-    /// <summary>
-    /// プロファイルと入力サイズから送信時間を見積もります。
-    /// </summary>
-    /// <param name="profile">見積り対象プロファイル。</param>
-    /// <param name="fileSizeBytes">入力ファイルサイズ（バイト）。</param>
-    /// <returns>送信時間見積り。</returns>
-    public static TransmissionDurationEstimate EstimateTransmissionDuration(FileWavCodecProfile profile, long fileSizeBytes)
-    {
-        if (fileSizeBytes < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(fileSizeBytes));
-        }
-
-        var codec = new FileWavCodec(profile);
-        var payloadLengths = BuildBlockPayloadLengths(fileSizeBytes);
-        var segments = new List<TransmissionDurationSegment>(payloadLengths.Length * Math.Max(1, profile.BlockInterleaveFactor) + 8);
-        var totalSamples = 0L;
-
-        totalSamples += profile.LeadingSilenceSamples;
-        AddSegment(segments, "プリアンブル", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples);
-
-        var openingHeaderOfdm = codec.CreateHeaderOfdm();
-        var openingFhSamples = HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
-        AddSegment(segments, "FH", openingFhSamples, profile.SampleRate, ref totalSamples);
-
-        for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
-        {
-            var (passSc, passMod) = ResolveInterleavePassModulation(
-                pass,
-                profile.ActiveSubcarriers,
-                profile.ModulationScheme);
-            var headerOfdm = codec.CreateHeaderOfdm(OfdmConfig.ResolveCarrierGrid(passSc));
-            var dataOfdm = codec.CreateDataOfdm(passSc, passMod);
-            var fhPacketSamples = HeaderPacketSamples(headerOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
-            var bhPacketSamples = HeaderPacketSamples(headerOfdm, BlockHeaderBytes, profile.BlockHeaderUnmodulatedSamples);
-            var order = GetBlockEmissionOrder(payloadLengths.Length, pass);
-            for (var local = 0; local < order.Length; local++)
-            {
-                if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
-                {
-                    AddSegment(segments, "FH", fhPacketSamples, profile.SampleRate, ref totalSamples);
-                }
-
-                var blockIndex = order[local];
-                var dataSamples = DataPacketSamples(
-                    dataOfdm,
-                    payloadLengths[blockIndex],
-                    profile.ChannelMode,
-                    passMod);
-                var blkSamples = bhPacketSamples + dataSamples;
-                var blkLabel = profile.BlockInterleaveFactor == 1
-                    ? $"BLK-{blockIndex}"
-                    : $"BLK-{blockIndex}(P{pass + 1})";
-                AddSegment(segments, blkLabel, blkSamples, profile.SampleRate, ref totalSamples);
-            }
-        }
-
-        AddSegment(
-            segments,
-            "FH",
-            HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples),
-            profile.SampleRate,
-            ref totalSamples);
-        AddSegment(segments, "TAIL", profile.TrailingSilenceSamples, profile.SampleRate, ref totalSamples);
-
-        return new TransmissionDurationEstimate(
-            profile.SampleRate,
-            totalSamples,
-            totalSamples / (double)profile.SampleRate,
-            segments);
-    }
-
-    /// <summary>
-    /// 送信時間見積りを表示向けテキストへ整形します。
-    /// </summary>
-    /// <param name="estimate">送信時間見積り。</param>
-    /// <param name="digits">秒表示の小数桁数。</param>
-    /// <returns>内訳表示テキスト。</returns>
-    public static string FormatTransmissionDurationBreakdown(TransmissionDurationEstimate estimate, int digits = 3)
-    {
-        var sb = new StringBuilder(estimate.Segments.Count * 24);
-        var fmt = "F" + Math.Clamp(digits, 0, 6);
-        for (var i = 0; i < estimate.Segments.Count; i++)
-        {
-            var seg = estimate.Segments[i];
-            sb.Append(seg.Label)
-              .Append(':')
-              .Append(seg.Seconds.ToString(fmt))
-                            .Append("s")
-              .AppendLine();
-        }
-
-        sb.Append("合計:")
-  .Append(estimate.TotalSeconds.ToString(fmt))
-            .Append("s");
-        return sb.ToString();
-    }
-
-    private static int[] BuildBlockPayloadLengths(long fileSizeBytes)
-    {
-        if (fileSizeBytes == 0)
-        {
-            return [0];
-        }
-
-        var blockCountLong = (fileSizeBytes + DataBlockBytes - 1) / DataBlockBytes;
-        if (blockCountLong > int.MaxValue)
-        {
-            throw new ArgumentOutOfRangeException(nameof(fileSizeBytes), "Block count exceeds supported range.");
-        }
-
-        var blockCount = (int)blockCountLong;
-        var lengths = new int[blockCount];
-        var remaining = fileSizeBytes;
-        for (var i = 0; i < blockCount; i++)
-        {
-            var len = (int)Math.Min(DataBlockBytes, remaining);
-            lengths[i] = len;
-            remaining -= len;
-        }
-
-        return lengths;
-    }
-
-    private static int HeaderPacketSamples(OfdmGenerator headerOfdm, int payloadLength, int unmodulatedSamples)
-    {
-        var rsLength = GetReedSolomonEncodedLength(payloadLength);
-        var convLength = GetConvolutionalEncodedLength(rsLength, HeaderPunctureRate);
-        var totalBits = convLength * 8;
-        var channelBits = headerOfdm.ChannelMode == ChannelMode.Stereo
-            ? (totalBits + 1) / 2
-            : totalBits;
-        return unmodulatedSamples + headerOfdm.SampleCountForBitCount(channelBits);
-    }
-
-    private static int DataPacketSamples(
-        OfdmGenerator dataOfdm,
-        int payloadLength,
-        ChannelMode channelMode,
-        ModulationScheme modulationScheme)
-    {
-        var withCrcLength = payloadLength + CrcBytes;
-        var paddedLength = TurboPaddedLength(withCrcLength);
-        var turboLength = (paddedLength / TurboEcc1024.DataUnitBytes) * TurboEcc1024.EncodedBytes;
-        var convLength = GetConvolutionalEncodedLength(turboLength, ResolveDataPunctureRate(modulationScheme));
-        var totalBits = convLength * 8;
-        var channelBits = channelMode == ChannelMode.Stereo
-            ? (totalBits + 1) / 2
-            : totalBits;
-        return dataOfdm.SampleCountForBitCount(channelBits);
-    }
-
-    private static void AddSegment(
-        List<TransmissionDurationSegment> segments,
-        string label,
-        long samples,
-        int sampleRate,
-        ref long totalSamples)
-    {
-        totalSamples += samples;
-        segments.Add(new TransmissionDurationSegment(label, samples, samples / (double)sampleRate));
-    }
-
     private readonly record struct DataBlock(byte[] Payload, int PayloadLength);
 }
 
@@ -4562,13 +2514,13 @@ public sealed class FileWavCodec
 public static class WavWriter
 {
     /// <summary>
-    /// ストリーミングWAVライターを生成します。
+    /// ストリーミング書き込み用の WAV ライターを作成します。
     /// </summary>
-    /// <param name="path">出力WAVパス。</param>
-    /// <param name="sampleRate">サンプルレート。</param>
-    /// <param name="peakTarget">ピーク振幅目標値。</param>
-    /// <param name="channelMode">チャネルモード。</param>
-    /// <returns>ストリーミングライター。</returns>
+    /// <param name="path">path を指定します。</param>
+    /// <param name="sampleRate">sampleRate を指定します。</param>
+    /// <param name="peakTarget">peakTarget を指定します。</param>
+    /// <param name="channelMode">channelMode を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public static StreamingPcm16Writer CreateStreamingPcm16(
         string path,
         int sampleRate,
@@ -4579,14 +2531,14 @@ public static class WavWriter
     }
 
     /// <summary>
-    /// 指定チャネルモードで PCM16 WAV を書き出します。
+    /// 指定チャンネルモードで PCM16 WAV を書き出します。
     /// </summary>
-    /// <param name="path">出力WAVパス。</param>
-    /// <param name="sampleRate">サンプルレート。</param>
-    /// <param name="left">左チャネルサンプル。</param>
-    /// <param name="right">右チャネルサンプル。</param>
-    /// <param name="peakTarget">ピーク振幅目標値。</param>
-    /// <param name="channelMode">チャネルモード。</param>
+    /// <param name="path">path を指定します。</param>
+    /// <param name="sampleRate">sampleRate を指定します。</param>
+    /// <param name="left">left を指定します。</param>
+    /// <param name="right">right を指定します。</param>
+    /// <param name="peakTarget">peakTarget を指定します。</param>
+    /// <param name="channelMode">channelMode を指定します。</param>
     public static void WritePcm16(
         string path,
         int sampleRate,
@@ -4732,10 +2684,10 @@ public static class WavWriter
         }
 
         /// <summary>
-        /// PCMチャンクを追記します。
+        /// PCM チャンクを追記します。
         /// </summary>
-        /// <param name="left">左チャネルチャンク。</param>
-        /// <param name="right">右チャネルチャンク。</param>
+        /// <param name="left">left を指定します。</param>
+        /// <param name="right">right を指定します。</param>
         public void WriteChunk(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
         {
             if (_disposed)
@@ -4805,7 +2757,7 @@ public static class WavWriter
             var byteRate = _sampleRate * blockAlign;
 
             _writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-            _writer.Write(0); // 後で更新
+            _writer.Write(0); // Dispose 時に RIFF チャンクサイズを書き戻す
             _writer.Write(Encoding.ASCII.GetBytes("WAVE"));
 
             _writer.Write(Encoding.ASCII.GetBytes("fmt "));
@@ -4818,21 +2770,21 @@ public static class WavWriter
             _writer.Write((short)16);
 
             _writer.Write(Encoding.ASCII.GetBytes("data"));
-            _writer.Write(0); // 後で更新
+            _writer.Write(0); // Dispose 時に data チャンクサイズを書き戻す
         }
     }
 }
 
 /// <summary>
-/// PCM16 WAV を読み込んで Complex サンプルへ復元するユーティリティです。
+/// PCM16 WAV を読み込み Complex サンプル列へ変換するユーティリティです。
 /// </summary>
 public static class WavReader
 {
     /// <summary>
-    /// WAVファイルのチャネル数（1ch/2ch）を取得します。
+    /// WAV のチャンネル数（1ch/2ch）を取得します。
     /// </summary>
-    /// <param name="path">入力WAVパス。</param>
-    /// <returns>チャネル数。</returns>
+    /// <param name="path">path を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public static int PeekChannelCount(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -4878,10 +2830,10 @@ public static class WavReader
     }
 
     /// <summary>
-    /// PCM16 WAV を Complex サンプルへ読み込みます。
+    /// PCM16 WAV を Complex サンプル列として読み込みます。
     /// </summary>
-    /// <param name="path">入力WAVパス。</param>
-    /// <returns>左/右チャネルのサンプル列。</returns>
+    /// <param name="path">path を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public static (Complex[] Left, Complex[] Right) ReadPcm16(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -4992,8 +2944,8 @@ public static class WavReader
 }
 
 /// <summary>
-/// PCM16 WAV をチャンク単位で逐次読みするストリームリーダーです。
-/// 全データをメモリへ展開しません。
+/// PCM16 WAV をチャンク単位で順次読み込むストリームリーダーです。
+/// 全データを一括展開せずに処理できます。
 /// </summary>
 public sealed class WavPcmStreamReader : IDisposable
 {
@@ -5024,24 +2976,24 @@ public sealed class WavPcmStreamReader : IDisposable
         _stream.Position = dataStart;
     }
 
-    /// <summary>チャネル数（1 または 2）。</summary>
+    /// <summary>チャンネル数（1 または 2）です。</summary>
     public int Channels => _channels;
 
-    /// <summary>サンプルレート。</summary>
+    /// <summary>サンプルレートです。</summary>
     public int SampleRate => _sampleRate;
 
-    /// <summary>総フレーム数。</summary>
+    /// <summary>総フレーム数です。</summary>
     public long TotalFrames => _dataLength / (_channels * 2);
 
-    /// <summary>読み込み済みフレーム数。</summary>
+    /// <summary>読み込み済みフレーム数です。</summary>
     public long FramesRead => _dataPosition / (_channels * 2);
 
-    /// <summary>読み込み進捗（0〜1）。</summary>
+    /// <summary>読み込み進捗（0.0〜1.0）です。</summary>
     public double Progress =>
         _dataLength <= 0 ? 1.0 : Math.Clamp(_dataPosition / (double)_dataLength, 0.0, 1.0);
 
     /// <summary>
-    /// WAV を開いてデータチャンク位置までシークします。
+    /// WAV を開き、data チャンク先頭までシークしたリーダーを返します。
     /// </summary>
     public static WavPcmStreamReader Open(string path)
     {
@@ -5128,9 +3080,9 @@ public sealed class WavPcmStreamReader : IDisposable
     }
 
     /// <summary>
-    /// 最大 frameCount フレームを読み、Complex L/R を返します。
+    /// 最大 frameCount フレームを読み、Complex の L/R 配列を返します。
     /// </summary>
-    /// <returns>1フレーム以上読めた場合 true。EOF なら false。</returns>
+    /// <returns>戻り値を返します。</returns>
     public bool TryRead(int frameCount, out Complex[] left, out Complex[] right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

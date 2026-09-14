@@ -24,9 +24,10 @@ public static class WowFlutterWarp
     /// <returns>wow 位相と flutter 位相（ラジアン）。</returns>
     public static (double WowPhase, double FlutterPhase) CreatePhases(int seed)
     {
-        var random = seed == 0 ? new Random() : new Random(seed);
-        var wowPhase = random.NextDouble() * 2.0 * Math.PI;
-        var flutterPhase = random.NextDouble() * 2.0 * Math.PI;
+        var effectiveSeed = seed == 0 ? Random.Shared.Next() : seed;
+        var state = MSequence31.InitializeState(MSequenceUsage.WowFlutterPhase, effectiveSeed);
+        var wowPhase = MSequence31.NextUnitDouble(ref state) * 2.0 * Math.PI;
+        var flutterPhase = MSequence31.NextUnitDouble(ref state) * 2.0 * Math.PI;
         return (wowPhase, flutterPhase);
     }
 
