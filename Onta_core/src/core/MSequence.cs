@@ -5,15 +5,6 @@
 /// </summary>
 public enum MSequenceUsage
 {
-    /// <summary>チャネルビットインターリーブ用途。</summary>
-    ChannelBitInterleave,
-
-    /// <summary>OFDM 周波数インターリーブ（左チャネル）用途。</summary>
-    OfdmFrequencyInterleaveLeft,
-
-    /// <summary>OFDM 周波数インターリーブ（右チャネル）用途。</summary>
-    OfdmFrequencyInterleaveRight,
-
     /// <summary>ターボ符号インターリーバ用途。</summary>
     TurboEccInterleaver,
 
@@ -41,37 +32,14 @@ public static class MSequence31
     /// </summary>
     /// <param name="usage">系列の用途種別。</param>
     /// <param name="seed">基本シード値。</param>
-    /// <param name="interleaveInitSeed">インターリーブ初期シード。</param>
-    /// <param name="epoch">エポック番号。</param>
     /// <returns>ゼロを除く 31bit の初期状態。</returns>
     public static uint InitializeState(
         MSequenceUsage usage,
-        int seed,
-        int interleaveInitSeed = 0,
-        long epoch = 0)
+        int seed)
     {
         ulong x;
         switch (usage)
         {
-            case MSequenceUsage.ChannelBitInterleave:
-                x = unchecked((uint)seed);
-                x ^= 0xA5A5A5A5u;
-                break;
-
-            case MSequenceUsage.OfdmFrequencyInterleaveLeft:
-                x = (uint)(seed == 0 ? 1 : seed);
-                x ^= (uint)interleaveInitSeed;
-                x ^= 0x5A5A5A5Au;
-                x ^= unchecked((ulong)epoch * SplitMixConst);
-                break;
-
-            case MSequenceUsage.OfdmFrequencyInterleaveRight:
-                x = (uint)(seed == 0 ? 1 : seed);
-                x ^= (uint)interleaveInitSeed;
-                x ^= 0xA5A5A5A5u;
-                x ^= unchecked((ulong)epoch * SplitMixConst);
-                break;
-
             case MSequenceUsage.TurboEccInterleaver:
                 x = unchecked((uint)seed);
                 x ^= 0x3C6EF372u;

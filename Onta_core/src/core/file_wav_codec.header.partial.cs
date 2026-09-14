@@ -20,11 +20,9 @@ public sealed partial class FileWavCodec
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 8,
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: _profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: grid);
@@ -44,7 +42,6 @@ public sealed partial class FileWavCodec
         int payloadLength,
         byte[]? expectedPilot,
         int searchRadius,
-        int interleaveInitSeed,
         Action<int, int>? onSyncProgress = null,
         CoreExecutionStatusBoard? statusBoard = null,
         CoreFrameKind frameKind = CoreFrameKind.Fh)
@@ -62,7 +59,6 @@ public sealed partial class FileWavCodec
                 payloadLength,
                 expectedPilot,
                 searchRadius,
-                interleaveInitSeed,
                 onSyncProgress,
                 statusBoard,
                 frameKind);
@@ -81,7 +77,6 @@ public sealed partial class FileWavCodec
                 payloadLength,
                 expectedPilot,
                 searchRadius,
-                interleaveInitSeed,
                 onSyncProgress,
                 statusBoard,
                 frameKind);
@@ -100,8 +95,7 @@ public sealed partial class FileWavCodec
             headerOfdm,
             fileHeader,
             fileHeader,
-            _profile.FileHeaderUnmodulatedSamples,
-            InterleaveInitSeedFileHeader);
+            _profile.FileHeaderUnmodulatedSamples);
     }
 
     private void AppendHeaderPackets(
@@ -110,8 +104,7 @@ public sealed partial class FileWavCodec
         OfdmGenerator ofdm,
         byte[] leftHeaderBytes,
         byte[] rightHeaderBytes,
-        int unmodulatedSamples,
-        int interleaveInitSeed)
+        int unmodulatedSamples)
     {
         _ = rightHeaderBytes;
         if (unmodulatedSamples > 0)
@@ -122,14 +115,11 @@ public sealed partial class FileWavCodec
 
         var leftBits = BytesToBitsMsb(
             ConvolutionalCode.Encode(
-                ApplyReedSolomon(
-                    ChannelBitInterleaver.InterleaveBytes(
-                        leftHeaderBytes,
-                        ResolveBitInterleaveSeed(interleaveInitSeed))),
+                ApplyReedSolomon(leftHeaderBytes),
                 terminate: true,
                 punctureRate: HeaderPunctureRate));
 
-        var modulated = ofdm.ModulateBits(leftBits, leftPcm.Count, interleaveInitSeed);
+        var modulated = ofdm.ModulateBits(leftBits, leftPcm.Count);
         AppendHeaderPair(leftPcm, rightPcm, modulated);
     }
 
@@ -166,7 +156,6 @@ public sealed partial class FileWavCodec
         int payloadLength,
         byte[]? expectedPilot,
         int searchRadius,
-        int interleaveInitSeed,
         Action<int, int>? onSyncProgress = null,
         CoreExecutionStatusBoard? statusBoard = null,
         CoreFrameKind frameKind = CoreFrameKind.Fh)
@@ -195,7 +184,6 @@ public sealed partial class FileWavCodec
                 expectedPilot,
                 stereoSplit,
                 perSymbolSearchRadius: 0,
-                interleaveInitSeed,
                 out var exactPayload,
                 out var exactEnd,
                 out _,
@@ -243,7 +231,6 @@ public sealed partial class FileWavCodec
                         expectedPilot,
                         stereoSplit,
                         perSymbolSearchRadius: Math.Min(2, Math.Max(0, symbolLength / 16)),
-                        interleaveInitSeed,
                         out var payload,
                         out var endCursor,
                         out _,
@@ -284,7 +271,6 @@ public sealed partial class FileWavCodec
         byte[]? expectedPilot,
         bool stereoSplit,
         int perSymbolSearchRadius,
-        int interleaveInitSeed,
         out byte[] payload,
         out int endCursor)
     {
@@ -302,7 +288,6 @@ public sealed partial class FileWavCodec
             expectedPilot,
             stereoSplit,
             perSymbolSearchRadius,
-            interleaveInitSeed,
             out payload,
             out endCursor,
             out _);
@@ -322,7 +307,6 @@ public sealed partial class FileWavCodec
         byte[]? expectedPilot,
         bool stereoSplit,
         int perSymbolSearchRadius,
-        int interleaveInitSeed,
         out byte[] payload,
         out int endCursor,
         out double meanAbsLlr,
@@ -359,7 +343,6 @@ public sealed partial class FileWavCodec
                     logicalOffset,
                     searchRadius: Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
                     noiseVariance: 0.05,
-                    interleaveInitSeed,
                     ModulationScheme.Bpsk);
                 endCursor = cursor;
             }
@@ -377,7 +360,6 @@ public sealed partial class FileWavCodec
                     logicalOffset,
                     perSymbolSearchRadius,
                     noiseVariance: 0.05,
-                    interleaveInitSeed,
                     ModulationScheme.Bpsk);
                 endCursor = cursor;
             }
@@ -396,9 +378,6 @@ public sealed partial class FileWavCodec
                 out var viterbiMetrics,
                 out var rsMetrics,
                 out _);
-            payload = ChannelBitInterleaver.DeinterleaveBytes(
-                payload,
-                ResolveBitInterleaveSeed(interleaveInitSeed));
             if (expectedPilot is not null && !HeaderPrefixMatches(payload, expectedPilot))
             {
                 return false;

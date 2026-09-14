@@ -11,8 +11,7 @@ public sealed partial class OfdmGenerator
         int bitCount,
         bool useRightChannel,
         long logicalSampleOffset,
-        int searchRadius = 16,
-        int interleaveInitSeed = 0)
+        int searchRadius = 16)
     {
         if (bitCount < 0)
         {
@@ -62,8 +61,7 @@ public sealed partial class OfdmGenerator
                 timeNoCp,
                 freqBins,
                 equalizers);
-            var symbolOffset = (long)s * symbolLength;
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
+            var dataOrder = ResolveDataCarrierOrder(useRightChannel);
 
             foreach (var dataBin in dataOrder)
             {
@@ -96,7 +94,6 @@ public sealed partial class OfdmGenerator
         long logicalSampleOffset,
         int searchRadius = 16,
         double noiseVariance = 0.05,
-        int interleaveInitSeed = 0,
         Action<Complex>? onEqualizedDataSymbol = null,
         Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame = null,
         Action<Complex[], int>? onFftSymbolFrame = null,
@@ -113,7 +110,6 @@ public sealed partial class OfdmGenerator
             searchRadius,
             noiseVariance,
             estimateNoiseFromPilots: true,
-            interleaveInitSeed,
             onEqualizedDataSymbol,
             onEqualizedDataSymbolFrame,
             onFftSymbolFrame,
@@ -130,8 +126,7 @@ public sealed partial class OfdmGenerator
         long logicalSampleOffset,
         int searchRadius = 16,
         double noiseVariance = 0.05,
-        bool estimateNoiseFromPilots = true,
-        int interleaveInitSeed = 0)
+        bool estimateNoiseFromPilots = true)
     {
         ArgumentNullException.ThrowIfNull(leftSamples);
         ArgumentNullException.ThrowIfNull(rightSamples);
@@ -148,7 +143,6 @@ public sealed partial class OfdmGenerator
                 searchRadius,
                 noiseVariance,
                 estimateNoiseFromPilots,
-                interleaveInitSeed,
                 onEqualizedDataSymbol: null,
                 onEqualizedDataSymbolFrame: null,
                 onFftSymbolFrame: null,
@@ -171,7 +165,6 @@ public sealed partial class OfdmGenerator
             searchRadius,
             noiseVariance,
             estimateNoiseFromPilots,
-            interleaveInitSeed,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: null,
             onFftSymbolFrame: null,
@@ -209,8 +202,7 @@ public sealed partial class OfdmGenerator
         ReadOnlySpan<Complex> samples,
         int bitCount,
         bool useRightChannel = false,
-        long absoluteSampleOffset = 0,
-        int interleaveInitSeed = 0)
+        long absoluteSampleOffset = 0)
     {
         if (bitCount < 0)
         {
@@ -245,8 +237,7 @@ public sealed partial class OfdmGenerator
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
             _ = absoluteSampleOffset;
-            var symbolOffset = (long)s * symbolLength;
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
+            var dataOrder = ResolveDataCarrierOrder(useRightChannel);
 
             var symbol = samples.Slice(s * symbolLength, symbolLength);
             PrepareSymbolFrequency(

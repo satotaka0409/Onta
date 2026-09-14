@@ -1,12 +1,12 @@
-﻿using System.Numerics;
+using System.Numerics;
 using Onta.Core;
 using Onta.Core.Tests;
 
 namespace Onta.Core.TestHost;
 
 /// <summary>
-/// デバッグ実行用テストホストです。引数で対象テストを切り替えます。
-/// probe* のうち exact 位相を渡すものは診断用オラクルであり、本テスト（OntaTest*）の代替ではありません。
+/// デバッグ実行用のテストホストです。引数で対象テストを切り替えます。
+/// probe* は診断用の補助コマンドであり、通常の本テスト（OntaTest*）の代替ではありません。
 /// </summary>
 internal static class Program
 {
@@ -142,11 +142,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: OfdmConfig.ResolveCarrierGrid(9)));
@@ -204,7 +202,7 @@ internal static class Program
 
     private static void ProbeWithWowParams(string wavPath)
     {
-        // test4 と同じ ImpairmentSeed=20260905 から位相を再現する。
+        // test4 と同じ ImpairmentSeed=20260905 の位相を使って確認する。
         var (wowPhase, flutterPhase) = WowFlutterWarp.CreatePhases(20260905);
         Console.WriteLine($"Probe with exact wowParams amount=0.01 phases=({wowPhase:F4},{flutterPhase:F4}): {wavPath}");
         var channels = WavReader.PeekChannelCount(wavPath);
@@ -224,7 +222,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// UI 受信条件で既存 WAV を復号します。
+    /// UI受信相当の設定で指定WAVを復号します。
     /// </summary>
     private static void ProbeUiStyleDecode(string wavPath, bool correctWow)
     {
@@ -236,7 +234,7 @@ internal static class Program
 
         var channels = WavReader.PeekChannelCount(wavPath);
         var channelMode = channels == 2 ? ChannelMode.Stereo : ChannelMode.Mono;
-        // test3 wow_only は 18SC/16QAM。それ以外はヘッダーのみで復調できる最低設定。
+        // test3 wow_only は 18SC/16QAM、それ以外はヘッダー情報で自動判定させる前提設定。
         var isTest3Wow = wavPath.Contains("test3_wow_only", StringComparison.OrdinalIgnoreCase)
             || wavPath.Contains("Sample1_test3", StringComparison.OrdinalIgnoreCase);
         var profile = isTest3Wow
@@ -284,11 +282,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: grid));
@@ -330,7 +326,7 @@ internal static class Program
             prefixScore);
         Console.WriteLine($"prefixRef-Correct corr={Correlate(prefixScore, ideal):F4}");
 
-        // Match 近傍から Correct 精密化が真値へ戻るか
+        // Match結果を起点に Correct したとき、真値へ戻るかを確認する。
         var matchLikeWow = trueWow + 0.01;
         var matchLikeFlutter = trueFlutter + 0.008;
         var refined = ofdm.RefineWowParametersForCorrectModel(
@@ -445,11 +441,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: grid));
@@ -496,11 +490,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: grid));
@@ -555,11 +547,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: OfdmConfig.ResolveCarrierGrid(9)));
@@ -590,11 +580,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: OfdmConfig.ResolveCarrierGrid(9)));
@@ -700,11 +688,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: OfdmConfig.ResolveCarrierGrid(9)));
@@ -783,7 +769,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// Exact 位相を CorrectWowFlutterSegmentInPlace（絶対時刻モデル）で掛けてから復号します。
+    /// Exact位相で CorrectWowFlutterSegmentInPlace を適用後に復号します。
     /// </summary>
     private static void ProbeTest9SegmentCorrect(string wavPath)
     {
@@ -802,11 +788,9 @@ internal static class Program
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
-            enableFrequencyInterleaving: true,
             pilotSpacing: 9,
             stereoFrequencyShiftBins: profile.StereoFrequencyShiftBins,
             sampleRate: profile.SampleRate,
-            frequencyInterleaveIntervalSymbols: 1,
             randomSeed: profile.RandomSeed,
             conceptualLeftBins: groupB,
             carrierGrid: OfdmConfig.ResolveCarrierGrid(9)));

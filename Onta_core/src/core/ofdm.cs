@@ -96,11 +96,6 @@ public sealed record OfdmConfig
     public ChannelMode ChannelMode { get; }
 
     /// <summary>
-    /// 周波数インタリーブ有効フラグ。
-    /// </summary>
-    public bool EnableFrequencyInterleaving { get; }
-
-    /// <summary>
     /// パイロット間隔。
     /// </summary>
     public int PilotSpacing { get; }
@@ -114,11 +109,6 @@ public sealed record OfdmConfig
     /// サンプルレート（Hz）。
     /// </summary>
     public int SampleRate { get; }
-
-    /// <summary>
-    /// 周波数インタリーブ更新間隔（シンボル単位）。
-    /// </summary>
-    public int FrequencyInterleaveIntervalSymbols { get; }
 
     /// <summary>
     /// 乱数シード。
@@ -144,11 +134,9 @@ public sealed record OfdmConfig
     /// <param name="ofdmSymbolCount">OFDM シンボル数。</param>
     /// <param name="modulationScheme">変調方式。</param>
     /// <param name="channelMode">チャネルモード。</param>
-    /// <param name="enableFrequencyInterleaving">周波数インタリーブ有効フラグ。</param>
     /// <param name="pilotSpacing">パイロット間隔。</param>
     /// <param name="stereoFrequencyShiftBins">ステレオ時の左右キャリアずらし量。</param>
     /// <param name="sampleRate">サンプルレート（Hz）。</param>
-    /// <param name="frequencyInterleaveIntervalSymbols">周波数インタリーブ更新間隔。</param>
     /// <param name="randomSeed">乱数シード。</param>
     /// <param name="conceptualLeftBins">概念上の左チャネルキャリア番号。</param>
     /// <param name="carrierGrid">キャリアグリッド種別。</param>
@@ -159,11 +147,9 @@ public sealed record OfdmConfig
         int ofdmSymbolCount,
         ModulationScheme modulationScheme = ModulationScheme.Qpsk,
         ChannelMode channelMode = ChannelMode.Mono,
-        bool enableFrequencyInterleaving = true,
         int pilotSpacing = 8,
         int stereoFrequencyShiftBins = 1,
         int sampleRate = 44100,
-        int frequencyInterleaveIntervalSymbols = 1,
         int randomSeed = 0,
         IReadOnlyList<int>? conceptualLeftBins = null,
         OfdmCarrierGrid? carrierGrid = null)
@@ -174,11 +160,9 @@ public sealed record OfdmConfig
         OfdmSymbolCount = ofdmSymbolCount;
         ModulationScheme = modulationScheme;
         ChannelMode = channelMode;
-        EnableFrequencyInterleaving = enableFrequencyInterleaving;
         PilotSpacing = pilotSpacing;
         StereoFrequencyShiftBins = stereoFrequencyShiftBins;
         SampleRate = sampleRate;
-        FrequencyInterleaveIntervalSymbols = frequencyInterleaveIntervalSymbols;
         RandomSeed = randomSeed;
         ConceptualLeftBins = conceptualLeftBins ?? ResolveConceptualLeftBins(activeSubcarriers);
         CarrierGrid = carrierGrid ?? ResolveCarrierGrid(activeSubcarriers);
@@ -238,11 +222,6 @@ public sealed record OfdmConfig
         if (sampleRate <= 0)
         {
             throw new ArgumentException("Sample rate must be > 0.", nameof(sampleRate));
-        }
-
-        if (frequencyInterleaveIntervalSymbols <= 0)
-        {
-            throw new ArgumentException("Frequency interleave interval symbols must be > 0.", nameof(frequencyInterleaveIntervalSymbols));
         }
 
         ValidateCarrierBinsFitFft();
@@ -442,16 +421,12 @@ public sealed partial class OfdmGenerator
     private readonly List<int> _leftDataCarrierBase;
     private readonly Dictionary<int, ModulationScheme> _leftDataCarrierModulationByBin;
     private readonly Dictionary<int, byte> _leftDataCarrierGroupByBin;
-    private readonly int[] _leftDataCarrierNoInterleaveOrder;
-    private readonly Dictionary<(long Epoch, int Seed), int[]> _leftInterleavedOrderCache;
     private readonly int[][] _leftPilotGroupedCarriers;
     private readonly List<int> _rightAllCarrierBins;
     private readonly List<int> _rightPilotBins;
     private readonly List<int> _rightDataCarrierBase;
     private readonly Dictionary<int, ModulationScheme> _rightDataCarrierModulationByBin;
     private readonly Dictionary<int, byte> _rightDataCarrierGroupByBin;
-    private readonly int[] _rightDataCarrierNoInterleaveOrder;
-    private readonly Dictionary<(long Epoch, int Seed), int[]> _rightInterleavedOrderCache;
     private readonly int[][] _rightPilotGroupedCarriers;
     private readonly Complex[] _scoreTimeNoCpScratch;
     private readonly Complex[] _scoreFreqBinsScratch;
@@ -510,10 +485,6 @@ public sealed partial class OfdmGenerator
             BuildChannelLayout(CarrierChannel.Left);
         (_rightAllCarrierBins, _rightPilotBins, _rightDataCarrierBase, _rightDataCarrierModulationByBin, _rightDataCarrierGroupByBin) =
             BuildChannelLayout(CarrierChannel.Right);
-        _leftDataCarrierNoInterleaveOrder = _leftDataCarrierBase.ToArray();
-        _rightDataCarrierNoInterleaveOrder = _rightDataCarrierBase.ToArray();
-        _leftInterleavedOrderCache = new Dictionary<(long Epoch, int Seed), int[]>();
-        _rightInterleavedOrderCache = new Dictionary<(long Epoch, int Seed), int[]>();
         _leftPilotGroupedCarriers = BuildPilotGroupedCarriers(_leftAllCarrierBins, _leftPilotBins);
         _rightPilotGroupedCarriers = BuildPilotGroupedCarriers(_rightAllCarrierBins, _rightPilotBins);
         _scoreTimeNoCpScratch = new Complex[_config.FftSize];
@@ -658,63 +629,12 @@ public sealed partial class OfdmGenerator
     };
 
     /// <summary>
-    /// 内部パラメータです。
-    /// </summary>
-    private int InterleaveIntervalSymbols =>
-        Math.Max(1, _config.FrequencyInterleaveIntervalSymbols);
-
-    /// <summary>
     /// ResolveDataCarrierOrder を解決します。
     /// </summary>
     /// <returns>処理結果。</returns>
-    private int[] ResolveDataCarrierOrder(bool useRightChannel, long symbolLocalSamplePosition, int interleaveInitSeed)
+    private int[] ResolveDataCarrierOrder(bool useRightChannel)
     {
-        var baseOrder = useRightChannel ? _rightDataCarrierBase : _leftDataCarrierBase;
-        var noInterleaveOrder = useRightChannel ? _rightDataCarrierNoInterleaveOrder : _leftDataCarrierNoInterleaveOrder;
-        if (!_config.EnableFrequencyInterleaving)
-        {
-            return noInterleaveOrder;
-        }
-
-        var absoluteSymbolPosition = symbolLocalSamplePosition / SamplesPerOfdmSymbol;
-        var epoch = absoluteSymbolPosition / InterleaveIntervalSymbols;
-        if (baseOrder.Count <= 1)
-        {
-            return noInterleaveOrder;
-        }
-
-        var cache = useRightChannel ? _rightInterleavedOrderCache : _leftInterleavedOrderCache;
-        var cacheKey = (epoch, interleaveInitSeed);
-        if (cache.TryGetValue(cacheKey, out var cached))
-        {
-            return cached;
-        }
-
-        var order = baseOrder.ToArray();
-        var usage = useRightChannel
-            ? MSequenceUsage.OfdmFrequencyInterleaveRight
-            : MSequenceUsage.OfdmFrequencyInterleaveLeft;
-        var state = MSequence31.InitializeState(
-            usage,
-            _config.RandomSeed,
-            interleaveInitSeed,
-            epoch);
-        var keys = new uint[order.Length];
-
-        for (var i = 0; i < keys.Length; i++)
-        {
-            keys[i] = MSequence31.NextWord(ref state);
-        }
-
-        Array.Sort(keys, order);
-
-        if (cache.Count >= 4096)
-        {
-            cache.Clear();
-        }
-
-        cache[cacheKey] = order;
-        return order;
+        return useRightChannel ? _rightDataCarrierBase.ToArray() : _leftDataCarrierBase.ToArray();
     }
 
     /// <summary>
@@ -3524,7 +3444,6 @@ public sealed partial class OfdmGenerator
         int searchRadius,
         double noiseVariance,
         bool estimateNoiseFromPilots,
-        int interleaveInitSeed,
         Action<Complex>? onEqualizedDataSymbol,
         Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame,
         Action<Complex[], int>? onFftSymbolFrame,
@@ -3628,7 +3547,6 @@ public sealed partial class OfdmGenerator
                 llrs,
                 effectiveVariance,
                 addToExisting: false,
-                interleaveInitSeed,
                 onEqualizedDataSymbol,
                 onEqualizedDataSymbolFrame);
 
@@ -3654,7 +3572,6 @@ public sealed partial class OfdmGenerator
                     llrs,
                     effectiveVariance,
                     addToExisting: true,
-                    interleaveInitSeed,
                     onEqualizedDataSymbol,
                     onEqualizedDataSymbolFrame: null);
             }
@@ -3679,8 +3596,7 @@ public sealed partial class OfdmGenerator
         ref int bitIndex,
         double[] llrs,
         double noiseVariance,
-        bool addToExisting,
-        int interleaveInitSeed)
+        bool addToExisting)
     {
         PrepareSymbolFrequency(
             symbolWithCp,
@@ -3699,7 +3615,6 @@ public sealed partial class OfdmGenerator
             llrs,
             noiseVariance,
             addToExisting,
-            interleaveInitSeed,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: null);
     }
@@ -3713,11 +3628,11 @@ public sealed partial class OfdmGenerator
         double[] llrs,
         double noiseVariance,
         bool addToExisting,
-        int interleaveInitSeed,
         Action<Complex>? onEqualizedDataSymbol,
         Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame)
     {
-        var dataOrder = ResolveDataCarrierOrder(useRightChannel, logical, interleaveInitSeed);
+        _ = logical;
+        var dataOrder = ResolveDataCarrierOrder(useRightChannel);
         var dataModulationByBin = useRightChannel
             ? _rightDataCarrierModulationByBin
             : _leftDataCarrierModulationByBin;
@@ -4568,11 +4483,6 @@ public sealed partial class OfdmGenerator
         var dataModulationByBin = channel == CarrierChannel.Right
             ? _rightDataCarrierModulationByBin
             : _leftDataCarrierModulationByBin;
-
-        if (_config.EnableFrequencyInterleaving)
-        {
-            ShuffleInPlace(dataBins);
-        }
 
         foreach (var pilotBin in pilotBins)
         {

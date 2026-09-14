@@ -11,31 +11,26 @@ public sealed partial class FileWavCodec
     /// <param name="rightPcm">右チャネル出力 PCM バッファ（モノラル時は未使用）。</param>
     /// <param name="ofdm">変調に使う OFDM 生成器。</param>
     /// <param name="payload">送信対象のペイロード。</param>
-    /// <param name="interleaveInitSeed">ビットインターリーブ初期シード。</param>
     /// <param name="punctureRate">畳み込み符号のパンクチャ率。</param>
     private static void AppendModulatedDataBlock(
         List<Complex> leftPcm,
         List<Complex> rightPcm,
         OfdmGenerator ofdm,
         byte[] payload,
-        int interleaveInitSeed,
         ConvolutionalCode.PunctureRate punctureRate)
     {
         var packed = PackDataBlockWithCrc(payload);
-        var interleaved = ChannelBitInterleaver.InterleaveBytes(
-            packed,
-            ResolveBitInterleaveSeed(interleaveInitSeed));
-        var turboEncoded = EncodeTurboBlock(interleaved);
+        var turboEncoded = EncodeTurboBlock(packed);
         var convEncoded = ConvolutionalCode.Encode(turboEncoded, terminate: true, punctureRate: punctureRate);
         var bits = BytesToBitsMsb(convEncoded);
         if (ofdm.ChannelMode == ChannelMode.Stereo)
         {
             SplitBitsForStereo(bits, out var leftBits, out var rightBits);
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(leftBits, rightBits, leftPcm.Count, interleaveInitSeed));
+            AppendPair(leftPcm, rightPcm, ofdm.ModulateBitStreams(leftBits, rightBits, leftPcm.Count));
         }
         else
         {
-            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(bits, leftPcm.Count, interleaveInitSeed));
+            AppendPair(leftPcm, rightPcm, ofdm.ModulateBits(bits, leftPcm.Count));
         }
     }
 
@@ -262,7 +257,6 @@ public sealed partial class FileWavCodec
     /// <param name="payloadLength">期待するペイロード長。</param>
     /// <param name="modulationScheme">データ部の変調方式。</param>
     /// <param name="tuning">復号探索・反復回数のチューニング値。</param>
-    /// <param name="interleaveInitSeed">ビットインターリーブ初期シード。</param>
     /// <param name="punctureRate">畳み込み符号のパンクチャ率。</param>
     /// <param name="wowLocked">WOW 補正パラメータが既知かどうか。</param>
     /// <param name="statusBoard">進捗・エラー率通知先。</param>
@@ -279,7 +273,6 @@ public sealed partial class FileWavCodec
         int payloadLength,
         ModulationScheme modulationScheme,
         DecodeRuntimeTuning tuning,
-        int interleaveInitSeed,
         ConvolutionalCode.PunctureRate punctureRate,
         bool wowLocked,
         CoreExecutionStatusBoard? statusBoard,
@@ -344,7 +337,7 @@ public sealed partial class FileWavCodec
                             }
 
                             bits = DemodulateDataBitsFixed(
-                                ofdm, leftSamples, rightSamples, start, channelBitCount, bitCount, useStereoSplit, logical, interleaveInitSeed);
+                                ofdm, leftSamples, rightSamples, start, channelBitCount, bitCount, useStereoSplit, logical);
                             end = start + sampleCount;
                         }
                         else
@@ -358,8 +351,7 @@ public sealed partial class FileWavCodec
                                 bitCount,
                                 useStereoSplit,
                                 logical,
-                                perSymbolRadius,
-                                interleaveInitSeed);
+                                perSymbolRadius);
                             end = cursor;
                         }
 
@@ -383,9 +375,6 @@ public sealed partial class FileWavCodec
                                     rate * 100.0,
                                     CoreFrameKind.Bd,
                                     CoreEccDecoderKind.Turbo));
-                        candidate = ChannelBitInterleaver.DeinterleaveBytes(
-                            candidate,
-                            ResolveBitInterleaveSeed(interleaveInitSeed));
                     }
                     else
                     {
@@ -403,7 +392,6 @@ public sealed partial class FileWavCodec
                             logical,
                             radius,
                             noiseVariance: 0.05,
-                            interleaveInitSeed,
                             modulationScheme,
                             statusBoard,
                             onSoftProgress);
@@ -439,9 +427,6 @@ public sealed partial class FileWavCodec
                                     rate * 100.0,
                                     CoreFrameKind.Bd,
                                     CoreEccDecoderKind.Turbo));
-                        softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                            softCandidate,
-                            ResolveBitInterleaveSeed(interleaveInitSeed));
                         if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
                         {
                             candidate = softCandidate;
@@ -458,9 +443,6 @@ public sealed partial class FileWavCodec
                                         rate * 100.0,
                                         CoreFrameKind.Bd,
                                         CoreEccDecoderKind.Turbo));
-                            hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                                hardCandidate,
-                                ResolveBitInterleaveSeed(interleaveInitSeed));
                             candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                         }
                         else
@@ -584,7 +566,6 @@ public sealed partial class FileWavCodec
                 logicalOffset,
                 Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
                 noiseVariance: 0.08,
-                interleaveInitSeed,
                 modulationScheme,
                 statusBoard);
             warpedCursor = cursor;
@@ -614,9 +595,6 @@ public sealed partial class FileWavCodec
                         rate * 100.0,
                         CoreFrameKind.Bd,
                         CoreEccDecoderKind.Turbo));
-            softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                softCandidate,
-                ResolveBitInterleaveSeed(interleaveInitSeed));
             if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
             {
                 softMatchSucceeded = true;
@@ -641,9 +619,6 @@ public sealed partial class FileWavCodec
                             rate * 100.0,
                             CoreFrameKind.Bd,
                             CoreEccDecoderKind.Turbo));
-                hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
-                    hardCandidate,
-                    ResolveBitInterleaveSeed(interleaveInitSeed));
                 var preferred = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                 if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))
                 {
@@ -695,7 +670,6 @@ public sealed partial class FileWavCodec
     /// <param name="totalBitCount">左右結合後の総ビット数。</param>
     /// <param name="stereoSplit">左右チャネル分割復調を行うかどうか。</param>
     /// <param name="logical">論理サンプル位置。</param>
-    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
     private static bool[] DemodulateDataBitsFixed(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -704,20 +678,19 @@ public sealed partial class FileWavCodec
         int channelBitCount,
         int totalBitCount,
         bool stereoSplit,
-        long logical,
-        int interleaveInitSeed)
+        long logical)
     {
         var sliceL = new Complex[ofdm.SampleCountForBitCount(channelBitCount)];
         Array.Copy(leftSamples, start, sliceL, 0, sliceL.Length);
         if (!stereoSplit)
         {
-            return ofdm.DemodulateBits(sliceL, totalBitCount, useRightChannel: false, logical, interleaveInitSeed);
+            return ofdm.DemodulateBits(sliceL, totalBitCount, useRightChannel: false, logical);
         }
 
         var sliceR = new Complex[sliceL.Length];
         Array.Copy(rightSamples, start, sliceR, 0, sliceR.Length);
-        var leftBits = ofdm.DemodulateBits(sliceL, channelBitCount, useRightChannel: false, logical, interleaveInitSeed);
-        var rightBits = ofdm.DemodulateBits(sliceR, channelBitCount, useRightChannel: true, logical, interleaveInitSeed);
+        var leftBits = ofdm.DemodulateBits(sliceL, channelBitCount, useRightChannel: false, logical);
+        var rightBits = ofdm.DemodulateBits(sliceR, channelBitCount, useRightChannel: true, logical);
         return JoinStereoBits(leftBits, rightBits, totalBitCount);
     }
 
@@ -733,7 +706,6 @@ public sealed partial class FileWavCodec
     /// <param name="stereoSplit">左右チャネル分割復調を行うかどうか。</param>
     /// <param name="logical">論理サンプル位置。</param>
     /// <param name="searchRadius">シンボル開始位置探索半径。</param>
-    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
     private static bool[] DemodulateDataBitsFromStream(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -743,21 +715,20 @@ public sealed partial class FileWavCodec
         int totalBitCount,
         bool stereoSplit,
         long logical,
-        int searchRadius,
-        int interleaveInitSeed)
+        int searchRadius)
     {
         if (!stereoSplit)
         {
             return ofdm.DemodulateBitsFromStream(
-                leftSamples, ref cursor, totalBitCount, useRightChannel: false, logical, searchRadius, interleaveInitSeed);
+                leftSamples, ref cursor, totalBitCount, useRightChannel: false, logical, searchRadius);
         }
 
         var leftCursor = cursor;
         var rightCursor = cursor;
         var leftBits = ofdm.DemodulateBitsFromStream(
-            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius, interleaveInitSeed);
+            leftSamples, ref leftCursor, channelBitCount, useRightChannel: false, logical, searchRadius);
         var rightBits = ofdm.DemodulateBitsFromStream(
-            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius, interleaveInitSeed);
+            rightSamples, ref rightCursor, channelBitCount, useRightChannel: true, logical, searchRadius);
         cursor = leftCursor;
         return JoinStereoBits(leftBits, rightBits, totalBitCount);
     }
@@ -775,7 +746,6 @@ public sealed partial class FileWavCodec
     /// <param name="logical">論理サンプル位置。</param>
     /// <param name="searchRadius">シンボル開始位置探索半径。</param>
     /// <param name="noiseVariance">LLR 推定に使う雑音分散。</param>
-    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
     /// <param name="modulationScheme">データ部の変調方式。</param>
     /// <param name="statusBoard">IQ/FFT 可視化と進捗通知の出力先。</param>
     /// <param name="onBlockProgress">ブロック復調進捗通知コールバック。</param>
@@ -790,7 +760,6 @@ public sealed partial class FileWavCodec
         long logical,
         int searchRadius,
         double noiseVariance,
-        int interleaveInitSeed,
         ModulationScheme modulationScheme,
         CoreExecutionStatusBoard? statusBoard = null,
         Action<double>? onBlockProgress = null)
@@ -846,7 +815,6 @@ public sealed partial class FileWavCodec
                 logical,
                 searchRadius,
                 noiseVariance,
-                interleaveInitSeed,
                 onEqualizedDataSymbol: null,
                 onEqualizedDataSymbolFrame: onIqFrame,
                 onFftSymbolFrame: onFftLeftFrame,
@@ -863,7 +831,6 @@ public sealed partial class FileWavCodec
             logical,
             searchRadius,
             noiseVariance,
-            interleaveInitSeed,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: onIqFrame,
             onFftSymbolFrame: onFftLeftFrame,
@@ -876,7 +843,6 @@ public sealed partial class FileWavCodec
             logical,
             searchRadius,
             noiseVariance,
-            interleaveInitSeed,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: onIqFrame,
             onFftSymbolFrame: onFftRightFrame,

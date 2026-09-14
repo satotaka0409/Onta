@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Numerics;
@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 namespace Onta.Core;
 
 /// <summary>
-/// 送受信で扱うフレーム種別です。
+/// ・ｽ・ｽ・ｽ・ｽM・ｽﾅ茨ｿｽ・ｽ・ｽ・ｽt・ｽ・ｽ・ｽ[・ｽ・ｽ・ｽ・ｽﾊでゑｿｽ・ｽB
 /// </summary>
 public enum TransmissionFrameKind
 {
@@ -19,12 +19,12 @@ public enum TransmissionFrameKind
 }
 
 /// <summary>
-/// 受信した PCM チャンクを処理するコールバックです。
+/// ・ｽ・ｽM・ｽ・ｽ・ｽ・ｽ PCM ・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽN・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽR・ｽ[・ｽ・ｽ・ｽo・ｽb・ｽN・ｽﾅゑｿｽ・ｽB
 /// </summary>
 public delegate void PcmChunkHandler(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right);
 
 /// <summary>
-/// ファイル伝送に使用する OFDM/変調パラメータです。
+/// ・ｽt・ｽ@・ｽC・ｽ・ｽ・ｽ`・ｽ・ｽ・ｽﾉ使・ｽp・ｽ・ｽ・ｽ・ｽ OFDM/・ｽﾏ抵ｿｽ・ｽp・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽ^・ｽﾅゑｿｽ・ｽB
 /// </summary>
 public sealed record FileWavCodecProfile(
     int ActiveSubcarriers,
@@ -52,7 +52,7 @@ public sealed record FileWavCodecProfile(
 }
 
 /// <summary>
-/// 段階デコード時の探索・復号チューニング値です。
+/// ・ｽi・ｽK・ｽf・ｽR・ｽ[・ｽh・ｽ・ｽ・ｽﾌ探・ｽ・ｽ・ｽE・ｽ・ｽ・ｽ・ｽ・ｽ`・ｽ・ｽ・ｽ[・ｽj・ｽ・ｽ・ｽO・ｽl・ｽﾅゑｿｽ・ｽB
 /// </summary>
 public sealed record DecodeRuntimeTuning(
     int TurboIterationsMin = 8,
@@ -74,7 +74,7 @@ public sealed record DecodeRuntimeTuning(
     double SoftLlrAbortMeanAbsWhenWowLocked = 0.55,
     double SoftHardFallbackMinMeanAbsLlr = 1.0,
     /// <summary>
-    /// WOW 再補正時に先読みする秒数です。
+    /// WOW ・ｽﾄ補正・ｽ・ｽ・ｽﾉ撰ｿｽﾇみゑｿｽ・ｽ・ｽb・ｽ・ｽ・ｽﾅゑｿｽ・ｽB
     /// </summary>
     double WowRewarpLookaheadSeconds = 8.0)
 {
@@ -82,7 +82,7 @@ public sealed record DecodeRuntimeTuning(
 }
 
 /// <summary>
-/// 段階デコードの進捗状態と中間結果を保持します。
+/// ・ｽi・ｽK・ｽf・ｽR・ｽ[・ｽh・ｽﾌ進・ｽ・ｽ・ｽ・ｽﾔと抵ｿｽ・ｽﾔ鯉ｿｽ・ｽﾊゑｿｽﾛ趣ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
 /// </summary>
 public sealed class ProgressiveDecodeState
 {
@@ -106,8 +106,8 @@ public sealed class ProgressiveDecodeState
 
     internal long LogicalOffset;
     /// <summary>
-    /// 現在の PCM バッファ先頭が、元ストリーム全体の何サンプル目に相当するかを示します。
-    /// ストリーミング受信で先頭を破棄した場合でも時刻基準を維持します。
+    /// ・ｽ・ｽ・ｽﾝゑｿｽ PCM ・ｽo・ｽb・ｽt・ｽ@・ｽ謫ｪ・ｽ・ｽ・ｽA・ｽ・ｽ・ｽX・ｽg・ｽ・ｽ・ｽ[・ｽ・ｽ・ｽS・ｽﾌの会ｿｽ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽﾚに托ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ驍ｩ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
+    /// ・ｽX・ｽg・ｽ・ｽ・ｽ[・ｽ~・ｽ・ｽ・ｽO・ｽ・ｽM・ｽﾅ先頭・ｽ・ｽj・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ鼾・ｿｽﾅゑｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ譓・ｽ・ｽ・ｽﾛ趣ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     internal long StreamSampleBase;
 
@@ -118,11 +118,11 @@ public sealed class ProgressiveDecodeState
     internal (double Amount, double WowPhase, double FlutterPhase)? TrackedWow;
 
     internal bool HasTrackedWow;
-    /// <summary>true のとき区間補正モデル、false のとき全体補正モデルを使用します。</summary>
+    /// <summary>true ・ｽﾌとゑｿｽ・ｽ・ｽﾔ補正・ｽ・ｽ・ｽf・ｽ・ｽ・ｽAfalse ・ｽﾌとゑｿｽ・ｽS・ｽﾌ補正・ｽ・ｽ・ｽf・ｽ・ｽ・ｽ・ｽ・ｽg・ｽp・ｽ・ｽ・ｽﾜゑｿｽ・ｽB</summary>
     internal bool UseSegmentWowModel;
-    /// <summary>オープニング区間での WOW 探索を実施済みかを示します。</summary>
+    /// <summary>・ｽI・ｽ[・ｽv・ｽj・ｽ・ｽ・ｽO・ｽ・ｽﾔでゑｿｽ WOW ・ｽT・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ{・ｽﾏみゑｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB</summary>
     internal bool OpeningWowSearchDone;
-    /// <summary>最後にオープニング WOW 推定を行った入力長（サンプル）です。</summary>
+    /// <summary>・ｽﾅ鯉ｿｽﾉオ・ｽ[・ｽv・ｽj・ｽ・ｽ・ｽO WOW ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽs・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾍ抵ｿｽ・ｽi・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽj・ｽﾅゑｿｽ・ｽB</summary>
     internal int LastOpeningWowEstimateAtSamples;
 
     internal CoreFrameKind CurrentFrame = CoreFrameKind.Fh;
@@ -155,15 +155,15 @@ public sealed class ProgressiveDecodeState
     internal ModulationScheme? DetectedModulationScheme;
 
     /// <summary>
-    /// FH 確定時にファイル名・サイズ・ブロック数を通知します。
+    /// FH ・ｽm・ｽ闔橸ｿｽﾉフ・ｽ@・ｽC・ｽ・ｽ・ｽ・ｽ・ｽE・ｽT・ｽC・ｽY・ｽE・ｽu・ｽ・ｽ・ｽb・ｽN・ｽ・ｽ・ｽ・ｽﾊ知・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     public Action<string, long, int>? FileHeaderReady;
 
     /// <summary>
-    /// 段階デコード状態を初期化します。
+    /// ・ｽi・ｽK・ｽf・ｽR・ｽ[・ｽh・ｽ・ｽﾔゑｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     /// <param name="statusBoard">
-    /// 画面と共有する状態メモリ。省略時は専用ボードを生成します。
+    /// ・ｽ・ｽﾊと具ｿｽ・ｽL・ｽ・ｽ・ｽ・ｽ・ｽﾔ・ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽB・ｽﾈ暦ｿｽ・ｽ・ｽ・ｽﾍ撰ｿｽp・ｽ{・ｽ[・ｽh・ｽｶ撰ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </param>
     public ProgressiveDecodeState(CoreExecutionStatusBoard? statusBoard = null)
     {
@@ -171,7 +171,7 @@ public sealed class ProgressiveDecodeState
     }
 
     /// <summary>
-    /// 段階デコード状態を初期化します。
+    /// ・ｽi・ｽK・ｽf・ｽR・ｽ[・ｽh・ｽ・ｽﾔゑｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     public void Reset()
     {
@@ -214,18 +214,18 @@ public sealed class ProgressiveDecodeState
     }
 
     /// <summary>
-    /// 共有状態メモリのスナップショットを読み取ります。
+    /// ・ｽ・ｽ・ｽL・ｽ・ｽﾔ・ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽﾌス・ｽi・ｽb・ｽv・ｽV・ｽ・ｽ・ｽb・ｽg・ｽ・ｽﾇみ趣ｿｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     public CoreExecutionStatus ReadExecutionStatus() => StatusBoard.Read();
 
     /// <summary>
-    /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
+    /// <see cref="ReadExecutionStatus"/> ・ｽﾌ互奇ｿｽ・ｽG・ｽC・ｽ・ｽ・ｽA・ｽX・ｽﾅゑｿｽ・ｽB
     /// </summary>
     public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 }
 
 /// <summary>
-/// 段階デコード呼び出しの結果状態です。
+/// ・ｽi・ｽK・ｽf・ｽR・ｽ[・ｽh・ｽﾄび出・ｽ・ｽ・ｽﾌ鯉ｿｽ・ｽﾊ擾ｿｽﾔでゑｿｽ・ｽB
 /// </summary>
 public enum ProgressiveDecodeStatus
 {
@@ -235,7 +235,7 @@ public enum ProgressiveDecodeStatus
 }
 
 /// <summary>
-/// デコード処理の集計メトリクスです。
+/// ・ｽf・ｽR・ｽ[・ｽh・ｽ・ｽ・ｽ・ｽ・ｽﾌ集・ｽv・ｽ・ｽ・ｽg・ｽ・ｽ・ｽN・ｽX・ｽﾅゑｿｽ・ｽB
 /// </summary>
 public readonly record struct DecodeStageMetrics(
     int HeaderRsDecodeCount,
@@ -250,7 +250,7 @@ public readonly record struct DecodeStageMetrics(
 }
 
 /// <summary>
-/// ファイルと WAV の相互変換および段階デコードを提供するコーデックです。
+/// ・ｽt・ｽ@・ｽC・ｽ・ｽ・ｽ・ｽ WAV ・ｽﾌ托ｿｽ・ｽﾝ変奇ｿｽ・ｽ・ｽ・ｽ・ｽﾑ段・ｽK・ｽf・ｽR・ｽ[・ｽh・ｽ・ｽ氓・ｽ・ｽ・ｽR・ｽ[・ｽf・ｽb・ｽN・ｽﾅゑｿｽ・ｽB
 /// </summary>
 public sealed partial class FileWavCodec
 {
@@ -285,13 +285,15 @@ public sealed partial class FileWavCodec
 
     private const int FileHeaderRepeatIntervalBlocks = 16;
 
+
+
     private static readonly ConvolutionalCode.PunctureRate HeaderPunctureRate = ConvolutionalCode.PunctureRate.Rate1_2;
 
     private readonly FileWavCodecProfile _profile;
 
     public DecodeStageMetrics LastDecodeStageMetrics { get; private set; } = DecodeStageMetrics.Empty;
 
-    /// <summary>指定したプロファイルでコーデックを初期化します。</summary>
+    /// <summary>・ｽw・ｽ閧ｵ・ｽ・ｽ・ｽv・ｽ・ｽ・ｽt・ｽ@・ｽC・ｽ・ｽ・ｽﾅコ・ｽ[・ｽf・ｽb・ｽN・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB</summary>
     public FileWavCodec(FileWavCodecProfile profile)
     {
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
@@ -305,14 +307,14 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 入力ファイルを WAV へ符号化し、再度復号して結果バイト列を返します。
+    /// ・ｽ・ｽ・ｽﾍフ・ｽ@・ｽC・ｽ・ｽ・ｽ・ｽ WAV ・ｽﾖ包ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽA・ｽﾄ度・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾄ鯉ｿｽ・ｽﾊバ・ｽC・ｽg・ｽ・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public byte[] EncodeDecodeRoundTrip(string inputPath, string wavPath, string? restoredPath = null)
     {
         if (!File.Exists(inputPath))
         {
-            throw new FileNotFoundException("入力ファイルが見つかりません。", inputPath);
+            throw new FileNotFoundException("・ｽ・ｽ・ｽﾍフ・ｽ@・ｽC・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾂゑｿｽ・ｽ・ｽﾜゑｿｽ・ｽ・ｽB", inputPath);
         }
 
         var originalBytes = File.ReadAllBytes(inputPath);
@@ -342,8 +344,8 @@ public sealed partial class FileWavCodec
         return decodedBytes;
     }
 
-    /// <summary>ファイルバイト列を OFDM の PCM サンプルへ変調します。</summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <summary>・ｽt・ｽ@・ｽC・ｽ・ｽ・ｽo・ｽC・ｽg・ｽ・ｽ・ｽ OFDM ・ｽ・ｽ PCM ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽﾖ変抵ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB</summary>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public (Complex[] Left, Complex[] Right) EncodeFileToSamples(
         byte[] fileBytes,
         FileInfo fileInfo,
@@ -513,9 +515,9 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// WAV を読み込み、ファイルバイト列へ復号します。
+    /// WAV ・ｽ・ｽﾇみ搾ｿｽ・ｽﾝ、・ｽt・ｽ@・ｽC・ｽ・ｽ・ｽo・ｽC・ｽg・ｽ・ｽﾖ包ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public byte[] DecodeWavToFileBytes(
         string wavPath,
         bool correctWow = true,
@@ -527,9 +529,9 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// PCM サンプル列をファイルバイト列へ復号します。
+    /// PCM ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ・ｽt・ｽ@・ｽC・ｽ・ｽ・ｽo・ｽC・ｽg・ｽ・ｽﾖ包ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public byte[] DecodePcmSamplesToFileBytes(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -557,9 +559,9 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// ProgressiveDecodeState から集計メトリクスを生成します。
+    /// ProgressiveDecodeState ・ｽ・ｽ・ｽ・ｽW・ｽv・ｽ・ｽ・ｽg・ｽ・ｽ・ｽN・ｽX・ｽｶ撰ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     private static DecodeStageMetrics BuildDecodeStageMetrics(ProgressiveDecodeState state)
     {
         return new DecodeStageMetrics(
@@ -575,12 +577,12 @@ public sealed partial class FileWavCodec
     /// <summary>
 
     /// <summary>
-    /// 指定したサブキャリア数と変調方式でデータ OFDM 生成器を作成します。
+    /// ・ｽw・ｽ閧ｵ・ｽ・ｽ・ｽT・ｽu・ｽL・ｽ・ｽ・ｽ・ｽ・ｽA・ｽ・ｽ・ｽﾆ変抵ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽﾅデ・ｽ[・ｽ^ OFDM ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｬ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
-    /// PCM サンプル列を入力として段階デコードを実行します。
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
+    /// PCM ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾍとゑｿｽ・ｽﾄ段・ｽK・ｽf・ｽR・ｽ[・ｽh・ｽ・ｽ・ｽ・ｽ・ｽs・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public ProgressiveDecodeStatus DecodePcmSamplesProgressive(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -601,13 +603,13 @@ public sealed partial class FileWavCodec
 
         if (_profile.ChannelMode == ChannelMode.Mono && rightSamples.Length != 0)
         {
-            state.LastError = "モノラル送信には 1ch WAV が必要です。";
+            state.LastError = "・ｽ・ｽ・ｽm・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽM・ｽﾉゑｿｽ 1ch WAV ・ｽ・ｽ・ｽK・ｽv・ｽﾅゑｿｽ・ｽB";
             return ProgressiveDecodeStatus.Failed;
         }
 
         if (_profile.ChannelMode == ChannelMode.Stereo && rightSamples.Length != leftSamples.Length)
         {
-            state.LastError = "ステレオ送信には L/R の 2ch WAV が必要です。";
+            state.LastError = "・ｽX・ｽe・ｽ・ｽ・ｽI・ｽ・ｽ・ｽM・ｽﾉゑｿｽ L/R ・ｽ・ｽ 2ch WAV ・ｽ・ｽ・ｽK・ｽv・ｽﾅゑｿｽ・ｽB";
             return ProgressiveDecodeStatus.Failed;
         }
 
@@ -875,7 +877,7 @@ public sealed partial class FileWavCodec
 
             if (hasTrackedWow)
             {
-                // 固定 Amount ではなく、現在サンプル位置の瞬間速度偏差を公開する
+                // ・ｽﾅ抵ｿｽ Amount ・ｽﾅはなゑｿｽ・ｽA・ｽ・ｽ・ｽﾝサ・ｽ・ｽ・ｽv・ｽ・ｽ・ｽﾊ置・ｽﾌ瞬・ｽﾔ托ｿｽ・ｽx・ｽﾎ搾ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽJ・ｽ・ｽ・ｽ・ｽ
                 var sampleIndex = state.StreamSampleBase + Math.Max(0L, logicalOffset);
                 state.StatusBoard.SetWowFlutterTracking(
                     trackedWow.Amount,
@@ -1137,7 +1139,7 @@ public sealed partial class FileWavCodec
                 state.Pass = 0;
                 state.Local = 0;
                 PersistCursor();
-                var displayName = string.IsNullOrWhiteSpace(fhFileName) ? "(不明)" : fhFileName;
+                var displayName = string.IsNullOrWhiteSpace(fhFileName) ? "(・ｽs・ｽ・ｽ)" : fhFileName;
                 state.StatusBoard.SetAnalyzing(false);
                 state.StatusBoard.SetFileInfo(displayName, $"{fileSize:N0} bytes", blockCount.ToString());
                 state.StatusBoard.SetProgress(new CoreProgressInfo(
@@ -1408,7 +1410,7 @@ public sealed partial class FileWavCodec
                         }
                         else if (acceptable)
                         {
-                            SaveOrphanPayload(payload, $"孤立ブロック index={blockIndex} (pass {pass}, local {local})");
+                            SaveOrphanPayload(payload, $"・ｽﾇ暦ｿｽ・ｽu・ｽ・ｽ・ｽb・ｽN index={blockIndex} (pass {pass}, local {local})");
                         }
                         else if (!acceptable)
                         {
@@ -1419,13 +1421,13 @@ public sealed partial class FileWavCodec
                                 effectiveBlockIndex = resolvedOwner;
                                 acceptedForStatus = true;
                                 state.LastError =
-                                    $"ORPHAN-RESOLVED hash一致で BLK-{resolvedOwner} に再割当 (pass {pass}, local {local})";
+                                    $"ORPHAN-RESOLVED hash・ｽ・ｽv・ｽ・ｽ BLK-{resolvedOwner} ・ｽﾉ再奇ｿｽ・ｽ・ｽ (pass {pass}, local {local})";
                             }
                             else
                             {
                                 var detail = ownerKnown
-                                    ? $"管理BLK-{ownerBlockIndex} と不一致 (pass {pass}, local {local})"
-                                    : $"孤立ブロック index={blockIndex} (pass {pass}, local {local})";
+                                    ? $"・ｽﾇ暦ｿｽBLK-{ownerBlockIndex} ・ｽﾆ不・ｽ・ｽv (pass {pass}, local {local})"
+                                    : $"・ｽﾇ暦ｿｽ・ｽu・ｽ・ｽ・ｽb・ｽN index={blockIndex} (pass {pass}, local {local})";
                                 SaveOrphanPayload(payload, detail);
                             }
                         }
@@ -1453,7 +1455,7 @@ public sealed partial class FileWavCodec
                     }
                     catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                     {
-                        MarkBlockError($"BLK-{expectedBlockIndex} デコードエラー: {ex.Message}");
+                        MarkBlockError($"BLK-{expectedBlockIndex} ・ｽf・ｽR・ｽ[・ｽh・ｽG・ｽ・ｽ・ｽ[: {ex.Message}");
                         if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol <= leftSamples.Length)
                         {
                             warpedCursor += headerOfdm.SamplesPerOfdmSymbol;
@@ -1559,7 +1561,7 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 追跡中のワウパラメータでバッファを補正した新規配列に差し替えます（元バッファは破壊しない）。
+    /// ・ｽﾇ跡抵ｿｽ・ｽﾌ・ｿｽ・ｽE・ｽp・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽ^・ｽﾅバ・ｽb・ｽt・ｽ@・ｽ・ｽ竦ｳ・ｽ・ｽ・ｽ・ｽ・ｽV・ｽK・ｽz・ｽ・ｽﾉ搾ｿｽ・ｽ・ｽ・ｽﾖゑｿｽ・ｽﾜゑｿｽ・ｽi・ｽ・ｽ・ｽo・ｽb・ｽt・ｽ@・ｽﾍ破・ｽｵなゑｿｽ・ｽj・ｽB
     /// </summary>
     private void ApplyTrackedWowToBuffers(
         OfdmGenerator headerOfdm,
@@ -1635,9 +1637,9 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 先頭 FH の同期成功を指標にワウパラメータを探索します。
-    /// プリアンブル相関が LPF 等で崩れる場合のフォールバックです。
-    /// prefix Correct で粗い位置を掴み、最終適用と同じ全波形 Correct で精密化します。
+    /// ・ｽ謫ｪ FH ・ｽﾌ難ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽw・ｽW・ｽﾉ・ｿｽ・ｽE・ｽp・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽ^・ｽ・ｽT・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
+    /// ・ｽv・ｽ・ｽ・ｽA・ｽ・ｽ・ｽu・ｽ・ｽ・ｽ・ｽ・ｽﾖゑｿｽ LPF ・ｽ・ｽ・ｽﾅ包ｿｽ・ｽ・ｽ・ｽ鼾・ｿｽﾌフ・ｽH・ｽ[・ｽ・ｽ・ｽo・ｽb・ｽN・ｽﾅゑｿｽ・ｽB
+    /// prefix Correct ・ｽﾅ粗・ｽ・ｽ・ｽﾊ置・ｽ・ｽﾍみ、・ｽﾅ終・ｽK・ｽp・ｽﾆ難ｿｽ・ｽ・ｽ・ｽS・ｽg・ｽ` Correct ・ｽﾅ撰ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     private (double Amount, double WowPhase, double FlutterPhase)? TryEstimateWowByOpeningFileHeader(
         Complex[] leftSamples,
@@ -1746,6 +1748,7 @@ public sealed partial class FileWavCodec
             int bits,
             int samples,
             byte[] pilot,
+            int seed,
             out int endCursor,
             out double meanAbsLlr,
             out byte[] payload)
@@ -1767,6 +1770,7 @@ public sealed partial class FileWavCodec
                     pilot,
                     stereoSplit: false,
                     perSymbolSearchRadius: searchRadius,
+                    seed,
                     out payload,
                     out endCursor,
                     out meanAbsLlr))
@@ -2468,7 +2472,7 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 指定サンプル数の無音を PCM バッファへ追加します。
+    /// ・ｽw・ｽ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽﾌ厄ｿｽ・ｽ・ｽ・ｽ・ｽ PCM ・ｽo・ｽb・ｽt・ｽ@・ｽﾖ追会ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     private static void AppendSilence(List<Complex> leftPcm, List<Complex> rightPcm, int sampleCount, bool stereo)
     {
@@ -2483,7 +2487,7 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 左右チャンネルのサンプル対を PCM バッファへ追加します。
+    /// ・ｽ・ｽ・ｽE・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽl・ｽ・ｽ・ｽﾌサ・ｽ・ｽ・ｽv・ｽ・ｽ・ｽﾎゑｿｽ PCM ・ｽo・ｽb・ｽt・ｽ@・ｽﾖ追会ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     private static void AppendPair(List<Complex> leftPcm, List<Complex> rightPcm, (Complex[] Left, Complex[] Right) pair)
     {
@@ -2497,9 +2501,9 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 指定サンプル数だけカーソルを進めます。
+    /// ・ｽw・ｽ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽJ・ｽ[・ｽ\・ｽ・ｽ・ｽ・ｽi・ｽﾟまゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     private static int SkipSamples(Complex[] samples, int cursor, int count)
     {
         var next = cursor + count;
@@ -2512,9 +2516,9 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// カーソル位置から指定サンプル数を切り出して返します。
+    /// ・ｽJ・ｽ[・ｽ\・ｽ・ｽ・ｽﾊ置・ｽ・ｽ・ｽ・ｽw・ｽ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾘゑｿｽo・ｽ・ｽ・ｽﾄ返ゑｿｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     private static Complex[] TakeSamples(Complex[] samples, ref int cursor, int count)
     {
         if (cursor + count > samples.Length)
@@ -2532,14 +2536,14 @@ public sealed partial class FileWavCodec
 }
 
 /// <summary>
-/// Complex サンプル列を PCM16 WAV として書き出すユーティリティです。
+/// Complex ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ PCM16 WAV ・ｽﾆゑｿｽ・ｽﾄ擾ｿｽ・ｽ・ｽ・ｽo・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽe・ｽB・ｽ・ｽ・ｽe・ｽB・ｽﾅゑｿｽ・ｽB
 /// </summary>
 public static class WavWriter
 {
     /// <summary>
-    /// ストリーミング書き込み用の WAV ライターを作成します。
+    /// ・ｽX・ｽg・ｽ・ｽ・ｽ[・ｽ~・ｽ・ｽ・ｽO・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾝ用・ｽ・ｽ WAV ・ｽ・ｽ・ｽC・ｽ^・ｽ[・ｽ・ｽ・ｽ・ｬ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public static StreamingPcm16Writer CreateStreamingPcm16(
         string path,
         int sampleRate,
@@ -2550,7 +2554,7 @@ public static class WavWriter
     }
 
     /// <summary>
-    /// 指定チャンネルモードで PCM16 WAV を書き出します。
+    /// ・ｽw・ｽ・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽl・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽh・ｽ・ｽ PCM16 WAV ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽo・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     public static void WritePcm16(
         string path,
@@ -2570,7 +2574,7 @@ public static class WavWriter
     }
 
     /// <summary>
-    /// モノラルの Complex サンプル列を PCM16 WAV として書き出します。
+    /// ・ｽ・ｽ・ｽm・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ Complex ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ PCM16 WAV ・ｽﾆゑｿｽ・ｽﾄ擾ｿｽ・ｽ・ｽ・ｽo・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     public static void WriteMono16(
         string path,
@@ -2617,7 +2621,7 @@ public static class WavWriter
     }
 
     /// <summary>
-    /// ステレオの Complex サンプル列を PCM16 WAV として書き出します。
+    /// ・ｽX・ｽe・ｽ・ｽ・ｽI・ｽ・ｽ Complex ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ PCM16 WAV ・ｽﾆゑｿｽ・ｽﾄ擾ｿｽ・ｽ・ｽ・ｽo・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     public static void WriteStereo16(
         string path,
@@ -2672,16 +2676,16 @@ public static class WavWriter
     }
 
     /// <summary>
-    /// 正規化済み振幅値を PCM16 値へ変換します。
+    /// ・ｽ・ｽ・ｽK・ｽ・ｽ・ｽﾏみ振・ｽ・ｽ・ｽl・ｽ・ｽ PCM16 ・ｽl・ｽﾖ変奇ｿｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     private static short ToPcm16(double value, double scale)
     {
         return (short)Math.Round(Math.Clamp(value * scale, -1.0, 1.0) * short.MaxValue);
     }
 
     /// <summary>
-    /// PCM16 WAV を逐次書き込むストリーミングライターです。
+    /// PCM16 WAV ・ｽ趣ｿｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾞス・ｽg・ｽ・ｽ・ｽ[・ｽ~・ｽ・ｽ・ｽO・ｽ・ｽ・ｽC・ｽ^・ｽ[・ｽﾅゑｿｽ・ｽB
     /// </summary>
     public sealed class StreamingPcm16Writer : IDisposable
     {
@@ -2714,7 +2718,7 @@ public static class WavWriter
         }
 
         /// <summary>
-        /// PCM チャンクを追記します。
+        /// PCM ・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽN・ｽ・ｽﾇ記・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
         /// </summary>
         public void WriteChunk(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
         {
@@ -2749,7 +2753,7 @@ public static class WavWriter
         }
 
         /// <summary>
-        /// WAV ヘッダーサイズを確定してストリームを破棄します。
+        /// WAV ・ｽw・ｽb・ｽ_・ｽ[・ｽT・ｽC・ｽY・ｽ・ｽ・ｽm・ｽ閧ｵ・ｽﾄス・ｽg・ｽ・ｽ・ｽ[・ｽ・ｽ・ｽ・ｽj・ｽ・ｽ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
         /// </summary>
         public void Dispose()
         {
@@ -2782,7 +2786,7 @@ public static class WavWriter
         }
 
         /// <summary>
-        /// サイズ未確定の WAV ヘッダーを書き込みます。
+        /// ・ｽT・ｽC・ｽY・ｽ・ｽ・ｽm・ｽ・ｽ・ｽ WAV ・ｽw・ｽb・ｽ_・ｽ[・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾝまゑｿｽ・ｽB
         /// </summary>
         private void WriteHeaderPlaceholder()
         {
@@ -2791,7 +2795,7 @@ public static class WavWriter
             var byteRate = _sampleRate * blockAlign;
 
             _writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-            _writer.Write(0); // Dispose 時に RIFF チャンクサイズを書き戻す
+            _writer.Write(0); // Dispose ・ｽ・ｽ・ｽ・ｽ RIFF ・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽN・ｽT・ｽC・ｽY・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾟゑｿｽ
             _writer.Write(Encoding.ASCII.GetBytes("WAVE"));
 
             _writer.Write(Encoding.ASCII.GetBytes("fmt "));
@@ -2804,20 +2808,20 @@ public static class WavWriter
             _writer.Write((short)16);
 
             _writer.Write(Encoding.ASCII.GetBytes("data"));
-            _writer.Write(0); // Dispose 時に data チャンクサイズを書き戻す
+            _writer.Write(0); // Dispose ・ｽ・ｽ・ｽ・ｽ data ・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽN・ｽT・ｽC・ｽY・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽﾟゑｿｽ
         }
     }
 }
 
 /// <summary>
-/// PCM16 WAV を読み込み Complex サンプル列へ変換するユーティリティです。
+/// PCM16 WAV ・ｽ・ｽﾇみ搾ｿｽ・ｽ・ｽ Complex ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽﾖ変奇ｿｽ・ｽ・ｽ・ｽ驛・ｿｽ[・ｽe・ｽB・ｽ・ｽ・ｽe・ｽB・ｽﾅゑｿｽ・ｽB
 /// </summary>
 public static class WavReader
 {
     /// <summary>
-    /// WAV のチャンネル数（1ch/2ch）を取得します。
+    /// WAV ・ｽﾌチ・ｽ・ｽ・ｽ・ｽ・ｽl・ｽ・ｽ・ｽ・ｽ・ｽi1ch/2ch・ｽj・ｽ・ｽ・ｽ謫ｾ・ｽ・ｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public static int PeekChannelCount(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -2863,9 +2867,9 @@ public static class WavReader
     }
 
     /// <summary>
-    /// PCM16 WAV を Complex サンプル列として読み込みます。
+    /// PCM16 WAV ・ｽ・ｽ Complex ・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽﾆゑｿｽ・ｽﾄ読み搾ｿｽ・ｽﾝまゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public static (Complex[] Left, Complex[] Right) ReadPcm16(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -2976,8 +2980,8 @@ public static class WavReader
 }
 
 /// <summary>
-/// PCM16 WAV をチャンク単位で順次読み込むストリームリーダーです。
-/// 全データを一括展開せずに処理できます。
+/// PCM16 WAV ・ｽ・ｽ・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽN・ｽP・ｽﾊで擾ｿｽ・ｽ・ｽ・ｽﾇみ搾ｿｽ・ｽﾞス・ｽg・ｽ・ｽ・ｽ[・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽ_・ｽ[・ｽﾅゑｿｽ・ｽB
+/// ・ｽS・ｽf・ｽ[・ｽ^・ｽ・ｽ・ｽ鼕・ｿｽW・ｽJ・ｽ・ｽ・ｽ・ｽ・ｽﾉ擾ｿｽ・ｽ・ｽ・ｽﾅゑｿｽ・ｽﾜゑｿｽ・ｽB
 /// </summary>
 public sealed class WavPcmStreamReader : IDisposable
 {
@@ -3016,24 +3020,24 @@ public sealed class WavPcmStreamReader : IDisposable
         _stream.Position = dataStart;
     }
 
-    /// <summary>チャンネル数（1 または 2）です。</summary>
+    /// <summary>・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽl・ｽ・ｽ・ｽ・ｽ・ｽi1 ・ｽﾜゑｿｽ・ｽ・ｽ 2・ｽj・ｽﾅゑｿｽ・ｽB</summary>
     public int Channels => _channels;
 
-    /// <summary>サンプルレートです。</summary>
+    /// <summary>・ｽT・ｽ・ｽ・ｽv・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽg・ｽﾅゑｿｽ・ｽB</summary>
     public int SampleRate => _sampleRate;
 
-    /// <summary>総フレーム数です。</summary>
+    /// <summary>・ｽ・ｽ・ｽt・ｽ・ｽ・ｽ[・ｽ・ｽ・ｽ・ｽ・ｽﾅゑｿｽ・ｽB</summary>
     public long TotalFrames => _dataLength / (_channels * 2);
 
-    /// <summary>読み込み済みフレーム数です。</summary>
+    /// <summary>・ｽﾇみ搾ｿｽ・ｽﾝ済みフ・ｽ・ｽ・ｽ[・ｽ・ｽ・ｽ・ｽ・ｽﾅゑｿｽ・ｽB</summary>
     public long FramesRead => _dataPosition / (_channels * 2);
 
-    /// <summary>読み込み進捗（0.0〜1.0）です。</summary>
+    /// <summary>・ｽﾇみ搾ｿｽ・ｽﾝ進・ｽ・ｽ・ｽi0.0?1.0・ｽj・ｽﾅゑｿｽ・ｽB</summary>
     public double Progress =>
         _dataLength <= 0 ? 1.0 : Math.Clamp(_dataPosition / (double)_dataLength, 0.0, 1.0);
 
     /// <summary>
-    /// WAV を開き、data チャンク先頭までシークしたリーダーを返します。
+    /// WAV ・ｽ・ｽ・ｽJ・ｽ・ｽ・ｽAdata ・ｽ`・ｽ・ｽ・ｽ・ｽ・ｽN・ｽ謫ｪ・ｽﾜでシ・ｽ[・ｽN・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ・ｽ[・ｽ_・ｽ[・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
     public static WavPcmStreamReader Open(string path)
     {
@@ -3120,9 +3124,9 @@ public sealed class WavPcmStreamReader : IDisposable
     }
 
     /// <summary>
-    /// 最大 frameCount フレームを読み、Complex の L/R 配列を返します。
+    /// ・ｽﾅ托ｿｽ frameCount ・ｽt・ｽ・ｽ・ｽ[・ｽ・ｽ・ｽ・ｽﾇみ、Complex ・ｽ・ｽ L/R ・ｽz・ｽ・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
+    /// <returns>・ｽﾟゑｿｽl・ｽ・ｽﾔゑｿｽ・ｽﾜゑｿｽ・ｽB</returns>
     public bool TryRead(int frameCount, out Complex[] left, out Complex[] right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

@@ -9,10 +9,9 @@ public sealed partial class OfdmGenerator
     /// </summary>
     /// <param name="bits">変調対象ビット列。</param>
     /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
-    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
-    public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0, int interleaveInitSeed = 0)
+    public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0)
     {
-        return ModulateBitStreams(bits, bits, absoluteSampleOffset, interleaveInitSeed);
+        return ModulateBitStreams(bits, bits, absoluteSampleOffset);
     }
 
     /// <summary>
@@ -21,25 +20,23 @@ public sealed partial class OfdmGenerator
     /// <param name="leftBits">左チャネルに載せるビット列。</param>
     /// <param name="rightBits">右チャネルに載せるビット列。</param>
     /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
-    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
     public (Complex[] Left, Complex[] Right) ModulateBitStreams(
         ReadOnlySpan<bool> leftBits,
         ReadOnlySpan<bool> rightBits,
-        long absoluteSampleOffset = 0,
-        int interleaveInitSeed = 0)
+        long absoluteSampleOffset = 0)
     {
         if (BitsPerOfdmSymbol <= 0)
         {
             throw new InvalidOperationException("No data carriers available for modulation.");
         }
 
-        var left = ModulateBitsOnChannel(leftBits, useRightChannel: false, absoluteSampleOffset, interleaveInitSeed);
+        var left = ModulateBitsOnChannel(leftBits, useRightChannel: false, absoluteSampleOffset);
         if (_config.ChannelMode == ChannelMode.Mono)
         {
             return (left, Array.Empty<Complex>());
         }
 
-        var right = ModulateBitsOnChannel(rightBits, useRightChannel: true, absoluteSampleOffset, interleaveInitSeed);
+        var right = ModulateBitsOnChannel(rightBits, useRightChannel: true, absoluteSampleOffset);
         if (left.Length != right.Length)
         {
             throw new InvalidOperationException(
@@ -55,13 +52,11 @@ public sealed partial class OfdmGenerator
     /// <param name="bits">変調対象ビット列。</param>
     /// <param name="useRightChannel">右チャネル用変調かどうか。</param>
     /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
-    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
     /// <returns>CP 付き OFDM シンボルを連結した複素 PCM 配列。</returns>
     private Complex[] ModulateBitsOnChannel(
         ReadOnlySpan<bool> bits,
         bool useRightChannel,
-        long absoluteSampleOffset,
-        int interleaveInitSeed)
+        long absoluteSampleOffset)
     {
         var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
         var dataModulationByBin = useRightChannel
@@ -82,8 +77,7 @@ public sealed partial class OfdmGenerator
         for (var s = 0; s < symbolCount; s++)
         {
             _ = absoluteSampleOffset;
-            var symbolOffset = (long)s * SamplesPerOfdmSymbol;
-            var dataCarrierOrder = ResolveDataCarrierOrder(useRightChannel, symbolOffset, interleaveInitSeed);
+            var dataCarrierOrder = ResolveDataCarrierOrder(useRightChannel);
 
             Array.Clear(freqBins);
             foreach (var pilotBin in pilotBins)
