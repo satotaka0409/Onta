@@ -9,7 +9,7 @@ using SkiaSharp;
 namespace Onta.View.Core;
 
 /// <summary>
-/// 受信FFTスペクトルを描画するためのチャートモデルです。
+/// 送受信 FFT スペクトルを描画するためのチャートモデルです（横軸=Hz）。
 /// </summary>
 public sealed class FftChartModel
 {
@@ -26,12 +26,11 @@ public sealed class FftChartModel
 
     public FftChartModel()
     {
-        // ColumnSeries は負の X（fftshift）で右端クリップや未描画が起きやすいので Line で描く。
         _leftSeries = new LineSeries<ObservablePoint>
         {
             Values = _leftPoints,
             Name = "L",
-            Fill = new SolidColorPaint(MonoColor.WithAlpha(90)),
+            Fill = null,
             Stroke = new SolidColorPaint(MonoColor, 1.5f),
             GeometrySize = 0,
             LineSmoothness = 0
@@ -41,7 +40,7 @@ public sealed class FftChartModel
         {
             Values = _rightPoints,
             Name = "R",
-            Fill = new SolidColorPaint(RightColor.WithAlpha(70)),
+            Fill = null,
             Stroke = new SolidColorPaint(RightColor, 1.5f),
             GeometrySize = 0,
             LineSmoothness = 0,
@@ -58,10 +57,10 @@ public sealed class FftChartModel
         [
             new Axis
             {
-                Name = "Bin (0=DC)",
-                MinLimit = -64 * (1.0 + AxisPaddingRatio),
-                MaxLimit = 64 * (1.0 + AxisPaddingRatio),
-                MinStep = 8,
+                Name = "Frequency (Hz)",
+                MinLimit = 0,
+                MaxLimit = 8000 * (1.0 + AxisPaddingRatio),
+                MinStep = 500,
                 TextSize = 8,
                 NameTextSize = 8,
                 NamePaint = new SolidColorPaint(AxisColor),
@@ -75,9 +74,8 @@ public sealed class FftChartModel
             new Axis
             {
                 Name = "Magnitude (dB)",
-                // 0 dB を縦方向の中央に固定
                 MinLimit = -100,
-                MaxLimit = 100,
+                MaxLimit = 0,
                 Labeler = value => $"{value:0}",
                 TextSize = 8,
                 NameTextSize = 8,
@@ -102,12 +100,14 @@ public sealed class FftChartModel
         _leftPoints.Clear();
         _rightPoints.Clear();
 
-        var maxAbsBin = 1;
+        var maxHz = 1000;
+        var peakDb = -80.0;
         for (var i = 0; i < leftSamples.Count; i++)
         {
             var s = leftSamples[i];
             _leftPoints.Add(new ObservablePoint(s.Bin, s.MagnitudeDb));
-            maxAbsBin = Math.Max(maxAbsBin, Math.Abs(s.Bin));
+            maxHz = Math.Max(maxHz, s.Bin);
+            peakDb = Math.Max(peakDb, s.MagnitudeDb);
         }
 
         if (isStereo)
@@ -116,35 +116,37 @@ public sealed class FftChartModel
             {
                 var s = rightSamples[i];
                 _rightPoints.Add(new ObservablePoint(s.Bin, s.MagnitudeDb));
-                maxAbsBin = Math.Max(maxAbsBin, Math.Abs(s.Bin));
+                maxHz = Math.Max(maxHz, s.Bin);
+                peakDb = Math.Max(peakDb, s.MagnitudeDb);
             }
 
-            _leftSeries.Fill = new SolidColorPaint(LeftColor.WithAlpha(90));
             _leftSeries.Stroke = new SolidColorPaint(LeftColor, 1.5f);
             _rightSeries.IsVisible = true;
         }
         else
         {
-            _leftSeries.Fill = new SolidColorPaint(MonoColor.WithAlpha(90));
             _leftSeries.Stroke = new SolidColorPaint(MonoColor, 1.5f);
             _rightSeries.IsVisible = false;
         }
 
-        // 0（DC）を中央にしつつ、右端バーが見切れないよう 5% 余白を取る
-        var axisLimit = maxAbsBin * (1.0 + AxisPaddingRatio);
-        XAxes[0].MinLimit = -axisLimit;
-        XAxes[0].MaxLimit = axisLimit;
+        // Onta のキャリア帯域が見やすいよう、上限はデータに合わせて拡張（最低 8kHz）
+        var xMax = Math.Max(8000, maxHz) * (1.0 + AxisPaddingRatio);
+        XAxes[0].MinLimit = 0;
+        XAxes[0].MaxLimit = xMax;
+
+        YAxes[0].MinLimit = -100;
+        YAxes[0].MaxLimit = Math.Clamp(Math.Ceiling((peakDb + 6.0) / 5.0) * 5.0, -20, 20);
     }
 
     public void Clear()
     {
         _leftPoints.Clear();
         _rightPoints.Clear();
-        _leftSeries.Fill = new SolidColorPaint(MonoColor.WithAlpha(90));
         _leftSeries.Stroke = new SolidColorPaint(MonoColor, 1.5f);
         _rightSeries.IsVisible = false;
-        var axisLimit = 64 * (1.0 + AxisPaddingRatio);
-        XAxes[0].MinLimit = -axisLimit;
-        XAxes[0].MaxLimit = axisLimit;
+        XAxes[0].MinLimit = 0;
+        XAxes[0].MaxLimit = 8000 * (1.0 + AxisPaddingRatio);
+        YAxes[0].MinLimit = -100;
+        YAxes[0].MaxLimit = 0;
     }
 }

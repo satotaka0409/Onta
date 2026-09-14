@@ -1,32 +1,91 @@
 ﻿<UserControl x:Class="Onta.View.Core.WowFlutterMeter"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             MinHeight="24" MinWidth="80"
+             MinHeight="28"
+             MinWidth="120"
              Background="Transparent">
-  <Grid Margin="4,2">
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="Auto"/>
-      <ColumnDefinition Width="*"/>
-    </Grid.ColumnDefinitions>
-    <TextBlock x:Name="TitleText"
-               FontWeight="SemiBold"
-               VerticalAlignment="Center"
-               Margin="0,0,8,0"
-               Foreground="{StaticResource BrushText}"/>
-    <Border Grid.Column="1"
-            Background="{StaticResource BrushTrack}"
-            BorderBrush="{StaticResource BrushBorder}"
-            BorderThickness="1"
-            Height="16"
-            VerticalAlignment="Center"
-            CornerRadius="2"
-            x:Name="Track">
-      <Canvas x:Name="CanvasRoot" ClipToBounds="True" SizeChanged="OnTrackSizeChanged">
-        <Rectangle x:Name="FillRect" Height="14" Canvas.Top="1"/>
-        <Line x:Name="CenterLine" Y1="-2" Y2="18" Stroke="{StaticResource BrushTextMuted}" StrokeThickness="1.5"/>
-        <Ellipse x:Name="Knob" Width="8" Height="20" Fill="{StaticResource BrushText}" Stroke="{StaticResource BrushBorder}" Canvas.Top="-2"/>
-      </Canvas>
-    </Border>
-  </Grid>
-</UserControl>
+    <Grid Margin="0,2">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="20"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="52"/>
+        </Grid.ColumnDefinitions>
 
+        <TextBlock x:Name="TitleText"
+                   FontWeight="SemiBold"
+                   VerticalAlignment="Center"
+                   Foreground="{StaticResource BrushText}"/>
+
+        <!-- 中央 0 の双方向バー（左半分=負 / 右半分=正） -->
+        <Border x:Name="Track"
+                Grid.Column="1"
+                Height="18"
+                VerticalAlignment="Center"
+                Background="{StaticResource BrushTrack}"
+                BorderBrush="{StaticResource BrushBorder}"
+                BorderThickness="1"
+                CornerRadius="3"
+                ClipToBounds="True"
+                SizeChanged="OnTrackSizeChanged">
+            <Grid x:Name="TrackGrid">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 負側フィル（右寄せ＝中央から左へ） -->
+                <Border x:Name="FillNeg"
+                        Grid.Column="0"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Stretch"
+                        Margin="0,1,0,1"
+                        CornerRadius="2,0,0,2"
+                        Background="{StaticResource BrushFillNeg}"
+                        Width="0"/>
+
+                <!-- 正側フィル（左寄せ＝中央から右へ） -->
+                <Border x:Name="FillPos"
+                        Grid.Column="1"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Stretch"
+                        Margin="0,1,0,1"
+                        CornerRadius="0,2,2,0"
+                        Background="{StaticResource BrushFillPos}"
+                        Width="0"/>
+
+                <!-- 中央ゼロ線 -->
+                <Rectangle Grid.ColumnSpan="2"
+                           Width="2"
+                           HorizontalAlignment="Center"
+                           Fill="{StaticResource BrushTextMuted}"/>
+
+                <!-- ノブ -->
+                <Border x:Name="Knob"
+                        Grid.ColumnSpan="2"
+                        Width="10"
+                        Height="22"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Left"
+                        Margin="0"
+                        CornerRadius="3"
+                        Background="{StaticResource BrushText}"
+                        BorderBrush="{StaticResource BrushBorder}"
+                        BorderThickness="1"
+                        RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="KnobTranslate"/>
+                    </Border.RenderTransform>
+                </Border>
+            </Grid>
+        </Border>
+
+        <TextBlock x:Name="ValueText"
+                   Grid.Column="2"
+                   Margin="8,0,0,0"
+                   VerticalAlignment="Center"
+                   FontFamily="Consolas"
+                   FontSize="12"
+                   Foreground="{StaticResource BrushTextMuted}"
+                   Text="0.00%"/>
+    </Grid>
+</UserControl>

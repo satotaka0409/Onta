@@ -65,17 +65,17 @@
               Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"
+                                   MinWidth="320"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <GroupBox Grid.Column="0"
                       Header="ワウフラッター"
-                      Width="600"
+                      Width="420"
                       Margin="0,0,8,0"
                       VerticalAlignment="Top">
-                <Grid Margin="4,2">
+                <Grid Margin="8,6">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
@@ -90,11 +90,16 @@
                 </Grid>
             </GroupBox>
 
-            <GroupBox Grid.Column="1"
+            <GroupBox x:Name="IoGroupBox"
+                      Grid.Column="1"
                       Header="入出力"
-                      Margin="0,0,8,0"
                       VerticalAlignment="Top">
-                <StackPanel Margin="4,2">
+                <Grid Margin="4,2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <StackPanel Orientation="Horizontal"
                                 Margin="0,0,0,6">
                         <RadioButton x:Name="WavInputRadio"
@@ -110,35 +115,38 @@
                                      VerticalAlignment="Center"
                                      Checked="OnInputModeChanged"/>
                     </StackPanel>
-                    <Grid>
-                        <StackPanel x:Name="WavInputPanel"
-                                    Orientation="Horizontal"
-                                    VerticalAlignment="Center"
-                                    Margin="0,0,0,4">
+                    <Grid Grid.Row="1"
+                          Margin="0,0,0,4">
+                        <Grid x:Name="WavInputPanel">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="72"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
                             <TextBlock Text="入力ファイル"
-                                       Width="72"
                                        VerticalAlignment="Center"
                                        Margin="0,0,8,0"/>
                             <TextBox x:Name="WavPathBox"
-                                     Width="300"
+                                     Grid.Column="1"
                                      IsReadOnly="True"
                                      VerticalAlignment="Center"/>
-                            <Button Content="..."
+                            <Button Grid.Column="2"
+                                    Content="..."
                                     Width="36"
                                     Margin="8,0,0,0"
                                     Click="OnBrowseWavInput"/>
-                        </StackPanel>
-                        <StackPanel x:Name="AudioInputPanel"
-                                    Orientation="Horizontal"
-                                    VerticalAlignment="Center"
-                                    Margin="0,0,0,4"
-                                    Visibility="Collapsed">
+                        </Grid>
+                        <Grid x:Name="AudioInputPanel"
+                              Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="72"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
                             <TextBlock Text="入力デバイス"
-                                       Width="72"
                                        VerticalAlignment="Center"
                                        Margin="0,0,8,0"/>
                             <ComboBox x:Name="AudioDeviceComboBox"
-                                      Width="300"
+                                      Grid.Column="1"
                                       Foreground="#FF1E2024"
                                       SelectedValuePath="DeviceNumber"
                                       SelectionChanged="OnAudioDeviceSelectionChanged">
@@ -157,41 +165,49 @@
                                     </Style>
                                 </ComboBox.ItemContainerStyle>
                             </ComboBox>
-                        </StackPanel>
+                        </Grid>
                     </Grid>
-                    <StackPanel Orientation="Horizontal">
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="72"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
                         <TextBlock Text="出力フォルダー"
-                                   Width="72"
                                    VerticalAlignment="Center"
                                    Margin="0,0,8,0"/>
                         <TextBox x:Name="OutputDirBox"
-                                 Width="300"
+                                 Grid.Column="1"
                                  IsReadOnly="True"
                                  VerticalAlignment="Center"/>
-                        <Button Content="..."
+                        <Button Grid.Column="2"
+                                Content="..."
                                 Width="36"
                                 Margin="8,0,0,0"
                                 Click="OnBrowseOutputDir"/>
-                    </StackPanel>
-                </StackPanel>
+                    </Grid>
+                </Grid>
             </GroupBox>
 
-            <!-- スタート -->
-            <Button Grid.Column="3"
+            <!-- スタート（入出力との間隔 16px。常に見える列幅） -->
+            <Button x:Name="StartButton"
+                    Grid.Column="2"
                     Content="スタート"
                     Width="110"
                     Height="34"
-                    HorizontalAlignment="Right"
+                    HorizontalAlignment="Left"
                     VerticalAlignment="Top"
-                    Margin="0,8,4,0"
+                    Margin="16,8,4,0"
                     Click="OnReceiveStartClick"/>
         </Grid>
 
-        <Grid Grid.Row="3">
+        <Grid x:Name="ReceiveGraphsRow"
+              Grid.Row="3"
+              SizeChanged="OnReceiveGraphsRowSizeChanged">
             <Grid.ColumnDefinitions>
-                <!-- FFT/エラーレート: I-Q 側を約5%詰めて右端の見切れを解消 -->
-                <ColumnDefinition Width="2.1*"/>
-                <ColumnDefinition Width="0.4*"/>
+                <!-- 左: FFT/エラーレート（残り幅） / 右: I-Q（正方形固定枠） -->
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <!-- TabItem 内に置くと非選択時 ActualSize=0 になり LiveCharts が描画不能になるため、切替は Visibility で行う -->
@@ -205,10 +221,34 @@
                                  Content="エラーレート"
                                  GroupName="ReceiveGraphTab"
                                  IsChecked="True"
-                                 Margin="0,0,12,0"/>
+                                 Margin="0,0,12,0"
+                                 VerticalAlignment="Center"/>
                     <RadioButton x:Name="FftTabRadio"
                                  Content="FFT"
-                                 GroupName="ReceiveGraphTab"/>
+                                 GroupName="ReceiveGraphTab"
+                                 VerticalAlignment="Center"/>
+                    <StackPanel x:Name="ErrorRateLegend"
+                                Orientation="Horizontal"
+                                Margin="20,0,0,0"
+                                VerticalAlignment="Center">
+                        <Border Width="12"
+                                Height="3"
+                                Background="#FF64AAFF"
+                                VerticalAlignment="Center"
+                                Margin="0,0,4,0"/>
+                        <TextBlock Text="青: ビタビ（畳み込み・ブロック単位）"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   Margin="0,0,14,0"/>
+                        <Border Width="12"
+                                Height="3"
+                                Background="#FFFF9646"
+                                VerticalAlignment="Center"
+                                Margin="0,0,4,0"/>
+                        <TextBlock Text="橙: RS／ターボ（ターボは1024B単位）"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource BrushTextMuted}"/>
+                    </StackPanel>
                 </StackPanel>
                 <Border x:Name="ErrorChartHost"
                         Grid.Row="1"
@@ -223,34 +263,29 @@
                                         AnimationsSpeed="0"
                                         TooltipPosition="Hidden"/>
                 </Border>
-                <Grid x:Name="FftChartHost"
-                      Grid.Row="1"
-                      Opacity="0"
-                      IsHitTestVisible="False">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock x:Name="FftTitle"
-                               Text="FFT"
-                               Margin="4,0,0,4"
-                               Foreground="{StaticResource BrushTextMuted}"/>
-                    <Border Grid.Row="1"
-                            BorderBrush="{StaticResource BrushBorder}"
-                            BorderThickness="1"
-                            Background="{StaticResource BrushInput}"
-                            CornerRadius="3"
-                            Padding="4"
-                            ClipToBounds="True">
-                        <lvc:CartesianChart x:Name="FftChart"
-                                            Background="{StaticResource BrushInput}"
-                                            AnimationsSpeed="0"
-                                            TooltipPosition="Hidden"/>
-                    </Border>
-                </Grid>
+                <Border x:Name="FftChartHost"
+                        Grid.Row="1"
+                        Opacity="0"
+                        IsHitTestVisible="False"
+                        BorderBrush="{StaticResource BrushBorder}"
+                        BorderThickness="1"
+                        Background="{StaticResource BrushInput}"
+                        CornerRadius="3"
+                        Padding="4"
+                        ClipToBounds="True">
+                    <lvc:CartesianChart x:Name="FftChart"
+                                        Background="{StaticResource BrushInput}"
+                                        AnimationsSpeed="0"
+                                        TooltipPosition="Hidden"/>
+                </Border>
             </Grid>
 
-            <Grid Grid.Column="1">
+            <Grid x:Name="IqPanelHost"
+                  Grid.Column="1"
+                  VerticalAlignment="Center"
+                  HorizontalAlignment="Right"
+                  Width="220"
+                  Height="240">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
@@ -259,7 +294,8 @@
                            Text="I-Q"
                            Margin="4,0,0,4"
                            Foreground="{StaticResource BrushTextMuted}"/>
-                <Border Grid.Row="1"
+                <Border x:Name="IqChartBorder"
+                        Grid.Row="1"
                         BorderBrush="{StaticResource BrushBorder}"
                         BorderThickness="1"
                         Background="{StaticResource BrushInput}"

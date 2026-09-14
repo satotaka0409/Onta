@@ -65,6 +65,40 @@ public static class WowFlutterWarp
     }
 
     /// <summary>
+    /// 指定サンプル位置の相対速度（1.0 = 無変調）を返します。
+    /// </summary>
+    public static double EvaluateSpeed(
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        long sampleIndex)
+    {
+        if (sampleIndex < 0)
+        {
+            sampleIndex = 0;
+        }
+
+        var sr = Math.Max(1, sampleRate);
+        var wowAngle = wowPhase + (sampleIndex * (2.0 * Math.PI * WowFrequencyHz / sr));
+        var flutterAngle = flutterPhase + (sampleIndex * (2.0 * Math.PI * FlutterFrequencyHz / sr));
+        var modulation = (0.65 * Math.Sin(wowAngle)) + (0.35 * Math.Sin(flutterAngle));
+        var speed = 1.0 + (amount * modulation);
+        return speed < 0.05 ? 0.05 : speed;
+    }
+
+    /// <summary>
+    /// 指定サンプル位置の速度偏差を百分率で返します（(speed-1)×100）。
+    /// </summary>
+    public static double EvaluateSpeedDeviationPercent(
+        int sampleRate,
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        long sampleIndex) =>
+        (EvaluateSpeed(sampleRate, amount, wowPhase, flutterPhase, sampleIndex) - 1.0) * 100.0;
+
+    /// <summary>
     /// 速度変調プロファイルを既存バッファへ書き込みます。
     /// </summary>
     private static void FillSpeedProfile(

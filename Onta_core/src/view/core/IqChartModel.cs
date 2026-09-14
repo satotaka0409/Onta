@@ -10,12 +10,13 @@ namespace Onta.View.Core;
 
 /// <summary>
 /// 受信IQ点群を表示する散布図モデルです。グループ A/B/C/D ごとに色分けします。
+/// 軸スケールは変調方式の理想コンスタレーション範囲に固定し、外れ値で一瞬縮むのを防ぎます。
 /// </summary>
 public sealed class IqChartModel
 {
     private const int MaxPoints = 4096;
     private const int MaxDisplayPoints = 512;
-    private const double DefaultAxisLimit = 2.0;
+    private const double DefaultAxisLimit = 1.6;
     private const int GroupCount = 4;
 
     // A=青, B=緑, C=白, D=オレンジ（modulation.mdc）
@@ -66,6 +67,8 @@ public sealed class IqChartModel
                 Name = null,
                 MinLimit = -DefaultAxisLimit,
                 MaxLimit = DefaultAxisLimit,
+                MinStep = 0.5,
+                ForceStepToMin = true,
                 NamePaint = null,
                 LabelsPaint = null,
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
@@ -79,6 +82,8 @@ public sealed class IqChartModel
                 Name = null,
                 MinLimit = -DefaultAxisLimit,
                 MaxLimit = DefaultAxisLimit,
+                MinStep = 0.5,
+                ForceStepToMin = true,
                 NamePaint = null,
                 LabelsPaint = null,
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
@@ -105,16 +110,20 @@ public sealed class IqChartModel
     /// 入力サンプルの末尾から最大件数をチャートへ反映します。
     /// </summary>
     /// <param name="samples">描画対象のIQサンプル列。</param>
-    public void ReplacePoints(IReadOnlyList<CoreIqSample> samples)
+    /// <param name="modulation">軸スケール決定に使う変調方式。</param>
+    public void ReplacePoints(
+        IReadOnlyList<CoreIqSample> samples,
+        ModulationScheme modulation = ModulationScheme.Bpsk)
     {
         for (var g = 0; g < GroupCount; g++)
         {
             _groupPoints[g].Clear();
         }
 
+        // 空フレームでは軸をいじらない（一瞬のリセットで縮んで見えるのを防ぐ）。
+        ApplyAxisLimits(IdealAxisLimit(modulation));
         if (samples.Count == 0)
         {
-            ResetAxisLimits();
             return;
         }
 
@@ -122,23 +131,16 @@ public sealed class IqChartModel
         var start = Math.Max(0, samples.Count - count);
         var span = count;
         var stride = Math.Max(1, span / MaxDisplayPoints);
-        var maxAbs = DefaultAxisLimit;
         for (var i = start; i < samples.Count; i += stride)
         {
-            maxAbs = Math.Max(maxAbs, AddSample(samples[i]));
+            AddSample(samples[i]);
         }
 
         // 末尾点は間引きで落ちやすいので必ず含める。
         if (stride > 1 && (samples.Count - 1 - start) % stride != 0)
         {
-            maxAbs = Math.Max(maxAbs, AddSample(samples[^1]));
+            AddSample(samples[^1]);
         }
-
-        var limit = Math.Clamp(Math.Ceiling(maxAbs * 1.15 * 2.0) / 2.0, DefaultAxisLimit, 8.0);
-        XAxes[0].MinLimit = -limit;
-        XAxes[0].MaxLimit = limit;
-        YAxes[0].MinLimit = -limit;
-        YAxes[0].MaxLimit = limit;
     }
 
     /// <summary>
@@ -151,21 +153,39 @@ public sealed class IqChartModel
             _groupPoints[g].Clear();
         }
 
-        ResetAxisLimits();
+        ApplyAxisLimits(DefaultAxisLimit);
     }
 
-    private double AddSample(CoreIqSample s)
+    /// <summary>
+    /// 単位エネルギー想定の理想コンスタレーション外接半径＋余白です。
+    /// </summary>
+    private static double IdealAxisLimit(ModulationScheme modulation) =>
+        modulation switch
+        {
+            ModulationScheme.Bpsk => 1.6,
+            ModulationScheme.Qpsk => 1.6,
+            ModulationScheme.Qam16 => 1.8,
+            ModulationScheme.Qam64 => 2.2,
+            _ => DefaultAxisLimit
+        };
+
+    private void AddSample(CoreIqSample s)
     {
         var group = s.Group < GroupCount ? s.Group : (byte)0;
         _groupPoints[group].Add(new ObservablePoint(s.I, s.Q));
-        return Math.Max(Math.Abs(s.I), Math.Abs(s.Q));
     }
 
-    private void ResetAxisLimits()
+    private void ApplyAxisLimits(double limit)
     {
-        XAxes[0].MinLimit = -DefaultAxisLimit;
-        XAxes[0].MaxLimit = DefaultAxisLimit;
-        YAxes[0].MinLimit = -DefaultAxisLimit;
-        YAxes[0].MaxLimit = DefaultAxisLimit;
+        if (Math.Abs((XAxes[0].MaxLimit ?? 0) - limit) <= 1e-9
+            && Math.Abs((XAxes[0].MinLimit ?? 0) + limit) <= 1e-9)
+        {
+            return;
+        }
+
+        XAxes[0].MinLimit = -limit;
+        XAxes[0].MaxLimit = limit;
+        YAxes[0].MinLimit = -limit;
+        YAxes[0].MaxLimit = limit;
     }
 }

@@ -535,6 +535,23 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
+    /// 送信側 FFT 可視化用。OFDM シンボルの周波数ビンを通知します（第2引数は右チャネルなら true）。
+    /// </summary>
+    public delegate void TxSpectrumHandler(ReadOnlySpan<Complex> bins, bool isRightChannel);
+
+    /// <summary>
+    /// 送信スペクトル通知ハンドラです。
+    /// </summary>
+    public TxSpectrumHandler? TxSpectrumObserver { get; set; }
+
+    /// <summary>
+    /// 送信スペクトル通知の間引き間隔（シンボル数）。1 で毎シンボル。
+    /// </summary>
+    public int TxSpectrumStride { get; set; } = 4;
+
+    private int _txSpectrumCounter;
+
+    /// <summary>
     /// 内部処理です。
     /// </summary>
     private (List<int> All, List<int> Pilots, List<int> DataBase, Dictionary<int, ModulationScheme> DataModulationByBin, Dictionary<int, byte> DataGroupByBin)
@@ -4505,6 +4522,38 @@ public sealed partial class OfdmGenerator
         time.CopyTo(destination);
         FftInPlace(destination);
     }
+
+    /// <summary>
+    /// 実数 PCM（Imag=0）から表示用フォワード FFT を計算します。
+    /// </summary>
+    public static void ComputeForwardSpectrumFromRealPcm(
+        ReadOnlySpan<Complex> timePcm,
+        Complex[] destination)
+    {
+        if (destination.Length == 0)
+        {
+            throw new ArgumentException("Destination is empty.", nameof(destination));
+        }
+
+        if (timePcm.Length < destination.Length)
+        {
+            throw new ArgumentException("PCM window is shorter than FFT size.", nameof(timePcm));
+        }
+
+        var n = destination.Length;
+        var offset = timePcm.Length - n;
+        for (var i = 0; i < n; i++)
+        {
+            destination[i] = new Complex(timePcm[offset + i].Real, 0.0);
+        }
+
+        FftInPlace(destination);
+    }
+
+    /// <summary>
+    /// サンプリング周波数を返します。
+    /// </summary>
+    public int SampleRate => _config.SampleRate;
 
     /// <summary>
     /// BuildFrequencyDomainSymbol を構築します。

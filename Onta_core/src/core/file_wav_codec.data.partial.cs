@@ -369,25 +369,23 @@ public sealed partial class FileWavCodec
                             out var hardConvMetrics,
                             terminated: true,
                             punctureRate: punctureRate);
+                        statusBoard?.SetErrorRate(
+                            hardConvMetrics.CorrectionRate * 100.0,
+                            CoreFrameKind.Bd,
+                            CoreEccDecoderKind.Viterbi);
                         candidate = DecodeTurboBlock(
                             turboEncoded,
                             paddedLen,
                             tuning.TurboIterationsMax,
-                            out var hardTurboRate);
+                            out _,
+                            onUnitCorrectionRate: rate =>
+                                statusBoard?.SetErrorRate(
+                                    rate * 100.0,
+                                    CoreFrameKind.Bd,
+                                    CoreEccDecoderKind.Turbo));
                         candidate = ChannelBitInterleaver.DeinterleaveBytes(
                             candidate,
                             ResolveBitInterleaveSeed(interleaveInitSeed));
-                        if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
-                        {
-                            statusBoard?.SetErrorRate(
-                                hardConvMetrics.CorrectionRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Viterbi);
-                            statusBoard?.SetErrorRate(
-                                hardTurboRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Turbo);
-                        }
                     }
                     else
                     {
@@ -418,6 +416,10 @@ public sealed partial class FileWavCodec
                             terminated: true,
                             punctureRate: punctureRate);
                         ClampLlrsInPlace(infoLlrs, 16.0);
+                        statusBoard?.SetErrorRate(
+                            softConvMetrics.CorrectionRate * 100.0,
+                            CoreFrameKind.Bd,
+                            CoreEccDecoderKind.Viterbi);
 
                         var meanAbs = MeanAbsLlrs(infoLlrs);
                         if (meanAbs < softLlrAbortMeanAbs)
@@ -431,11 +433,15 @@ public sealed partial class FileWavCodec
                             turboEncoded,
                             paddedLen,
                             turboIterations,
-                            out var softTurboRate);
+                            out _,
+                            onUnitCorrectionRate: rate =>
+                                statusBoard?.SetErrorRate(
+                                    rate * 100.0,
+                                    CoreFrameKind.Bd,
+                                    CoreEccDecoderKind.Turbo));
                         softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
                             softCandidate,
                             ResolveBitInterleaveSeed(interleaveInitSeed));
-                        double publishTurboRate = softTurboRate;
                         if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
                         {
                             candidate = softCandidate;
@@ -446,28 +452,20 @@ public sealed partial class FileWavCodec
                                 turboEncoded,
                                 paddedLen,
                                 turboIterations,
-                                out var fallbackTurboRate);
+                                out _,
+                                onUnitCorrectionRate: rate =>
+                                    statusBoard?.SetErrorRate(
+                                        rate * 100.0,
+                                        CoreFrameKind.Bd,
+                                        CoreEccDecoderKind.Turbo));
                             hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
                                 hardCandidate,
                                 ResolveBitInterleaveSeed(interleaveInitSeed));
-                            publishTurboRate = fallbackTurboRate;
                             candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                         }
                         else
                         {
                             candidate = softCandidate;
-                        }
-
-                        if (IsDataBlockAcceptable(candidate, expectedBlockHash, payloadLength))
-                        {
-                            statusBoard?.SetErrorRate(
-                                softConvMetrics.CorrectionRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Viterbi);
-                            statusBoard?.SetErrorRate(
-                                publishTurboRate * 100.0,
-                                CoreFrameKind.Bd,
-                                CoreEccDecoderKind.Turbo);
                         }
                     }
 
@@ -601,27 +599,27 @@ public sealed partial class FileWavCodec
             ClampLlrsInPlace(infoLlrs, 16.0);
             _ = lastError;
             var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
+            statusBoard?.SetErrorRate(
+                fallbackConvMetrics.CorrectionRate * 100.0,
+                CoreFrameKind.Bd,
+                CoreEccDecoderKind.Viterbi);
             var softCandidate = DecodeTurboBlockFromLlrs(
                 infoLlrs,
                 turboEncoded,
                 paddedLen,
                 turboIterations,
-                out var fallbackTurboRate);
+                out _,
+                onUnitCorrectionRate: rate =>
+                    statusBoard?.SetErrorRate(
+                        rate * 100.0,
+                        CoreFrameKind.Bd,
+                        CoreEccDecoderKind.Turbo));
             softCandidate = ChannelBitInterleaver.DeinterleaveBytes(
                 softCandidate,
                 ResolveBitInterleaveSeed(interleaveInitSeed));
-            double publishTurboRate = fallbackTurboRate;
             if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
             {
                 softMatchSucceeded = true;
-                statusBoard?.SetErrorRate(
-                    fallbackConvMetrics.CorrectionRate * 100.0,
-                    CoreFrameKind.Bd,
-                    CoreEccDecoderKind.Viterbi);
-                statusBoard?.SetErrorRate(
-                    publishTurboRate * 100.0,
-                    CoreFrameKind.Bd,
-                    CoreEccDecoderKind.Turbo);
                 diag = new DataDecodeDiag(
                     totalAttempts,
                     hardMatchSucceeded,
@@ -637,22 +635,18 @@ public sealed partial class FileWavCodec
                     turboEncoded,
                     paddedLen,
                     turboIterations,
-                    out var hardFallbackTurboRate);
+                    out _,
+                    onUnitCorrectionRate: rate =>
+                        statusBoard?.SetErrorRate(
+                            rate * 100.0,
+                            CoreFrameKind.Bd,
+                            CoreEccDecoderKind.Turbo));
                 hardCandidate = ChannelBitInterleaver.DeinterleaveBytes(
                     hardCandidate,
                     ResolveBitInterleaveSeed(interleaveInitSeed));
-                publishTurboRate = hardFallbackTurboRate;
                 var preferred = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                 if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))
                 {
-                    statusBoard?.SetErrorRate(
-                        fallbackConvMetrics.CorrectionRate * 100.0,
-                        CoreFrameKind.Bd,
-                        CoreEccDecoderKind.Viterbi);
-                    statusBoard?.SetErrorRate(
-                        publishTurboRate * 100.0,
-                        CoreFrameKind.Bd,
-                        CoreEccDecoderKind.Turbo);
                     if (ReferenceEquals(preferred, hardCandidate))
                     {
                         hardMatchSucceeded = true;
@@ -810,10 +804,16 @@ public sealed partial class FileWavCodec
                 statusBoard.AppendIqFrame(symbols.AsSpan(0, count), groups.AsSpan(0, count));
         Action<Complex[], int>? onFftLeftFrame = statusBoard is null
             ? null
-            : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: false);
+            : (spectrum, count) => statusBoard.SetFftFrame(
+                spectrum.AsSpan(0, count),
+                isRightChannel: false,
+                sampleRate: ofdm.SampleRate);
         Action<Complex[], int>? onFftRightFrame = statusBoard is null
             ? null
-            : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: true);
+            : (spectrum, count) => statusBoard.SetFftFrame(
+                spectrum.AsSpan(0, count),
+                isRightChannel: true,
+                sampleRate: ofdm.SampleRate);
 
         // UI 更新頻度を抑え、復調処理のスループット低下を防ぐ。
         var progressClock = System.Diagnostics.Stopwatch.StartNew();
@@ -1087,7 +1087,8 @@ public sealed partial class FileWavCodec
         byte[] turboEncoded,
         int paddedLength,
         int iterations,
-        out double meanCorrectionRate)
+        out double meanCorrectionRate,
+        Action<double>? onUnitCorrectionRate = null)
     {
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
@@ -1102,6 +1103,7 @@ public sealed partial class FileWavCodec
                 iterations: iterations,
                 channelReliability: 1.25);
             rateSum += metrics.CorrectionRate;
+            onUnitCorrectionRate?.Invoke(metrics.CorrectionRate);
             Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
         }
 
@@ -1133,7 +1135,8 @@ public sealed partial class FileWavCodec
         byte[] turboEncodedHard,
         int paddedLength,
         int iterations,
-        out double meanCorrectionRate)
+        out double meanCorrectionRate,
+        Action<double>? onUnitCorrectionRate = null)
     {
         var padded = new byte[paddedLength];
         var unitCount = paddedLength / TurboEcc1024.DataUnitBytes;
@@ -1175,6 +1178,7 @@ public sealed partial class FileWavCodec
             }
 
             rateSum += metrics.CorrectionRate;
+            onUnitCorrectionRate?.Invoke(metrics.CorrectionRate);
             Buffer.BlockCopy(decoded, 0, padded, i * TurboEcc1024.DataUnitBytes, TurboEcc1024.DataUnitBytes);
         }
 

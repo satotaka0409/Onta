@@ -118,12 +118,19 @@ public readonly record struct CoreExecutionStatus(
     bool IsAnalyzing,
     CoreProgressInfo Progress,
     CoreErrorRateInfo ErrorRate,
-    /// <summary>前回 Query 以降に積まれたエラー率サンプル（ビタビ/RS/ターボ）。</summary>
+    /// <summary>前回 Read 以降にコアが書き込んだエラー率サンプル（ビタビ/RS/ターボ）。</summary>
     IReadOnlyList<CoreErrorRateInfo> ErrorRateSamples,
     CoreIqGraphInfo IqGraph,
     CoreFftGraphInfo FftGraph,
     double WowLeftPercent,
     double WowRightPercent,
+    /// <summary>推定ワウモデルが有効なら true（UI が瞬間速度を連続評価する）。</summary>
+    bool WowTrackingActive,
+    double WowAmount,
+    double WowPhase,
+    double FlutterPhase,
+    int WowSampleRate,
+    long WowSampleIndex,
     string FileName,
     string FileSizeText,
     string BlockCountText,
@@ -144,6 +151,12 @@ public readonly record struct CoreExecutionStatus(
         FftGraph: CoreFftGraphInfo.Empty,
         WowLeftPercent: 0,
         WowRightPercent: 0,
+        WowTrackingActive: false,
+        WowAmount: 0,
+        WowPhase: 0,
+        FlutterPhase: 0,
+        WowSampleRate: 44100,
+        WowSampleIndex: 0,
         FileName: "(未受信)",
         FileSizeText: "-",
         BlockCountText: "-",
@@ -151,7 +164,8 @@ public readonly record struct CoreExecutionStatus(
 }
 
 /// <summary>
-/// 実行状態をスレッド安全に更新・参照する状態ボードです。
+/// コアと画面の共有実行状態メモリです。
+/// コアが進捗・グラフ用データを書き込み、画面は定期的に <see cref="Read"/> で読み取ります（画面→コア問い合わせは行いません）。
 /// </summary>
 public sealed class CoreExecutionStatusBoard
 {
@@ -159,7 +173,10 @@ public sealed class CoreExecutionStatusBoard
     public const int DefaultFftCapacity = 256;
 
     private readonly object _sync = new();
-    private readonly List<CoreErrorRateInfo> _errorRatePending = new(64);
+    /// <summary>エラー率の SPSC リング（コア=producer、画面 Read=consumer）。</summary>
+    private readonly CoreErrorRateInfo[] _errorRateRing = new CoreErrorRateInfo[MaxPendingErrorRates];
+    private long _errorRateWriteSeq;
+    private long _errorRateReadSeq;
     private const int MaxPendingErrorRates = 256;
     private CoreIqSample[] _iqRing;
     private int _iqCount;
@@ -220,7 +237,7 @@ public sealed class CoreExecutionStatusBoard
             _fftRightCount = 0;
             _fftIsStereo = false;
             _fftSize = 0;
-            _errorRatePending.Clear();
+            ResetErrorRateRingUnlocked();
             _status = CoreExecutionStatus.Idle with { FileName = fileName };
         }
     }
@@ -243,7 +260,7 @@ public sealed class CoreExecutionStatusBoard
             _fftRightCount = 0;
             _fftIsStereo = false;
             _fftSize = 0;
-            _errorRatePending.Clear();
+            ResetErrorRateRingUnlocked();
             _status = new CoreExecutionStatus(
                 IsRunning: true,
                 IsCompleted: false,
@@ -256,6 +273,12 @@ public sealed class CoreExecutionStatusBoard
                 FftGraph: CoreFftGraphInfo.Empty,
                 WowLeftPercent: 0,
                 WowRightPercent: 0,
+                WowTrackingActive: false,
+                WowAmount: 0,
+                WowPhase: 0,
+                FlutterPhase: 0,
+                WowSampleRate: 44100,
+                WowSampleIndex: 0,
                 FileName: fileName,
                 FileSizeText: fileSizeText,
                 BlockCountText: blockCountText,
@@ -325,12 +348,15 @@ public sealed class CoreExecutionStatusBoard
                 decoderKind,
                 _status.ErrorRate.Sequence + 1);
             _status = _status with { ErrorRate = info };
-            if (_errorRatePending.Count >= MaxPendingErrorRates)
+            // コアが共有リングへ追記。画面の Read が追いつかない場合は最古を上書きする。
+            var nextWrite = _errorRateWriteSeq + 1;
+            if (nextWrite - _errorRateReadSeq > MaxPendingErrorRates)
             {
-                _errorRatePending.RemoveAt(0);
+                _errorRateReadSeq = nextWrite - MaxPendingErrorRates;
             }
 
-            _errorRatePending.Add(info);
+            _errorRateRing[(int)(_errorRateWriteSeq % MaxPendingErrorRates)] = info;
+            _errorRateWriteSeq = nextWrite;
         }
     }
 
@@ -361,7 +387,38 @@ public sealed class CoreExecutionStatusBoard
             _status = _status with
             {
                 WowLeftPercent = leftPercent,
-                WowRightPercent = rightPercent
+                WowRightPercent = rightPercent,
+                WowTrackingActive = false
+            };
+        }
+    }
+
+    /// <summary>
+    /// 推定ワウモデルを公開し、瞬間速度偏差（%）も更新します。
+    /// UI はこのモデルから連続的にメーターを動かします。
+    /// </summary>
+    public void SetWowFlutterTracking(
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        int sampleRate,
+        long sampleIndex)
+    {
+        var sr = Math.Max(1, sampleRate);
+        var pct = WowFlutterWarp.EvaluateSpeedDeviationPercent(
+            sr, amount, wowPhase, flutterPhase, sampleIndex);
+        lock (_sync)
+        {
+            _status = _status with
+            {
+                WowLeftPercent = pct,
+                WowRightPercent = pct,
+                WowTrackingActive = true,
+                WowAmount = amount,
+                WowPhase = wowPhase,
+                FlutterPhase = flutterPhase,
+                WowSampleRate = sr,
+                WowSampleIndex = Math.Max(0L, sampleIndex)
             };
         }
     }
@@ -483,11 +540,12 @@ public sealed class CoreExecutionStatusBoard
 
     /// <summary>
     /// FFT表示用フレームを更新します。
-    /// 横軸は fftshift 相当で、ビン0（DC）を中央（X=0）に置きます。
+    /// 横軸は正周波数（Hz）、ビン0（DC）を左端に置きます。
     /// </summary>
     /// <param name="freqBins">周波数ビン列。</param>
     /// <param name="isRightChannel">右チャネル更新時は true。</param>
-    public void SetFftFrame(ReadOnlySpan<Complex> freqBins, bool isRightChannel)
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    public void SetFftFrame(ReadOnlySpan<Complex> freqBins, bool isRightChannel, int sampleRate = 44100)
     {
         lock (_sync)
         {
@@ -513,8 +571,9 @@ public sealed class CoreExecutionStatusBoard
             }
 
             var half = n / 2;
-            // 負側 (half+1..n-1) + DC(0) + 正側(1..half) = n 点
-            var pointCount = n;
+            var sr = Math.Max(1, sampleRate);
+            // 正周波数のみ（DC..Nyquist直前）
+            var pointCount = half;
             EnsureFftCapacityUnlocked(pointCount, isRightChannel);
 
             if (isRightChannel)
@@ -532,28 +591,22 @@ public sealed class CoreExecutionStatusBoard
             }
 
             var dest = isRightChannel ? _fftRightBins : _fftLeftBins;
-            var write = 0;
+            // 実信号 FFT の片側振幅スケール（ピーク≈時間振幅）
+            var scale = 2.0 / n;
 
-            static CoreFftSample ToSample(Complex c, int signedBin)
+            for (var bin = 0; bin < half; bin++)
             {
-                var magnitude = Math.Sqrt((c.Real * c.Real) + (c.Imaginary * c.Imaginary));
+                var c = freqBins[bin];
+                var magnitude = Math.Sqrt((c.Real * c.Real) + (c.Imaginary * c.Imaginary)) * scale;
+                if (bin == 0)
+                {
+                    // DC は片側スケールしない
+                    magnitude *= 0.5;
+                }
+
                 var magnitudeDb = 20.0 * Math.Log10(magnitude + 1e-12);
-                return new CoreFftSample(signedBin, magnitudeDb);
-            }
-
-            // 左半分: 負周波数（ビン half+1 .. n-1 → X = bin-n）
-            for (var bin = half + 1; bin < n; bin++)
-            {
-                dest[write++] = ToSample(freqBins[bin], bin - n);
-            }
-
-            // 中央: DC（ビン 0 → X = 0）
-            dest[write++] = ToSample(freqBins[0], 0);
-
-            // 右半分: 正周波数（ビン 1 .. half → X = bin）
-            for (var bin = 1; bin <= half; bin++)
-            {
-                dest[write++] = ToSample(freqBins[bin], bin);
+                var hz = (int)Math.Round(bin * (double)sr / n);
+                dest[bin] = new CoreFftSample(hz, magnitudeDb);
             }
         }
     }
@@ -614,24 +667,15 @@ public sealed class CoreExecutionStatusBoard
     }
 
     /// <summary>
-    /// 現在状態を描画用データ付きで取得します。
+    /// 共有状態のスナップショットを読み取ります（画面スレッド用）。
+    /// 進捗・IQ・FFT・ワウは最新値のコピー、エラー率サンプルは未読分のみ取り出します。
     /// </summary>
     /// <returns>現在の実行状態。</returns>
-    public CoreExecutionStatus Query()
+    public CoreExecutionStatus Read()
     {
         lock (_sync)
         {
-            CoreErrorRateInfo[] samples;
-            if (_errorRatePending.Count == 0)
-            {
-                samples = [];
-            }
-            else
-            {
-                samples = _errorRatePending.ToArray();
-                _errorRatePending.Clear();
-            }
-
+            var samples = ConsumeErrorRateSamplesUnlocked();
             var iqCount = _iqActiveSubcarrierCount > 0 ? _iqActiveSubcarrierCount : _iqCount;
             var iqGraph = new CoreIqGraphInfo(CopyIqPointsUnlocked(), iqCount, _iqModulationScheme);
             var fftGraph = new CoreFftGraphInfo(
@@ -647,6 +691,42 @@ public sealed class CoreExecutionStatusBoard
                 FftGraph = fftGraph
             };
         }
+    }
+
+    /// <summary>
+    /// <see cref="Read"/> の互換エイリアスです。
+    /// </summary>
+    public CoreExecutionStatus Query() => Read();
+
+    private void ResetErrorRateRingUnlocked()
+    {
+        _errorRateWriteSeq = 0;
+        _errorRateReadSeq = 0;
+        Array.Clear(_errorRateRing);
+    }
+
+    private CoreErrorRateInfo[] ConsumeErrorRateSamplesUnlocked()
+    {
+        var unread = _errorRateWriteSeq - _errorRateReadSeq;
+        if (unread <= 0)
+        {
+            return [];
+        }
+
+        if (unread > MaxPendingErrorRates)
+        {
+            _errorRateReadSeq = _errorRateWriteSeq - MaxPendingErrorRates;
+            unread = MaxPendingErrorRates;
+        }
+
+        var samples = new CoreErrorRateInfo[unread];
+        for (var i = 0; i < unread; i++)
+        {
+            samples[i] = _errorRateRing[(int)((_errorRateReadSeq + i) % MaxPendingErrorRates)];
+        }
+
+        _errorRateReadSeq = _errorRateWriteSeq;
+        return samples;
     }
 
     /// <summary>

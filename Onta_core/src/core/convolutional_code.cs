@@ -510,7 +510,9 @@ public static class ConvolutionalCode
         var corrected = 0;
         for (var i = 0; i < bitCount; i++)
         {
-            var rxHard = puncturedCodeLlrs[i] < 0.0;
+            // 本系のソフト LLR は正でビット1（変調: bit→+1、復調硬判定: Real>=0→1）。
+            // 標準 LLR（正=ビット0）とは逆なので、ここでは正をビット1として硬判定する。
+            var rxHard = puncturedCodeLlrs[i] >= 0.0;
             if (rxHard != reBits[i])
             {
                 corrected++;

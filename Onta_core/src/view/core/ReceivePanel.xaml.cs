@@ -1,4 +1,5 @@
-﻿using System.Windows;
+﻿using System.Diagnostics;
+using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
@@ -12,6 +13,8 @@ namespace Onta.View.Core;
 public partial class ReceivePanel : UserControl
 {
     private const int DefaultAudioDeviceNumber = -1;
+    /// <summary>ワウフラッターメーターの表示感度（実偏差%に対する倍率）。</summary>
+    private const double WowFlutterDisplayGain = 2.0;
 
     private readonly ErrorRateChartModel _errorChart = new();
     private readonly FftChartModel _fftChart = new();
@@ -22,6 +25,15 @@ public partial class ReceivePanel : UserControl
     private CoreEccDecoderKind _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
     private double _lastErrorPercent = -1;
     private int _lastErrorSequence = -1;
+
+    // ワウメーター用: コアのモデルを壁時計で補間して左右に揺らす
+    private bool _wowTrackingActive;
+    private double _wowAmount;
+    private double _wowPhase;
+    private double _flutterPhase;
+    private int _wowSampleRate = 44100;
+    private long _wowSampleIndexAtSync;
+    private long _wowSyncTimestamp;
 
     /// <summary>
     /// 受信パネルを初期化します。
@@ -49,6 +61,7 @@ public partial class ReceivePanel : UserControl
             ProgressBox.Text = "-";
             UpdateInputModePanels();
             UpdateReceiveGraphTabVisibility();
+            UpdateIqSquareSize();
         };
     }
 
@@ -84,6 +97,52 @@ public partial class ReceivePanel : UserControl
         FftChartHost.IsHitTestVisible = showFft;
         FftChartHost.Visibility = Visibility.Visible;
         ErrorChartHost.Visibility = Visibility.Visible;
+        if (ErrorRateLegend is not null)
+        {
+            ErrorRateLegend.Visibility = showFft ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
+
+    /// <summary>
+    /// グラフ行のリサイズに合わせて I-Q を正方形に保ちます。
+    /// </summary>
+    private void OnReceiveGraphsRowSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateIqSquareSize();
+    }
+
+    /// <summary>
+    /// I-Q パネル全体を正方形（タイトル込みで高さを合わせ）にします。
+    /// </summary>
+    private void UpdateIqSquareSize()
+    {
+        if (ReceiveGraphsRow is null || IqPanelHost is null || IqTitle is null)
+        {
+            return;
+        }
+
+        if (ReceiveGraphsRow.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        // 行の高さ一杯の正方形。左グラフが極端に狭くならないよう上限。
+        var side = Math.Floor(ReceiveGraphsRow.ActualHeight);
+        if (ReceiveGraphsRow.ActualWidth > 0)
+        {
+            side = Math.Min(side, Math.Floor(ReceiveGraphsRow.ActualWidth * 0.38));
+        }
+
+        side = Math.Clamp(side, 180, 420);
+        if (Math.Abs(IqPanelHost.Width - side) <= 0.5
+            && Math.Abs(IqPanelHost.Height - side) <= 0.5)
+        {
+            return;
+        }
+
+        IqPanelHost.Width = side;
+        IqPanelHost.Height = side;
+        ReceiveGraphsRow.ColumnDefinitions[1].Width = new GridLength(side);
     }
 
     public event EventHandler? ReceiveStartRequested;
@@ -163,10 +222,10 @@ public partial class ReceivePanel : UserControl
             SetWowStereoEnabled(status.FftGraph.IsStereo);
         }
 
-        SetWowFlutterPercent(status.WowLeftPercent, status.WowRightPercent);
+        ApplyWowFlutterFromStatus(status);
 
         // I-Q / FFT を先に更新する（エラーレート側の LiveCharts 更新で例外・遅延しても可視化を落とさない）
-        _iqChart.ReplacePoints(status.IqGraph.Points);
+        _iqChart.ReplacePoints(status.IqGraph.Points, status.IqGraph.ModulationScheme);
         if (status.IqGraph.ActiveSubcarrierCount > 0)
         {
             IqTitle.Text = $"I-Q ({status.IqGraph.ModulationScheme} / SC={status.IqGraph.ActiveSubcarrierCount})";
@@ -180,15 +239,6 @@ public partial class ReceivePanel : UserControl
             status.FftGraph.LeftPoints,
             status.FftGraph.RightPoints,
             status.FftGraph.IsStereo);
-        if (status.FftGraph.FftSize > 0)
-        {
-            var mode = status.FftGraph.IsStereo ? "Stereo" : "Mono";
-            FftTitle.Text = $"FFT ({mode} / N={status.FftGraph.FftSize})";
-        }
-        else
-        {
-            FftTitle.Text = "FFT";
-        }
 
         // 解析中は止め、積まれた訂正率サンプルを系列ごとに追加（ビタビ / RS・ターボ）
         if (!status.IsAnalyzing && status.ErrorRateSamples.Count > 0)
@@ -227,12 +277,22 @@ public partial class ReceivePanel : UserControl
             {
             }
         }
+        else
+        {
+            try
+            {
+                _errorChart.Tick();
+            }
+            catch
+            {
+            }
+        }
     }
 
     /// <summary>
-    /// 新しい受信開始時にグラフ／誤差ゲートを初期化します。
+    /// 受信グラフ／メーター／ファイル表示を初期状態へ戻します。
     /// </summary>
-    public void PrepareForNewReceive()
+    public void ResetVisualization()
     {
         _errorChart.Clear();
         _fftChart.Clear();
@@ -241,10 +301,52 @@ public partial class ReceivePanel : UserControl
         _lastErrorFrame = CoreFrameKind.Fh;
         _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
         _lastErrorSequence = -1;
+        ClearWowTracking();
         SetWowFlutterPercent(0, 0);
+        SetFileInfo("(未受信)", "-", "-");
+        ProgressBox.Text = "-";
         IqTitle.Text = "I-Q";
-        FftTitle.Text = "FFT";
+    }
+
+    /// <summary>
+    /// 新しい受信開始時にグラフ／誤差ゲートを初期化します。
+    /// </summary>
+    public void PrepareForNewReceive()
+    {
+        ResetVisualization();
         ProgressBox.Text = "開始中…";
+    }
+
+    /// <summary>
+    /// 送信中の FFT を受信パネルのグラフへ反映します。
+    /// </summary>
+    public void ApplySendFft(CoreFftGraphInfo fft)
+    {
+        if (fft.FftSize <= 0)
+        {
+            return;
+        }
+
+        _fftChart.ReplacePoints(fft.LeftPoints, fft.RightPoints, fft.IsStereo);
+    }
+
+    /// <summary>
+    /// FFT タブを前面にします。
+    /// </summary>
+    public void ShowFftTab()
+    {
+        FftTabRadio.IsChecked = true;
+        UpdateReceiveGraphTabVisibility();
+    }
+
+    /// <summary>
+    /// 受信操作（入出力設定・スタート）の有効/無効を切り替えます。
+    /// </summary>
+    /// <param name="enabled">有効なら true。</param>
+    public void SetInteractionEnabled(bool enabled)
+    {
+        IoGroupBox.IsEnabled = enabled;
+        StartButton.IsEnabled = enabled;
     }
 
     /// <summary>
@@ -263,8 +365,8 @@ public partial class ReceivePanel : UserControl
     /// <param name="rightSpeedRatio">右チャネル速度比。</param>
     public void SetWowFlutterFromPilots(double leftSpeedRatio, double rightSpeedRatio)
     {
-        WowLeft.SetFromSpeedRatio(leftSpeedRatio);
-        WowRight.SetFromSpeedRatio(rightSpeedRatio);
+        ClearWowTracking();
+        SetWowFlutterPercent((leftSpeedRatio - 1.0) * 100.0, (rightSpeedRatio - 1.0) * 100.0);
     }
 
     /// <summary>
@@ -288,14 +390,56 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// WOW/Flutter パーセント値をグラフへ追加します。
+    /// コア状態のワウモデルから瞬間速度偏差を評価してメーターへ反映します。
+    /// </summary>
+    private void ApplyWowFlutterFromStatus(CoreExecutionStatus status)
+    {
+        if (!status.WowTrackingActive)
+        {
+            ClearWowTracking();
+            SetWowFlutterPercent(status.WowLeftPercent, status.WowRightPercent);
+            return;
+        }
+
+        _wowAmount = status.WowAmount;
+        _wowPhase = status.WowPhase;
+        _flutterPhase = status.FlutterPhase;
+        _wowSampleRate = Math.Max(1, status.WowSampleRate);
+
+        if (!_wowTrackingActive)
+        {
+            // 初回ロック時だけサンプル位置を合わせ、以後は壁時計で連続再生する
+            _wowTrackingActive = true;
+            _wowSampleIndexAtSync = Math.Max(0L, status.WowSampleIndex);
+            _wowSyncTimestamp = Stopwatch.GetTimestamp();
+        }
+
+        var dt = (Stopwatch.GetTimestamp() - _wowSyncTimestamp) / (double)Stopwatch.Frequency;
+        var sampleIndex = _wowSampleIndexAtSync + (long)(dt * _wowSampleRate);
+        var percent = WowFlutterWarp.EvaluateSpeedDeviationPercent(
+            _wowSampleRate, _wowAmount, _wowPhase, _flutterPhase, sampleIndex);
+        SetWowFlutterPercent(percent, percent);
+    }
+
+    private void ClearWowTracking()
+    {
+        _wowTrackingActive = false;
+        _wowAmount = 0;
+        _wowPhase = 0;
+        _flutterPhase = 0;
+        _wowSampleIndexAtSync = 0;
+        _wowSyncTimestamp = 0;
+    }
+
+    /// <summary>
+    /// WOW/Flutter パーセント値をメーターへ反映します。
     /// </summary>
     /// <param name="leftPercent">左チャネル値。</param>
     /// <param name="rightPercent">右チャネル値。</param>
     public void SetWowFlutterPercent(double leftPercent, double rightPercent)
     {
-        WowLeft.AddSample(leftPercent);
-        WowRight.AddSample(rightPercent);
+        WowLeft.AddSample(leftPercent * WowFlutterDisplayGain);
+        WowRight.AddSample(rightPercent * WowFlutterDisplayGain);
     }
 
     private void OnInputModeChanged(object sender, RoutedEventArgs e)

@@ -102,13 +102,18 @@ public partial class MainWindow : Window
             // 送信開始前に既存の再生状態をリセットする。
             StopAudioPlayback();
 
-            ReceivePanel.SetWowFlutterPercent(0, 0);
+            // 送信中は受信操作を止め、前回の受信可視化をクリアする。
+            ReceivePanel.ResetVisualization();
+            ReceiveDetailPanel.Clear();
+            ReceivePanel.SetInteractionEnabled(false);
+            ReceivePanel.ShowFftTab();
+            _receiveDetailOpened = false;
+            _lastReceiveHistorySnapshotKey = string.Empty;
+
             // 新規送信開始に合わせて進捗表示を初期化する。
             EstimatePanel.ResetProgress();
             BottomTabs.SelectedItem = EstimateTab;
             SendPanel.SetTransmissionRunning(true);
-            // 前回受信時のIQ表示を消して誤解を防ぐ。
-            ReceivePanel.ClearIqDisplay();
             // 受信ワーカー未実行なら受信ポーリングは止める。
             if (!_inputCoreWorker.IsRunning)
             {
@@ -123,6 +128,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SendPanel.SetTransmissionRunning(false);
+            ReceivePanel.SetInteractionEnabled(true);
             MessageBox.Show(this, $"送信中にエラーが発生しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -135,6 +141,7 @@ public partial class MainWindow : Window
     private void OnStopRequested(object? sender, EventArgs e)
     {
         _ = _coreWorker.RequestStop();
+        ReceivePanel.SetInteractionEnabled(true);
     }
 
     /// <summary>
@@ -147,6 +154,12 @@ public partial class MainWindow : Window
     {
         _ = Dispatcher.BeginInvoke(() =>
         {
+            // 送信中は受信表示を更新しない。
+            if (_coreWorker.GetProgress().IsRunning)
+            {
+                return;
+            }
+
             ReceivePanel.SetFileInfo(fileName, fileSizeText, blockCount.ToString());
             ReceiveDetailPanel.ApplyFileHeader(fileName, fileSizeText, blockCount);
             SaveReceiveHistoryIfChanged(force: false);
@@ -235,8 +248,8 @@ public partial class MainWindow : Window
             // 前回完了で止まっていても確実に再開する。
             _progressPollTimer.Stop();
             _progressPollTimer.Start();
-            // 開始直後の状態を1回分すぐ反映（完了済表示のまま残るのを防ぐ）。
-            var startStatus = _inputCoreWorker.QueryExecutionStatus();
+            // 開始直後の共有状態を1回分すぐ反映（完了済表示のまま残るのを防ぐ）。
+            var startStatus = _inputCoreWorker.SharedStatus.Read();
             ReceivePanel.ApplyExecutionStatus(startStatus);
             ReceiveDetailPanel.ApplyStatus(startStatus);
         }
@@ -277,47 +290,63 @@ public partial class MainWindow : Window
         _pollingReceive = true;
         _progressPollTimer.Stop();
         _progressPollTimer.Start();
-        var audioStartStatus = _inputCoreWorker.QueryExecutionStatus();
+        var audioStartStatus = _inputCoreWorker.SharedStatus.Read();
         ReceivePanel.ApplyExecutionStatus(audioStartStatus);
         ReceiveDetailPanel.ApplyStatus(audioStartStatus);
     }
 
     /// <summary>
-    /// 送受信進捗を定期ポーリングして UI へ反映します。
+    /// 共有状態メモリを定期読み取りして UI へ反映します（コアへの問い合わせはしません）。
     /// </summary>
     /// <param name="sender">イベント送信元。</param>
     /// <param name="e">イベント引数。</param>
     private void OnProgressPollTick(object? sender, EventArgs e)
     {
-        var sendProgress = _coreWorker.GetProgress();
+        var sendProgress = _coreWorker.SharedProgress;
+
+        if (sendProgress.IsRunning)
+        {
+            var sendStatus = _coreWorker.SharedVizStatus.Read();
+            if (sendStatus.FftGraph.FftSize > 0)
+            {
+                ReceivePanel.ApplySendFft(sendStatus.FftGraph);
+            }
+        }
 
         if (_pollingReceive)
         {
-            // 受信実行状態を各表示へ反映する。
-            var status = _inputCoreWorker.QueryExecutionStatus();
-            ReceivePanel.ApplyExecutionStatus(status);
-            ReceiveDetailPanel.ApplyStatus(status);
-
-            // 受信実行中は履歴保存を省略（ディスク I/O が画面更新を遅らせる）。
-            // FH 確定コールバックと完了時のみ保存する。
-            if (!status.IsRunning || status.IsCompleted)
+            if (!sendProgress.IsRunning)
             {
-                SaveReceiveHistoryIfChanged(force: false);
-            }
+                // コアが書き込んだ共有状態を読み、各表示へ反映する。
+                // 送信中は受信可視化を触らない（送信開始時にクリアした表示を維持する）。
+                var status = _inputCoreWorker.SharedStatus.Read();
+                ReceivePanel.ApplyExecutionStatus(status);
+                ReceiveDetailPanel.ApplyStatus(status);
 
-            // FH確定後に未表示なら受信詳細タブへ遷移する。
-            if (!_receiveDetailOpened && ReceiveDetailPanel.HasFileHeaderInfo(status))
-            {
-                _receiveDetailOpened = true;
-                BottomTabs.SelectedItem = ReceiveDetailTab;
+                // 受信実行中は履歴保存を省略（ディスク I/O が画面更新を遅らせる）。
+                // FH 確定コールバックと完了時のみ保存する。
+                if (!status.IsRunning || status.IsCompleted)
+                {
+                    SaveReceiveHistoryIfChanged(force: false);
+                }
+
+                // FH確定後に未表示なら受信詳細タブへ遷移する。
+                if (!_receiveDetailOpened && ReceiveDetailPanel.HasFileHeaderInfo(status))
+                {
+                    _receiveDetailOpened = true;
+                    BottomTabs.SelectedItem = ReceiveDetailTab;
+                }
             }
 
             if (_inputCoreWorker.TryConsumeCompletion(out var success, out var message, out var outputPath))
             {
                 _pollingReceive = false;
-                ReceiveDetailPanel.MarkCompletion(success, message, outputPath);
-                SaveReceiveHistoryIfChanged(force: true);
-                HistoryPanel.ReloadHistory();
+                if (!sendProgress.IsRunning)
+                {
+                    ReceiveDetailPanel.MarkCompletion(success, message, outputPath);
+                    SaveReceiveHistoryIfChanged(force: true);
+                    HistoryPanel.ReloadHistory();
+                }
 
                 // MessageBox はモーダルなので Tick 内で出すとポーリングが止まる。完了後に遅延表示する。
                 var completionSuccess = success;
@@ -349,6 +378,7 @@ public partial class MainWindow : Window
         if (_coreWorker.TryConsumeCompletion(out var completion))
         {
             SendPanel.SetTransmissionRunning(false);
+            ReceivePanel.SetInteractionEnabled(true);
             EstimatePanel.ApplyProgress(
                 completion.IsSuccess
                     ? Math.Max(sendProgress.TotalAudioSeconds, sendProgress.ElapsedAudioSeconds)

@@ -100,6 +100,15 @@ public sealed partial class OfdmGenerator
             }
 
             EmitRealTimeSymbolWithCp(freqBins, samples.AsSpan(write, symbolLength));
+
+            // Hermitian 適用後のスペクトルを出す（受信 FFT と左右対称で比較できる）
+            var observer = TxSpectrumObserver;
+            var stride = Math.Max(1, TxSpectrumStride);
+            if (observer is not null && (_txSpectrumCounter++ % stride) == 0)
+            {
+                observer(freqBins, useRightChannel);
+            }
+
             write += symbolLength;
         }
 

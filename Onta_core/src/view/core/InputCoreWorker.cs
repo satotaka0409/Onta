@@ -9,6 +9,8 @@ namespace Onta.View.Core;
 internal sealed class InputCoreWorker : IDisposable
 {
     private readonly object _sync = new();
+    /// <summary>コアが書き込み、画面が定期 Read する共有状態。</summary>
+    private readonly CoreExecutionStatusBoard _sharedStatus = new();
     private ProgressiveDecodeState? _state;
     private Task? _worker;
     private RealtimeDecodeSession? _liveSession;
@@ -18,6 +20,11 @@ internal sealed class InputCoreWorker : IDisposable
     private bool _completionPending;
     private string? _lastError;
     private bool _liveMode;
+
+    /// <summary>
+    /// コアが進捗・グラフ用データを書き込む共有状態です。画面は問い合わせせず定期的に Read します。
+    /// </summary>
+    public CoreExecutionStatusBoard SharedStatus => _sharedStatus;
 
     /// <summary>
     /// ファイルヘッダー（名前/サイズ/ブロック数）確定時に通知します。
@@ -45,7 +52,7 @@ internal sealed class InputCoreWorker : IDisposable
     }
 
     /// <summary>
-    /// WAVデコード処理を開始します（バックグラウンドで一括復号。UI は StatusBoard をポーリング）。
+    /// WAVデコード処理を開始します（バックグラウンドで一括復号。UI は SharedStatus を定期読み取り）。
     /// 逐次ストリーミングは音声入力専用（ファイル WAV では不安定だったため）。
     /// </summary>
     public bool TryStartWavDecode(string wavPath, FileWavCodecProfile profile, string? outputDirectory = null)
@@ -124,7 +131,8 @@ internal sealed class InputCoreWorker : IDisposable
                 profile.ChannelMode,
                 DecodeRuntimeTuning.Default,
                 pollInterval: TimeSpan.FromMilliseconds(100),
-                minAttemptSeconds: 2);
+                minAttemptSeconds: 2,
+                sharedStatus: _sharedStatus);
             var state = session.ProgressiveState;
             state.StatusBoard.BeginRun("(音声入力)");
             state.StatusBoard.SetProgress(new CoreProgressInfo(
@@ -187,20 +195,14 @@ internal sealed class InputCoreWorker : IDisposable
     }
 
     /// <summary>
-    /// 現在の実行状態を取得します。
+    /// 共有状態メモリを読み取ります（コアへの問い合わせではありません）。
     /// </summary>
-    public CoreExecutionStatus QueryExecutionStatus()
-    {
-        lock (_sync)
-        {
-            if (_liveSession is not null)
-            {
-                return _liveSession.QueryExecutionStatus();
-            }
+    public CoreExecutionStatus ReadExecutionStatus() => _sharedStatus.Read();
 
-            return _state?.QueryExecutionStatus() ?? CoreExecutionStatus.Idle;
-        }
-    }
+    /// <summary>
+    /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
+    /// </summary>
+    public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 
     /// <summary>
     /// 完了結果を1回だけ取り出します。
@@ -274,7 +276,7 @@ internal sealed class InputCoreWorker : IDisposable
 
     private ProgressiveDecodeState CreateState(string runLabel)
     {
-        var state = new ProgressiveDecodeState();
+        var state = new ProgressiveDecodeState(_sharedStatus);
         state.StatusBoard.BeginRun(runLabel);
         state.StatusBoard.SetProgress(new CoreProgressInfo(
             CurrentFrame: CoreFrameKind.Fh,

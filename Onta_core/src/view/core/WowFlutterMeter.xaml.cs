@@ -1,18 +1,16 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 
 namespace Onta.View.Core;
 
 /// <summary>
-/// WOW/Flutter の偏差を左右バーとノブで可視化するメーターです。
+/// WOW/Flutter の偏差を左右バーとノブで可視化するメーターです（中央が 0）。
 /// </summary>
 public partial class WowFlutterMeter : UserControl
 {
     private double _valuePercent;
     private double _rangePercent = 5.0;
     private string _channelLabel = "L";
-
     private bool _isActive = true;
 
     /// <summary>
@@ -22,6 +20,7 @@ public partial class WowFlutterMeter : UserControl
     {
         InitializeComponent();
         ChannelLabel = "L";
+        Loaded += (_, _) => UpdateVisual();
         UpdateVisual();
     }
 
@@ -78,7 +77,6 @@ public partial class WowFlutterMeter : UserControl
     /// <summary>
     /// 速度比を % 偏差へ変換して表示します。
     /// </summary>
-    /// <param name="speedRatio">速度比（1.0 が基準）。</param>
     public void SetFromSpeedRatio(double speedRatio)
     {
         if (!_isActive)
@@ -90,9 +88,8 @@ public partial class WowFlutterMeter : UserControl
     }
 
     /// <summary>
-    /// 直接 % 値を追加して表示を更新します。
+    /// 直接 % 値を設定して表示を更新します。
     /// </summary>
-    /// <param name="valuePercent">表示する偏差値（%）。</param>
     public void AddSample(double valuePercent)
     {
         if (!_isActive)
@@ -101,6 +98,13 @@ public partial class WowFlutterMeter : UserControl
         }
 
         _valuePercent = valuePercent;
+        // 大きな偏差でも振り切れないようレンジを自動拡張
+        var abs = Math.Abs(_valuePercent);
+        if (abs > _rangePercent)
+        {
+            _rangePercent = Math.Clamp(Math.Ceiling(abs * 1.25 * 2.0) / 2.0, 5.0, 50.0);
+        }
+
         UpdateVisual();
     }
 
@@ -110,6 +114,7 @@ public partial class WowFlutterMeter : UserControl
     public void Clear()
     {
         _valuePercent = 0;
+        _rangePercent = 5.0;
         UpdateVisual();
     }
 
@@ -120,42 +125,42 @@ public partial class WowFlutterMeter : UserControl
 
     private void UpdateVisual()
     {
-        var width = CanvasRoot.ActualWidth;
-        if (width <= 1)
+        if (TrackGrid is null || FillNeg is null || FillPos is null || KnobTranslate is null || ValueText is null)
         {
             return;
         }
 
-        var midX = width / 2.0;
-        CenterLine.X1 = midX;
-        CenterLine.X2 = midX;
+        var trackWidth = Track.ActualWidth;
+        if (trackWidth <= 2)
+        {
+            return;
+        }
 
+        var half = trackWidth / 2.0;
         var clamped = Math.Clamp(_valuePercent, -_rangePercent, _rangePercent);
-        var half = width / 2.0;
-        var fillWidth = Math.Abs(clamped) / _rangePercent * half;
+        var ratio = Math.Abs(clamped) / _rangePercent;
+        var fillWidth = ratio * half;
 
         if (clamped < 0)
         {
-            Canvas.SetLeft(FillRect, midX - fillWidth);
-            FillRect.Width = fillWidth;
-            FillRect.Fill = (Brush)FindResource("BrushFillNeg");
+            FillNeg.Width = fillWidth;
+            FillPos.Width = 0;
         }
         else if (clamped > 0)
         {
-            Canvas.SetLeft(FillRect, midX);
-            FillRect.Width = fillWidth;
-            FillRect.Fill = (Brush)FindResource("BrushFillPos");
+            FillNeg.Width = 0;
+            FillPos.Width = fillWidth;
         }
         else
         {
-            FillRect.Width = 0;
+            FillNeg.Width = 0;
+            FillPos.Width = 0;
         }
 
-        var knobX = midX + (clamped / _rangePercent) * half - (Knob.Width / 2.0);
-        Canvas.SetLeft(Knob, knobX);
+        // ノブはトラック左端基準。中央(0)からのオフセット。
+        var knobCenterX = half + (clamped / _rangePercent) * half;
+        KnobTranslate.X = knobCenterX - (Knob.Width / 2.0);
+
+        ValueText.Text = $"{_valuePercent:+0.00;-0.00;0.00}%";
     }
 }
-
-
-
-

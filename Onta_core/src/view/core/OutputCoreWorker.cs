@@ -1,4 +1,5 @@
-﻿using Onta.Core;
+﻿using System.Numerics;
+using Onta.Core;
 
 namespace Onta.View.Core;
 
@@ -9,6 +10,7 @@ internal sealed class OutputCoreWorker
 {
     private readonly object _sync = new();
     private readonly Queue<ErrorRateFrameKind> _frameEvents = [];
+    private readonly CoreExecutionStatusBoard _vizBoard = new();
     private CoreProgressSnapshot _snapshot = CoreProgressSnapshot.Idle;
     private CoreCompletionResult? _completion;
     private RealtimePcmPlayer? _player;
@@ -18,6 +20,11 @@ internal sealed class OutputCoreWorker
     private long _totalSamples;
     private int _sampleRate = 44100;
     private double _totalAudioSeconds;
+
+    /// <summary>
+    /// 送信中 FFT など可視化用の共有状態です。
+    /// </summary>
+    public CoreExecutionStatusBoard SharedVizStatus => _vizBoard;
 
     /// <summary>
     /// 送信ワーカーを開始します。
@@ -71,6 +78,7 @@ internal sealed class OutputCoreWorker
             _sampleRate = 44100;
             _totalAudioSeconds = 0;
             _player = null;
+            _vizBoard.BeginRun(fileName);
         }
 
         _ = CoreBackgroundHost.RunAsync(_ => RunCore(settings, outputWavPath, cts.Token), cts.Token);
@@ -110,6 +118,11 @@ internal sealed class OutputCoreWorker
         player?.Dispose();
         return true;
     }
+
+    /// <summary>
+    /// コアが書き込む送信進捗の共有スナップショットです。画面は定期読み取りします。
+    /// </summary>
+    public CoreProgressSnapshot SharedProgress => GetProgress();
 
     /// <summary>
     /// 現在の送信進捗スナップショットを返します。
@@ -244,6 +257,10 @@ internal sealed class OutputCoreWorker
             UpdateSnapshot(0, 0, totalSeconds, stageLabel, ErrorRateFrameKind.Bh, false, false, fileSizeText, blockCountText);
             var codec = new FileWavCodec(profile);
             var inputInfo = new FileInfo(settings.InputFilePath);
+            var spectrumPublisher = new TxPcmSpectrumPublisher(
+                _vizBoard,
+                profile.SampleRate,
+                profile.ChannelMode == ChannelMode.Stereo);
             _ = codec.EncodeFileToSamples(
                 bytes,
                 inputInfo,
@@ -251,6 +268,7 @@ internal sealed class OutputCoreWorker
                 onPcmChunk: (leftChunk, rightChunk) =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    spectrumPublisher.Push(leftChunk, rightChunk);
                     wavWriter?.WriteChunk(leftChunk, rightChunk);
                     if (player is not null)
                     {
@@ -494,6 +512,80 @@ internal sealed class OutputCoreWorker
                 TransmissionFrameKind.Bh => ErrorRateFrameKind.Bh,
                 _ => ErrorRateFrameKind.Bd
             });
+        }
+    }
+
+    /// <summary>
+    /// 送信 PCM チャンクから FFT スペクトルを間引き更新します（再生ペースに追従）。
+    /// </summary>
+    private sealed class TxPcmSpectrumPublisher
+    {
+        private const int FftSize = 256;
+        private const int MinPublishIntervalMs = 33;
+        private readonly CoreExecutionStatusBoard _board;
+        private readonly int _sampleRate;
+        private readonly bool _stereo;
+        private readonly Complex[] _leftWindow = new Complex[FftSize];
+        private readonly Complex[] _rightWindow = new Complex[FftSize];
+        private readonly Complex[] _fftWork = new Complex[FftSize];
+        private int _count;
+        private long _lastPublishMs = -1;
+
+        public TxPcmSpectrumPublisher(CoreExecutionStatusBoard board, int sampleRate, bool stereo)
+        {
+            _board = board;
+            _sampleRate = Math.Max(1, sampleRate);
+            _stereo = stereo;
+            _board.SetFftStereoMode(stereo);
+        }
+
+        public void Push(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
+        {
+            for (var i = 0; i < left.Length; i++)
+            {
+                _leftWindow[_count] = left[i];
+                if (_stereo && i < right.Length)
+                {
+                    _rightWindow[_count] = right[i];
+                }
+
+                _count++;
+                if (_count < FftSize)
+                {
+                    continue;
+                }
+
+                TryPublish();
+
+                // 50% オーバーラップで次窓へ
+                var hop = FftSize / 2;
+                Array.Copy(_leftWindow, hop, _leftWindow, 0, FftSize - hop);
+                if (_stereo)
+                {
+                    Array.Copy(_rightWindow, hop, _rightWindow, 0, FftSize - hop);
+                }
+
+                _count = FftSize - hop;
+            }
+        }
+
+        private void TryPublish()
+        {
+            var now = Environment.TickCount64;
+            if (_lastPublishMs >= 0 && now - _lastPublishMs < MinPublishIntervalMs)
+            {
+                return;
+            }
+
+            OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_leftWindow, _fftWork);
+            _board.SetFftFrame(_fftWork, isRightChannel: false, sampleRate: _sampleRate);
+            if (_stereo)
+            {
+                OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_rightWindow, _fftWork);
+                _board.SetFftFrame(_fftWork, isRightChannel: true, sampleRate: _sampleRate);
+            }
+
+            _lastPublishMs = now;
         }
     }
 }

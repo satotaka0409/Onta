@@ -94,7 +94,7 @@ public sealed class ProgressiveDecodeState
     public int BlockCount { get; internal set; }
     public long FileSize { get; internal set; }
 
-    public CoreExecutionStatusBoard StatusBoard { get; } = new();
+    public CoreExecutionStatusBoard StatusBoard { get; }
 
     internal int SourceLength;
 
@@ -162,6 +162,17 @@ public sealed class ProgressiveDecodeState
     /// <summary>
     /// 段階デコード状態を初期化します。
     /// </summary>
+    /// <param name="statusBoard">
+    /// 画面と共有する状態メモリ。省略時は専用ボードを生成します。
+    /// </param>
+    public ProgressiveDecodeState(CoreExecutionStatusBoard? statusBoard = null)
+    {
+        StatusBoard = statusBoard ?? new CoreExecutionStatusBoard();
+    }
+
+    /// <summary>
+    /// 段階デコード状態を初期化します。
+    /// </summary>
     public void Reset()
     {
         HeaderReady = false;
@@ -203,10 +214,14 @@ public sealed class ProgressiveDecodeState
     }
 
     /// <summary>
-    /// 現在の実行状態を取得します。
+    /// 共有状態メモリのスナップショットを読み取ります。
     /// </summary>
-    /// <returns>戻り値を返します。</returns>
-    public CoreExecutionStatus QueryExecutionStatus() => StatusBoard.Query();
+    public CoreExecutionStatus ReadExecutionStatus() => StatusBoard.Read();
+
+    /// <summary>
+    /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
+    /// </summary>
+    public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 }
 
 /// <summary>
@@ -348,7 +363,8 @@ public sealed partial class FileWavCodec
         Action<TransmissionFrameKind>? onFrameTransmitted = null,
         PcmChunkHandler? onPcmChunk = null,
         bool retainAllSamples = true,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        CoreExecutionStatusBoard? txStatusBoard = null)
     {
         if (!retainAllSamples && onPcmChunk is null)
         {
@@ -367,6 +383,11 @@ public sealed partial class FileWavCodec
         var leftPcm = new List<Complex>(1 << 20);
         var rightPcm = new List<Complex>(1 << 20);
         var pcmEmitted = 0;
+
+        if (txStatusBoard is not null)
+        {
+            txStatusBoard.SetFftStereoMode(_profile.ChannelMode == ChannelMode.Stereo);
+        }
 
         void EnsureStereoParity(string stage)
         {
@@ -869,8 +890,14 @@ public sealed partial class FileWavCodec
 
             if (hasTrackedWow)
             {
-                var wowDisplay = trackedWow.Amount * 200.0;
-                state.StatusBoard.SetWowFlutterPercent(wowDisplay, wowDisplay);
+                // 固定 Amount ではなく、現在サンプル位置の瞬間速度偏差を公開する
+                var sampleIndex = state.StreamSampleBase + Math.Max(0L, logicalOffset);
+                state.StatusBoard.SetWowFlutterTracking(
+                    trackedWow.Amount,
+                    trackedWow.WowPhase,
+                    trackedWow.FlutterPhase,
+                    _profile.SampleRate,
+                    sampleIndex);
             }
 
             if (state.HeaderReady)

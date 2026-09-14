@@ -20,7 +20,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     private readonly DecodeRuntimeTuning _tuning;
     private readonly TimeSpan _pollInterval;
     private readonly int _minAttemptSamples;
-    private readonly ProgressiveDecodeState _progressive = new();
+    private readonly ProgressiveDecodeState _progressive;
 
     private Complex[] _left = Array.Empty<Complex>();
     private Complex[] _right = Array.Empty<Complex>();
@@ -46,13 +46,15 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <param name="tuning">復号探索・反復回数の調整値。</param>
     /// <param name="pollInterval">ワーカーループのポーリング間隔。</param>
     /// <param name="minAttemptSeconds">復号試行を開始する最小蓄積秒数。</param>
+    /// <param name="sharedStatus">画面と共有する状態メモリ。省略時は専用ボードを生成します。</param>
     public RealtimeDecodeSession(
         FileWavCodec codec,
         int sampleRate,
         ChannelMode channelMode,
         DecodeRuntimeTuning? tuning = null,
         TimeSpan? pollInterval = null,
-        int minAttemptSeconds = 2)
+        int minAttemptSeconds = 2,
+        CoreExecutionStatusBoard? sharedStatus = null)
     {
         _codec = codec ?? throw new ArgumentNullException(nameof(codec));
         _sampleRate = Math.Max(1, sampleRate);
@@ -60,6 +62,7 @@ public sealed class RealtimeDecodeSession : IDisposable
         _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(100);
         _minAttemptSamples = _sampleRate * Math.Max(1, minAttemptSeconds);
         _stereo = channelMode == ChannelMode.Stereo;
+        _progressive = new ProgressiveDecodeState(sharedStatus);
     }
 
     /// <summary>
@@ -202,15 +205,14 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// UI 向け実行状態を返します。
+    /// 共有状態メモリのスナップショットを読み取ります（セッションロックは取りません）。
     /// </summary>
-    public CoreExecutionStatus QueryExecutionStatus()
-    {
-        lock (_sync)
-        {
-            return _progressive.QueryExecutionStatus();
-        }
-    }
+    public CoreExecutionStatus ReadExecutionStatus() => _progressive.ReadExecutionStatus();
+
+    /// <summary>
+    /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
+    /// </summary>
+    public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 
     /// <summary>
     /// 内部の段階デコード状態です（完了ペイロード参照用）。

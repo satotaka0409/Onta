@@ -15,8 +15,8 @@
     <Color x:Key="GrayAccent">#FF8A909C</Color>
     <Color x:Key="GrayAccentHover">#FF9AA1AE</Color>
     <Color x:Key="GrayTrack">#FF3F434C</Color>
-    <Color x:Key="GrayFillNeg">#FF7E8796</Color>
-    <Color x:Key="GrayFillPos">#FFA8A4A0</Color>
+    <Color x:Key="GrayFillNeg">#FF5B8FD9</Color>
+    <Color x:Key="GrayFillPos">#FFD4A05A</Color>
 
     <SolidColorBrush x:Key="BrushBg"
                      Color="{StaticResource GrayBg}"/>
