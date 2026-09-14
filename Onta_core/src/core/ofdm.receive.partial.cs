@@ -4,16 +4,6 @@ namespace Onta.Core;
 
 public sealed partial class OfdmGenerator
 {
-    /// <summary>
-    /// DemodulateBitsFromStream を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="cursor">cursor を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。</param>
-    /// <param name="logicalSampleOffset">logicalSampleOffset を指定します。</param>
-    /// <param name="searchRadius">searchRadius を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
     /// <returns>戻り値を返します。</returns>
     public bool[] DemodulateBitsFromStream(
         Complex[] samples,
@@ -96,21 +86,7 @@ public sealed partial class OfdmGenerator
         return bits;
     }
 
-    /// <summary>
-    /// DemodulateSoftLlrsFromStream を実行します。
-    /// </summary>
-    /// <param name="onOfdmSymbolProgress">onOfdmSymbolProgress を指定します。</param>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="cursor">cursor を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。</param>
-    /// <param name="logicalSampleOffset">logicalSampleOffset を指定します。</param>
-    /// <param name="searchRadius">searchRadius を指定します。</param>
     /// <param name="noiseVariance">譌｢遏･髮鷹浹蛻・淵縲・/param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <param name="onEqualizedDataSymbol">onEqualizedDataSymbol を指定します。</param>
-    /// <param name="onEqualizedDataSymbolFrame">onEqualizedDataSymbolFrame を指定します。</param>
-    /// <param name="onFftSymbolFrame">onFftSymbolFrame を指定します。</param>
     /// <returns>戻り値を返します。</returns>
     public double[] DemodulateSoftLlrsFromStream(
         Complex[] samples,
@@ -144,18 +120,7 @@ public sealed partial class OfdmGenerator
             onOfdmSymbolProgress);
     }
 
-    /// <summary>
-    /// DemodulateSoftLlrsStereoCombined を実行します。
-    /// </summary>
-    /// <param name="leftSamples">leftSamples を指定します。</param>
-    /// <param name="rightSamples">rightSamples を指定します。</param>
-    /// <param name="cursor">cursor を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
-    /// <param name="logicalSampleOffset">logicalSampleOffset を指定します。</param>
-    /// <param name="searchRadius">searchRadius を指定します。</param>
     /// <param name="noiseVariance">譌｢遏･髮鷹浹蛻・淵縲・/param>
-    /// <param name="estimateNoiseFromPilots">estimateNoiseFromPilots を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
     /// <returns>戻り値を返します。</returns>
     public double[] DemodulateSoftLlrsStereoCombined(
         Complex[] leftSamples,
@@ -213,14 +178,6 @@ public sealed partial class OfdmGenerator
             onOfdmSymbolProgress: null);
     }
 
-    /// <summary>
-    /// SkipSymbolsWithTimingTracking を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="cursor">cursor を指定します。</param>
-    /// <param name="symbolCount">symbolCount を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。</param>
-    /// <param name="searchRadius">searchRadius を指定します。</param>
     public void SkipSymbolsWithTimingTracking(
         Complex[] samples,
         ref int cursor,
@@ -247,14 +204,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// DemodulateBits を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。</param>
-    /// <param name="absoluteSampleOffset">absoluteSampleOffset を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
     /// <returns>戻り値を返します。</returns>
     public bool[] DemodulateBits(
         ReadOnlySpan<Complex> samples,
@@ -327,3 +276,5 @@ public sealed partial class OfdmGenerator
         return bits;
     }
 }
+
+

@@ -9,13 +9,6 @@ namespace Onta.Core;
 
 public sealed partial class OfdmGenerator
 {
-    /// <summary>
-    /// EnsureIfftScratch を実行します。
-    /// </summary>
-    /// <param name="n">n を指定します。</param>
-    /// <summary>
-    /// EnsureIfftScratch を実行します。
-    /// </summary>
     private void EnsureIfftScratch(int n)
     {
         if (_ifftConjugateScratch is not null && _ifftConjugateScratch.Length == n)
@@ -27,14 +20,6 @@ public sealed partial class OfdmGenerator
         _ifftWorkScratch = new Complex[n];
     }
 
-    /// <summary>
-    /// InverseFftInto を実行します。
-    /// </summary>
-    /// <param name="frequency">frequency を指定します。</param>
-    /// <param name="destination">destination を指定します。</param>
-    /// <summary>
-    /// InverseFftInto を実行します。
-    /// </summary>
     private void InverseFftInto(Complex[] frequency, Complex[] destination)
     {
         if (destination.Length < frequency.Length)
@@ -50,14 +35,6 @@ public sealed partial class OfdmGenerator
         ConjugateAndScaleInPlace(destination, 1.0 / frequency.Length);
     }
 
-    /// <summary>
-    /// InverseFft を実行します。
-    /// </summary>
-    /// <param name="frequency">frequency を指定します。</param>
-    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
-    /// <summary>
-    /// InverseFft を実行します。
-    /// </summary>
     private Complex[] InverseFft(Complex[] frequency)
     {
         EnsureIfftScratch(frequency.Length);
@@ -67,13 +44,6 @@ public sealed partial class OfdmGenerator
         return result;
     }
 
-    /// <summary>
-    /// CreateConjugateSignMask を実行します。
-    /// </summary>
-    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
-    /// <summary>
-    /// CreateConjugateSignMask を実行します。
-    /// </summary>
     private static Vector<double> CreateConjugateSignMask()
     {
         var values = new double[Vector<double>.Count];
@@ -85,14 +55,6 @@ public sealed partial class OfdmGenerator
         return new Vector<double>(values);
     }
 
-    /// <summary>
-    /// ConjugateInto を実行します。
-    /// </summary>
-    /// <param name="source">source を指定します。</param>
-    /// <param name="destination">destination を指定します。</param>
-    /// <summary>
-    /// ConjugateInto を実行します。
-    /// </summary>
     private static void ConjugateInto(Complex[] source, Complex[] destination)
     {
         ReadOnlySpan<double> src = MemoryMarshal.Cast<Complex, double>(source.AsSpan());
@@ -111,14 +73,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// ConjugateAndScaleInPlace を実行します。
-    /// </summary>
-    /// <param name="values">values を指定します。</param>
-    /// <param name="scale">scale を指定します。</param>
-    /// <summary>
-    /// ConjugateAndScaleInPlace を実行します。
-    /// </summary>
     private static void ConjugateAndScaleInPlace(Complex[] values, double scale)
     {
         Span<double> data = MemoryMarshal.Cast<Complex, double>(values.AsSpan());
@@ -138,15 +92,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// LoadVector を実行します。
-    /// </summary>
-    /// <param name="index">index を指定します。</param>
-    /// <param name="source">source を指定します。</param>
-    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
-    /// <summary>
-    /// LoadVector を実行します。
-    /// </summary>
     private static Vector<double> LoadVector(ReadOnlySpan<double> source, int index)
     {
         ref var first = ref MemoryMarshal.GetReference(source);
@@ -154,15 +99,6 @@ public sealed partial class OfdmGenerator
         return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
     }
 
-    /// <summary>
-    /// LoadVector を実行します。
-    /// </summary>
-    /// <param name="index">index を指定します。</param>
-    /// <param name="source">source を指定します。</param>
-    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
-    /// <summary>
-    /// LoadVector を実行します。
-    /// </summary>
     private static Vector<double> LoadVector(Span<double> source, int index)
     {
         ref var first = ref MemoryMarshal.GetReference(source);
@@ -170,15 +106,6 @@ public sealed partial class OfdmGenerator
         return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
     }
 
-    /// <summary>
-    /// StoreVector を実行します。
-    /// </summary>
-    /// <param name="index">index を指定します。</param>
-    /// <param name="destination">destination を指定します。</param>
-    /// <param name="value">value を指定します。</param>
-    /// <summary>
-    /// StoreVector を実行します。
-    /// </summary>
     private static void StoreVector(Span<double> destination, int index, Vector<double> value)
     {
         ref var first = ref MemoryMarshal.GetReference(destination);
@@ -186,14 +113,6 @@ public sealed partial class OfdmGenerator
         Unsafe.WriteUnaligned(ref Unsafe.As<double, byte>(ref at), value);
     }
 
-    /// <summary>
-    /// Fft を実行します。
-    /// </summary>
-    /// <param name="input">input を指定します。</param>
-    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
-    /// <summary>
-    /// Fft を実行します。
-    /// </summary>
     private static Complex[] Fft(Complex[] input)
     {
         var output = new Complex[input.Length];
@@ -202,13 +121,6 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
-    /// <summary>
-    /// FftInPlace を実行します。
-    /// </summary>
-    /// <param name="output">output を指定します。</param>
-    /// <summary>
-    /// FftInPlace を実行します。
-    /// </summary>
     private static void FftInPlace(Complex[] output)
     {
         var n = output.Length;
@@ -335,15 +247,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// ReverseBits を実行します。
-    /// </summary>
-    /// <param name="value">value を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
-    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
-    /// <summary>
-    /// ReverseBits を実行します。
-    /// </summary>
     private static int ReverseBits(int value, int bitCount)
     {
         var reversed = 0;
@@ -356,3 +259,5 @@ public sealed partial class OfdmGenerator
         return reversed;
     }
 }
+
+

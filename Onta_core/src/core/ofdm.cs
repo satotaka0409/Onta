@@ -248,9 +248,6 @@ public sealed record OfdmConfig
         ValidateCarrierBinsFitFft();
     }
 
-    /// <summary>
-    /// ValidateCarrierBinsFitFft を実行します。
-    /// </summary>
     private void ValidateCarrierBinsFitFft()
     {
         foreach (var k in ConceptualLeftBins)
@@ -438,166 +435,36 @@ public sealed partial class OfdmGenerator
         Right
     }
 
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly OfdmConfig _config;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly Random _random;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly List<int> _leftAllCarrierBins;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly List<int> _leftPilotBins;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly List<int> _leftDataCarrierBase;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly Dictionary<int, ModulationScheme> _leftDataCarrierModulationByBin;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly Dictionary<int, byte> _leftDataCarrierGroupByBin;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly int[] _leftDataCarrierNoInterleaveOrder;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-    /// <param name="Epoch">Epoch を指定します。</param>
-    /// <param name="Seed">Seed を指定します。</param>
-
     private readonly Dictionary<(long Epoch, int Seed), int[]> _leftInterleavedOrderCache;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly int[][] _leftPilotGroupedCarriers;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly List<int> _rightAllCarrierBins;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly List<int> _rightPilotBins;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly List<int> _rightDataCarrierBase;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly Dictionary<int, ModulationScheme> _rightDataCarrierModulationByBin;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly Dictionary<int, byte> _rightDataCarrierGroupByBin;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly int[] _rightDataCarrierNoInterleaveOrder;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-    /// <param name="Epoch">Epoch を指定します。</param>
-    /// <param name="Seed">Seed を指定します。</param>
-
     private readonly Dictionary<(long Epoch, int Seed), int[]> _rightInterleavedOrderCache;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly int[][] _rightPilotGroupedCarriers;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly Complex[] _scoreTimeNoCpScratch;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly Complex[] _scoreFreqBinsScratch;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private Complex[]? _ifftConjugateScratch;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private Complex[]? _ifftWorkScratch;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private Complex[]? _unmodulatedLeftSymbol;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private Complex[]? _unmodulatedRightSymbol;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private readonly int _bitsPerOfdmSymbol;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private ulong _randomBitPool;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private int _randomBitCount;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private static readonly int[] Qam16Levels = [-3, -1, 1, 3];
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private static readonly int[] Qam64Levels = [-7, -5, -3, -1, 1, 3, 5, 7];
-    /// <summary>
-    /// BuildPamByBinary を実行します。
-    /// </summary>
-    /// <param name="Qam16Levels">Qam16Levels を指定します。</param>
-
     private static readonly double[] Qam16PamByBinary = BuildPamByBinary(2, Qam16Levels);
-    /// <summary>
-    /// BuildPamByBinary を実行します。
-    /// </summary>
-    /// <param name="Qam64Levels">Qam64Levels を指定します。</param>
-
     private static readonly double[] Qam64PamByBinary = BuildPamByBinary(3, Qam64Levels);
     private static readonly Complex PilotSymbol = Complex.One;
     private static readonly Vector256<double> RealLaneMask = Vector256.Create(1.0, 0.0, 1.0, 0.0);
@@ -607,9 +474,8 @@ public sealed partial class OfdmGenerator
     private const double TwoPi = Math.PI * 2.0;
     private static readonly double[] SinQuarterLut = BuildSinQuarterLut();
     /// <summary>
-    /// このメソッド を実行します。
+    /// sin 四分円テーブルの添字変換係数です。
     /// </summary>
-
     private static readonly double TrigQuarterIndexScale = TrigQuarterTableSize / HalfPi;
 
     /// <summary>
@@ -628,15 +494,13 @@ public sealed partial class OfdmGenerator
     public OfdmCarrierGrid CarrierGrid => _config.CarrierGrid;
 
     /// <summary>
-    /// このメソッド を実行します。
+    /// 無変調サブキャリアを表す単位複素数です。
     /// </summary>
-
     private static readonly Complex UnmodulatedCarrierSymbol = Complex.One;
 
     /// <summary>
     /// 内部処理です。
     /// </summary>
-    /// <param name="config">config を指定します。</param>
     public OfdmGenerator(OfdmConfig config)
     {
         _config = config;
@@ -673,11 +537,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 内部処理です。
     /// </summary>
-    /// <param name="All">All を指定します。</param>
-    /// <param name="Pilots">Pilots を指定します。</param>
-    /// <param name="DataBase">DataBase を指定します。</param>
-    /// <param name="DataModulationByBin">DataModulationByBin を指定します。</param>
-    /// <param name="DataGroupByBin">DataGroupByBin を指定します。</param>
     private (List<int> All, List<int> Pilots, List<int> DataBase, Dictionary<int, ModulationScheme> DataModulationByBin, Dictionary<int, byte> DataGroupByBin)
         BuildChannelLayout(CarrierChannel channel)
     {
@@ -713,12 +572,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildPilotGroupedCarriers を構築します。
     /// </summary>
-    /// <param name="allCarriers">allCarriers を指定します。</param>
-    /// <param name="orderedPilots">orderedPilots を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// BuildPilotGroupedCarriers を実行します。
-    /// </summary>
     private static int[][] BuildPilotGroupedCarriers(List<int> allCarriers, List<int> orderedPilots)
     {
         if (orderedPilots.Count == 0)
@@ -750,22 +604,13 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// IsGroupDConceptualLeftBin を判定します。
     /// </summary>
-    /// <param name="conceptualLeftBin">conceptualLeftBin を指定します。</param>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
-    /// <summary>
-    /// IsGroupDConceptualLeftBin を実行します。
-    /// </summary>
     private static bool IsGroupDConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 25 and <= 32;
 
     /// <summary>
     /// ResolveEffectiveCarrierModulation を解決します。
     /// </summary>
-    /// <param name="configuredScheme">configuredScheme を指定します。</param>
-    /// <param name="conceptualLeftBin">conceptualLeftBin を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ResolveEffectiveCarrierModulation を実行します。
-    /// </summary>
     private static ModulationScheme ResolveEffectiveCarrierModulation(
         ModulationScheme configuredScheme,
         int conceptualLeftBin)
@@ -785,14 +630,7 @@ public sealed partial class OfdmGenerator
         };
     }
 
-    /// <summary>
-    /// BitsPerModulation を実行します。
-    /// </summary>
-    /// <param name="modulationScheme">modulationScheme を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// BitsPerModulation を実行します。
-    /// </summary>
     private static int BitsPerModulation(ModulationScheme modulationScheme) => modulationScheme switch
     {
         ModulationScheme.Bpsk => 1,
@@ -811,13 +649,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// ResolveDataCarrierOrder を解決します。
     /// </summary>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="symbolLocalSamplePosition">symbolLocalSamplePosition を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ResolveDataCarrierOrder を実行します。
-    /// </summary>
     private int[] ResolveDataCarrierOrder(bool useRightChannel, long symbolLocalSamplePosition, int interleaveInitSeed)
     {
         var baseOrder = useRightChannel ? _rightDataCarrierBase : _leftDataCarrierBase;
@@ -871,11 +703,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// GetPositiveCarrierBins を取得します。
     /// </summary>
-    /// <param name="channel">channel を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GetPositiveCarrierBins を実行します。
-    /// </summary>
     private List<int> GetPositiveCarrierBins(CarrierChannel channel)
     {
         var conceptBins = _config.ConceptualLeftBins;
@@ -908,15 +736,7 @@ public sealed partial class OfdmGenerator
         return bins;
     }
 
-    /// <summary>
-    /// EnsureUniquePositiveBin を実行します。
-    /// </summary>
-    /// <param name="preferred">preferred を指定します。</param>
-    /// <param name="used">used を指定します。true で有効です。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// EnsureUniquePositiveBin を実行します。
-    /// </summary>
     private int EnsureUniquePositiveBin(int preferred, HashSet<int> used)
     {
         var bin = preferred;
@@ -945,14 +765,6 @@ public sealed partial class OfdmGenerator
         return bin;
     }
 
-    /// <summary>
-    /// AddPositiveBin を実行します。
-    /// </summary>
-    /// <param name="bins">bins を指定します。</param>
-    /// <param name="bin">bin を指定します。</param>
-    /// <summary>
-    /// AddPositiveBin を実行します。
-    /// </summary>
     private void AddPositiveBin(List<int> bins, int bin)
     {
         if (bin <= 0 || bin >= _config.FftSize / 2)
@@ -966,10 +778,6 @@ public sealed partial class OfdmGenerator
 
     /// <summary>
     /// ApplyHermitianSymmetry を適用します。
-    /// </summary>
-    /// <param name="bins">bins を指定します。</param>
-    /// <summary>
-    /// ApplyHermitianSymmetry を実行します。
     /// </summary>
     private static void ApplyHermitianSymmetry(Complex[] bins)
     {
@@ -986,14 +794,7 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// ToRealTimeSymbol を実行します。
-    /// </summary>
-    /// <param name="freqBins">freqBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ToRealTimeSymbol を実行します。
-    /// </summary>
     private Complex[] ToRealTimeSymbol(Complex[] freqBins)
     {
         ApplyHermitianSymmetry(freqBins);
@@ -1008,14 +809,6 @@ public sealed partial class OfdmGenerator
         return time;
     }
 
-    /// <summary>
-    /// EmitRealTimeSymbolWithCp を実行します。
-    /// </summary>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="destinationWithCp">destinationWithCp を指定します。</param>
-    /// <summary>
-    /// EmitRealTimeSymbolWithCp を実行します。
-    /// </summary>
     private void EmitRealTimeSymbolWithCp(Complex[] freqBins, Span<Complex> destinationWithCp)
     {
         ApplyHermitianSymmetry(freqBins);
@@ -1057,9 +850,6 @@ public sealed partial class OfdmGenerator
     /// </summary>
     public int SamplesPerOfdmSymbol => _config.FftSize + _config.CyclicPrefixLength;
 
-    /// <summary>
-    /// GenerateFrame を実行します。
-    /// </summary>
     public Complex[] GenerateFrame()
     {
         if (_config.ChannelMode == ChannelMode.Stereo)
@@ -1081,10 +871,6 @@ public sealed partial class OfdmGenerator
         return frame;
     }
 
-    /// <summary>
-    /// GenerateStereoFrame を実行します。
-    /// </summary>
-    /// <param name="Left">Left を指定します。</param>
     public (Complex[] Left, Complex[] Right) GenerateStereoFrame()
     {
         if (_config.ChannelMode != ChannelMode.Stereo)
@@ -1111,11 +897,6 @@ public sealed partial class OfdmGenerator
         return (left, right);
     }
 
-    /// <summary>
-    /// GenerateUnmodulated を実行します。
-    /// </summary>
-    /// <param name="Left">Left を指定します。</param>
-    /// <param name="sampleCount">sampleCount を指定します。</param>
     public (Complex[] Left, Complex[] Right) GenerateUnmodulated(int sampleCount)
     {
         if (sampleCount <= 0)
@@ -1133,15 +914,7 @@ public sealed partial class OfdmGenerator
         return (left, right);
     }
 
-    /// <summary>
-    /// GenerateUnmodulatedChannel を実行します。
-    /// </summary>
-    /// <param name="sampleCount">sampleCount を指定します。</param>
-    /// <param name="carrierBins">carrierBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GenerateUnmodulatedChannel を実行します。
-    /// </summary>
     private Complex[] GenerateUnmodulatedChannel(int sampleCount, List<int> carrierBins)
     {
         var symbolLength = SamplesPerOfdmSymbol;
@@ -1166,11 +939,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// GetOrBuildUnmodulatedSymbol を取得します。
     /// </summary>
-    /// <param name="carrierBins">carrierBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GetOrBuildUnmodulatedSymbol を実行します。
-    /// </summary>
     private Complex[] GetOrBuildUnmodulatedSymbol(List<int> carrierBins)
     {
         if (ReferenceEquals(carrierBins, _leftAllCarrierBins))
@@ -1189,11 +958,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildUnmodulatedSymbol を構築します。
     /// </summary>
-    /// <param name="carrierBins">carrierBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// BuildUnmodulatedSymbol を実行します。
-    /// </summary>
     private Complex[] BuildUnmodulatedSymbol(List<int> carrierBins)
     {
         var symbolLength = SamplesPerOfdmSymbol;
@@ -1208,15 +973,7 @@ public sealed partial class OfdmGenerator
         return symbol;
     }
 
-    /// <summary>
-    /// CopyWithCyclicPrefix を実行します。
-    /// </summary>
     /// <param name="destination">CP 付き出力先を指定します。</param>
-    /// <param name="symbol">symbol を指定します。</param>
-    /// <param name="cpLength">cpLength を指定します。</param>
-    /// <summary>
-    /// CopyWithCyclicPrefix を実行します。
-    /// </summary>
     private static void CopyWithCyclicPrefix(ReadOnlySpan<Complex> symbol, int cpLength, Span<Complex> destination)
     {
         if (destination.Length < symbol.Length + cpLength)
@@ -1234,10 +991,6 @@ public sealed partial class OfdmGenerator
         symbol.CopyTo(destination.Slice(cpLength));
     }
 
-    /// <summary>
-    /// SampleCountForBitCount を実行します。
-    /// </summary>
-    /// <param name="bitCount">bitCount を指定します。</param>
     public int SampleCountForBitCount(int bitCount)
     {
         if (bitCount < 0)
@@ -1251,16 +1004,6 @@ public sealed partial class OfdmGenerator
         return symbolCount * SamplesPerOfdmSymbol;
     }
 
-    /// <summary>
-    /// ScoreWowParamsForDiagnostics を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。</param>
-    /// <param name="analysisStartSample">analysisStartSample を指定します。</param>
-    /// <param name="analysisSampleCount">analysisSampleCount を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     public double ScoreWowParamsForDiagnostics(
         Complex[] samples,
         bool useRightChannel,
@@ -1311,11 +1054,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 内部処理です。
     /// </summary>
-    /// <param name="Baseline">Baseline を指定します。</param>
-    /// <param name="BestScore">BestScore を指定します。</param>
-    /// <param name="Amount">Amount を指定します。</param>
-    /// <param name="WowPhase">WowPhase を指定します。</param>
-    /// <param name="FlutterPhase">FlutterPhase を指定します。</param>
     public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         MatchWowParametersForDiagnostics(
             Complex[] samples,
@@ -1332,9 +1070,6 @@ public sealed partial class OfdmGenerator
     /// Match 結果を散乱 Correct（Apply の逆）モデルで局所精密化します。
     /// 採点は全長 scale のままプリアンブル近傍だけ散乱逆補正し、全波形 Correct より大幅に軽くします。
     /// </summary>
-    /// <param name="Amount">Amount を指定します。</param>
-    /// <param name="WowPhase">WowPhase を指定します。</param>
-    /// <param name="FlutterPhase">FlutterPhase を指定します。</param>
     /// <param name="onProgress">探索進捗 (done, total)。省略可。</param>
     public (double Amount, double WowPhase, double FlutterPhase) RefineWowParametersForCorrectModel(
         Complex[] samples,
@@ -1488,15 +1223,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// public を実行します。
-    /// </summary>
-    /// <param name="Baseline">Baseline を指定します。</param>
-    /// <param name="BestScore">BestScore を指定します。</param>
-    /// <param name="Amount">Amount を指定します。</param>
-    /// <param name="WowPhase">WowPhase を指定します。</param>
-    /// <param name="FlutterPhase">FlutterPhase を指定します。</param>
-
     public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         RefineWowParametersNearHintForDiagnostics(
             Complex[] samples,
@@ -1599,14 +1325,6 @@ public sealed partial class OfdmGenerator
         return (baseline, best, bestAmount, WrapPhase(bestWow), WrapPhase(bestFlutter));
     }
 
-    /// <summary>
-    /// CorrectWowFlutter を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。</param>
-    /// <param name="analysisStartSample">analysisStartSample を指定します。</param>
-    /// <param name="analysisSampleCount">analysisSampleCount を指定します。</param>
-    /// <param name="passes">passes を指定します。</param>
     public Complex[] CorrectWowFlutter(
         Complex[] samples,
         bool useRightChannel = false,
@@ -1736,13 +1454,6 @@ public sealed partial class OfdmGenerator
     /// 全波形上の絶対時刻を保ったまま、指定区間だけをワウ逆補正して destination へ書き出します。
     /// 先頭切り出しの CorrectInPlace は end-scale がずれるため使わず、source.Length 基準の scale を使います。
     /// </summary>
-    /// <param name="source">source を指定します。</param>
-    /// <param name="start">start を指定します。</param>
-    /// <param name="length">length を指定します。</param>
-    /// <param name="destination">destination を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <param name="streamBaseSample">
     /// source[0] がストリーム先頭から何サンプル目か。圧縮バッファでは 0 以外になります。
     /// </param>
@@ -1841,17 +1552,7 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// MatchWowByPreambleCorrelation を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="analysisStartSample">analysisStartSample を指定します。</param>
-    /// <param name="analysisSampleCount">analysisSampleCount を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// MatchWowByPreambleCorrelation を実行します。
-    /// </summary>
     private double[]? MatchWowByPreambleCorrelation(
         Complex[] samples,
         bool useRightChannel,
@@ -1877,11 +1578,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 内部処理です。
     /// </summary>
-    /// <param name="Baseline">Baseline を指定します。</param>
-    /// <param name="BestScore">BestScore を指定します。</param>
-    /// <param name="Amount">Amount を指定します。</param>
-    /// <param name="WowPhase">WowPhase を指定します。</param>
-    /// <param name="FlutterPhase">FlutterPhase を指定します。</param>
     private (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         MatchWowByPreambleCorrelationParams(
             Complex[] samples,
@@ -2185,12 +1881,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// BuildCorrelationReferenceReals を実行します。
-    /// </summary>
-    /// <param name="Mean">Mean を指定します。</param>
-    /// <param name="Energy">Energy を指定します。</param>
-    /// <param name="reference">reference を指定します。</param>
     private static (double Mean, double Energy, int Count) BuildCorrelationReferenceReals(ReadOnlySpan<double> reference)
     {
         if (reference.Length <= 1)
@@ -2215,15 +1905,8 @@ public sealed partial class OfdmGenerator
         return (mean, energy, reference.Length);
     }
 
-
-    /// <summary>
-    /// WrapPhase を実行します。
-    /// </summary>
     /// <param name="phase">折り返し正規化する位相 (rad)。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// WrapPhase を実行します。
-    /// </summary>
     private static double WrapPhase(double phase)
     {
         phase %= TwoPi;
@@ -2239,9 +1922,6 @@ public sealed partial class OfdmGenerator
         return phase;
     }
 
-    /// <summary>
-    /// BuildSinQuarterLut を実行します。
-    /// </summary>
     private static double[] BuildSinQuarterLut()
     {
         var table = new double[TrigQuarterTableSize + 1];
@@ -2253,10 +1933,6 @@ public sealed partial class OfdmGenerator
         return table;
     }
 
-    /// <summary>
-    /// SinFromQuarterLut を実行します。
-    /// </summary>
-    /// <param name="angle">angle を指定します。</param>
     private static double SinFromQuarterLut(double angle)
     {
         var x = angle % TwoPi;
@@ -2291,12 +1967,6 @@ public sealed partial class OfdmGenerator
         return quadrant >= 2 ? -baseValue : baseValue;
     }
 
-    /// <summary>
-    /// SinCosFromQuarterLut を実行します。
-    /// </summary>
-    /// <param name="angle">angle を指定します。</param>
-    /// <param name="sin">sin を指定します。</param>
-    /// <param name="cos">cos を指定します。</param>
     private static void SinCosFromQuarterLut(double angle, out double sin, out double cos)
     {
         sin = SinFromQuarterLut(angle);
@@ -2306,9 +1976,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildCorrelationReference を構築します。
     /// </summary>
-    /// <param name="Mean">Mean を指定します。</param>
-    /// <param name="Energy">Energy を指定します。</param>
-    /// <param name="stride">stride を指定します。</param>
     /// <param name="reference">参照シーケンスを指定します。</param>
     private static (double Mean, double Energy, int Count) BuildCorrelationReference(Complex[] reference, int stride)
     {
@@ -2318,10 +1985,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildCorrelationReference を構築します。
     /// </summary>
-    /// <param name="Mean">Mean を指定します。</param>
-    /// <param name="Energy">Energy を指定します。</param>
-    /// <param name="reference">reference を指定します。</param>
-    /// <param name="stride">stride を指定します。</param>
     private static (double Mean, double Energy, int Count) BuildCorrelationReference(ReadOnlySpan<Complex> reference, int stride)
     {
         stride = Math.Max(1, stride);
@@ -2359,9 +2022,6 @@ public sealed partial class OfdmGenerator
     /// <param name="energyB">系列 b の分散エネルギー。</param>
     /// <param name="count">比較サンプル数。</param>
     /// <returns>正規化相関係数。</returns>
-    /// <summary>
-    /// CorrelateRealStridedWithReference を実行します。
-    /// </summary>
     private static double CorrelateRealStridedWithReference(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2432,11 +2092,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// stride=1 の正規化相関（AVX: Complex の Real レーンだけ畳み込み）。
     /// </summary>
-    /// <param name="a">a を指定します。</param>
-    /// <param name="b">b を指定します。</param>
-    /// <param name="meanB">meanB を指定します。</param>
-    /// <param name="energyB">energyB を指定します。</param>
-    /// <param name="count">count を指定します。</param>
     private static double CorrelateRealDenseAvx(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2510,11 +2165,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// stride=1 の正規化相関（ARM AdvSIMD）。
     /// </summary>
-    /// <param name="a">a を指定します。</param>
-    /// <param name="b">b を指定します。</param>
-    /// <param name="meanB">meanB を指定します。</param>
-    /// <param name="energyB">energyB を指定します。</param>
-    /// <param name="count">count を指定します。</param>
     private static double CorrelateRealDenseAdvSimd(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2572,12 +2222,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// stride&gt;1 の正規化相関（AVX: 間引きロード対応）。
     /// </summary>
-    /// <param name="a">a を指定します。</param>
-    /// <param name="b">b を指定します。</param>
-    /// <param name="stride">stride を指定します。</param>
-    /// <param name="meanB">meanB を指定します。</param>
-    /// <param name="energyB">energyB を指定します。</param>
-    /// <param name="count">count を指定します。</param>
     private static double CorrelateRealStridedAvx(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2652,12 +2296,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// stride&gt;1 の正規化相関（ARM AdvSIMD: 間引きロード対応）。
     /// </summary>
-    /// <param name="a">a を指定します。</param>
-    /// <param name="b">b を指定します。</param>
-    /// <param name="stride">stride を指定します。</param>
-    /// <param name="meanB">meanB を指定します。</param>
-    /// <param name="energyB">energyB を指定します。</param>
-    /// <param name="count">count を指定します。</param>
     private static double CorrelateRealStridedAdvSimd(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2725,15 +2363,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildCassetteSpeedProfilePerSample を構築します。
     /// </summary>
-    /// <param name="sampleCount">sampleCount を指定します。</param>
-    /// <param name="sampleRate">sampleRate を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// BuildCassetteSpeedProfilePerSample を実行します。
-    /// </summary>
     private static double[] BuildCassetteSpeedProfilePerSample(
         int sampleCount,
         int sampleRate,
@@ -2780,17 +2410,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildCassetteSpeedProfile を構築します。
     /// </summary>
-    /// <param name="symbolCount">symbolCount を指定します。</param>
-    /// <param name="firstSymbol">firstSymbol を指定します。</param>
-    /// <param name="symbolLength">symbolLength を指定します。</param>
-    /// <param name="sampleRate">sampleRate を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// BuildCassetteSpeedProfile を実行します。
-    /// </summary>
     private static double[] BuildCassetteSpeedProfile(
         int symbolCount,
         int firstSymbol,
@@ -2838,30 +2458,13 @@ public sealed partial class OfdmGenerator
         return profile;
     }
 
-    /// <summary>
-    /// CorrelateReal を実行します。
-    /// </summary>
-    /// <param name="a">a を指定します。</param>
-    /// <param name="b">b を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// CorrelateReal を実行します。
-    /// </summary>
     private static double CorrelateReal(Complex[] a, Complex[] b)
     {
         return CorrelateRealStrided(a, b, 1);
     }
 
-    /// <summary>
-    /// CorrelateRealStrided を実行します。
-    /// </summary>
-    /// <param name="a">a を指定します。</param>
-    /// <param name="b">b を指定します。</param>
-    /// <param name="stride">stride を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// CorrelateRealStrided を実行します。
-    /// </summary>
     private static double CorrelateRealStrided(Complex[] a, Complex[] b, int stride)
     {
         var n = Math.Min(a.Length, b.Length);
@@ -2938,16 +2541,7 @@ public sealed partial class OfdmGenerator
             requireStrongCpImprovement: false);
     }
 
-    /// <summary>
-    /// ExtrapolateSpeedProfile を実行します。
-    /// </summary>
-    /// <param name="preambleSpeeds">preambleSpeeds を指定します。</param>
-    /// <param name="sampleCount">sampleCount を指定します。</param>
-    /// <param name="analysisStartSample">analysisStartSample を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ExtrapolateSpeedProfile を実行します。
-    /// </summary>
     private double[] ExtrapolateSpeedProfile(double[] preambleSpeeds, int sampleCount, int analysisStartSample)
     {
         var symbolLength = Math.Max(1, SamplesPerOfdmSymbol);
@@ -2971,14 +2565,7 @@ public sealed partial class OfdmGenerator
         return full;
     }
 
-    /// <summary>
-    /// NeedsWowCorrection を実行します。
-    /// </summary>
-    /// <param name="speedProfile">speedProfile を指定します。</param>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
-    /// <summary>
-    /// NeedsWowCorrection を実行します。
-    /// </summary>
     private static bool NeedsWowCorrection(double[] speedProfile)
     {
         if (speedProfile.Length < 32)
@@ -3012,19 +2599,7 @@ public sealed partial class OfdmGenerator
             && below >= 8;
     }
 
-    /// <summary>
-    /// EstimateSpeedProfile を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="analysisStartSample">analysisStartSample を指定します。</param>
-    /// <param name="analysisSampleCount">analysisSampleCount を指定します。</param>
-    /// <param name="allowSymbolOffsetSearch">allowSymbolOffsetSearch を指定します。true で有効です。</param>
-    /// <param name="requireStrongCpImprovement">requireStrongCpImprovement を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// EstimateSpeedProfile を実行します。
-    /// </summary>
     private double[] EstimateSpeedProfile(
         Complex[] samples,
         bool useRightChannel,
@@ -3104,16 +2679,7 @@ public sealed partial class OfdmGenerator
         return FitCassetteWowSpeedProfile(speeds, firstSymbol, symbolLength);
     }
 
-    /// <summary>
-    /// FitCassetteWowSpeedProfile を実行します。
-    /// </summary>
-    /// <param name="measured">measured を指定します。</param>
-    /// <param name="firstSymbol">firstSymbol を指定します。</param>
-    /// <param name="symbolLength">symbolLength を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// FitCassetteWowSpeedProfile を実行します。
-    /// </summary>
     private double[] FitCassetteWowSpeedProfile(double[] measured, int firstSymbol, int symbolLength)
     {
         if (measured.Length < 32)
@@ -3202,12 +2768,7 @@ public sealed partial class OfdmGenerator
     /// TrySolve4x4 を試行します。
     /// </summary>
     /// <param name="a">4x4 係数行列。</param>
-    /// <param name="b">b を指定します。</param>
-    /// <param name="x">x を指定します。</param>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
-    /// <summary>
-    /// TrySolve4x4 を実行します。
-    /// </summary>
     private static bool TrySolve4x4(double[,] a, double[] b, out double[] x)
     {
         x = new double[4];
@@ -3275,13 +2836,6 @@ public sealed partial class OfdmGenerator
         return true;
     }
 
-    /// <summary>
-    /// NormalizeSpeedProfileMean を実行します。
-    /// </summary>
-    /// <param name="speeds">speeds を指定します。</param>
-    /// <summary>
-    /// NormalizeSpeedProfileMean を実行します。
-    /// </summary>
     private static void NormalizeSpeedProfileMean(double[] speeds)
     {
         if (speeds.Length == 0)
@@ -3307,16 +2861,8 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// FindBestSymbolOffset を実行します。
-    /// </summary>
     /// <param name="window">評価ウィンドウ。</param>
-    /// <param name="maxSearch">maxSearch を指定します。</param>
-    /// <param name="requireStrongCpImprovement">requireStrongCpImprovement を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// FindBestSymbolOffset を実行します。
-    /// </summary>
     private int FindBestSymbolOffset(
         ReadOnlySpan<Complex> window,
         int maxSearch,
@@ -3353,17 +2899,7 @@ public sealed partial class OfdmGenerator
         return bestOffset;
     }
 
-    /// <summary>
-    /// ScoreCpCorrelation を実行します。
-    /// </summary>
-    /// <param name="window">window を指定します。</param>
-    /// <param name="offset">offset を指定します。</param>
-    /// <param name="fftSize">fftSize を指定します。</param>
-    /// <param name="cp">cp を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ScoreCpCorrelation を実行します。
-    /// </summary>
     private static double ScoreCpCorrelation(ReadOnlySpan<Complex> window, int offset, int fftSize, int cp)
     {
         if (Avx.IsSupported && cp >= 2)
@@ -3425,16 +2961,7 @@ public sealed partial class OfdmGenerator
         return score;
     }
 
-    /// <summary>
-    /// EstimateSpeedFromPilots を実行します。
-    /// </summary>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
-    /// <param name="carrierBins">carrierBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// EstimateSpeedFromPilots を実行します。
-    /// </summary>
     private static double EstimateSpeedFromPilots(
         Complex[] freqBins,
         List<int> pilotBins,
@@ -3500,28 +3027,14 @@ public sealed partial class OfdmGenerator
         return weightedSum / weightTotal;
     }
 
-    /// <summary>
-    /// ComplexMagnitude を実行します。
-    /// </summary>
     /// <param name="value">複素数値。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ComplexMagnitude を実行します。
-    /// </summary>
     private static double ComplexMagnitude(Complex value)
     {
         return Math.Sqrt((value.Real * value.Real) + (value.Imaginary * value.Imaginary));
     }
 
-    /// <summary>
-    /// ResampleWithInverseSpeed を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="speedProfile">speedProfile を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ResampleWithInverseSpeed を実行します。
-    /// </summary>
     private Complex[] ResampleWithInverseSpeed(Complex[] samples, double[] speedProfile)
     {
         var n = samples.Length;
@@ -3541,17 +3054,7 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
-    /// <summary>
-    /// ResampleSegmentWithInverseSpeed を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="speedProfile">speedProfile を指定します。</param>
-    /// <param name="segmentStart">segmentStart を指定します。</param>
-    /// <param name="segmentLength">segmentLength を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ResampleSegmentWithInverseSpeed を実行します。
-    /// </summary>
     private Complex[] ResampleSegmentWithInverseSpeed(
         Complex[] samples,
         double[] speedProfile,
@@ -3580,21 +3083,7 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
-    /// <summary>
-    /// ResampleSegmentWithInverseSpeed を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="segmentStart">segmentStart を指定します。</param>
-    /// <param name="segmentLength">segmentLength を指定します。</param>
-    /// <param name="sampleRate">sampleRate を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ResampleSegmentWithInverseSpeed を実行します。
-    /// </summary>
-    /// <param name="stride">stride を指定します。</param>
     private Complex[] ResampleSegmentWithInverseSpeed(
         Complex[] samples,
         int segmentStart,
@@ -3619,22 +3108,6 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
-    /// <summary>
-    /// ResampleSegmentWithInverseSpeed を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="segmentStart">segmentStart を指定します。</param>
-    /// <param name="segmentLength">segmentLength を指定します。</param>
-    /// <param name="sampleRate">sampleRate を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
-    /// <param name="output">output を指定します。</param>
-    /// <summary>
-    /// ResampleSegmentWithInverseSpeed を実行します。
-    /// </summary>
-    /// <param name="stride">stride を指定します。</param>
-    /// <param name="streamBaseSample">streamBaseSample を指定します。</param>
     private void ResampleSegmentWithInverseSpeed(
         Complex[] samples,
         int segmentStart,
@@ -3745,18 +3218,8 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// CassetteCumulAt を実行します。
-    /// </summary>
     /// <param name="i">サンプルインデックス。</param>
-    /// <param name="sampleRate">sampleRate を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// CassetteCumulAt を実行します。
-    /// </summary>
     private static double CassetteCumulAt(
         int i,
         int sampleRate,
@@ -3783,20 +3246,12 @@ public sealed partial class OfdmGenerator
             flutterOmega);
     }
 
-    /// <summary>
-    /// CassetteCumulAtCached を実行します。
-    /// </summary>
     /// <param name="i">サンプルインデックス。</param>
     /// <param name="wowGain">wow の振幅係数。</param>
     /// <param name="flutterGain">flutter の振幅係数。</param>
     /// <param name="wowOmega">wow 角周波数。</param>
     /// <param name="flutterOmega">flutter 角周波数。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// CassetteCumulAtCached を実行します。
-    /// </summary>
     private static double CassetteCumulAtCached(
         int i,
         double wowGain,
@@ -3816,16 +3271,9 @@ public sealed partial class OfdmGenerator
             + (flutterGain * SumOfSines(flutterPhase, flutterOmega, i));
     }
 
-    /// <summary>
-    /// SumOfSines を実行します。
-    /// </summary>
     /// <param name="phase0">初期位相。</param>
     /// <param name="omega">角周波数。</param>
-    /// <param name="count">count を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// SumOfSines を実行します。
-    /// </summary>
     private static double SumOfSines(double phase0, double omega, int count)
     {
         if (count <= 0)
@@ -3843,19 +3291,8 @@ public sealed partial class OfdmGenerator
         return Math.Sin(count * half) / denom * Math.Sin(phase0 + ((count - 1) * half));
     }
 
-    /// <summary>
-    /// FindCassetteCumulIndex を実行します。
-    /// </summary>
     /// <param name="target">目標累積値。</param>
-    /// <param name="sampleCount">sampleCount を指定します。</param>
-    /// <param name="sampleRate">sampleRate を指定します。</param>
-    /// <param name="amount">amount を指定します。</param>
-    /// <param name="wowPhase">wowPhase を指定します。</param>
-    /// <param name="flutterPhase">flutterPhase を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// FindCassetteCumulIndex を実行します。
-    /// </summary>
     private static int FindCassetteCumulIndex(
         double target,
         int sampleCount,
@@ -3887,12 +3324,6 @@ public sealed partial class OfdmGenerator
     /// </summary>
     /// <param name="cumul">累積配列。</param>
     /// <param name="speedHop">速度サンプルの間引き間隔。</param>
-    /// <param name="sampleCount">sampleCount を指定します。</param>
-    /// <param name="speedProfile">speedProfile を指定します。</param>
-    /// <param name="scale">scale を指定します。</param>
-    /// <summary>
-    /// BuildInverseCumul を実行します。
-    /// </summary>
     private void BuildInverseCumul(
         int sampleCount,
         double[] speedProfile,
@@ -3925,18 +3356,10 @@ public sealed partial class OfdmGenerator
         scale = cumul[^1] > 1e-12 ? (sampleCount - 1) / cumul[^1] : 1.0;
     }
 
-    /// <summary>
-    /// SampleWarpedAtCumul を実行します。
-    /// </summary>
     /// <param name="cumul">累積配列。</param>
     /// <param name="outputIndex">出力サンプル位置。</param>
     /// <param name="warpedIndex">逆写像後の実数サンプル位置。</param>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="scale">scale を指定します。</param>
     /// <returns>補間後サンプル。</returns>
-    /// <summary>
-    /// SampleWarpedAtCumul を実行します。
-    /// </summary>
     private static Complex SampleWarpedAtCumul(
         Complex[] samples,
         double[] cumul,
@@ -3961,15 +3384,8 @@ public sealed partial class OfdmGenerator
         return SampleHermite(samples, pos);
     }
 
-    /// <summary>
-    /// SampleHermite を実行します。
-    /// </summary>
     /// <param name="position">補間位置。</param>
-    /// <param name="samples">samples を指定します。</param>
     /// <returns>補間後サンプル。</returns>
-    /// <summary>
-    /// SampleHermite を実行します。
-    /// </summary>
     private static Complex SampleHermite(Complex[] samples, double position)
     {
         if (samples.Length == 0)
@@ -4005,14 +3421,7 @@ public sealed partial class OfdmGenerator
         return new Complex(value, 0.0);
     }
 
-    /// <summary>
-    /// ScoreSingleSymbolCpLock を実行します。
-    /// </summary>
-    /// <param name="symbolWithCp">symbolWithCp を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ScoreSingleSymbolCpLock を実行します。
-    /// </summary>
     private double ScoreSingleSymbolCpLock(ReadOnlySpan<Complex> symbolWithCp)
     {
         var fftSize = _config.FftSize;
@@ -4039,15 +3448,7 @@ public sealed partial class OfdmGenerator
         return cpScore / (energy * 0.5);
     }
 
-    /// <summary>
-    /// ScoreSingleSymbolLock を実行します。
-    /// </summary>
-    /// <param name="symbolWithCp">symbolWithCp を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ScoreSingleSymbolLock を実行します。
-    /// </summary>
     private double ScoreSingleSymbolLock(ReadOnlySpan<Complex> symbolWithCp, List<int> pilotBins)
     {
         var timeNoCp = _scoreTimeNoCpScratch;
@@ -4055,17 +3456,7 @@ public sealed partial class OfdmGenerator
         return ScoreSingleSymbolLock(symbolWithCp, pilotBins, timeNoCp, freqBins);
     }
 
-    /// <summary>
-    /// ScoreSingleSymbolLock を実行します。
-    /// </summary>
-    /// <param name="symbolWithCp">symbolWithCp を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
-    /// <param name="timeNoCp">timeNoCp を指定します。</param>
-    /// <param name="freqBins">freqBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ScoreSingleSymbolLock を実行します。
-    /// </summary>
     private double ScoreSingleSymbolLock(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -4103,28 +3494,8 @@ public sealed partial class OfdmGenerator
         return (normalizedCp * 2.0) + Math.Log10(pilotPower + 1e-12);
     }
 
-    /// <summary>
-    /// DemodulateSoftLlrsFromStreamCore を実行します。
-    /// </summary>
-    /// <param name="samples">samples を指定します。</param>
-    /// <param name="secondarySamples">secondarySamples を指定します。</param>
-    /// <param name="cursor">cursor を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="secondaryUseRightChannel">secondaryUseRightChannel を指定します。</param>
-    /// <param name="logicalSampleOffset">logicalSampleOffset を指定します。</param>
-    /// <param name="searchRadius">searchRadius を指定します。</param>
-    /// <param name="noiseVariance">noiseVariance を指定します。</param>
-    /// <param name="estimateNoiseFromPilots">estimateNoiseFromPilots を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <param name="onEqualizedDataSymbol">onEqualizedDataSymbol を指定します。</param>
-    /// <param name="onEqualizedDataSymbolFrame">onEqualizedDataSymbolFrame を指定します。</param>
-    /// <param name="onFftSymbolFrame">onFftSymbolFrame を指定します。</param>
     /// <param name="onOfdmSymbolProgress">OFDM シンボル進捗 (index, count)。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// DemodulateSoftLlrsFromStreamCore を実行します。
-    /// </summary>
     private double[] DemodulateSoftLlrsFromStreamCore(
         Complex[] samples,
         Complex[]? secondarySamples,
@@ -4279,25 +3650,6 @@ public sealed partial class OfdmGenerator
         return llrs;
     }
 
-    /// <summary>
-    /// EmitSymbolSoftLlrsForChannel を実行します。
-    /// </summary>
-    /// <param name="symbolWithCp">symbolWithCp を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="agcState">agcState を指定します。</param>
-    /// <param name="logical">logical を指定します。</param>
-    /// <param name="timeNoCp">timeNoCp を指定します。</param>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="equalizers">equalizers を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <param name="noiseVariance">noiseVariance を指定します。</param>
-    /// <param name="addToExisting">addToExisting を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <summary>
-    /// EmitSymbolSoftLlrsForChannel を実行します。
-    /// </summary>
     private void EmitSymbolSoftLlrsForChannel(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -4335,23 +3687,6 @@ public sealed partial class OfdmGenerator
             onEqualizedDataSymbolFrame: null);
     }
 
-    /// <summary>
-    /// EmitSymbolSoftLlrsFromPrepared を実行します。
-    /// </summary>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="equalizers">equalizers を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="logical">logical を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <param name="noiseVariance">noiseVariance を指定します。</param>
-    /// <param name="addToExisting">addToExisting を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <param name="onEqualizedDataSymbol">onEqualizedDataSymbol を指定します。</param>
-    /// <param name="onEqualizedDataSymbolFrame">onEqualizedDataSymbolFrame を指定します。</param>
-    /// <summary>
-    /// EmitSymbolSoftLlrsFromPrepared を実行します。
-    /// </summary>
     private void EmitSymbolSoftLlrsFromPrepared(
         Complex[] freqBins,
         Complex[] equalizers,
@@ -4425,20 +3760,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// AccumulatePilotNoise を実行します。
-    /// </summary>
-    /// <param name="symbolWithCp">symbolWithCp を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="timeNoCp">timeNoCp を指定します。</param>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="equalizers">equalizers を指定します。</param>
-    /// <param name="noiseAccum">noiseAccum を指定します。</param>
-    /// <param name="noiseCount">noiseCount を指定します。</param>
-    /// <summary>
-    /// AccumulatePilotNoise を実行します。
-    /// </summary>
     private void AccumulatePilotNoise(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -4460,13 +3781,6 @@ public sealed partial class OfdmGenerator
         AccumulatePilotNoiseFromPrepared(freqBins, equalizers, pilotBins, ref noiseAccum, ref noiseCount);
     }
 
-    /// <summary>
-    /// AccumulatePilotNoiseFromPrepared を実行します。
-    /// </summary>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="equalizers">equalizers を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
-    /// <param name="noiseAccum">noiseAccum を指定します。</param>
     /// <summary>
     /// パイロット位置の等化誤差から雑音電力を加算します。
     /// </summary>
@@ -4572,14 +3886,11 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// ResolvePilotGroupIndex を解決します。
+    /// 指定キャリアが属するパイロット群インデックスを返します。
     /// </summary>
-    /// <param name="carrierBin">carrierBin を指定します。</param>
-    /// <param name="orderedPilots">orderedPilots を指定します。</param>
-    /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ResolvePilotGroupIndex を実行します。
-    /// </summary>
+    /// <param name="carrierBin">対象キャリアの周波数ビン。</param>
+    /// <param name="orderedPilots">昇順に並んだパイロットビン列。</param>
+    /// <returns>パイロット群インデックス。</returns>
     private static int ResolvePilotGroupIndex(int carrierBin, List<int> orderedPilots)
     {
         if (orderedPilots.Count <= 1)
@@ -4606,21 +3917,12 @@ public sealed partial class OfdmGenerator
 
     private sealed class PilotGroupAgcState
     {
-        /// <summary>
-        /// このメソッド を実行します。
-        /// </summary>
-
         private readonly Complex[] _smoothed;
-        /// <summary>
-        /// このメソッド を実行します。
-        /// </summary>
-
         private readonly bool[] _initialized;
 
         /// <summary>
         /// 内部処理です。
         /// </summary>
-        /// <param name="groupCount">groupCount を指定します。</param>
         public PilotGroupAgcState(int groupCount)
         {
             var size = Math.Max(1, groupCount);
@@ -4628,11 +3930,6 @@ public sealed partial class OfdmGenerator
             _initialized = new bool[size];
         }
 
-        /// <summary>
-        /// Update を実行します。
-        /// </summary>
-        /// <param name="groupIndex">groupIndex を指定します。</param>
-        /// <param name="instantaneous">instantaneous を指定します。</param>
         public Complex Update(int groupIndex, Complex instantaneous)
         {
             if ((uint)groupIndex >= (uint)_smoothed.Length)
@@ -4653,16 +3950,7 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// InterpolatePilotChannel を実行します。
-    /// </summary>
-    /// <param name="bin">bin を指定します。</param>
-    /// <param name="orderedPilots">orderedPilots を指定します。</param>
-    /// <param name="channels">channels を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// InterpolatePilotChannel を実行します。
-    /// </summary>
     private static Complex InterpolatePilotChannel(int bin, List<int> orderedPilots, Complex[] channels)
     {
         if (orderedPilots.Count == 1)
@@ -4706,16 +3994,7 @@ public sealed partial class OfdmGenerator
         return channels[0];
     }
 
-    /// <summary>
-    /// EstimateNoisePower を実行します。
-    /// </summary>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
-    /// <param name="allCarriers">allCarriers を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// EstimateNoisePower を実行します。
-    /// </summary>
     private static double EstimateNoisePower(Complex[] freqBins, List<int> pilotBins, List<int> allCarriers)
     {
         var carrierSet = allCarriers.ToHashSet();
@@ -4764,15 +4043,7 @@ public sealed partial class OfdmGenerator
         return Math.Max(energy / count, 1e-4);
     }
 
-    /// <summary>
-    /// SmoothEqualizers を実行します。
-    /// </summary>
-    /// <param name="previous">previous を指定します。</param>
-    /// <param name="current">current を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// SmoothEqualizers を実行します。
-    /// </summary>
     private static Complex[] SmoothEqualizers(ref Complex[]? previous, Complex[] current)
     {
         if (previous is null || previous.Length != current.Length)
@@ -4792,15 +4063,7 @@ public sealed partial class OfdmGenerator
         return mixed;
     }
 
-    /// <summary>
-    /// EstimatePilotEqualizer を実行します。
-    /// </summary>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// EstimatePilotEqualizer を実行します。
-    /// </summary>
     private static Complex EstimatePilotEqualizer(Complex[] freqBins, List<int> pilotBins)
     {
         if (pilotBins.Count == 0)
@@ -4825,16 +4088,6 @@ public sealed partial class OfdmGenerator
         return Complex.One / average;
     }
 
-    /// <summary>
-    /// EmitSymbolBits を実行します。
-    /// </summary>
-    /// <param name="symbol">symbol を指定します。</param>
-    /// <param name="modulationScheme">modulationScheme を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
-    /// <summary>
-    /// EmitSymbolBits を実行します。
-    /// </summary>
     private static void EmitSymbolBits(
         Complex symbol,
         ModulationScheme modulationScheme,
@@ -4863,17 +4116,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// EmitSymbolSoftLlrs を実行します。
-    /// </summary>
-    /// <param name="symbol">symbol を指定します。</param>
-    /// <param name="modulationScheme">modulationScheme を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <param name="noiseVariance">noiseVariance を指定します。</param>
-    /// <summary>
-    /// EmitSymbolSoftLlrs を実行します。
-    /// </summary>
     private static void EmitSymbolSoftLlrs(
         Complex symbol,
         ModulationScheme modulationScheme,
@@ -4904,18 +4146,7 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// EmitPamAxisSoftLlrs を実行します。
-    /// </summary>
     /// <param name="amplitude">PAM 振幅値。</param>
-    /// <param name="bitsPerAxis">bitsPerAxis を指定します。</param>
-    /// <param name="levels">levels を指定します。</param>
-    /// <param name="invVariance">invVariance を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <summary>
-    /// EmitPamAxisSoftLlrs を実行します。
-    /// </summary>
     private static void EmitPamAxisSoftLlrs(
         double amplitude,
         int bitsPerAxis,
@@ -4927,18 +4158,7 @@ public sealed partial class OfdmGenerator
         EmitPamAxisSoftLlrsCore(amplitude, bitsPerAxis, levels, invVariance, ref bitIndex, llrs.AsSpan());
     }
 
-    /// <summary>
-    /// EmitPamAxisSoftLlrsCore を実行します。
-    /// </summary>
     /// <param name="amplitude">PAM 振幅値。</param>
-    /// <param name="bitsPerAxis">bitsPerAxis を指定します。</param>
-    /// <param name="levels">levels を指定します。</param>
-    /// <param name="invVariance">invVariance を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <summary>
-    /// EmitPamAxisSoftLlrsCore を実行します。
-    /// </summary>
     private static void EmitPamAxisSoftLlrsCore(
         double amplitude,
         int bitsPerAxis,
@@ -4996,16 +4216,7 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam16Avx を実行します。
-    /// </summary>
     /// <param name="amplitude">PAM 振幅値。</param>
-    /// <param name="invVariance">invVariance を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam16Avx を実行します。
-    /// </summary>
     private static void EmitPamAxisSoftLlrsQam16Avx(
         double amplitude,
         double invVariance,
@@ -5037,16 +4248,7 @@ public sealed partial class OfdmGenerator
         WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
     }
 
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam64Avx を実行します。
-    /// </summary>
     /// <param name="amplitude">PAM 振幅値。</param>
-    /// <param name="invVariance">invVariance を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam64Avx を実行します。
-    /// </summary>
     private static void EmitPamAxisSoftLlrsQam64Avx(
         double amplitude,
         double invVariance,
@@ -5094,16 +4296,7 @@ public sealed partial class OfdmGenerator
         WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
     }
 
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam16Arm64 を実行します。
-    /// </summary>
     /// <param name="amplitude">PAM 振幅値。</param>
-    /// <param name="invVariance">invVariance を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam16Arm64 を実行します。
-    /// </summary>
     private static void EmitPamAxisSoftLlrsQam16Arm64(
         double amplitude,
         double invVariance,
@@ -5132,16 +4325,7 @@ public sealed partial class OfdmGenerator
         WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
     }
 
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam64Arm64 を実行します。
-    /// </summary>
     /// <param name="amplitude">PAM 振幅値。</param>
-    /// <param name="invVariance">invVariance を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <summary>
-    /// EmitPamAxisSoftLlrsQam64Arm64 を実行します。
-    /// </summary>
     private static void EmitPamAxisSoftLlrsQam64Arm64(
         double amplitude,
         double invVariance,
@@ -5193,12 +4377,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildPamByBinary を構築します。
     /// </summary>
-    /// <param name="bitsPerAxis">bitsPerAxis を指定します。</param>
-    /// <param name="levels">levels を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// BuildPamByBinary を実行します。
-    /// </summary>
     private static double[] BuildPamByBinary(int bitsPerAxis, int[] levels)
     {
         var count = 1 << bitsPerAxis;
@@ -5216,12 +4395,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// WriteLlr を書き込みます。
     /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="llrs">llrs を指定します。</param>
-    /// <param name="value">value を指定します。</param>
-    /// <summary>
-    /// WriteLlr を実行します。
-    /// </summary>
     private static void WriteLlr(ref int bitIndex, Span<double> llrs, double value)
     {
         if (bitIndex >= llrs.Length)
@@ -5232,17 +4405,7 @@ public sealed partial class OfdmGenerator
         llrs[bitIndex++] = value;
     }
 
-    /// <summary>
-    /// EmitPamAxisBits を実行します。
-    /// </summary>
     /// <param name="amplitude">PAM 振幅値。</param>
-    /// <param name="bitsPerAxis">bitsPerAxis を指定します。</param>
-    /// <param name="levels">levels を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
-    /// <summary>
-    /// EmitPamAxisBits を実行します。
-    /// </summary>
     private static void EmitPamAxisBits(
         double amplitude,
         int bitsPerAxis,
@@ -5258,15 +4421,8 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// FindNearestLevelIndex を実行します。
-    /// </summary>
     /// <param name="amplitude">隕ｳ貂ｬ謖ｯ蟷・・/param>
-    /// <param name="levels">levels を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// FindNearestLevelIndex を実行します。
-    /// </summary>
     private static int FindNearestLevelIndex(double amplitude, int[] levels)
     {
         var best = 0;
@@ -5284,14 +4440,7 @@ public sealed partial class OfdmGenerator
         return best;
     }
 
-    /// <summary>
-    /// GrayToBinary を実行します。
-    /// </summary>
-    /// <param name="gray">gray を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GrayToBinary を実行します。
-    /// </summary>
     private static int GrayToBinary(int gray)
     {
         var binary = gray;
@@ -5306,12 +4455,6 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// WriteBit を書き込みます。
     /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
-    /// <param name="value">value を指定します。</param>
-    /// <summary>
-    /// WriteBit を実行します。
-    /// </summary>
     private static void WriteBit(ref int bitIndex, bool[] bits, bool value)
     {
         if (bitIndex >= bits.Length)
@@ -5322,19 +4465,6 @@ public sealed partial class OfdmGenerator
         bits[bitIndex++] = value;
     }
 
-    /// <summary>
-    /// PrepareSymbolFrequency を実行します。
-    /// </summary>
-    /// <param name="symbolWithCp">symbolWithCp を指定します。</param>
-    /// <param name="pilotBins">pilotBins を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
-    /// <param name="agcState">agcState を指定します。</param>
-    /// <param name="timeNoCp">timeNoCp を指定します。</param>
-    /// <param name="freqBins">freqBins を指定します。</param>
-    /// <param name="equalizers">equalizers を指定します。</param>
-    /// <summary>
-    /// PrepareSymbolFrequency を実行します。
-    /// </summary>
     private void PrepareSymbolFrequency(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -5349,15 +4479,7 @@ public sealed partial class OfdmGenerator
         EstimatePilotEqualizersInto(freqBins, pilotBins, useRightChannel, equalizers, agcState);
     }
 
-    /// <summary>
-    /// RemoveCyclicPrefix を実行します。
-    /// </summary>
-    /// <param name="withCp">withCp を指定します。</param>
-    /// <param name="cpLength">cpLength を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// RemoveCyclicPrefix を実行します。
-    /// </summary>
     private static Complex[] RemoveCyclicPrefix(ReadOnlySpan<Complex> withCp, int cpLength)
     {
         var result = new Complex[withCp.Length - cpLength];
@@ -5365,14 +4487,7 @@ public sealed partial class OfdmGenerator
         return result;
     }
 
-    /// <summary>
-    /// ForwardFftMatchingInverse を実行します。
-    /// </summary>
-    /// <param name="time">time を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ForwardFftMatchingInverse を実行します。
-    /// </summary>
     private static Complex[] ForwardFftMatchingInverse(Complex[] time)
     {
         var freq = new Complex[time.Length];
@@ -5380,14 +4495,6 @@ public sealed partial class OfdmGenerator
         return freq;
     }
 
-    /// <summary>
-    /// ForwardFftMatchingInverseInto を実行します。
-    /// </summary>
-    /// <param name="time">time を指定します。</param>
-    /// <param name="destination">destination を指定します。</param>
-    /// <summary>
-    /// ForwardFftMatchingInverseInto を実行します。
-    /// </summary>
     private static void ForwardFftMatchingInverseInto(ReadOnlySpan<Complex> time, Complex[] destination)
     {
         if (destination.Length < time.Length)
@@ -5402,11 +4509,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// BuildFrequencyDomainSymbol を構築します。
     /// </summary>
-    /// <param name="channel">channel を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// BuildFrequencyDomainSymbol を実行します。
-    /// </summary>
     private Complex[] BuildFrequencyDomainSymbol(CarrierChannel channel)
     {
         var bins = new Complex[_config.FftSize];
@@ -5435,16 +4538,7 @@ public sealed partial class OfdmGenerator
         return bins;
     }
 
-    /// <summary>
-    /// ConsumeModulatedSymbol を実行します。
-    /// </summary>
-    /// <param name="modulationScheme">modulationScheme を指定します。</param>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ConsumeModulatedSymbol を実行します。
-    /// </summary>
     private static Complex ConsumeModulatedSymbol(
         ModulationScheme modulationScheme,
         ref int bitIndex,
@@ -5463,12 +4557,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// ReadBitOrZero を読み取ります。
     /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
     /// <returns>判定結果。</returns>
-    /// <summary>
-    /// ReadBitOrZero を実行します。
-    /// </summary>
     private static bool ReadBitOrZero(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         if (bitIndex >= bits.Length)
@@ -5483,13 +4572,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// ReadBitField を読み取ります。
     /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
-    /// <param name="bitCount">bitCount を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ReadBitField を実行します。
-    /// </summary>
     private static int ReadBitField(ref int bitIndex, ReadOnlySpan<bool> bits, int bitCount)
     {
         var value = 0;
@@ -5501,30 +4584,14 @@ public sealed partial class OfdmGenerator
         return value;
     }
 
-    /// <summary>
-    /// ConsumeBpskSymbol を実行します。
-    /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ConsumeBpskSymbol を実行します。
-    /// </summary>
     private static Complex ConsumeBpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var bit = ReadBitOrZero(ref bitIndex, bits);
         return new Complex(bit ? 1.0 : -1.0, 0.0);
     }
 
-    /// <summary>
-    /// ConsumeQpskSymbol を実行します。
-    /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ConsumeQpskSymbol を実行します。
-    /// </summary>
     private static Complex ConsumeQpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var iBit = ReadBitOrZero(ref bitIndex, bits);
@@ -5534,15 +4601,7 @@ public sealed partial class OfdmGenerator
         return new Complex(real, imag) / Math.Sqrt(2.0);
     }
 
-    /// <summary>
-    /// ConsumeQam16Symbol を実行します。
-    /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ConsumeQam16Symbol を実行します。
-    /// </summary>
     private static Complex ConsumeQam16Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 2), bitsPerAxis: 2, Qam16Levels);
@@ -5550,15 +4609,7 @@ public sealed partial class OfdmGenerator
         return new Complex(real, imag) / Math.Sqrt(10.0);
     }
 
-    /// <summary>
-    /// ConsumeQam64Symbol を実行します。
-    /// </summary>
-    /// <param name="bitIndex">bitIndex を指定します。</param>
-    /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// ConsumeQam64Symbol を実行します。
-    /// </summary>
     private static Complex ConsumeQam64Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 3), bitsPerAxis: 3, Qam64Levels);
@@ -5566,16 +4617,7 @@ public sealed partial class OfdmGenerator
         return new Complex(real, imag) / Math.Sqrt(42.0);
     }
 
-    /// <summary>
-    /// GrayMappedPamLevel を実行します。
-    /// </summary>
-    /// <param name="binaryIndex">binaryIndex を指定します。</param>
-    /// <param name="bitsPerAxis">bitsPerAxis を指定します。</param>
-    /// <param name="levels">levels を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GrayMappedPamLevel を実行します。
-    /// </summary>
     private static int GrayMappedPamLevel(int binaryIndex, int bitsPerAxis, int[] levels)
     {
         var grayIndex = (binaryIndex ^ (binaryIndex >> 1)) & ((1 << bitsPerAxis) - 1);
@@ -5585,25 +4627,13 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// GetActiveCarrierBins を取得します。
     /// </summary>
-    /// <param name="channel">channel を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GetActiveCarrierBins を実行します。
-    /// </summary>
     private List<int> GetActiveCarrierBins(CarrierChannel channel)
     {
         return GetPositiveCarrierBins(channel);
     }
 
-    /// <summary>
-    /// SelectPilotBins を実行します。
-    /// </summary>
-    /// <param name="orderedBins">orderedBins を指定します。</param>
-    /// <param name="spacing">spacing を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// SelectPilotBins を実行します。
-    /// </summary>
     private static HashSet<int> SelectPilotBins(List<int> orderedBins, int spacing)
     {
         // グループ内 CH1/CH5（0起点で index 1 と 5）をパイロットにする（modulation.mdc）。
@@ -5636,23 +4666,8 @@ public sealed partial class OfdmGenerator
         return pilots;
     }
 
-    /// <summary>
-    /// ShuffleInPlace を実行します。
-    /// </summary>
-    /// <param name="_random">_random を指定します。</param>
-    /// <summary>
-    /// ShuffleInPlace を実行します。
-    /// </summary>
     private void ShuffleInPlace(List<int> values) => ShuffleInPlace(values, _random);
 
-    /// <summary>
-    /// ShuffleInPlace を実行します。
-    /// </summary>
-    /// <param name="values">values を指定します。</param>
-    /// <param name="random">random を指定します。</param>
-    /// <summary>
-    /// ShuffleInPlace を実行します。
-    /// </summary>
     private static void ShuffleInPlace(List<int> values, Random random)
     {
         for (var i = values.Count - 1; i > 0; i--)
@@ -5662,14 +4677,6 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// ShuffleInPlace を実行します。
-    /// </summary>
-    /// <param name="values">values を指定します。</param>
-    /// <param name="random">random を指定します。</param>
-    /// <summary>
-    /// ShuffleInPlace を実行します。
-    /// </summary>
     private static void ShuffleInPlace(int[] values, Random random)
     {
         for (var i = values.Length - 1; i > 0; i--)
@@ -5679,14 +4686,7 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <summary>
-    /// GenerateModulatedSymbol を実行します。
-    /// </summary>
-    /// <param name="modulationScheme">modulationScheme を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GenerateModulatedSymbol を実行します。
-    /// </summary>
     private Complex GenerateModulatedSymbol(ModulationScheme modulationScheme)
     {
         return modulationScheme switch
@@ -5699,26 +4699,14 @@ public sealed partial class OfdmGenerator
         };
     }
 
-    /// <summary>
-    /// GenerateBpskSymbol を実行します。
-    /// </summary>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GenerateBpskSymbol を実行します。
-    /// </summary>
     private Complex GenerateBpskSymbol()
     {
         var bit = _random.Next(2);
         return new Complex(bit == 0 ? -1.0 : 1.0, 0.0);
     }
 
-    /// <summary>
-    /// GenerateQpskSymbol を実行します。
-    /// </summary>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GenerateQpskSymbol を実行します。
-    /// </summary>
     private Complex GenerateQpskSymbol()
     {
         var iBit = _random.Next(2);
@@ -5729,13 +4717,7 @@ public sealed partial class OfdmGenerator
         return new Complex(real, imag) / Math.Sqrt(2.0);
     }
 
-    /// <summary>
-    /// GenerateQam16Symbol を実行します。
-    /// </summary>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GenerateQam16Symbol を実行します。
-    /// </summary>
     private Complex GenerateQam16Symbol()
     {
         var real = GenerateGrayMappedPamLevel(bitsPerAxis: 2, Qam16Levels);
@@ -5743,13 +4725,7 @@ public sealed partial class OfdmGenerator
         return new Complex(real, imag) / Math.Sqrt(10.0);
     }
 
-    /// <summary>
-    /// GenerateQam64Symbol を実行します。
-    /// </summary>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GenerateQam64Symbol を実行します。
-    /// </summary>
     private Complex GenerateQam64Symbol()
     {
         var real = GenerateGrayMappedPamLevel(bitsPerAxis: 3, Qam64Levels);
@@ -5757,15 +4733,7 @@ public sealed partial class OfdmGenerator
         return new Complex(real, imag) / Math.Sqrt(42.0);
     }
 
-    /// <summary>
-    /// GenerateGrayMappedPamLevel を実行します。
-    /// </summary>
-    /// <param name="bitsPerAxis">bitsPerAxis を指定します。</param>
-    /// <param name="levels">levels を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// GenerateGrayMappedPamLevel を実行します。
-    /// </summary>
     private int GenerateGrayMappedPamLevel(int bitsPerAxis, int[] levels)
     {
         var binaryIndex = NextBits(bitsPerAxis);
@@ -5773,14 +4741,7 @@ public sealed partial class OfdmGenerator
         return levels[grayIndex];
     }
 
-    /// <summary>
-    /// NextBits を実行します。
-    /// </summary>
-    /// <param name="bitCount">bitCount を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// NextBits を実行します。
-    /// </summary>
     private int NextBits(int bitCount)
     {
         var value = 0;
@@ -5800,15 +4761,7 @@ public sealed partial class OfdmGenerator
         return value;
     }
 
-    /// <summary>
-    /// AddCyclicPrefix を実行します。
-    /// </summary>
-    /// <param name="symbol">symbol を指定します。</param>
-    /// <param name="cpLength">cpLength を指定します。</param>
     /// <returns>処理結果。</returns>
-    /// <summary>
-    /// AddCyclicPrefix を実行します。
-    /// </summary>
     private static Complex[] AddCyclicPrefix(Complex[] symbol, int cpLength)
     {
         if (cpLength == 0)

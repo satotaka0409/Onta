@@ -24,77 +24,28 @@ public sealed class RealtimeDecodeSession : IDisposable
 
     private Complex[] _left = Array.Empty<Complex>();
     private Complex[] _right = Array.Empty<Complex>();
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private int _count;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private long _streamBase;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private bool _stereo;
-
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private CancellationTokenSource? _cts;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private Task? _worker;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private int _lastAttemptCount;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private bool _disposed;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private bool _inputCompleted;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private int _postInputStallCount;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private long _lastPostInputCursor;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private int _lastPostInputBuffered;
-    /// <summary>
-    /// このメソッド を実行します。
-    /// </summary>
-
     private RealtimeDecodeSnapshot _snapshot = RealtimeDecodeSnapshot.Idle;
 
     /// <summary>
     /// デコードセッションを初期化します。
     /// </summary>
-    /// <param name="codec">codec を指定します。</param>
-    /// <param name="sampleRate">sampleRate を指定します。</param>
-    /// <param name="channelMode">channelMode を指定します。</param>
-    /// <param name="tuning">tuning を指定します。</param>
-    /// <param name="pollInterval">pollInterval を指定します。</param>
-    /// <param name="minAttemptSeconds">minAttemptSeconds を指定します。</param>
+    /// <param name="codec">段階デコード本体。</param>
+    /// <param name="sampleRate">入力 PCM のサンプルレート。</param>
+    /// <param name="channelMode">入力チャネル構成。</param>
+    /// <param name="tuning">復号探索・反復回数の調整値。</param>
+    /// <param name="pollInterval">ワーカーループのポーリング間隔。</param>
+    /// <param name="minAttemptSeconds">復号試行を開始する最小蓄積秒数。</param>
     public RealtimeDecodeSession(
         FileWavCodec codec,
         int sampleRate,
@@ -164,8 +115,6 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// PCM チャンクを追記します（リング上書きではなく、消費後に先頭圧縮します）。
     /// </summary>
-    /// <param name="left">left を指定します。</param>
-    /// <param name="right">right を指定します。</param>
     public void AppendSamples(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
     {
         ThrowIfDisposed();
@@ -280,7 +229,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// 復元済みバイト列がある場合に1回だけ取り出します。
     /// </summary>
-    /// <param name="decoded">decoded を指定します。</param>
+    /// <param name="decoded">復元済みバイト列。未復元時は空配列。</param>
     public bool TryConsumeDecoded(out byte[] decoded)
     {
         lock (_sync)
@@ -310,9 +259,9 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// WorkerLoop を実行します。
+    /// バッファ監視と段階復号を繰り返すバックグラウンド処理です。
     /// </summary>
-    /// <param name="token">token を指定します。</param>
+    /// <param name="token">停止要求トークン。</param>
     private async Task WorkerLoop(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -491,7 +440,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// CompactLocked を実行します。
+    /// 消費済み先頭サンプルを圧縮してメモリ使用量を抑えます。
     /// </summary>
     private void CompactLocked()
     {
@@ -519,9 +468,9 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// DropFront を実行します。
+    /// 先頭から指定サンプル数を破棄してバッファを前詰めします。
     /// </summary>
-    /// <param name="drop">drop を指定します。</param>
+    /// <param name="drop">破棄する先頭サンプル数。</param>
     private void DropFront(int drop)
     {
         if (drop <= 0)
@@ -545,9 +494,9 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// EnsureCapacity を実行します。
+    /// 入力追記に必要なバッファ容量を確保します。
     /// </summary>
-    /// <param name="needed">needed を指定します。</param>
+    /// <param name="needed">必要サンプル数。</param>
     private void EnsureCapacity(int needed)
     {
         if (_left.Length >= needed)
@@ -564,7 +513,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// ThrowIfDisposed を実行します。
+    /// 破棄済みインスタンス操作を検出して例外を送出します。
     /// </summary>
     private void ThrowIfDisposed()
     {

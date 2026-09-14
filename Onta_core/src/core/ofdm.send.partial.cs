@@ -5,20 +5,23 @@ namespace Onta.Core;
 public sealed partial class OfdmGenerator
 {
     /// <summary>
-    /// public を実行します。
+    /// 単一ビット列を左右同一ストリームとして OFDM 変調します。
     /// </summary>
-    /// <param name="Left">Left を指定します。</param>
-    /// <param name="absoluteSampleOffset">absoluteSampleOffset を指定します。</param>
+    /// <param name="bits">変調対象ビット列。</param>
+    /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
+    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
     public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0, int interleaveInitSeed = 0)
     {
         return ModulateBitStreams(bits, bits, absoluteSampleOffset, interleaveInitSeed);
     }
 
     /// <summary>
-    /// public を実行します。
+    /// 左右チャネル別のビット列を OFDM 変調して PCM シンボル列を生成します。
     /// </summary>
-    /// <param name="Left">Left を指定します。</param>
-    /// <param name="Right">Right を指定します。</param>
+    /// <param name="leftBits">左チャネルに載せるビット列。</param>
+    /// <param name="rightBits">右チャネルに載せるビット列。</param>
+    /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
+    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
     public (Complex[] Left, Complex[] Right) ModulateBitStreams(
         ReadOnlySpan<bool> leftBits,
         ReadOnlySpan<bool> rightBits,
@@ -47,16 +50,13 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// ModulateBitsOnChannel を実行します。
+    /// 指定チャネルのビット列を OFDM シンボル列へ変換します。
     /// </summary>
-    /// <param name="bits">bits を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。</param>
-    /// <param name="absoluteSampleOffset">absoluteSampleOffset を指定します。</param>
-    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
-    /// <summary>
-    /// ModulateBitsOnChannel を実行します。
-    /// </summary>
+    /// <param name="bits">変調対象ビット列。</param>
+    /// <param name="useRightChannel">右チャネル用変調かどうか。</param>
+    /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
+    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
+    /// <returns>CP 付き OFDM シンボルを連結した複素 PCM 配列。</returns>
     private Complex[] ModulateBitsOnChannel(
         ReadOnlySpan<bool> bits,
         bool useRightChannel,

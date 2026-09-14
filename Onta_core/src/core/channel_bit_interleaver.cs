@@ -27,8 +27,6 @@ public static class ChannelBitInterleaver
     /// <summary>
     /// バイト列をビット列へ展開してインターリーブします（MSB 順）。
     /// </summary>
-    /// <param name="bytes">bytes を指定します。</param>
-    /// <param name="seed">seed を指定します。</param>
     public static byte[] InterleaveBytes(ReadOnlySpan<byte> bytes, int seed)
     {
         if (bytes.Length == 0)
@@ -44,8 +42,6 @@ public static class ChannelBitInterleaver
     /// <summary>
     /// インターリーブ済みのバイト列を元の順序へ復元します。
     /// </summary>
-    /// <param name="bytes">bytes を指定します。</param>
-    /// <param name="seed">seed を指定します。</param>
     public static byte[] DeinterleaveBytes(ReadOnlySpan<byte> bytes, int seed)
     {
         if (bytes.Length == 0)
@@ -61,8 +57,6 @@ public static class ChannelBitInterleaver
     /// <summary>
     /// ビット列をインターリーブします。
     /// </summary>
-    /// <param name="bits">bits を指定します。</param>
-    /// <param name="seed">seed を指定します。</param>
     public static bool[] Interleave(ReadOnlySpan<bool> bits, int seed)
     {
         if (bits.Length == 0)
@@ -83,8 +77,6 @@ public static class ChannelBitInterleaver
     /// <summary>
     /// インターリーブ済みビット列を逆変換します。
     /// </summary>
-    /// <param name="bits">bits を指定します。</param>
-    /// <param name="seed">seed を指定します。</param>
     public static bool[] Deinterleave(ReadOnlySpan<bool> bits, int seed)
     {
         if (bits.Length == 0)
@@ -102,21 +94,11 @@ public static class ChannelBitInterleaver
         return output;
     }
 
-    /// <summary>
-    /// GetForward を実行します。
-    /// </summary>
-    /// <param name="length">length を指定します。</param>
-    /// <param name="seed">seed を指定します。</param>
     private static int[] GetForward(int length, int seed)
     {
         return ForwardCache.GetOrAdd((length, seed), static key => BuildInterleaver(key.Length, key.Seed));
     }
 
-    /// <summary>
-    /// GetInverse を実行します。
-    /// </summary>
-    /// <param name="length">length を指定します。</param>
-    /// <param name="seed">seed を指定します。</param>
     private static int[] GetInverse(int length, int seed)
     {
         return InverseCache.GetOrAdd(
@@ -133,8 +115,6 @@ public static class ChannelBitInterleaver
     /// <summary>
     /// 31bit M 系列（x^31+x^28+1）を使って Fisher-Yates 順列を生成します。
     /// </summary>
-    /// <param name="length">length を指定します。</param>
-    /// <param name="seed">seed を指定します。</param>
     private static int[] BuildInterleaver(int length, int seed)
     {
         var permutation = new int[length];
@@ -154,10 +134,6 @@ public static class ChannelBitInterleaver
         return permutation;
     }
 
-    /// <summary>
-    /// BuildDeinterleaver を実行します。
-    /// </summary>
-    /// <param name="interleaver">interleaver を指定します。</param>
     private static int[] BuildDeinterleaver(int[] interleaver)
     {
         var deinterleaver = new int[interleaver.Length];
@@ -169,10 +145,6 @@ public static class ChannelBitInterleaver
         return deinterleaver;
     }
 
-    /// <summary>
-    /// BytesToBitsMsb を実行します。
-    /// </summary>
-    /// <param name="bytes">bytes を指定します。</param>
     private static bool[] BytesToBitsMsb(ReadOnlySpan<byte> bytes)
     {
         var bits = new bool[bytes.Length * 8];
@@ -189,10 +161,6 @@ public static class ChannelBitInterleaver
         return bits;
     }
 
-    /// <summary>
-    /// BitsToBytesMsb を実行します。
-    /// </summary>
-    /// <param name="bits">bits を指定します。</param>
     private static byte[] BitsToBytesMsb(ReadOnlySpan<bool> bits)
     {
         if ((bits.Length & 7) != 0)
@@ -219,4 +187,5 @@ public static class ChannelBitInterleaver
         return bytes;
     }
 }
+
 
