@@ -1,20 +1,20 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Onta.Core;
 
 public sealed partial class OfdmGenerator
 {
     /// <summary>
-    /// ストリームからハード判定ビットを復調します。
+    /// DemodulateBitsFromStream を実行します。
     /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="logicalSampleOffset">論理サンプルオフセット。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <returns>復調したビット列。</returns>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="cursor">cursor を指定します。</param>
+    /// <param name="bitCount">bitCount を指定します。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
+    /// <param name="logicalSampleOffset">logicalSampleOffset を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public bool[] DemodulateBitsFromStream(
         Complex[] samples,
         ref int cursor,
@@ -97,20 +97,21 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// ストリームからソフト判定 LLR を復調します。
+    /// DemodulateSoftLlrsFromStream を実行します。
     /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="logicalSampleOffset">論理サンプルオフセット。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
-    /// <param name="noiseVariance">既知雑音分散。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <param name="onEqualizedDataSymbol">等化後データシンボルの通知先。</param>
-    /// <param name="onEqualizedDataSymbolFrame">等化後シンボル列の通知先。</param>
-    /// <param name="onFftSymbolFrame">FFTシンボル列の通知先。</param>
-    /// <returns>復調した LLR 列。</returns>
+    /// <param name="onOfdmSymbolProgress">onOfdmSymbolProgress を指定します。</param>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="cursor">cursor を指定します。</param>
+    /// <param name="bitCount">bitCount を指定します。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
+    /// <param name="logicalSampleOffset">logicalSampleOffset を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="noiseVariance">譌｢遏･髮鷹浹蛻・淵縲・/param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="onEqualizedDataSymbol">onEqualizedDataSymbol を指定します。</param>
+    /// <param name="onEqualizedDataSymbolFrame">onEqualizedDataSymbolFrame を指定します。</param>
+    /// <param name="onFftSymbolFrame">onFftSymbolFrame を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public double[] DemodulateSoftLlrsFromStream(
         Complex[] samples,
         ref int cursor,
@@ -144,18 +145,18 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// 左右チャネルを統合してソフト判定 LLR を復調します。
+    /// DemodulateSoftLlrsStereoCombined を実行します。
     /// </summary>
-    /// <param name="leftSamples">左チャネルサンプル列。</param>
-    /// <param name="rightSamples">右チャネルサンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="logicalSampleOffset">論理サンプルオフセット。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
-    /// <param name="noiseVariance">既知雑音分散。</param>
-    /// <param name="estimateNoiseFromPilots">パイロットから雑音推定する場合 true。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <returns>復調した LLR 列。</returns>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="cursor">cursor を指定します。</param>
+    /// <param name="bitCount">bitCount を指定します。</param>
+    /// <param name="logicalSampleOffset">logicalSampleOffset を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="noiseVariance">譌｢遏･髮鷹浹蛻・淵縲・/param>
+    /// <param name="estimateNoiseFromPilots">estimateNoiseFromPilots を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public double[] DemodulateSoftLlrsStereoCombined(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -213,13 +214,13 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// 読み取りカーソルを追従させながら指定シンボル数だけスキップします。
+    /// SkipSymbolsWithTimingTracking を実行します。
     /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取りカーソル（更新あり）。</param>
-    /// <param name="symbolCount">読み飛ばすシンボル数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="searchRadius">シンボル開始探索半径。</param>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="cursor">cursor を指定します。</param>
+    /// <param name="symbolCount">symbolCount を指定します。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
     public void SkipSymbolsWithTimingTracking(
         Complex[] samples,
         ref int cursor,
@@ -247,14 +248,14 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// OFDM シンボル列からハード判定ビットを復調します。
+    /// DemodulateBits を実行します。
     /// </summary>
-    /// <param name="samples">OFDM シンボル列（CP 付き）。</param>
-    /// <param name="bitCount">取得するビット数。</param>
-    /// <param name="useRightChannel">右チャネルを使う場合 true。</param>
-    /// <param name="absoluteSampleOffset">絶対サンプルオフセット。</param>
-    /// <param name="interleaveInitSeed">インタリーブ初期シード。</param>
-    /// <returns>復調したビット列。</returns>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="bitCount">bitCount を指定します。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
+    /// <param name="absoluteSampleOffset">absoluteSampleOffset を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public bool[] DemodulateBits(
         ReadOnlySpan<Complex> samples,
         int bitCount,

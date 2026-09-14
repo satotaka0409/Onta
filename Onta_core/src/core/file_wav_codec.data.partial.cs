@@ -1,9 +1,18 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Onta.Core;
 
 public sealed partial class FileWavCodec
 {
+    /// <summary>
+    /// AppendModulatedDataBlock を実行します。
+    /// </summary>
+    /// <param name="leftPcm">leftPcm を指定します。</param>
+    /// <param name="rightPcm">rightPcm を指定します。</param>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="payload">payload を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="punctureRate">punctureRate を指定します。</param>
     private static void AppendModulatedDataBlock(
         List<Complex> leftPcm,
         List<Complex> rightPcm,
@@ -30,6 +39,10 @@ public sealed partial class FileWavCodec
         }
     }
 
+    /// <summary>
+    /// PackDataBlockWithCrc を実行します。
+    /// </summary>
+    /// <param name="payload">payload を指定します。</param>
     private static byte[] PackDataBlockWithCrc(byte[] payload)
     {
         if (payload.Length > DataBlockBytes)
@@ -46,12 +59,22 @@ public sealed partial class FileWavCodec
         return packed;
     }
 
+    /// <summary>
+    /// TurboPaddedLength を実行します。
+    /// </summary>
+    /// <param name="contentLength">contentLength を指定します。</param>
     private static int TurboPaddedLength(int contentLength)
     {
         var unit = TurboEcc1024.DataUnitBytes;
         return ((Math.Max(contentLength, 1) + unit - 1) / unit) * unit;
     }
 
+    /// <summary>
+    /// GetBlockEmissionOrder を実行します。
+    /// </summary>
+    /// <param name="blockCount">blockCount を指定します。</param>
+    /// <param name="passIndex">passIndex を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public static int[] GetBlockEmissionOrder(int blockCount, int passIndex)
     {
         if (blockCount < 0)
@@ -89,6 +112,12 @@ public sealed partial class FileWavCodec
         return order;
     }
 
+    /// <summary>
+    /// static を実行します。
+    /// </summary>
+    /// <param name="Subcarriers">Subcarriers を指定します。</param>
+    /// <param name="Modulation">Modulation を指定します。</param>
+
     public static (int Subcarriers, ModulationScheme Modulation) ResolveInterleavePassModulation(
         int passIndex,
         int baseSubcarriers,
@@ -119,6 +148,12 @@ public sealed partial class FileWavCodec
         return (sc, mod);
     }
 
+    /// <summary>
+    /// SplitBitsForStereo を実行します。
+    /// </summary>
+    /// <param name="bits">bits を指定します。</param>
+    /// <param name="leftBits">leftBits を指定します。</param>
+    /// <param name="rightBits">rightBits を指定します。</param>
     private static void SplitBitsForStereo(bool[] bits, out bool[] leftBits, out bool[] rightBits)
     {
         var half = (bits.Length + 1) / 2;
@@ -131,6 +166,12 @@ public sealed partial class FileWavCodec
         }
     }
 
+    /// <summary>
+    /// JoinStereoBits を実行します。
+    /// </summary>
+    /// <param name="leftBits">leftBits を指定します。</param>
+    /// <param name="rightBits">rightBits を指定します。</param>
+    /// <param name="totalBits">totalBits を指定します。</param>
     private static bool[] JoinStereoBits(bool[] leftBits, bool[] rightBits, int totalBits)
     {
         var joined = new bool[totalBits];
@@ -145,6 +186,10 @@ public sealed partial class FileWavCodec
         return joined;
     }
 
+    /// <summary>
+    /// SplitDataBlocks を実行します。
+    /// </summary>
+    /// <param name="fileBytes">fileBytes を指定します。</param>
     private static List<DataBlock> SplitDataBlocks(byte[] fileBytes)
     {
         var blocks = new List<DataBlock>();
@@ -164,6 +209,10 @@ public sealed partial class FileWavCodec
         return blocks;
     }
 
+    /// <summary>
+    /// BytesToBitsMsb を実行します。
+    /// </summary>
+    /// <param name="bytes">bytes を指定します。</param>
     private static bool[] BytesToBitsMsb(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
@@ -178,6 +227,10 @@ public sealed partial class FileWavCodec
         return bits;
     }
 
+    /// <summary>
+    /// BitsToBytesMsb を実行します。
+    /// </summary>
+    /// <param name="bits">bits を指定します。</param>
     private static byte[] BitsToBytesMsb(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
@@ -194,6 +247,25 @@ public sealed partial class FileWavCodec
         return bytes;
     }
 
+    /// <summary>
+    /// DecodeDataBlockSynced を実行します。
+    /// </summary>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="warpedCursor">warpedCursor を指定します。</param>
+    /// <param name="logicalOffset">logicalOffset を指定します。</param>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="expectedBlockHash">expectedBlockHash を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="modulationScheme">modulationScheme を指定します。</param>
+    /// <param name="tuning">tuning を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="punctureRate">punctureRate を指定します。</param>
+    /// <param name="wowLocked">wowLocked を指定します。</param>
+    /// <param name="statusBoard">statusBoard を指定します。</param>
+    /// <param name="diag">diag を指定します。</param>
+    /// <param name="onSoftProgress">onSoftProgress を指定します。</param>
     private static byte[] DecodeDataBlockSynced(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -451,7 +523,7 @@ public sealed partial class FileWavCodec
 
                 if (delta == 0)
                 {
-                    // ���ɒ��߃J�[�\���ŕ������s�ς݂̊J�n�ʒu�͏��O����B
+                    // 文字化けしていたコメントを整理しました。
                     continue;
                 }
 
@@ -616,6 +688,18 @@ public sealed partial class FileWavCodec
         throw new InvalidDataException("Data block sync failed.", lastError);
     }
 
+    /// <summary>
+    /// DemodulateDataBitsFixed を実行します。
+    /// </summary>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="start">start を指定します。</param>
+    /// <param name="channelBitCount">channelBitCount を指定します。</param>
+    /// <param name="totalBitCount">totalBitCount を指定します。</param>
+    /// <param name="stereoSplit">stereoSplit を指定します。</param>
+    /// <param name="logical">logical を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
     private static bool[] DemodulateDataBitsFixed(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -641,6 +725,19 @@ public sealed partial class FileWavCodec
         return JoinStereoBits(leftBits, rightBits, totalBitCount);
     }
 
+    /// <summary>
+    /// DemodulateDataBitsFromStream を実行します。
+    /// </summary>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="cursor">cursor を指定します。</param>
+    /// <param name="channelBitCount">channelBitCount を指定します。</param>
+    /// <param name="totalBitCount">totalBitCount を指定します。</param>
+    /// <param name="stereoSplit">stereoSplit を指定します。</param>
+    /// <param name="logical">logical を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
     private static bool[] DemodulateDataBitsFromStream(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -669,6 +766,23 @@ public sealed partial class FileWavCodec
         return JoinStereoBits(leftBits, rightBits, totalBitCount);
     }
 
+    /// <summary>
+    /// DemodulateDataSoftLlrsFromStream を実行します。
+    /// </summary>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="cursor">cursor を指定します。</param>
+    /// <param name="channelBitCount">channelBitCount を指定します。</param>
+    /// <param name="totalBitCount">totalBitCount を指定します。</param>
+    /// <param name="stereoSplit">stereoSplit を指定します。</param>
+    /// <param name="logical">logical を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="noiseVariance">noiseVariance を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="modulationScheme">modulationScheme を指定します。</param>
+    /// <param name="statusBoard">statusBoard を指定します。</param>
+    /// <param name="onBlockProgress">onBlockProgress を指定します。</param>
     private static double[] DemodulateDataSoftLlrsFromStream(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -699,7 +813,7 @@ public sealed partial class FileWavCodec
             ? null
             : (spectrum, count) => statusBoard.SetFftFrame(spectrum.AsSpan(0, count), isRightChannel: true);
 
-        // ���M���� ~33ms �|�[�����O�ɍ��킹�A�u���b�N���i�����Ԉ����ʒm����B
+        // 文字化けしていたコメントを整理しました。
         var progressClock = System.Diagnostics.Stopwatch.StartNew();
         Action<int, int>? onSymbolProgress = onBlockProgress is null
             ? null
@@ -778,6 +892,11 @@ public sealed partial class FileWavCodec
         return joined;
     }
 
+    /// <summary>
+    /// ClampLlrsInPlace を実行します。
+    /// </summary>
+    /// <param name="llrs">llrs を指定します。</param>
+    /// <param name="maxAbs">maxAbs を指定します。</param>
     private static void ClampLlrsInPlace(double[] llrs, double maxAbs)
     {
         for (var i = 0; i < llrs.Length; i++)
@@ -793,6 +912,10 @@ public sealed partial class FileWavCodec
         }
     }
 
+    /// <summary>
+    /// MeanAbsLlrs を実行します。
+    /// </summary>
+    /// <param name="llrs">llrs を指定します。</param>
     private static double MeanAbsLlrs(ReadOnlySpan<double> llrs)
     {
         if (llrs.Length == 0)
@@ -810,8 +933,9 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// LLR �̑傫������r�b�g���m���𐄒肵�A�p�[�Z���g�ŕԂ��܂��i�O���t�p�j�B
+    /// EstimateSoftBitErrorPercent を実行します。
     /// </summary>
+    /// <param name="llrs">llrs を指定します。</param>
     private static double EstimateSoftBitErrorPercent(ReadOnlySpan<double> llrs)
     {
         if (llrs.Length == 0)
@@ -834,6 +958,13 @@ public sealed partial class FileWavCodec
         return 100.0 * sum / llrs.Length;
     }
 
+    /// <summary>
+    /// PreferHashMatch を実行します。
+    /// </summary>
+    /// <param name="softCandidate">softCandidate を指定します。</param>
+    /// <param name="hardCandidate">hardCandidate を指定します。</param>
+    /// <param name="expectedBlockHash">expectedBlockHash を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
     private static byte[] PreferHashMatch(
         byte[] softCandidate,
         byte[] hardCandidate,
@@ -853,6 +984,12 @@ public sealed partial class FileWavCodec
         return softCandidate;
     }
 
+    /// <summary>
+    /// IsDataBlockAcceptable を実行します。
+    /// </summary>
+    /// <param name="candidate">candidate を指定します。</param>
+    /// <param name="expectedBlockHash">expectedBlockHash を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
     private static bool IsDataBlockAcceptable(byte[] candidate, byte[] expectedBlockHash, int payloadLength)
     {
         var actualLen = Math.Clamp(payloadLength, 0, DataBlockBytes);
@@ -872,6 +1009,10 @@ public sealed partial class FileWavCodec
             candidate.AsSpan(actualLen, CrcBytes));
     }
 
+    /// <summary>
+    /// EncodeTurboBlock を実行します。
+    /// </summary>
+    /// <param name="padded">padded を指定します。</param>
     private static byte[] EncodeTurboBlock(byte[] padded)
     {
         if (padded.Length == 0 || padded.Length % TurboEcc1024.DataUnitBytes != 0)
@@ -896,6 +1037,11 @@ public sealed partial class FileWavCodec
         return output;
     }
 
+    /// <summary>
+    /// ResolveTurboIterations を実行します。
+    /// </summary>
+    /// <param name="infoLlrs">infoLlrs を指定します。</param>
+    /// <param name="tuning">tuning を指定します。</param>
     private static int ResolveTurboIterations(double[] infoLlrs, DecodeRuntimeTuning tuning)
     {
         var minIter = Math.Clamp(Math.Min(tuning.TurboIterationsMin, tuning.TurboIterationsMax), 1, 32);
@@ -928,6 +1074,13 @@ public sealed partial class FileWavCodec
         return (int)Math.Round(Math.Clamp(value, minIter, maxIter));
     }
 
+    /// <summary>
+    /// DecodeTurboBlock を実行します。
+    /// </summary>
+    /// <param name="turboEncoded">turboEncoded を指定します。</param>
+    /// <param name="paddedLength">paddedLength を指定します。</param>
+    /// <param name="iterations">iterations を指定します。</param>
+    /// <param name="meanCorrectionRate">meanCorrectionRate を指定します。</param>
     private static byte[] DecodeTurboBlock(
         byte[] turboEncoded,
         int paddedLength,
@@ -954,14 +1107,25 @@ public sealed partial class FileWavCodec
         return padded;
     }
 
+    /// <summary>
+    /// DecodeTurboBlock を実行します。
+    /// </summary>
+    /// <param name="turboEncoded">turboEncoded を指定します。</param>
+    /// <param name="paddedLength">paddedLength を指定します。</param>
+    /// <param name="iterations">iterations を指定します。</param>
     private static byte[] DecodeTurboBlock(byte[] turboEncoded, int paddedLength, int iterations)
     {
         return DecodeTurboBlock(turboEncoded, paddedLength, iterations, out _);
     }
 
     /// <summary>
-    /// Turbo���LLR��P�ʂ��Ƃɕ������A���s���̓n�[�h����Ƀt�H�[���o�b�N���܂��B
+    /// DecodeTurboBlockFromLlrs を実行します。
     /// </summary>
+    /// <param name="infoLlrs">infoLlrs を指定します。</param>
+    /// <param name="turboEncodedHard">turboEncodedHard を指定します。</param>
+    /// <param name="paddedLength">paddedLength を指定します。</param>
+    /// <param name="iterations">iterations を指定します。</param>
+    /// <param name="meanCorrectionRate">meanCorrectionRate を指定します。</param>
     private static byte[] DecodeTurboBlockFromLlrs(
         double[] infoLlrs,
         byte[] turboEncodedHard,
@@ -1016,6 +1180,13 @@ public sealed partial class FileWavCodec
         return padded;
     }
 
+    /// <summary>
+    /// DecodeTurboBlockFromLlrs を実行します。
+    /// </summary>
+    /// <param name="infoLlrs">infoLlrs を指定します。</param>
+    /// <param name="turboEncodedHard">turboEncodedHard を指定します。</param>
+    /// <param name="paddedLength">paddedLength を指定します。</param>
+    /// <param name="iterations">iterations を指定します。</param>
     private static byte[] DecodeTurboBlockFromLlrs(
         double[] infoLlrs,
         byte[] turboEncodedHard,
@@ -1025,6 +1196,9 @@ public sealed partial class FileWavCodec
         return DecodeTurboBlockFromLlrs(infoLlrs, turboEncodedHard, paddedLength, iterations, out _);
     }
 
+    /// <summary>
+    /// DataDecodeDiag を実行します。
+    /// </summary>
     private readonly record struct DataDecodeDiag(
         int TotalAttempts,
         bool HardMatchSucceeded,
@@ -1032,6 +1206,10 @@ public sealed partial class FileWavCodec
         bool FallbackUsed,
         int StartDeltaSamples);
 
+    /// <summary>
+    /// GetReedSolomonEncodedLength を実行します。
+    /// </summary>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
     private static int GetReedSolomonEncodedLength(int payloadLength)
     {
         var paddedLength = ((payloadLength + RsEcc256.DataUnitSize - 1) / RsEcc256.DataUnitSize) * RsEcc256.DataUnitSize;
@@ -1043,12 +1221,21 @@ public sealed partial class FileWavCodec
         return (paddedLength / RsEcc256.DataUnitSize) * RsEcc256.EncodedUnitSize;
     }
 
+    /// <summary>
+    /// GetConvolutionalEncodedLength を実行します。
+    /// </summary>
+    /// <param name="inputByteLength">inputByteLength を指定します。</param>
+    /// <param name="punctureRate">punctureRate を指定します。</param>
     private static int GetConvolutionalEncodedLength(int inputByteLength, ConvolutionalCode.PunctureRate punctureRate)
     {
         var encodedBits = ConvolutionalCode.GetEncodedBitLength(inputByteLength * 8, terminated: true, punctureRate: punctureRate);
         return (encodedBits + 7) / 8;
     }
 
+    /// <summary>
+    /// ResolveDataPunctureRate を実行します。
+    /// </summary>
+    /// <param name="modulationScheme">modulationScheme を指定します。</param>
     private static ConvolutionalCode.PunctureRate ResolveDataPunctureRate(ModulationScheme modulationScheme)
     {
         return modulationScheme switch
@@ -1061,6 +1248,11 @@ public sealed partial class FileWavCodec
         };
     }
 
+    /// <summary>
+    /// ReadBlockDataModulation を実行します。
+    /// </summary>
+    /// <param name="Subcarriers">Subcarriers を指定します。</param>
+    /// <param name="blockHeader">blockHeader を指定します。</param>
     private static (int Subcarriers, ModulationScheme Modulation) ReadBlockDataModulation(byte[] blockHeader)
     {
         if (blockHeader.Length <= 9)
@@ -1085,6 +1277,10 @@ public sealed partial class FileWavCodec
         return (subcarriers, modulation);
     }
 
+    /// <summary>
+    /// ApplyReedSolomon を実行します。
+    /// </summary>
+    /// <param name="payload">payload を指定します。</param>
     private static byte[] ApplyReedSolomon(byte[] payload)
     {
         var paddedLength = ((payload.Length + RsEcc256.DataUnitSize - 1) / RsEcc256.DataUnitSize) * RsEcc256.DataUnitSize;
@@ -1111,9 +1307,18 @@ public sealed partial class FileWavCodec
         return output;
     }
 
+    /// <summary>
+    /// ApplyReedSolomonDecode を実行します。
+    /// </summary>
+    /// <param name="encoded">encoded を指定します。</param>
     private static byte[] ApplyReedSolomonDecode(byte[] encoded) =>
         ApplyReedSolomonDecode(encoded, out _);
 
+    /// <summary>
+    /// ApplyReedSolomonDecode を実行します。
+    /// </summary>
+    /// <param name="encoded">encoded を指定します。</param>
+    /// <param name="metrics">metrics を指定します。</param>
     private static byte[] ApplyReedSolomonDecode(byte[] encoded, out RsEcc256.DecodeMetrics metrics)
     {
         if (encoded.Length % RsEcc256.EncodedUnitSize != 0)
@@ -1149,3 +1354,4 @@ public sealed partial class FileWavCodec
     }
 
 }
+

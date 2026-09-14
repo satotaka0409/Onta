@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Text;
 
 namespace Onta.Core;
@@ -6,12 +6,12 @@ namespace Onta.Core;
 public sealed partial class FileWavCodec
 {
     /// <summary>
-    /// 送信時間内訳の1セグメントです。
+    /// 処理の補足説明です。
     /// </summary>
     public readonly record struct TransmissionDurationSegment(string Label, long Samples, double Seconds);
 
     /// <summary>
-    /// 送信時間見積り結果です。
+    /// 処理の補足説明です。
     /// </summary>
     public sealed record TransmissionDurationEstimate(
         int SampleRate,
@@ -20,11 +20,11 @@ public sealed partial class FileWavCodec
         IReadOnlyList<TransmissionDurationSegment> Segments);
 
     /// <summary>
-    /// プロファイルと入力サイズから送信時間を見積もります。
+    /// EstimateTransmissionDuration を実行します。
     /// </summary>
-    /// <param name="profile">見積り対象プロファイル。</param>
-    /// <param name="fileSizeBytes">入力ファイルサイズ（バイト）。</param>
-    /// <returns>送信時間見積り。</returns>
+    /// <param name="profile">profile を指定します。</param>
+    /// <param name="fileSizeBytes">fileSizeBytes を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public static TransmissionDurationEstimate EstimateTransmissionDuration(FileWavCodecProfile profile, long fileSizeBytes)
     {
         if (fileSizeBytes < 0)
@@ -92,11 +92,11 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 送信時間見積りを表示向けテキストへ整形します。
+    /// FormatTransmissionDurationBreakdown を実行します。
     /// </summary>
-    /// <param name="estimate">送信時間見積り。</param>
-    /// <param name="digits">秒表示の小数桁数。</param>
-    /// <returns>内訳表示テキスト。</returns>
+    /// <param name="estimate">estimate を指定します。</param>
+    /// <param name="digits">digits を指定します。</param>
+    /// <returns>戻り値を返します。</returns>
     public static string FormatTransmissionDurationBreakdown(TransmissionDurationEstimate estimate, int digits = 3)
     {
         var sb = new StringBuilder(estimate.Segments.Count * 24);
@@ -111,12 +111,16 @@ public sealed partial class FileWavCodec
               .AppendLine();
         }
 
-        sb.Append("合計:")
+        sb.Append("蜷郁ｨ・")
           .Append(estimate.TotalSeconds.ToString(fmt))
           .Append("s");
         return sb.ToString();
     }
 
+    /// <summary>
+    /// BuildBlockPayloadLengths を実行します。
+    /// </summary>
+    /// <param name="fileSizeBytes">fileSizeBytes を指定します。</param>
     private static int[] BuildBlockPayloadLengths(long fileSizeBytes)
     {
         if (fileSizeBytes == 0)
@@ -143,6 +147,12 @@ public sealed partial class FileWavCodec
         return lengths;
     }
 
+    /// <summary>
+    /// HeaderPacketSamples を実行します。
+    /// </summary>
+    /// <param name="headerOfdm">headerOfdm を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="unmodulatedSamples">unmodulatedSamples を指定します。</param>
     private static int HeaderPacketSamples(OfdmGenerator headerOfdm, int payloadLength, int unmodulatedSamples)
     {
         var rsLength = GetReedSolomonEncodedLength(payloadLength);
@@ -154,6 +164,13 @@ public sealed partial class FileWavCodec
         return unmodulatedSamples + headerOfdm.SampleCountForBitCount(channelBits);
     }
 
+    /// <summary>
+    /// DataPacketSamples を実行します。
+    /// </summary>
+    /// <param name="dataOfdm">dataOfdm を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="channelMode">channelMode を指定します。</param>
+    /// <param name="modulationScheme">modulationScheme を指定します。</param>
     private static int DataPacketSamples(
         OfdmGenerator dataOfdm,
         int payloadLength,
@@ -171,6 +188,14 @@ public sealed partial class FileWavCodec
         return dataOfdm.SampleCountForBitCount(channelBits);
     }
 
+    /// <summary>
+    /// AddSegment を実行します。
+    /// </summary>
+    /// <param name="segments">segments を指定します。</param>
+    /// <param name="label">label を指定します。</param>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="sampleRate">sampleRate を指定します。</param>
+    /// <param name="totalSamples">totalSamples を指定します。</param>
     private static void AddSegment(
         List<TransmissionDurationSegment> segments,
         string label,
@@ -182,3 +207,4 @@ public sealed partial class FileWavCodec
         segments.Add(new TransmissionDurationSegment(label, samples, samples / (double)sampleRate));
     }
 }
+

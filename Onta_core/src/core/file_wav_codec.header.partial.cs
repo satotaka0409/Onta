@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO;
 using System.Numerics;
 using System.Text;
@@ -7,10 +7,14 @@ namespace Onta.Core;
 
 public sealed partial class FileWavCodec
 {
+    /// <summary>
+    /// CreateHeaderOfdm を実行します。
+    /// </summary>
+    /// <param name="carrierGrid">carrierGrid を指定します。</param>
     private OfdmGenerator CreateHeaderOfdm(OfdmCarrierGrid? carrierGrid = null)
     {
         var groupB = OfdmConfig.ResolveGroupBLeftBins();
-        // ヘッダーは常に GROUP-B・8SC。周波数グリッドはデータ部 SC 族に合わせる（明示指定時はそのグリッド）。
+        // 文字化けしていたコメントを整理しました。
         var grid = carrierGrid ?? OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
         var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
         var config = new OfdmConfig(
@@ -32,13 +36,29 @@ public sealed partial class FileWavCodec
         return new OfdmGenerator(config);
     }
 
+    /// <summary>
+    /// AlternateCarrierGrid を実行します。
+    /// </summary>
+    /// <param name="grid">grid を指定します。</param>
     private static OfdmCarrierGrid AlternateCarrierGrid(OfdmCarrierGrid grid) =>
         grid == OfdmCarrierGrid.Sc8Family ? OfdmCarrierGrid.Sc24Family : OfdmCarrierGrid.Sc8Family;
 
     /// <summary>
-    /// ヘッダー復号を試し、失敗時はもう一方の SC 族グリッドで再試行します。
-    /// （受信プロファイルの SC が送信と不一致でも FH 同期できるようにする）
+    /// DecodeHeaderPacketSyncedTryingGrids を実行します。
+    /// DecodeHeaderPacketSyncedTryingGrids を実行します。
     /// </summary>
+    /// <param name="headerOfdm">headerOfdm を指定します。</param>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="warpedCursor">warpedCursor を指定します。</param>
+    /// <param name="logicalOffset">logicalOffset を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="expectedPilot">expectedPilot を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="onSyncProgress">onSyncProgress を指定します。</param>
+    /// <param name="statusBoard">statusBoard を指定します。</param>
+    /// <param name="frameKind">frameKind を指定します。</param>
     private byte[] DecodeHeaderPacketSyncedTryingGrids(
         ref OfdmGenerator headerOfdm,
         Complex[] leftSamples,
@@ -92,6 +112,13 @@ public sealed partial class FileWavCodec
         }
     }
 
+    /// <summary>
+    /// AppendFileHeaderPacket を実行します。
+    /// </summary>
+    /// <param name="leftPcm">leftPcm を指定します。</param>
+    /// <param name="rightPcm">rightPcm を指定します。</param>
+    /// <param name="headerOfdm">headerOfdm を指定します。</param>
+    /// <param name="fileHeader">fileHeader を指定します。</param>
     private void AppendFileHeaderPacket(
         List<Complex> leftPcm,
         List<Complex> rightPcm,
@@ -109,15 +136,18 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// ヘッダー前置無変調区間と符号化ヘッダーをPCMへ追加します。
+    /// AppendHeaderPackets を実行します。
     /// </summary>
-    /// <param name="leftPcm">左チャネル出力バッファ。</param>
-    /// <param name="rightPcm">右チャネル出力バッファ。</param>
-    /// <param name="ofdm">ヘッダー変調に使うOFDM生成器。</param>
-    /// <param name="leftHeaderBytes">送信するヘッダーバイト列。</param>
-    /// <param name="rightHeaderBytes">将来拡張用の右ヘッダーバイト列。</param>
-    /// <param name="unmodulatedSamples">前置の無変調サンプル数。</param>
-    /// <param name="interleaveInitSeed">周波数インタリーブ初期シード。</param>
+    /// <param name="leftPcm">leftPcm を指定します。</param>
+    /// <param name="rightPcm">rightPcm を指定します。</param>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="leftHeaderBytes">leftHeaderBytes を指定します。</param>
+    /// <param name="rightHeaderBytes">rightHeaderBytes を指定します。</param>
+    /// <param name="unmodulatedSamples">unmodulatedSamples を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <summary>
+    /// AppendHeaderPackets を実行します。
+    /// </summary>
     private void AppendHeaderPackets(
         List<Complex> leftPcm,
         List<Complex> rightPcm,
@@ -147,6 +177,12 @@ public sealed partial class FileWavCodec
         AppendHeaderPair(leftPcm, rightPcm, modulated);
     }
 
+    /// <summary>
+    /// AppendHeaderPair を実行します。
+    /// </summary>
+    /// <param name="leftPcm">leftPcm を指定します。</param>
+    /// <param name="rightPcm">rightPcm を指定します。</param>
+    /// <param name="pair">pair を指定します。</param>
     private void AppendHeaderPair(List<Complex> leftPcm, List<Complex> rightPcm, (Complex[] Left, Complex[] Right) pair)
     {
         AppendPair(leftPcm, rightPcm, pair);
@@ -156,18 +192,25 @@ public sealed partial class FileWavCodec
         }
     }
 
+    /// <summary>
+    /// HeaderUnmodulatedSamplesFor を実行します。
+    /// </summary>
+    /// <param name="packetLength">packetLength を指定します。</param>
     private int HeaderUnmodulatedSamplesFor(int packetLength) =>
         packetLength == FileHeaderBytes
             ? _profile.FileHeaderUnmodulatedSamples
             : _profile.BlockHeaderUnmodulatedSamples;
 
     /// <summary>
-    /// ヘッダー前置無変調サンプルを読み飛ばします。
+    /// SkipHeaderUnmodulatedPreamble を実行します。
     /// </summary>
     /// <param name="samples">samples を指定します。</param>
     /// <param name="warpedCursor">warpedCursor を指定します。</param>
     /// <param name="logicalOffset">logicalOffset を指定します。</param>
     /// <param name="unmodulatedSamples">unmodulatedSamples を指定します。</param>
+    /// <summary>
+    /// SkipHeaderUnmodulatedPreamble を実行します。
+    /// </summary>
     private static void SkipHeaderUnmodulatedPreamble(
         Complex[] samples,
         ref int warpedCursor,
@@ -179,8 +222,20 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 現在カーソル近傍でヘッダーパケット同期復号を行います。
+    /// DecodeHeaderPacketSynced を実行します。
     /// </summary>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="warpedCursor">warpedCursor を指定します。</param>
+    /// <param name="logicalOffset">logicalOffset を指定します。</param>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="expectedPilot">expectedPilot を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="onSyncProgress">onSyncProgress を指定します。</param>
+    /// <param name="statusBoard">statusBoard を指定します。</param>
+    /// <param name="frameKind">frameKind を指定します。</param>
     private static byte[] DecodeHeaderPacketSynced(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -286,11 +341,30 @@ public sealed partial class FileWavCodec
         }
 
         throw new InvalidDataException(
-            $"ヘッダー同期に失敗しました（sample≈{warpedCursor}, payload={payloadLength}）。" +
-            "プリアンブル位置のずれ、またはワウ／ノイズが強い可能性があります。",
+            $"ヘッダーの復号に失敗しました。sample={warpedCursor}, payload={payloadLength}。"
+            + "プリアンブル長のずれ、またはワウ・ノイズが大きい可能性があります。",
             lastError);
     }
 
+    /// <summary>
+    /// 指定位置からヘッダー復号を試行します。
+    /// </summary>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="start">start を指定します。</param>
+    /// <param name="logicalOffset">logicalOffset を指定します。</param>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="totalBitCount">totalBitCount を指定します。</param>
+    /// <param name="channelBitCount">channelBitCount を指定します。</param>
+    /// <param name="sampleCount">sampleCount を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="rsByteLength">rsByteLength を指定します。</param>
+    /// <param name="expectedPilot">expectedPilot を指定します。</param>
+    /// <param name="stereoSplit">stereoSplit を指定します。</param>
+    /// <param name="perSymbolSearchRadius">perSymbolSearchRadius を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="payload">payload を指定します。</param>
+    /// <param name="endCursor">endCursor を指定します。</param>
     private static bool TryDecodeHeaderAt(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -329,6 +403,28 @@ public sealed partial class FileWavCodec
             out _);
     }
 
+    /// <summary>
+    /// TryDecodeHeaderAt を実行します。
+    /// </summary>
+    /// <param name="leftSamples">leftSamples を指定します。</param>
+    /// <param name="rightSamples">rightSamples を指定します。</param>
+    /// <param name="start">start を指定します。</param>
+    /// <param name="logicalOffset">logicalOffset を指定します。</param>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="totalBitCount">totalBitCount を指定します。</param>
+    /// <param name="channelBitCount">channelBitCount を指定します。</param>
+    /// <param name="sampleCount">sampleCount を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="rsByteLength">rsByteLength を指定します。</param>
+    /// <param name="expectedPilot">expectedPilot を指定します。</param>
+    /// <param name="stereoSplit">stereoSplit を指定します。</param>
+    /// <param name="perSymbolSearchRadius">perSymbolSearchRadius を指定します。</param>
+    /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
+    /// <param name="payload">payload を指定します。</param>
+    /// <param name="endCursor">endCursor を指定します。</param>
+    /// <param name="meanAbsLlr">meanAbsLlr を指定します。</param>
+    /// <param name="statusBoard">statusBoard を指定します。</param>
+    /// <param name="frameKind">frameKind を指定します。</param>
     private static bool TryDecodeHeaderAt(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -441,6 +537,15 @@ public sealed partial class FileWavCodec
         }
     }
 
+    /// <summary>
+    /// DecodeHeaderFromSoftLlrs を実行します。
+    /// </summary>
+    /// <param name="llrs">llrs を指定します。</param>
+    /// <param name="payloadLength">payloadLength を指定します。</param>
+    /// <param name="rsByteLength">rsByteLength を指定します。</param>
+    /// <param name="viterbiMetrics">viterbiMetrics を指定します。</param>
+    /// <param name="rsMetrics">rsMetrics を指定します。</param>
+    /// <param name="infoLlrs">infoLlrs を指定します。</param>
     private static byte[] DecodeHeaderFromSoftLlrs(
         double[] llrs,
         int payloadLength,
@@ -462,6 +567,16 @@ public sealed partial class FileWavCodec
         return payload;
     }
 
+    /// <summary>
+    /// CollectSyncCandidates を実行します。
+    /// </summary>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="expectedStart">expectedStart を指定します。</param>
+    /// <param name="sampleCount">sampleCount を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="ofdm">ofdm を指定します。</param>
+    /// <param name="probeSymbols">probeSymbols を指定します。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
     private static List<int> CollectSyncCandidates(
         Complex[] samples,
         int expectedStart,
@@ -517,6 +632,11 @@ public sealed partial class FileWavCodec
         return unique;
     }
 
+    /// <summary>
+    /// HeaderPrefixMatches を実行します。
+    /// </summary>
+    /// <param name="header">header を指定します。</param>
+    /// <param name="expectedPilot">expectedPilot を指定します。</param>
     private static bool HeaderPrefixMatches(byte[] header, byte[] expectedPilot)
     {
         if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)
@@ -548,6 +668,10 @@ public sealed partial class FileWavCodec
         return true;
     }
 
+    /// <summary>
+    /// ReadFileHeaderFileName を実行します。
+    /// </summary>
+    /// <param name="fileHeader">fileHeader を指定します。</param>
     private static string ReadFileHeaderFileName(ReadOnlySpan<byte> fileHeader)
     {
         if (fileHeader.Length < HeaderPrefixBytes + FileNameBytes)
@@ -569,6 +693,13 @@ public sealed partial class FileWavCodec
         return Encoding.UTF8.GetString(nameBytes[..end]).Trim();
     }
 
+    /// <summary>
+    /// BuildFileHeader を実行します。
+    /// </summary>
+    /// <param name="fileInfo">fileInfo を指定します。</param>
+    /// <param name="fileSize">fileSize を指定します。</param>
+    /// <param name="blockCount">blockCount を指定します。</param>
+    /// <param name="fileHash">fileHash を指定します。</param>
     private static byte[] BuildFileHeader(FileInfo fileInfo, long fileSize, int blockCount, byte[] fileHash)
     {
         if (fileHash.Length != 64)
@@ -593,6 +724,11 @@ public sealed partial class FileWavCodec
         return header;
     }
 
+    /// <summary>
+    /// WriteFileAttributes を実行します。
+    /// </summary>
+    /// <param name="dest">dest を指定します。</param>
+    /// <param name="fileInfo">fileInfo を指定します。</param>
     private static void WriteFileAttributes(Span<byte> dest, FileInfo fileInfo)
     {
         WriteTimestamp(dest.Slice(0, 7), fileInfo.CreationTime);
@@ -618,6 +754,11 @@ public sealed partial class FileWavCodec
         attrs.CopyTo(dest.Slice(14, 6));
     }
 
+    /// <summary>
+    /// WriteTimestamp を実行します。
+    /// </summary>
+    /// <param name="dest">dest を指定します。</param>
+    /// <param name="timestamp">timestamp を指定します。</param>
     private static void WriteTimestamp(Span<byte> dest, DateTime timestamp)
     {
         var local = timestamp.ToLocalTime();
@@ -629,6 +770,16 @@ public sealed partial class FileWavCodec
         dest[6] = (byte)local.Second;
     }
 
+    /// <summary>
+    /// BuildBlockHeader を実行します。
+    /// </summary>
+    /// <param name="subcarriers">subcarriers を指定します。</param>
+    /// <param name="modulationMode">modulationMode を指定します。</param>
+    /// <param name="channelMode">channelMode を指定します。</param>
+    /// <param name="blockIndex">blockIndex を指定します。</param>
+    /// <param name="blockSize">blockSize を指定します。</param>
+    /// <param name="blockHash">blockHash を指定します。</param>
+    /// <param name="fileHash">fileHash を指定します。</param>
     private static byte[] BuildBlockHeader(
         byte subcarriers,
         byte modulationMode,
@@ -664,6 +815,11 @@ public sealed partial class FileWavCodec
         return header;
     }
 
+    /// <summary>
+    /// EnsureHeaderCrc を実行します。
+    /// </summary>
+    /// <param name="header">header を指定します。</param>
+    /// <param name="headerName">headerName を指定します。</param>
     private static void EnsureHeaderCrc(byte[] header, string headerName)
     {
         if (header.Length < HeaderCrcDataOffset + CrcBytes)
@@ -678,6 +834,12 @@ public sealed partial class FileWavCodec
         }
     }
 
+    /// <summary>
+    /// EnsureHeaderPilot を実行します。
+    /// </summary>
+    /// <param name="header">header を指定します。</param>
+    /// <param name="expectedPilot">expectedPilot を指定します。</param>
+    /// <param name="headerName">headerName を指定します。</param>
     private static void EnsureHeaderPilot(byte[] header, byte[] expectedPilot, string headerName)
     {
         if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)
@@ -707,3 +869,4 @@ public sealed partial class FileWavCodec
         }
     }
 }
+

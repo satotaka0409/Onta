@@ -1,20 +1,24 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Onta.Core;
 
 public sealed partial class OfdmGenerator
 {
     /// <summary>
-    /// ModulateBits を実行します。
+    /// public を実行します。
     /// </summary>
+    /// <param name="Left">Left を指定します。</param>
+    /// <param name="absoluteSampleOffset">absoluteSampleOffset を指定します。</param>
     public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0, int interleaveInitSeed = 0)
     {
         return ModulateBitStreams(bits, bits, absoluteSampleOffset, interleaveInitSeed);
     }
 
     /// <summary>
-    /// ModulateBitStreams を実行します。
+    /// public を実行します。
     /// </summary>
+    /// <param name="Left">Left を指定します。</param>
+    /// <param name="Right">Right を指定します。</param>
     public (Complex[] Left, Complex[] Right) ModulateBitStreams(
         ReadOnlySpan<bool> leftBits,
         ReadOnlySpan<bool> rightBits,
@@ -46,10 +50,13 @@ public sealed partial class OfdmGenerator
     /// ModulateBitsOnChannel を実行します。
     /// </summary>
     /// <param name="bits">bits を指定します。</param>
-    /// <param name="useRightChannel">useRightChannel を指定します。true で有効です。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
     /// <param name="absoluteSampleOffset">absoluteSampleOffset を指定します。</param>
     /// <param name="interleaveInitSeed">interleaveInitSeed を指定します。</param>
-    /// <returns>処理結果。</returns>
+    /// <returns>蜃ｦ逅・ｵ先棡縲・/returns>
+    /// <summary>
+    /// ModulateBitsOnChannel を実行します。
+    /// </summary>
     private Complex[] ModulateBitsOnChannel(
         ReadOnlySpan<bool> bits,
         bool useRightChannel,

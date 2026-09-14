@@ -27,6 +27,7 @@ public readonly record struct CoreProgressInfo(
     /// <summary>
     /// 待機状態を表す初期値です。
     /// </summary>
+    /// <param name="Fh">Fh を指定します。</param>
     public static CoreProgressInfo Idle { get; } = new(
         CurrentFrame: CoreFrameKind.Fh,
         CurrentBlockIndex: -1,
@@ -61,15 +62,14 @@ public readonly record struct CoreErrorRateInfo(
     /// <summary>
     /// 初期エラー率情報です。
     /// </summary>
+    /// <param name="Fh">Fh を指定します。</param>
+    /// <param name="Viterbi">Viterbi を指定します。</param>
     public static CoreErrorRateInfo Idle { get; } = new(0, CoreFrameKind.Fh, CoreEccDecoderKind.Viterbi, 0);
 }
 
 /// <summary>
 /// I/Q 平面上の1サンプルです。
 /// </summary>
-/// <param name="I">同相成分。</param>
-/// <param name="Q">直交成分。</param>
-/// <param name="Group">サブキャリアグループ（0=A, 1=B, 2=C, 3=D）。</param>
 public readonly record struct CoreIqSample(double I, double Q, byte Group = 0);
 
 /// <summary>
@@ -83,6 +83,7 @@ public readonly record struct CoreIqGraphInfo(
     /// <summary>
     /// 空状態のIQグラフ情報です。
     /// </summary>
+    /// <param name="Bpsk">Bpsk を指定します。</param>
     public static CoreIqGraphInfo Empty { get; } = new(Array.Empty<CoreIqSample>(), 0, ModulationScheme.Bpsk);
 }
 
@@ -163,18 +164,70 @@ public sealed class CoreExecutionStatusBoard
 
     private readonly object _sync = new();
     private readonly List<CoreErrorRateInfo> _errorRatePending = new(64);
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private const int MaxPendingErrorRates = 256;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private CoreIqSample[] _iqRing;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _iqCount;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _iqWrite;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private ModulationScheme _iqModulationScheme = ModulationScheme.Bpsk;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _iqActiveSubcarrierCount;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private CoreFftSample[] _fftLeftBins;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private CoreFftSample[] _fftRightBins;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _fftLeftCount;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _fftRightCount;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private bool _fftIsStereo;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _fftSize;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private CoreExecutionStatus _status = CoreExecutionStatus.Idle;
 
     /// <summary>
@@ -381,6 +434,7 @@ public sealed class CoreExecutionStatusBoard
     /// <summary>
     /// I/Q 成分を指定して単一サンプルを追加します。
     /// </summary>
+    /// <param name="group">group を指定します。</param>
     /// <param name="i">同相成分 I。</param>
     /// <param name="q">直交成分 Q。</param>
     public void PushIq(double i, double q, byte group = 0)
@@ -655,6 +709,9 @@ public sealed class CoreExecutionStatusBoard
     /// EnsureIqCapacityUnlocked を実行します。
     /// </summary>
     /// <param name="required">required を指定します。</param>
+    /// <summary>
+    /// EnsureIqCapacityUnlocked を実行します。
+    /// </summary>
     private void EnsureIqCapacityUnlocked(int required)
     {
         if (required <= _iqRing.Length)
@@ -672,6 +729,9 @@ public sealed class CoreExecutionStatusBoard
     /// </summary>
     /// <param name="required">required を指定します。</param>
     /// <param name="isRightChannel">isRightChannel を指定します。true で有効です。</param>
+    /// <summary>
+    /// EnsureFftCapacityUnlocked を実行します。
+    /// </summary>
     private void EnsureFftCapacityUnlocked(int required, bool isRightChannel)
     {
         var target = isRightChannel ? _fftRightBins : _fftLeftBins;
@@ -696,6 +756,9 @@ public sealed class CoreExecutionStatusBoard
     /// CopyIqPointsUnlocked を実行します。
     /// </summary>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// CopyIqPointsUnlocked を実行します。
+    /// </summary>
     private CoreIqSample[] CopyIqPointsUnlocked()
     {
         if (_iqCount == 0)
@@ -718,6 +781,9 @@ public sealed class CoreExecutionStatusBoard
     /// </summary>
     /// <param name="isRightChannel">isRightChannel を指定します。true で有効です。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// CopyFftPointsUnlocked を実行します。
+    /// </summary>
     private CoreFftSample[] CopyFftPointsUnlocked(bool isRightChannel)
     {
         var count = isRightChannel ? _fftRightCount : _fftLeftCount;

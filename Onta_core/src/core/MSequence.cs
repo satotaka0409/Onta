@@ -1,7 +1,7 @@
-namespace Onta.Core;
+﻿namespace Onta.Core;
 
 /// <summary>
-/// M 系列の用途を表します。
+/// M 系列の用途種別です。
 /// </summary>
 public enum MSequenceUsage
 {
@@ -17,26 +17,33 @@ public enum MSequenceUsage
     /// <summary>ターボ符号インターリーバ用途。</summary>
     TurboEccInterleaver,
 
-    /// <summary>Wow/Flutter 位相生成用途。</summary>
+    /// <summary>WOW/Flutter 位相生成用途。</summary>
     WowFlutterPhase
 }
 
 /// <summary>
-/// 31bit M 系列（x^31+x^28+1）ユーティリティです。
+/// 31bit M 系列（x^31 + x^28 + 1）を生成するユーティリティです。
 /// </summary>
 public static class MSequence31
 {
+    /// <summary>
+    /// SplitMix の拡散定数です。
+    /// </summary>
     private const ulong SplitMixConst = 0x9E3779B97F4A7C15UL;
+
+    /// <summary>
+    /// 31bit 整数を [0, 1) の実数へ正規化する係数です。
+    /// </summary>
     private const double InvM31 = 1.0 / 2147483648.0;
 
     /// <summary>
     /// 用途に応じた 31bit M 系列状態を初期化します。
     /// </summary>
-    /// <param name="usage">用途。</param>
-    /// <param name="seed">主シード（用途に応じて解釈）。</param>
-    /// <param name="interleaveInitSeed">周波数インターリーブ初期シード。</param>
-    /// <param name="epoch">周波数インターリーブエポック。</param>
-    /// <returns>初期状態（0 は返しません）。</returns>
+    /// <param name="usage">系列の用途種別。</param>
+    /// <param name="seed">基本シード値。</param>
+    /// <param name="interleaveInitSeed">インターリーブ初期シード。</param>
+    /// <param name="epoch">エポック番号。</param>
+    /// <returns>ゼロを除く 31bit の初期状態。</returns>
     public static uint InitializeState(
         MSequenceUsage usage,
         int seed,
@@ -89,8 +96,10 @@ public static class MSequence31
     }
 
     /// <summary>
-    /// 31bit M 系列状態から 31bit ワードを生成します。
+    /// M 系列を 31 ステップ進めて 31bit ワードを生成します。
     /// </summary>
+    /// <param name="state">更新対象の系列状態。</param>
+    /// <returns>生成された 31bit ワード。</returns>
     public static uint NextWord(ref uint state)
     {
         var value = 0u;
@@ -110,16 +119,20 @@ public static class MSequence31
     }
 
     /// <summary>
-    /// 31bit M 系列状態から [0,1) の一様値を生成します。
+    /// M 系列ワードを [0, 1) の実数として返します。
     /// </summary>
+    /// <param name="state">更新対象の系列状態。</param>
+    /// <returns>[0, 1) の擬似乱数。</returns>
     public static double NextUnitDouble(ref uint state)
     {
         return NextWord(ref state) * InvM31;
     }
 
     /// <summary>
-    /// 31bit M 系列状態を 1 ステップ進めます。
+    /// M 系列状態を 1 ステップ進めます。
     /// </summary>
+    /// <param name="state">現在の系列状態。</param>
+    /// <returns>次の系列状態（ゼロ状態は 1 へ補正）。</returns>
     public static uint Advance31(uint state)
     {
         // Primitive polynomial: x^31 + x^28 + 1

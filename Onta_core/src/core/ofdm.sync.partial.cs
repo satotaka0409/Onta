@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Onta.Core;
 
@@ -7,7 +7,10 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// ScoreLock を実行します。
     /// </summary>
-    /// <param name="start">評価開始サンプル位置。</param>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="symbolCount">symbolCount を指定します。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
+    /// <param name="start">隧穂ｾ｡髢句ｧ九し繝ｳ繝励Ν菴咲ｽｮ縲・/param>
     public double ScoreLock(Complex[] samples, int start, int symbolCount, bool useRightChannel = false)
     {
         ArgumentNullException.ThrowIfNull(samples);
@@ -38,7 +41,10 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// FindBestSymbolStart を実行します。
     /// </summary>
-    /// <param name="expectedStart">期待されるシンボル開始位置。</param>
+    /// <param name="samples">samples を指定します。</param>
+    /// <param name="searchRadius">searchRadius を指定します。</param>
+    /// <param name="useRightChannel">useRightChannel を指定します。</param>
+    /// <param name="expectedStart">expectedStart を指定します。</param>
     public int FindBestSymbolStart(
         Complex[] samples,
         int expectedStart,

@@ -47,8 +47,23 @@ public static class ConvolutionalCode
     private static readonly byte[] Output0WhenInput1 = BuildOutputBitTable(inputBit: 1, generatorIndex: 0);
     private static readonly byte[] Output1WhenInput1 = BuildOutputBitTable(inputBit: 1, generatorIndex: 1);
     private static readonly byte[] ByteToBitsLookup = BuildByteToBitsLookup();
+    /// <summary>
+    /// CountTrue を実行します。
+    /// </summary>
+    /// <param name="PuncturePatternRate1_2">PuncturePatternRate1_2 を指定します。</param>
+
     private static readonly int PunctureRate1_2Ones = CountTrue(PuncturePatternRate1_2);
+    /// <summary>
+    /// CountTrue を実行します。
+    /// </summary>
+    /// <param name="PuncturePatternRate2_3">PuncturePatternRate2_3 を指定します。</param>
+
     private static readonly int PunctureRate2_3Ones = CountTrue(PuncturePatternRate2_3);
+    /// <summary>
+    /// CountTrue を実行します。
+    /// </summary>
+    /// <param name="PuncturePatternRate3_4">PuncturePatternRate3_4 を指定します。</param>
+
     private static readonly int PunctureRate3_4Ones = CountTrue(PuncturePatternRate3_4);
 
     /// <summary>
@@ -313,6 +328,12 @@ public static class ConvolutionalCode
     /// <summary>
     /// ソフト判定LLRを復号し、チャネル硬判定との差分から訂正率メトリクスも返します。
     /// </summary>
+    /// <param name="codeLlrs">codeLlrs を指定します。</param>
+    /// <param name="originalByteLength">originalByteLength を指定します。</param>
+    /// <param name="infoLlrs">infoLlrs を指定します。</param>
+    /// <param name="metrics">metrics を指定します。</param>
+    /// <param name="terminated">terminated を指定します。</param>
+    /// <param name="punctureRate">punctureRate を指定します。</param>
     public static byte[] DecodeSoftToInfoLlrs(
         ReadOnlySpan<double> codeLlrs,
         int originalByteLength,
@@ -495,6 +516,10 @@ public static class ConvolutionalCode
     /// <summary>
     /// ソフト受信符号語と再符号化結果のハミング距離から訂正率を推定します。
     /// </summary>
+    /// <param name="puncturedCodeLlrs">puncturedCodeLlrs を指定します。</param>
+    /// <param name="decodedInfo">decodedInfo を指定します。</param>
+    /// <param name="terminated">terminated を指定します。</param>
+    /// <param name="punctureRate">punctureRate を指定します。</param>
     public static DecodeMetrics MeasureSoftCorrectionRate(
         ReadOnlySpan<double> puncturedCodeLlrs,
         byte[] decodedInfo,
@@ -532,6 +557,9 @@ public static class ConvolutionalCode
     /// <param name="llr0">llr0 を指定します。</param>
     /// <param name="llr1">llr1 を指定します。</param>
     /// <returns>枝の対数尤度。</returns>
+    /// <summary>
+    /// BranchLogLikelihood を実行します。
+    /// </summary>
     private static double BranchLogLikelihood(int state, int inputBit, double llr0, double llr1)
     {
         var branch0 = GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]);
@@ -544,6 +572,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="metrics">metrics を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// FindMinMetricState を実行します。
+    /// </summary>
     private static int FindMinMetricState(double[] metrics)
     {
         var best = 0;
@@ -636,6 +667,9 @@ public static class ConvolutionalCode
     /// <param name="motherBitLength">motherBitLength を指定します。</param>
     /// <param name="punctureRate">punctureRate を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// GetPuncturedBitLength を実行します。
+    /// </summary>
     private static int GetPuncturedBitLength(int motherBitLength, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
@@ -667,6 +701,9 @@ public static class ConvolutionalCode
     /// <param name="motherBits">motherBits を指定します。</param>
     /// <param name="punctureRate">punctureRate を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// Puncture を実行します。
+    /// </summary>
     private static bool[] Puncture(bool[] motherBits, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
@@ -705,6 +742,9 @@ public static class ConvolutionalCode
     /// <param name="punctureRate">punctureRate を指定します。</param>
     /// <param name="fullBits">fullBits を指定します。</param>
     /// <param name="presentMask">presentMask を指定します。</param>
+    /// <summary>
+    /// DepunctureHard を実行します。
+    /// </summary>
     private static void DepunctureHard(
         bool[] puncturedBits,
         int motherBitLength,
@@ -756,6 +796,9 @@ public static class ConvolutionalCode
     /// <param name="punctureRate">punctureRate を指定します。</param>
     /// <param name="fullBits">fullBits を指定します。</param>
     /// <param name="presentMask">presentMask を指定します。</param>
+    /// <summary>
+    /// DepunctureHardFromPacked を実行します。
+    /// </summary>
     private static void DepunctureHardFromPacked(
         ReadOnlySpan<byte> packedBits,
         int puncturedBitLength,
@@ -804,6 +847,9 @@ public static class ConvolutionalCode
     /// <param name="motherBitLength">motherBitLength を指定します。</param>
     /// <param name="punctureRate">punctureRate を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// DepunctureSoft を実行します。
+    /// </summary>
     private static double[] DepunctureSoft(ReadOnlySpan<double> puncturedLlrs, int motherBitLength, PunctureRate punctureRate)
     {
         var pattern = GetPuncturePattern(punctureRate);
@@ -847,6 +893,9 @@ public static class ConvolutionalCode
     /// <param name="motherBitLength">motherBitLength を指定します。</param>
     /// <param name="punctureRate">punctureRate を指定します。</param>
     /// <param name="full">full を指定します。</param>
+    /// <summary>
+    /// DepunctureSoftInto を実行します。
+    /// </summary>
     private static void DepunctureSoftInto(
         ReadOnlySpan<double> puncturedLlrs,
         int motherBitLength,
@@ -889,6 +938,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="punctureRate">punctureRate を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// GetPuncturePattern を実行します。
+    /// </summary>
     private static bool[] GetPuncturePattern(PunctureRate punctureRate)
     {
         return punctureRate switch
@@ -907,6 +959,9 @@ public static class ConvolutionalCode
     /// <param name="state">現在状態（更新あり）。</param>
     /// <param name="encodedBits">符号化ビット出力先。</param>
     /// <param name="writeIndex">書き込み位置（更新あり）。</param>
+    /// <summary>
+    /// EncodeOneBit を実行します。
+    /// </summary>
     private static void EncodeOneBit(int inputBit, ref int state, bool[] encodedBits, ref int writeIndex)
     {
         if (inputBit == 0)
@@ -927,6 +982,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="values">判定対象配列。</param>
     /// <returns>true 要素数。</returns>
+    /// <summary>
+    /// CountTrue を実行します。
+    /// </summary>
     private static int CountTrue(bool[] values)
     {
         var count = 0;
@@ -947,6 +1005,9 @@ public static class ConvolutionalCode
     /// <param name="state">現在状態。</param>
     /// <param name="inputBit">inputBit を指定します。</param>
     /// <returns>次状態。</returns>
+    /// <summary>
+    /// GetNextState を実行します。
+    /// </summary>
     private static int GetNextState(int state, int inputBit)
     {
         var register = (inputBit << MemoryBits) | state;
@@ -958,6 +1019,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="inputBit">inputBit を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BuildNextStateTable を実行します。
+    /// </summary>
     private static byte[] BuildNextStateTable(int inputBit)
     {
         var table = new byte[StateCount];
@@ -975,6 +1039,9 @@ public static class ConvolutionalCode
     /// <param name="inputBit">inputBit を指定します。</param>
     /// <param name="generatorIndex">generatorIndex を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BuildOutputBitTable を実行します。
+    /// </summary>
     private static byte[] BuildOutputBitTable(int inputBit, int generatorIndex)
     {
         var table = new byte[StateCount];
@@ -993,6 +1060,9 @@ public static class ConvolutionalCode
     /// <param name="inputBit">inputBit を指定します。</param>
     /// <param name="generator">generator を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// GetOutputBit を実行します。
+    /// </summary>
     private static int GetOutputBit(int state, int inputBit, int generator)
     {
         var register = (inputBit << MemoryBits) | state;
@@ -1005,6 +1075,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="value">入力値。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// Parity を実行します。
+    /// </summary>
     private static int Parity(int value)
     {
         var parity = 0;
@@ -1022,6 +1095,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="metrics">metrics を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// FindMinMetricState を実行します。
+    /// </summary>
     private static int FindMinMetricState(int[] metrics)
     {
         var minState = 0;
@@ -1043,6 +1119,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="bytes">bytes を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BytesToBits を実行します。
+    /// </summary>
     private static bool[] BytesToBits(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
@@ -1065,6 +1144,9 @@ public static class ConvolutionalCode
     /// BuildByteToBitsLookup を構築します。
     /// </summary>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BuildByteToBitsLookup を実行します。
+    /// </summary>
     private static byte[] BuildByteToBitsLookup()
     {
         var lookup = new byte[256 * 8];
@@ -1089,6 +1171,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BitsToBytes を実行します。
+    /// </summary>
     private static byte[] BitsToBytes(bool[] bits)
     {
         return BitsToBytes(bits.AsSpan());
@@ -1099,6 +1184,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BitsToBytes を実行します。
+    /// </summary>
     private static byte[] BitsToBytes(ReadOnlySpan<bool> bits)
     {
         if (bits.Length % 8 != 0)
@@ -1125,6 +1213,9 @@ public static class ConvolutionalCode
     /// <param name="packed">packed を指定します。</param>
     /// <param name="bitIndex">bitIndex を指定します。</param>
     /// <returns>判定結果。</returns>
+    /// <summary>
+    /// ReadPackedBit を実行します。
+    /// </summary>
     private static bool ReadPackedBit(ReadOnlySpan<byte> packed, int bitIndex)
     {
         var b = packed[bitIndex >> 3];
@@ -1136,6 +1227,9 @@ public static class ConvolutionalCode
     /// </summary>
     /// <param name="bits">bits を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// PackBits を実行します。
+    /// </summary>
     private static byte[] PackBits(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
@@ -1174,6 +1268,9 @@ public static class ConvolutionalCode
     /// <param name="bytes">bytes を指定します。</param>
     /// <param name="bitCount">bitCount を指定します。</param>
     /// <returns>処理結果。</returns>
+    /// <summary>
+    /// UnpackBits を実行します。
+    /// </summary>
     private static bool[] UnpackBits(byte[] bytes, int bitCount)
     {
         var maxBits = bytes.Length * 8;

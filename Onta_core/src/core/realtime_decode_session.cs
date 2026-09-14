@@ -24,23 +24,77 @@ public sealed class RealtimeDecodeSession : IDisposable
 
     private Complex[] _left = Array.Empty<Complex>();
     private Complex[] _right = Array.Empty<Complex>();
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _count;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private long _streamBase;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private bool _stereo;
 
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private CancellationTokenSource? _cts;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private Task? _worker;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _lastAttemptCount;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private bool _disposed;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private bool _inputCompleted;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _postInputStallCount;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private long _lastPostInputCursor;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private int _lastPostInputBuffered;
+    /// <summary>
+    /// このメソッド を実行します。
+    /// </summary>
+
     private RealtimeDecodeSnapshot _snapshot = RealtimeDecodeSnapshot.Idle;
 
     /// <summary>
     /// デコードセッションを初期化します。
     /// </summary>
+    /// <param name="codec">codec を指定します。</param>
+    /// <param name="sampleRate">sampleRate を指定します。</param>
+    /// <param name="channelMode">channelMode を指定します。</param>
+    /// <param name="tuning">tuning を指定します。</param>
+    /// <param name="pollInterval">pollInterval を指定します。</param>
+    /// <param name="minAttemptSeconds">minAttemptSeconds を指定します。</param>
     public RealtimeDecodeSession(
         FileWavCodec codec,
         int sampleRate,
@@ -110,6 +164,8 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// PCM チャンクを追記します（リング上書きではなく、消費後に先頭圧縮します）。
     /// </summary>
+    /// <param name="left">left を指定します。</param>
+    /// <param name="right">right を指定します。</param>
     public void AppendSamples(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
     {
         ThrowIfDisposed();
@@ -224,6 +280,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// 復元済みバイト列がある場合に1回だけ取り出します。
     /// </summary>
+    /// <param name="decoded">decoded を指定します。</param>
     public bool TryConsumeDecoded(out byte[] decoded)
     {
         lock (_sync)
@@ -252,6 +309,10 @@ public sealed class RealtimeDecodeSession : IDisposable
         _disposed = true;
     }
 
+    /// <summary>
+    /// WorkerLoop を実行します。
+    /// </summary>
+    /// <param name="token">token を指定します。</param>
     private async Task WorkerLoop(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -429,6 +490,9 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// CompactLocked を実行します。
+    /// </summary>
     private void CompactLocked()
     {
         if (_count <= 0)
@@ -454,6 +518,10 @@ public sealed class RealtimeDecodeSession : IDisposable
         _lastAttemptCount = Math.Max(0, _lastAttemptCount - drop);
     }
 
+    /// <summary>
+    /// DropFront を実行します。
+    /// </summary>
+    /// <param name="drop">drop を指定します。</param>
     private void DropFront(int drop)
     {
         if (drop <= 0)
@@ -476,6 +544,10 @@ public sealed class RealtimeDecodeSession : IDisposable
         _streamBase += drop;
     }
 
+    /// <summary>
+    /// EnsureCapacity を実行します。
+    /// </summary>
+    /// <param name="needed">needed を指定します。</param>
     private void EnsureCapacity(int needed)
     {
         if (_left.Length >= needed)
@@ -491,6 +563,9 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// ThrowIfDisposed を実行します。
+    /// </summary>
     private void ThrowIfDisposed()
     {
         if (_disposed)
@@ -511,6 +586,9 @@ public readonly record struct RealtimeDecodeSnapshot(
     byte[]? DecodedBytes,
     string? LastError)
 {
+    /// <summary>
+    /// 待機状態の初期スナップショットです。
+    /// </summary>
     public static RealtimeDecodeSnapshot Idle { get; } = new(
         IsRunning: false,
         BufferedSamples: 0,
@@ -519,3 +597,4 @@ public readonly record struct RealtimeDecodeSnapshot(
         DecodedBytes: null,
         LastError: null);
 }
+
