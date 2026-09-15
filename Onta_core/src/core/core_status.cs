@@ -437,7 +437,7 @@ public sealed class CoreExecutionStatusBoard
     /// </summary>
     /// <param name="i">同相成分 I。</param>
     /// <param name="q">直交成分 Q。</param>
-    /// <param name="group">サブキャリアグループ（0=A..3=D）。</param>
+    /// <param name="group">サブキャリアグループ（0=A..5=F）。</param>
     public void PushIq(double i, double q, byte group = 0)
     {
         lock (_sync)
@@ -455,7 +455,7 @@ public sealed class CoreExecutionStatusBoard
     /// 複数のIQサンプルをまとめて追加します。
     /// </summary>
     /// <param name="equalizedSymbols">等化後シンボル列。</param>
-    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..3=D）。null 時は 0。</param>
+    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..5=F）。null 時は 0。</param>
     public void PushIqMany(ReadOnlySpan<Complex> equalizedSymbols, ReadOnlySpan<byte> groups = default)
     {
         lock (_sync)
@@ -527,7 +527,7 @@ public sealed class CoreExecutionStatusBoard
     /// 等化後シンボルを IQ リングへ追記します（コンスタレーション蓄積用）。
     /// </summary>
     /// <param name="equalizedSymbols">等化後シンボル列。</param>
-    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..3=D）。</param>
+    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..5=F）。</param>
     public void AppendIqFrame(ReadOnlySpan<Complex> equalizedSymbols, ReadOnlySpan<byte> groups = default)
     {
         if (equalizedSymbols.IsEmpty)

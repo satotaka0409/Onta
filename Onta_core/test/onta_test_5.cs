@@ -29,6 +29,7 @@ public sealed class OntaTest5
         Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 24, ModulationScheme.Qam16));
         Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 32, ModulationScheme.Qam64));
         Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 40, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 48, ModulationScheme.Qam64));
     }
 
     [Fact]
@@ -102,9 +103,12 @@ public sealed class OntaTest5
         Assert.Equal(Enumerable.Range(1, 24), OfdmConfig.ResolveConceptualLeftBins(24));
         Assert.Equal(Enumerable.Range(1, 32), OfdmConfig.ResolveConceptualLeftBins(32));
         Assert.Equal(Enumerable.Range(1, 40), OfdmConfig.ResolveConceptualLeftBins(40));
+        Assert.Equal(Enumerable.Range(1, 48), OfdmConfig.ResolveConceptualLeftBins(48));
         Assert.Equal((byte)3, OfdmConfig.ResolveSubcarrierGroupId(32));
         Assert.Equal((byte)4, OfdmConfig.ResolveSubcarrierGroupId(33));
         Assert.Equal((byte)4, OfdmConfig.ResolveSubcarrierGroupId(40));
+        Assert.Equal((byte)5, OfdmConfig.ResolveSubcarrierGroupId(41));
+        Assert.Equal((byte)5, OfdmConfig.ResolveSubcarrierGroupId(48));
     }
 
     [Fact]
@@ -115,6 +119,7 @@ public sealed class OntaTest5
         Assert.Equal(256, OfdmConfig.ResolveFftSize(24, ChannelMode.Mono));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(32, ChannelMode.Stereo));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(40, ChannelMode.Stereo));
+        Assert.Equal(256, OfdmConfig.ResolveFftSize(48, ChannelMode.Stereo));
         Assert.Equal(OfdmConfig.FixedFftSize, OfdmConfig.ResolveFftSize(8, ChannelMode.Mono));
     }
 
@@ -160,6 +165,23 @@ public sealed class OntaTest5
             OfdmConfig.RightCarrierHzSc24(1),
             6);
         Assert.Equal(550.0 + (8 * OfdmConfig.CarrierSpacingHz), OfdmConfig.LeftCarrierHzSc24(9), 6);
+    }
+
+    [Fact]
+    public void CarrierFrequencies_MatchModulationTable_Sc24FamilyEndpoints()
+    {
+        // modulation.mdc SC-24/32/40/48 表の端点（四捨五入 0.1Hz）と実装を照合する。
+        static double RoundHz(double hz) =>
+            Math.Round(hz, 1, MidpointRounding.AwayFromZero);
+
+        Assert.Equal(550.0, RoundHz(OfdmConfig.LeftCarrierHzSc24(1)), 6);
+        Assert.Equal(662.0, RoundHz(OfdmConfig.RightCarrierHzSc24(1)), 6);
+        Assert.Equal(9282.1, RoundHz(OfdmConfig.LeftCarrierHzSc24(40)), 6);
+        Assert.Equal(9394.1, RoundHz(OfdmConfig.RightCarrierHzSc24(40)), 6);
+        Assert.Equal(9506.0, RoundHz(OfdmConfig.LeftCarrierHzSc24(41)), 6);
+        Assert.Equal(9618.0, RoundHz(OfdmConfig.RightCarrierHzSc24(41)), 6);
+        Assert.Equal(11073.3, RoundHz(OfdmConfig.LeftCarrierHzSc24(48)), 6);
+        Assert.Equal(11185.3, RoundHz(OfdmConfig.RightCarrierHzSc24(48)), 6);
     }
 
     [Fact]

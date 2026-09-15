@@ -45,8 +45,8 @@ internal sealed class RealtimePcmPlayer : IDisposable
         var format = new WaveFormat(_sampleRate, 16, _channels);
         _buffer = new BufferedWaveProvider(format)
         {
-            // 長時間再生に備えてバッファを十分確保する。
-            BufferDuration = TimeSpan.FromSeconds(60),
+            // 長時間先読みを避け、FFT/進捗と耳の聴感を揃える（エンコードはバッファ満杯で待機）。
+            BufferDuration = TimeSpan.FromSeconds(3),
             DiscardOnBufferOverflow = false
         };
         _waveOut = new WaveOutEvent
@@ -64,10 +64,12 @@ internal sealed class RealtimePcmPlayer : IDisposable
     /// <param name="left">左チャネルサンプル。</param>
     /// <param name="right">右チャネルサンプル。</param>
     /// <param name="onSamplesQueued">投入フレーム数通知コールバック。</param>
+    /// <param name="onBufferWait">バッファ待ち中の心拍（再生ヘッド追従用）。</param>
     public void AddSamples(
         ReadOnlySpan<Complex> left,
         ReadOnlySpan<Complex> right,
-        Action<int>? onSamplesQueued = null)
+        Action<int>? onSamplesQueued = null,
+        Action? onBufferWait = null)
     {
         if (_disposed)
         {
@@ -107,7 +109,7 @@ internal sealed class RealtimePcmPlayer : IDisposable
         {
             var slice = Math.Min(MaxSliceSamples, left.Length - offset);
             var byteCount = slice * bytesPerFrame;
-            WaitForBufferSpace(buffer, waveOut, byteCount);
+            WaitForBufferSpace(buffer, waveOut, byteCount, onBufferWait);
             if (_disposed)
             {
                 throw new OperationCanceledException("Realtime playback was stopped.");
@@ -200,7 +202,11 @@ internal sealed class RealtimePcmPlayer : IDisposable
         StopInternal();
     }
 
-    private void WaitForBufferSpace(BufferedWaveProvider buffer, WaveOutEvent waveOut, int requiredBytes)
+    private void WaitForBufferSpace(
+        BufferedWaveProvider buffer,
+        WaveOutEvent waveOut,
+        int requiredBytes,
+        Action? onBufferWait)
     {
         while (!_disposed)
         {
@@ -215,6 +221,7 @@ internal sealed class RealtimePcmPlayer : IDisposable
                 waveOut.Play();
             }
 
+            onBufferWait?.Invoke();
             Thread.Sleep(20);
         }
     }

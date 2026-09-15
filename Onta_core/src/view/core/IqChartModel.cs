@@ -9,7 +9,7 @@ using SkiaSharp;
 namespace Onta.View.Core;
 
 /// <summary>
-/// 受信IQ点群を表示する散布図モデルです。グループ A/B/C/D/E ごとに色分けします。
+/// 受信IQ点群を表示する散布図モデルです。グループ A〜F ごとに色分けします。
 /// 軸スケールは変調方式の理想コンスタレーション範囲に固定し、外れ値で一瞬縮むのを防ぎます。
 /// </summary>
 public sealed class IqChartModel
@@ -17,22 +17,24 @@ public sealed class IqChartModel
     private const int MaxPoints = 4096;
     private const int MaxDisplayPoints = 512;
     private const double DefaultAxisLimit = 1.6;
-    private const int GroupCount = 5;
+    private const int GroupCount = 6;
 
-    // A=青, B=緑, C=白, D=オレンジ, E=紫（modulation.mdc）
+    // A=青, B=緑, C=白, D=オレンジ, E=茶, F=紫（modulation.mdc）
     private static readonly SKColor[] GroupColors =
     [
         new(80, 140, 255),   // A 青
         new(80, 200, 100),   // B 緑
         new(230, 230, 230),  // C 白
         new(255, 160, 40),   // D オレンジ
-        new(170, 100, 255)   // E 紫
+        new(170, 110, 60),   // E 茶
+        new(170, 100, 255)   // F 紫
     ];
 
     private static readonly SKColor GridColor = new(92, 97, 108);
 
     private readonly ObservableCollection<ObservablePoint>[] _groupPoints =
     [
+        [],
         [],
         [],
         [],
@@ -94,7 +96,7 @@ public sealed class IqChartModel
     }
 
     /// <summary>
-    /// 描画系列です（GROUP A〜D）。
+    /// 描画系列です（GROUP A〜F）。
     /// </summary>
     public ISeries[] Series { get; }
 

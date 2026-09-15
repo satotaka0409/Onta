@@ -132,7 +132,7 @@ public sealed partial class FileWavCodec
 
         var sc = baseSubcarriers switch
         {
-            40 or 32 or 24 => 16,
+            48 or 40 or 32 or 24 => 16,
             16 or 8 => 8,
             _ => throw new ArgumentOutOfRangeException(nameof(baseSubcarriers), baseSubcarriers, "Unsupported subcarrier count.")
         };
@@ -1232,7 +1232,7 @@ public sealed partial class FileWavCodec
         }
 
         var subcarriers = blockHeader[8];
-        if (subcarriers is not (8 or 16 or 24 or 32 or 40))
+        if (subcarriers is not (8 or 16 or 24 or 32 or 40 or 48))
         {
             throw new InvalidDataException($"Invalid block header subcarrier count: {subcarriers}.");
         }

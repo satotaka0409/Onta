@@ -14,8 +14,10 @@ alwaysApply: true
   - `.cursor/rules/data_struct.mdc`
 - 変調仕様
   - `.cursor/rules/modulation.mdc`
+  - 要点: SC 8/16/24/32/40/48、Δf=223.9Hz、SC-24族起点550Hz / SC-8族起点650Hz、Group E/F は変調1段下げ、FFT=256固定
 - 画面仕様
   - `.cursor/rules/画面仕様.mdc`（実装: WPF + LiveCharts2、`Onta_core/src/view/`）
+  - 送信ラジオは 8–48 SC、I-Q 点色は A–F（青/緑/白/オレンジ/茶/紫）
 
 ## AIへの依頼テンプレート
 

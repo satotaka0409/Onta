@@ -124,6 +124,26 @@ public sealed class OntaTest6
     }
 
     [Fact]
+    public void GroupEF_Downgrade_AdjustsBitsPerOfdmSymbol_For48Sc64Qam()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(48, ChannelMode.Mono),
+            activeSubcarriers: 48,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qam64,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 7,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 48SC: 12 pilot + 36 data。Group E/F の12本を16QAMに落として 192bit/symbol。
+        Assert.Equal(192, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
     public void SampleCountForBitCount_UsesDowngradedGroupECapacity()
     {
         var config = new OfdmConfig(
@@ -144,7 +164,92 @@ public sealed class OntaTest6
     }
 
     [Fact]
-    public void PilotEqualizer_IsClosedWithinEachPilotVoronoiCell()
+    public void PilotBins_AreGroupLocalCh2AndCh6()
+    {
+        foreach (var (sc, grid) in new[]
+                 {
+                     (16, OfdmCarrierGrid.Sc8Family),
+                     (40, OfdmCarrierGrid.Sc24Family),
+                     (48, OfdmCarrierGrid.Sc24Family)
+                 })
+        {
+            var config = new OfdmConfig(
+                fftSize: OfdmConfig.ResolveFftSize(sc, ChannelMode.Mono),
+                activeSubcarriers: sc,
+                cyclicPrefixLength: 16,
+                ofdmSymbolCount: 1,
+                modulationScheme: ModulationScheme.Qpsk,
+                channelMode: ChannelMode.Mono,
+                pilotSpacing: 8,
+                randomSeed: 1,
+                carrierGrid: grid);
+            var ofdm = new OfdmGenerator(config);
+            var allCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
+            var pilotSet = GetPrivateField<List<int>>(ofdm, "_leftPilotBins").ToHashSet();
+
+            Assert.Equal(sc / 4, pilotSet.Count); // グループあたり2本
+            for (var start = 0; start < allCarriers.Count; start += 8)
+            {
+                Assert.Contains(allCarriers[start + 2], pilotSet);
+                Assert.Contains(allCarriers[start + 6], pilotSet);
+                Assert.DoesNotContain(allCarriers[start + 1], pilotSet);
+                Assert.DoesNotContain(allCarriers[start + 5], pilotSet);
+            }
+        }
+    }
+
+    [Fact]
+    public void PilotCoverage_IsTwoBelowOneAboveWithinGroup()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(16, ChannelMode.Mono),
+            activeSubcarriers: 16,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qpsk,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 1,
+            carrierGrid: OfdmCarrierGrid.Sc8Family);
+        var ofdm = new OfdmGenerator(config);
+        var allCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
+        var grouped = GetPrivateField<int[][]>(ofdm, "_leftPilotGroupedCarriers");
+        var pilots = GetPrivateField<List<int>>(ofdm, "_leftPilotBins");
+
+        Assert.Equal(4, grouped.Length);
+        for (var g = 0; g < 2; g++)
+        {
+            var baseIdx = g * 8;
+            // CH2 パイロット → CH0..CH3
+            var lowPilot = allCarriers[baseIdx + 2];
+            var lowGroup = pilots.IndexOf(lowPilot);
+            Assert.Equal(
+                new[]
+                {
+                    allCarriers[baseIdx],
+                    allCarriers[baseIdx + 1],
+                    allCarriers[baseIdx + 2],
+                    allCarriers[baseIdx + 3]
+                },
+                grouped[lowGroup]);
+
+            // CH6 パイロット → CH4..CH7
+            var highPilot = allCarriers[baseIdx + 6];
+            var highGroup = pilots.IndexOf(highPilot);
+            Assert.Equal(
+                new[]
+                {
+                    allCarriers[baseIdx + 4],
+                    allCarriers[baseIdx + 5],
+                    allCarriers[baseIdx + 6],
+                    allCarriers[baseIdx + 7]
+                },
+                grouped[highGroup]);
+        }
+    }
+
+    [Fact]
+    public void PilotEqualizer_IsClosedWithinTwoBelowOneAboveCoverage()
     {
         var config = new OfdmConfig(
             fftSize: OfdmConfig.ResolveFftSize(16, ChannelMode.Mono),
@@ -160,7 +265,7 @@ public sealed class OntaTest6
 
         var allCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
         var pilotBins = GetPrivateField<List<int>>(ofdm, "_leftPilotBins").OrderBy(x => x).ToList();
-        // 16SC = 2グループ × CH1/CH5 = 4パイロット
+        // 16SC = 2グループ × CH2/CH6 = 4パイロット
         Assert.Equal(4, pilotBins.Count);
 
         var pilotGains = new[] { 0.5, 2.0, 0.7, 1.6 };
@@ -187,15 +292,18 @@ public sealed class OntaTest6
 
         foreach (var carrier in allCarriers)
         {
-            var group = (int)groupMethod!.Invoke(null, [carrier, pilotBins])!;
+            var group = (int)groupMethod!.Invoke(null, [carrier, allCarriers, pilotBins])!;
             Assert.InRange(group, 0, pilotBins.Count - 1);
             var expected = equalizers[pilotBins[group]];
             Assert.InRange((equalizers[carrier] - expected).Magnitude, 0.0, 1e-9);
         }
+
+        // CH3 と CH4 は別パイロット担当（下2上1の境界）
+        Assert.True((equalizers[allCarriers[3]] - equalizers[allCarriers[4]]).Magnitude > 0.3);
     }
 
     [Fact]
-    public void PilotEqualizer_IsClosedWithinEachPilotVoronoiCell_ForStereoLeftAndRight()
+    public void PilotEqualizer_IsClosedWithinTwoBelowOneAboveCoverage_ForStereoLeftAndRight()
     {
         var config = new OfdmConfig(
             fftSize: OfdmConfig.ResolveFftSize(16, ChannelMode.Stereo),
@@ -240,7 +348,7 @@ public sealed class OntaTest6
         Assert.True((leftEqualizers![leftPilots[0]] - leftEqualizers[leftPilots[1]]).Magnitude > 0.2);
         foreach (var carrier in leftCarriers)
         {
-            var group = (int)groupMethod!.Invoke(null, [carrier, leftPilots])!;
+            var group = (int)groupMethod!.Invoke(null, [carrier, leftCarriers, leftPilots])!;
             var expected = leftEqualizers[leftPilots[group]];
             Assert.InRange((leftEqualizers[carrier] - expected).Magnitude, 0.0, 1e-9);
         }
@@ -258,7 +366,7 @@ public sealed class OntaTest6
         Assert.True((rightEqualizers![rightPilots[0]] - rightEqualizers[rightPilots[1]]).Magnitude > 0.2);
         foreach (var carrier in rightCarriers)
         {
-            var group = (int)groupMethod.Invoke(null, [carrier, rightPilots])!;
+            var group = (int)groupMethod.Invoke(null, [carrier, rightCarriers, rightPilots])!;
             var expected = rightEqualizers[rightPilots[group]];
             Assert.InRange((rightEqualizers[carrier] - expected).Magnitude, 0.0, 1e-9);
         }

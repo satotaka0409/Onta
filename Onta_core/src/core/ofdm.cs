@@ -71,7 +71,7 @@ public sealed record OfdmConfig
     public int FftSize { get; }
 
     /// <summary>
-    /// 有効サブキャリア数（8/16/24/32）。
+    /// 有効サブキャリア数（8/16/24/32/40/48）。
     /// </summary>
     public int ActiveSubcarriers { get; }
 
@@ -172,10 +172,10 @@ public sealed record OfdmConfig
             throw new ArgumentException("FFT size must be a power of two and > 0.");
         }
 
-        if (ActiveSubcarriers is not (8 or 16 or 24 or 32 or 40))
+        if (ActiveSubcarriers is not (8 or 16 or 24 or 32 or 40 or 48))
         {
             throw new ArgumentException(
-            "Active subcarriers must be 8, 16, 24, 32, or 40 (modulation.mdc).",
+            "Active subcarriers must be 8, 16, 24, 32, 40, or 48 (modulation.mdc).",
                 nameof(activeSubcarriers));
         }
 
@@ -286,6 +286,12 @@ public sealed record OfdmConfig
     public static int[] ResolveGroupELeftBins() => Enumerable.Range(33, 8).ToArray();
 
     /// <summary>
+    /// Group F の左チャネルキャリア番号を返します。
+    /// </summary>
+    /// <returns>Group F のキャリア番号配列。</returns>
+    public static int[] ResolveGroupFLeftBins() => Enumerable.Range(41, 8).ToArray();
+
+    /// <summary>
     /// サブキャリア数に応じた概念左キャリア番号列を返します。
     /// </summary>
     /// <param name="activeSubcarriers">有効サブキャリア数。</param>
@@ -307,10 +313,17 @@ public sealed record OfdmConfig
                 .Concat(ResolveGroupDLeftBins())
                 .Concat(ResolveGroupELeftBins())
                 .ToArray(),
+            48 => ResolveGroupALeftBins()
+                .Concat(ResolveGroupBLeftBins())
+                .Concat(ResolveGroupCLeftBins())
+                .Concat(ResolveGroupDLeftBins())
+                .Concat(ResolveGroupELeftBins())
+                .Concat(ResolveGroupFLeftBins())
+                .ToArray(),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(activeSubcarriers),
                 activeSubcarriers,
-                "Active subcarriers must be 8, 16, 24, 32, or 40.")
+                "Active subcarriers must be 8, 16, 24, 32, 40, or 48.")
         };
 
     /// <summary>
@@ -324,7 +337,7 @@ public sealed record OfdmConfig
     /// <summary>全 SC 共通の搬送波間隔（Hz）。</summary>
     public const double CarrierSpacingHz = 223.9;
 
-    /// <summary>SC-24/32/40 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
+    /// <summary>SC-24/32/40/48 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア間隔（Hz）。</returns>
     public static double DeltaF24(int sampleRate = 44100) => CarrierSpacingHz;
@@ -337,7 +350,7 @@ public sealed record OfdmConfig
     /// <summary>SC-8/16 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
     public const double Sc8StartHz = 650.0;
 
-    /// <summary>SC-24/32/40 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
+    /// <summary>SC-24/32/40/48 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
     public const double Sc24StartHz = 550.0;
 
     /// <summary>SC-8/16 系列の左チャネルキャリア周波数を返します。</summary>
@@ -354,15 +367,15 @@ public sealed record OfdmConfig
     public static double RightCarrierHzSc8(int zeroBasedChannelIndex, int sampleRate = 44100) =>
         LeftCarrierHzSc8(zeroBasedChannelIndex, sampleRate) + (CarrierSpacingHz / 2.0);
 
-    /// <summary>SC-24/32/40 系列の左チャネルキャリア周波数を返します。</summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..40）。</param>
+    /// <summary>SC-24/32/40/48 系列の左チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..48）。</param>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
     public static double LeftCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
         Sc24StartHz + (conceptualLeftBin - 1) * CarrierSpacingHz;
 
-    /// <summary>SC-24/32/40 系列の右チャネルキャリア周波数を返します。</summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..40）。</param>
+    /// <summary>SC-24/32/40/48 系列の右チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..48）。</param>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
     public static double RightCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
@@ -388,9 +401,9 @@ public sealed record OfdmConfig
         activeSubcarriers is 8 or 16 ? OfdmCarrierGrid.Sc8Family : OfdmCarrierGrid.Sc24Family;
 
     /// <summary>
-    /// 概念左キャリア番号からサブキャリアグループ ID（0=A, 1=B, 2=C, 3=D, 4=E）を返します。
+    /// 概念左キャリア番号からサブキャリアグループ ID（0=A..5=F）を返します。
     /// </summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..40）。</param>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..48）。</param>
     /// <returns>グループ ID。</returns>
     public static byte ResolveSubcarrierGroupId(int conceptualLeftBin) =>
         conceptualLeftBin switch
@@ -400,10 +413,11 @@ public sealed record OfdmConfig
             >= 17 and <= 24 => 2,
             >= 25 and <= 32 => 3,
             >= 33 and <= 40 => 4,
+            >= 41 and <= 48 => 5,
             _ => throw new ArgumentOutOfRangeException(
                 nameof(conceptualLeftBin),
                 conceptualLeftBin,
-                "Conceptual left bin must be in range 1..40.")
+                "Conceptual left bin must be in range 1..48.")
         };
 
     /// <summary>
@@ -575,7 +589,18 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
+    /// パイロットが担当する下側チャネル数（自身を含まない）。
+    /// </summary>
+    private const int PilotCoverChannelsBelow = 2;
+
+    /// <summary>
+    /// パイロットが担当する上側チャネル数（自身を含まない）。
+    /// </summary>
+    private const int PilotCoverChannelsAbove = 1;
+
+    /// <summary>
     /// BuildPilotGroupedCarriers を構築します。
+    /// 各パイロットは「下2CH + 自身 + 上1CH」を担当します（グループ境界内でクランプ）。
     /// </summary>
     /// <returns>処理結果。</returns>
     private static int[][] BuildPilotGroupedCarriers(List<int> allCarriers, List<int> orderedPilots)
@@ -591,10 +616,28 @@ public sealed partial class OfdmGenerator
             grouped[i] = new List<int>();
         }
 
-        foreach (var carrier in allCarriers)
+        var carrierIndexByBin = new Dictionary<int, int>(allCarriers.Count);
+        for (var i = 0; i < allCarriers.Count; i++)
         {
-            var groupIndex = ResolvePilotGroupIndex(carrier, orderedPilots);
-            grouped[groupIndex].Add(carrier);
+            carrierIndexByBin[allCarriers[i]] = i;
+        }
+
+        var groupSize = 8;
+        for (var pi = 0; pi < orderedPilots.Count; pi++)
+        {
+            if (!carrierIndexByBin.TryGetValue(orderedPilots[pi], out var pilotIndex))
+            {
+                continue;
+            }
+
+            var groupStart = (pilotIndex / groupSize) * groupSize;
+            var groupEnd = Math.Min(groupStart + groupSize, allCarriers.Count) - 1;
+            var coverStart = Math.Max(groupStart, pilotIndex - PilotCoverChannelsBelow);
+            var coverEnd = Math.Min(groupEnd, pilotIndex + PilotCoverChannelsAbove);
+            for (var i = coverStart; i <= coverEnd; i++)
+            {
+                grouped[pi].Add(allCarriers[i]);
+            }
         }
 
         var result = new int[grouped.Length][];
@@ -607,10 +650,11 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// IsGroupEConceptualLeftBin を判定します。
+    /// Group E/F（変調1段下げ対象）の概念左キャリアか判定します。
     /// </summary>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
-    private static bool IsGroupEConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 33 and <= 40;
+    private static bool IsDowngradedGroupConceptualLeftBin(int conceptualLeftBin) =>
+        conceptualLeftBin is >= 33 and <= 48;
 
     /// <summary>
     /// ResolveEffectiveCarrierModulation を解決します。
@@ -620,7 +664,7 @@ public sealed partial class OfdmGenerator
         ModulationScheme configuredScheme,
         int conceptualLeftBin)
     {
-        if (!IsGroupEConceptualLeftBin(conceptualLeftBin))
+        if (!IsDowngradedGroupConceptualLeftBin(conceptualLeftBin))
         {
             return configuredScheme;
         }
@@ -3836,32 +3880,57 @@ public sealed partial class OfdmGenerator
 
     /// <summary>
     /// 指定キャリアが属するパイロット群インデックスを返します。
+    /// 担当範囲は「下2CH + 自身 + 上1CH」（8本グループ内でクランプ）です。
     /// </summary>
     /// <param name="carrierBin">対象キャリアの周波数ビン。</param>
+    /// <param name="allCarriers">概念順の全キャリアビン。</param>
     /// <param name="orderedPilots">昇順に並んだパイロットビン列。</param>
     /// <returns>パイロット群インデックス。</returns>
-    private static int ResolvePilotGroupIndex(int carrierBin, List<int> orderedPilots)
+    private static int ResolvePilotGroupIndex(
+        int carrierBin,
+        List<int> allCarriers,
+        List<int> orderedPilots)
     {
         if (orderedPilots.Count <= 1)
         {
             return 0;
         }
 
-        if (carrierBin <= orderedPilots[0])
+        var carrierIndex = allCarriers.IndexOf(carrierBin);
+        if (carrierIndex < 0)
         {
             return 0;
         }
 
-        for (var i = 0; i < orderedPilots.Count - 1; i++)
+        const int groupSize = 8;
+        var groupStart = (carrierIndex / groupSize) * groupSize;
+        var groupEnd = Math.Min(groupStart + groupSize, allCarriers.Count) - 1;
+        var best = 0;
+        var bestDist = int.MaxValue;
+        for (var pi = 0; pi < orderedPilots.Count; pi++)
         {
-            var mid = (orderedPilots[i] + orderedPilots[i + 1]) / 2;
-            if (carrierBin <= mid)
+            var pilotIndex = allCarriers.IndexOf(orderedPilots[pi]);
+            if (pilotIndex < groupStart || pilotIndex > groupEnd)
             {
-                return i;
+                continue;
+            }
+
+            var coverStart = Math.Max(groupStart, pilotIndex - PilotCoverChannelsBelow);
+            var coverEnd = Math.Min(groupEnd, pilotIndex + PilotCoverChannelsAbove);
+            if (carrierIndex < coverStart || carrierIndex > coverEnd)
+            {
+                continue;
+            }
+
+            var dist = Math.Abs(carrierIndex - pilotIndex);
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                best = pi;
             }
         }
 
-        return orderedPilots.Count - 1;
+        return bestDist == int.MaxValue ? 0 : best;
     }
 
     private sealed class PilotGroupAgcState
@@ -4612,7 +4681,7 @@ public sealed partial class OfdmGenerator
     /// <returns>処理結果。</returns>
     private static HashSet<int> SelectPilotBins(List<int> orderedBins, int spacing)
     {
-        // グループ内 CH1/CH5（0起点で index 1 と 5）をパイロットにする（modulation.mdc）。
+        // グループ内 CH2/CH6（0起点で index 2 と 6）をパイロットにする（modulation.mdc）。
         var pilots = new HashSet<int>();
         var groupSize = spacing > 0 ? spacing : 8;
         for (var start = 0; start < orderedBins.Count; start += groupSize)
@@ -4623,14 +4692,14 @@ public sealed partial class OfdmGenerator
                 continue;
             }
 
-            if (1 < length)
+            if (2 < length)
             {
-                pilots.Add(orderedBins[start + 1]);
+                pilots.Add(orderedBins[start + 2]);
             }
 
-            if (5 < length)
+            if (6 < length)
             {
-                pilots.Add(orderedBins[start + 5]);
+                pilots.Add(orderedBins[start + 6]);
             }
             else if (length >= 3)
             {

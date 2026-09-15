@@ -272,13 +272,12 @@ internal sealed class OutputCoreWorker
                     wavWriter?.WriteChunk(leftChunk, rightChunk);
                     if (player is not null)
                     {
-                        // キュー投入時点のサンプル数から実時間進捗を近似する。
-                        player.AddSamples(leftChunk, rightChunk, samplesQueued =>
+                        void SyncPlayheadViz()
                         {
-                            emittedSamples += samplesQueued;
-                            PublishEmittedSamples(emittedSamples);
                             var liveElapsed = ResolveElapsedSeconds(
                                 emittedSamples, player, profile.SampleRate, totalSamples);
+                            spectrumPublisher.PublishPlayhead(
+                                ResolvePlayedSamples(emittedSamples, player));
                             UpdateSnapshot(
                                 100.0 * liveElapsed / Math.Max(totalSeconds, 1e-9),
                                 liveElapsed,
@@ -289,12 +288,31 @@ internal sealed class OutputCoreWorker
                                 false,
                                 fileSizeText,
                                 blockCountText);
-                        });
+                        }
+
+                        // キュー投入時点のサンプル数から実時間進捗を近似する。
+                        player.AddSamples(
+                            leftChunk,
+                            rightChunk,
+                            onSamplesQueued: samplesQueued =>
+                            {
+                                emittedSamples += samplesQueued;
+                                PublishEmittedSamples(emittedSamples);
+                                SyncPlayheadViz();
+                            },
+                            onBufferWait: () =>
+                            {
+                                // バッファ待ち中も再生ヘッドに合わせて FFT/進捗を進める。
+                                PublishEmittedSamples(emittedSamples);
+                                SyncPlayheadViz();
+                            });
                     }
                     else
                     {
                         emittedSamples += leftChunk.Length;
                         PublishEmittedSamples(emittedSamples);
+                        // WAV のみ: 再生が無いのでエンコード位置をそのまま可視化する。
+                        spectrumPublisher.PublishPlayhead(emittedSamples);
                         var elapsed = ResolveElapsedSeconds(
                             emittedSamples, player, profile.SampleRate, totalSamples);
                         UpdateSnapshot(
@@ -328,6 +346,7 @@ internal sealed class OutputCoreWorker
                     }
 
                     PublishEmittedSamples(emittedSamples);
+                    spectrumPublisher.PublishPlayhead(ResolvePlayedSamples(emittedSamples, player));
                     var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
                     UpdateSnapshot(
                         100.0 * elapsed / Math.Max(totalSeconds, 1e-9),
@@ -421,6 +440,19 @@ internal sealed class OutputCoreWorker
     }
 
     /// <summary>
+    /// 再生キュー残量を差し引いた実再生サンプル位置を返します。
+    /// </summary>
+    private static long ResolvePlayedSamples(long emittedSamples, RealtimePcmPlayer player)
+    {
+        if (player.IsDisposed)
+        {
+            return Math.Max(0L, emittedSamples);
+        }
+
+        return Math.Max(0L, emittedSamples - player.BufferedSampleFrames);
+    }
+
+    /// <summary>
     /// 再生キュー残量を考慮して経過秒を推定します。
     /// </summary>
     /// <param name="emittedSamples">投入済みサンプル数。</param>
@@ -441,7 +473,7 @@ internal sealed class OutputCoreWorker
         }
 
         // 出力済み総数から未再生バッファを差し引いて実再生数を推定する。
-        var played = Math.Max(0L, emittedSamples - player.BufferedSampleFrames);
+        var played = ResolvePlayedSamples(emittedSamples, player);
         return Math.Min(played, totalSamples) / (double)rate;
     }
 
@@ -516,65 +548,118 @@ internal sealed class OutputCoreWorker
     }
 
     /// <summary>
-    /// 送信 PCM チャンクから FFT スペクトルを間引き更新します（再生ペースに追従）。
+    /// 送信 PCM をリングに保持し、再生ヘッド位置の FFT を間引き更新します。
     /// </summary>
     private sealed class TxPcmSpectrumPublisher
     {
         private const int FftSize = 256;
         private const int MinPublishIntervalMs = 33;
+        /// <summary>再生バッファ（3秒）＋余白を覆うリング長（秒）。</summary>
+        private const double RingSeconds = 4.0;
+
         private readonly CoreExecutionStatusBoard _board;
         private readonly int _sampleRate;
         private readonly bool _stereo;
+        private readonly float[] _leftRing;
+        private readonly float[] _rightRing;
+        private readonly int _capacity;
         private readonly Complex[] _leftWindow = new Complex[FftSize];
         private readonly Complex[] _rightWindow = new Complex[FftSize];
         private readonly Complex[] _fftWork = new Complex[FftSize];
-        private int _count;
+        private readonly object _sync = new();
+        private long _writeTotal;
         private long _lastPublishMs = -1;
+        private long _lastPublishedPlayhead = -1;
 
+        /// <summary>
+        /// 再生ヘッド同期 FFT パブリッシャを初期化します。
+        /// </summary>
         public TxPcmSpectrumPublisher(CoreExecutionStatusBoard board, int sampleRate, bool stereo)
         {
             _board = board;
             _sampleRate = Math.Max(1, sampleRate);
             _stereo = stereo;
+            _capacity = Math.Max(FftSize * 2, (int)(_sampleRate * RingSeconds));
+            _leftRing = new float[_capacity];
+            _rightRing = new float[_capacity];
             _board.SetFftStereoMode(stereo);
         }
 
+        /// <summary>
+        /// エンコード済み PCM をリングへ追記します（FFT は PublishPlayhead で行う）。
+        /// </summary>
         public void Push(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
         {
-            for (var i = 0; i < left.Length; i++)
+            if (left.Length == 0)
             {
-                _leftWindow[_count] = left[i];
-                if (_stereo && i < right.Length)
+                return;
+            }
+
+            lock (_sync)
+            {
+                for (var i = 0; i < left.Length; i++)
                 {
-                    _rightWindow[_count] = right[i];
+                    var idx = (int)(_writeTotal % _capacity);
+                    _leftRing[idx] = (float)left[i].Real;
+                    _rightRing[idx] = _stereo && i < right.Length ? (float)right[i].Real : 0f;
+                    _writeTotal++;
                 }
-
-                _count++;
-                if (_count < FftSize)
-                {
-                    continue;
-                }
-
-                TryPublish();
-
-                // 50% オーバーラップで次窓へ
-                var hop = FftSize / 2;
-                Array.Copy(_leftWindow, hop, _leftWindow, 0, FftSize - hop);
-                if (_stereo)
-                {
-                    Array.Copy(_rightWindow, hop, _rightWindow, 0, FftSize - hop);
-                }
-
-                _count = FftSize - hop;
             }
         }
 
-        private void TryPublish()
+        /// <summary>
+        /// 指定再生サンプル位置の直前窓で FFT を更新します。
+        /// </summary>
+        /// <param name="playedSamples">実再生済みサンプル数（バッファ差し引き後）。</param>
+        public void PublishPlayhead(long playedSamples)
         {
+            if (playedSamples < FftSize)
+            {
+                return;
+            }
+
             var now = Environment.TickCount64;
             if (_lastPublishMs >= 0 && now - _lastPublishMs < MinPublishIntervalMs)
             {
                 return;
+            }
+
+            // 再生ヘッドが進んでいないときは再計算しない。
+            if (_lastPublishedPlayhead >= 0 && playedSamples - _lastPublishedPlayhead < FftSize / 4)
+            {
+                return;
+            }
+
+            lock (_sync)
+            {
+                var end = Math.Min(playedSamples, _writeTotal);
+                if (end < FftSize)
+                {
+                    return;
+                }
+
+                var start = end - FftSize;
+                // リングから上書き済みなら可視化できない。
+                if (_writeTotal - start > _capacity)
+                {
+                    start = _writeTotal - _capacity;
+                    end = start + FftSize;
+                    if (end > _writeTotal)
+                    {
+                        return;
+                    }
+                }
+
+                for (var i = 0; i < FftSize; i++)
+                {
+                    var sampleIndex = start + i;
+                    var ringIndex = (int)(sampleIndex % _capacity);
+                    _leftWindow[i] = new Complex(_leftRing[ringIndex], 0.0);
+                    if (_stereo)
+                    {
+                        _rightWindow[i] = new Complex(_rightRing[ringIndex], 0.0);
+                    }
+                }
             }
 
             OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_leftWindow, _fftWork);
@@ -586,6 +671,7 @@ internal sealed class OutputCoreWorker
             }
 
             _lastPublishMs = now;
+            _lastPublishedPlayhead = playedSamples;
         }
     }
 }

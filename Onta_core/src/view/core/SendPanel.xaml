@@ -22,16 +22,16 @@
       <!-- 送信中はここ全体を Disable（ストップだけ右側に残す） -->
       <Grid x:Name="SettingsHost">
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="100"/>
-          <ColumnDefinition Width="100"/>
-          <ColumnDefinition Width="100"/>
+          <ColumnDefinition Width="90"/>
           <ColumnDefinition Width="140"/>
+          <ColumnDefinition Width="95"/>
+          <ColumnDefinition Width="90"/>
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
         <GroupBox Header="チャンネル"
                   Margin="4">
-          <StackPanel Margin="4">
+          <StackPanel Margin="2">
             <RadioButton x:Name="MonoRadio"
                          Content="モノラル"
                          GroupName="Channel"
@@ -46,39 +46,46 @@
         <GroupBox Grid.Column="1"
                   Header="サブキャリア"
                   Margin="4">
-          <StackPanel Margin="4">
+          <UniformGrid Columns="2"
+                       Margin="3">
             <RadioButton Content="8-SC"
                          Tag="8"
                          GroupName="Subcarrier"
                          IsChecked="True"
-                         Checked="OnSettingsChanged"/>
+                         Checked="OnSettingsChanged"
+                         Margin="0,0,4,2"/>
             <RadioButton Content="16-SC"
                          Tag="16"
                          GroupName="Subcarrier"
                          Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
+                         Margin="0,0,4,2"/>
             <RadioButton Content="24-SC"
                          Tag="24"
                          GroupName="Subcarrier"
                          Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
+                         Margin="0,0,4,2"/>
             <RadioButton Content="32-SC"
                          Tag="32"
                          GroupName="Subcarrier"
                          Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
+                         Margin="0,0,4,2"/>
             <RadioButton Content="40-SC"
                          Tag="40"
                          GroupName="Subcarrier"
                          Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
-          </StackPanel>
+                         Margin="0,0,4,2"/>
+            <RadioButton Content="48-SC"
+                         Tag="48"
+                         GroupName="Subcarrier"
+                         Checked="OnSettingsChanged"
+                         Margin="0,0,4,2"/>
+          </UniformGrid>
         </GroupBox>
 
         <GroupBox Grid.Column="2"
                   Header="変調"
                   Margin="4">
-          <StackPanel Margin="4">
+          <StackPanel Margin="2">
             <RadioButton Content="BPSK"
                          Tag="Bpsk"
                          GroupName="Modulation"
@@ -103,9 +110,9 @@
         </GroupBox>
 
         <GroupBox Grid.Column="3"
-                  Header="Block Interleave"
+                  Header="Interleave"
                   Margin="4">
-          <StackPanel Margin="4">
+          <StackPanel Margin="2">
             <RadioButton Content="x1"
                          Tag="1"
                          GroupName="Interleave"
@@ -115,14 +122,14 @@
                          Tag="2"
                          GroupName="Interleave"
                          Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
+                         Margin="0,0,0,2"/>
           </StackPanel>
         </GroupBox>
 
         <GroupBox Grid.Column="4"
                   Header="入出力"
                   Margin="4">
-          <Grid Margin="4">
+          <Grid Margin="2">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
