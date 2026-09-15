@@ -69,6 +69,10 @@ public sealed class OntaTest5
         Assert.Equal(Enumerable.Range(1, 16), OfdmConfig.ResolveConceptualLeftBins(16));
         Assert.Equal(Enumerable.Range(1, 24), OfdmConfig.ResolveConceptualLeftBins(24));
         Assert.Equal(Enumerable.Range(1, 32), OfdmConfig.ResolveConceptualLeftBins(32));
+        Assert.Equal(Enumerable.Range(1, 40), OfdmConfig.ResolveConceptualLeftBins(40));
+        Assert.Equal((byte)3, OfdmConfig.ResolveSubcarrierGroupId(32));
+        Assert.Equal((byte)4, OfdmConfig.ResolveSubcarrierGroupId(33));
+        Assert.Equal((byte)4, OfdmConfig.ResolveSubcarrierGroupId(40));
     }
 
     [Fact]
@@ -78,6 +82,7 @@ public sealed class OntaTest5
         Assert.Equal(256, OfdmConfig.ResolveFftSize(16, ChannelMode.Stereo));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(24, ChannelMode.Mono));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(32, ChannelMode.Stereo));
+        Assert.Equal(256, OfdmConfig.ResolveFftSize(40, ChannelMode.Stereo));
         Assert.Equal(OfdmConfig.FixedFftSize, OfdmConfig.ResolveFftSize(8, ChannelMode.Mono));
     }
 
@@ -122,7 +127,7 @@ public sealed class OntaTest5
             OfdmConfig.LeftCarrierHzSc24(1) + (OfdmConfig.CarrierSpacingHz / 2.0),
             OfdmConfig.RightCarrierHzSc24(1),
             6);
-        Assert.Equal(500.0 + (8 * OfdmConfig.CarrierSpacingHz), OfdmConfig.LeftCarrierHzSc24(9), 6);
+        Assert.Equal(550.0 + (8 * OfdmConfig.CarrierSpacingHz), OfdmConfig.LeftCarrierHzSc24(9), 6);
     }
 
     [Fact]
@@ -133,6 +138,16 @@ public sealed class OntaTest5
             "Sample1_test5_x2.wav",
             "Sample1_test5_x2.png",
             nameof(EncodeDecode_QrPng_MatchesOriginal_Mono8ScQpsk_InterleaveX2));
+    }
+
+    [Fact]
+    public void EncodeDecode_QrPng_MatchesOriginal_Mono40ScQpsk()
+    {
+        RoundTrip(
+            BaseProfile with { ActiveSubcarriers = 40, BlockInterleaveFactor = 1 },
+            "Sample1_test5_sc40.wav",
+            "Sample1_test5_sc40.png",
+            nameof(EncodeDecode_QrPng_MatchesOriginal_Mono40ScQpsk));
     }
 
     private static void RoundTrip(FileWavCodecProfile profile, string wavName, string restoredName, string testTitle)

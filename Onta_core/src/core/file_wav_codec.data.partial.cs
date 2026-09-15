@@ -1232,7 +1232,7 @@ public sealed partial class FileWavCodec
         }
 
         var subcarriers = blockHeader[8];
-        if (subcarriers is not (8 or 16 or 24 or 32))
+        if (subcarriers is not (8 or 16 or 24 or 32 or 40))
         {
             throw new InvalidDataException($"Invalid block header subcarrier count: {subcarriers}.");
         }

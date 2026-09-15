@@ -67,6 +67,11 @@
                          GroupName="Subcarrier"
                          Checked="OnSettingsChanged"
                          Margin="0,6,0,0"/>
+            <RadioButton Content="40-SC"
+                         Tag="40"
+                         GroupName="Subcarrier"
+                         Checked="OnSettingsChanged"
+                         Margin="0,6,0,0"/>
           </StackPanel>
         </GroupBox>
 

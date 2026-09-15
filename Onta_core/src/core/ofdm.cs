@@ -172,10 +172,10 @@ public sealed record OfdmConfig
             throw new ArgumentException("FFT size must be a power of two and > 0.");
         }
 
-        if (ActiveSubcarriers is not (8 or 16 or 24 or 32))
+        if (ActiveSubcarriers is not (8 or 16 or 24 or 32 or 40))
         {
             throw new ArgumentException(
-                "Active subcarriers must be 8, 16, 24, or 32 (modulation.mdc).",
+            "Active subcarriers must be 8, 16, 24, 32, or 40 (modulation.mdc).",
                 nameof(activeSubcarriers));
         }
 
@@ -280,6 +280,12 @@ public sealed record OfdmConfig
     public static int[] ResolveGroupDLeftBins() => Enumerable.Range(25, 8).ToArray();
 
     /// <summary>
+    /// Group E の左チャネルキャリア番号を返します。
+    /// </summary>
+    /// <returns>Group E のキャリア番号配列。</returns>
+    public static int[] ResolveGroupELeftBins() => Enumerable.Range(33, 8).ToArray();
+
+    /// <summary>
     /// サブキャリア数に応じた概念左キャリア番号列を返します。
     /// </summary>
     /// <param name="activeSubcarriers">有効サブキャリア数。</param>
@@ -295,10 +301,16 @@ public sealed record OfdmConfig
                 .Concat(ResolveGroupCLeftBins())
                 .Concat(ResolveGroupDLeftBins())
                 .ToArray(),
+            40 => ResolveGroupALeftBins()
+                .Concat(ResolveGroupBLeftBins())
+                .Concat(ResolveGroupCLeftBins())
+                .Concat(ResolveGroupDLeftBins())
+                .Concat(ResolveGroupELeftBins())
+                .ToArray(),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(activeSubcarriers),
                 activeSubcarriers,
-                "Active subcarriers must be 8, 16, 24, or 32.")
+                "Active subcarriers must be 8, 16, 24, 32, or 40.")
         };
 
     /// <summary>
@@ -312,7 +324,7 @@ public sealed record OfdmConfig
     /// <summary>全 SC 共通の搬送波間隔（Hz）。</summary>
     public const double CarrierSpacingHz = 223.9;
 
-    /// <summary>SC-24/32 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
+    /// <summary>SC-24/32/40 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア間隔（Hz）。</returns>
     public static double DeltaF24(int sampleRate = 44100) => CarrierSpacingHz;
@@ -325,8 +337,8 @@ public sealed record OfdmConfig
     /// <summary>SC-8/16 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
     public const double Sc8StartHz = 650.0;
 
-    /// <summary>SC-24/32 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
-    public const double Sc24StartHz = 500.0;
+    /// <summary>SC-24/32/40 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
+    public const double Sc24StartHz = 550.0;
 
     /// <summary>SC-8/16 系列の左チャネルキャリア周波数を返します。</summary>
     /// <param name="zeroBasedChannelIndex">0 起点のチャネル番号（A0=0, B0=8）。</param>
@@ -342,15 +354,15 @@ public sealed record OfdmConfig
     public static double RightCarrierHzSc8(int zeroBasedChannelIndex, int sampleRate = 44100) =>
         LeftCarrierHzSc8(zeroBasedChannelIndex, sampleRate) + (CarrierSpacingHz / 2.0);
 
-    /// <summary>SC-24/32 系列の左チャネルキャリア周波数を返します。</summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..32）。</param>
+    /// <summary>SC-24/32/40 系列の左チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..40）。</param>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
     public static double LeftCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
         Sc24StartHz + (conceptualLeftBin - 1) * CarrierSpacingHz;
 
-    /// <summary>SC-24/32 系列の右チャネルキャリア周波数を返します。</summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..32）。</param>
+    /// <summary>SC-24/32/40 系列の右チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..40）。</param>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
     public static double RightCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
@@ -376,9 +388,9 @@ public sealed record OfdmConfig
         activeSubcarriers is 8 or 16 ? OfdmCarrierGrid.Sc8Family : OfdmCarrierGrid.Sc24Family;
 
     /// <summary>
-    /// 概念左キャリア番号からサブキャリアグループ ID（0=A, 1=B, 2=C, 3=D）を返します。
+    /// 概念左キャリア番号からサブキャリアグループ ID（0=A, 1=B, 2=C, 3=D, 4=E）を返します。
     /// </summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..32）。</param>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..40）。</param>
     /// <returns>グループ ID。</returns>
     public static byte ResolveSubcarrierGroupId(int conceptualLeftBin) =>
         conceptualLeftBin switch
@@ -386,7 +398,12 @@ public sealed record OfdmConfig
             >= 1 and <= 8 => 0,
             >= 9 and <= 16 => 1,
             >= 17 and <= 24 => 2,
-            _ => 3
+            >= 25 and <= 32 => 3,
+            >= 33 and <= 40 => 4,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(conceptualLeftBin),
+                conceptualLeftBin,
+                "Conceptual left bin must be in range 1..40.")
         };
 
     /// <summary>
@@ -590,10 +607,10 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// IsGroupDConceptualLeftBin を判定します。
+    /// IsGroupEConceptualLeftBin を判定します。
     /// </summary>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
-    private static bool IsGroupDConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 25 and <= 32;
+    private static bool IsGroupEConceptualLeftBin(int conceptualLeftBin) => conceptualLeftBin is >= 33 and <= 40;
 
     /// <summary>
     /// ResolveEffectiveCarrierModulation を解決します。
@@ -603,7 +620,7 @@ public sealed partial class OfdmGenerator
         ModulationScheme configuredScheme,
         int conceptualLeftBin)
     {
-        if (!IsGroupDConceptualLeftBin(conceptualLeftBin))
+        if (!IsGroupEConceptualLeftBin(conceptualLeftBin))
         {
             return configuredScheme;
         }

@@ -104,11 +104,11 @@ public sealed class OntaTest6
     }
 
     [Fact]
-    public void GroupD_Downgrade_AdjustsBitsPerOfdmSymbol_For32Sc64Qam()
+    public void GroupE_Downgrade_AdjustsBitsPerOfdmSymbol_For40Sc64Qam()
     {
         var config = new OfdmConfig(
-            fftSize: OfdmConfig.ResolveFftSize(32, ChannelMode.Mono),
-            activeSubcarriers: 32,
+            fftSize: OfdmConfig.ResolveFftSize(40, ChannelMode.Mono),
+            activeSubcarriers: 40,
             cyclicPrefixLength: 16,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Qam64,
@@ -119,16 +119,16 @@ public sealed class OntaTest6
 
         var ofdm = new OfdmGenerator(config);
 
-        // 32SC: 8 pilot + 24 data。Group D の6本は16QAMに落として 132bit/symbol。
-        Assert.Equal(132, ofdm.BitsPerOfdmSymbol);
+        // 40SC: 10 pilot + 30 data。Group E の6本のみ16QAMに落として 168bit/symbol。
+        Assert.Equal(168, ofdm.BitsPerOfdmSymbol);
     }
 
     [Fact]
-    public void SampleCountForBitCount_UsesDowngradedGroupDCapacity()
+    public void SampleCountForBitCount_UsesDowngradedGroupECapacity()
     {
         var config = new OfdmConfig(
-            fftSize: OfdmConfig.ResolveFftSize(32, ChannelMode.Mono),
-            activeSubcarriers: 32,
+            fftSize: OfdmConfig.ResolveFftSize(40, ChannelMode.Mono),
+            activeSubcarriers: 40,
             cyclicPrefixLength: 16,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Qam64,
@@ -139,8 +139,8 @@ public sealed class OntaTest6
 
         var ofdm = new OfdmGenerator(config);
 
-        // 265bit は 132bit/symbol なら 3 symbol 必要（144bit/symbol 前提なら 2）。
-        Assert.Equal(3 * ofdm.SamplesPerOfdmSymbol, ofdm.SampleCountForBitCount(265));
+        // 337bit は 168bit/symbol なら 3 symbol 必要（180bit/symbol 前提なら 2）。
+        Assert.Equal(3 * ofdm.SamplesPerOfdmSymbol, ofdm.SampleCountForBitCount(337));
     }
 
     [Fact]
