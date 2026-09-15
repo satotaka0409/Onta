@@ -23,7 +23,14 @@ $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
 $project = Join-Path $PSScriptRoot "Onta_core\Onta_core.csproj"
-$testProject = Join-Path $PSScriptRoot "Onta_core\test\Onta_core.Tests.csproj"
+$testProjects = @(
+    Get-ChildItem -Path (Join-Path $PSScriptRoot "Onta_core") -Recurse -Filter "*.Tests.csproj" -File |
+        ForEach-Object { $_.FullName }
+)
+
+if ($testProjects.Count -eq 0) {
+    throw "No test projects (*.Tests.csproj) were found under Onta_core."
+}
 
 function Resolve-Dotnet {
     param([string]$Candidate)
@@ -58,33 +65,43 @@ function Invoke-Build {
     & $dotnetExe build $project -c $Config --nologo
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    & $dotnetExe build $testProject -c $Config --nologo
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    foreach ($tp in $testProjects) {
+        & $dotnetExe build $tp -c $Config --nologo
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 }
 
 function Invoke-Clean {
     & $dotnetExe clean $project -c $Config --nologo
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    & $dotnetExe clean $testProject -c $Config --nologo
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    foreach ($tp in $testProjects) {
+        & $dotnetExe clean $tp -c $Config --nologo
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 }
 
 function Invoke-Test {
     Invoke-Build
-    & $dotnetExe test $testProject -c $Config --no-build --nologo
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    foreach ($tp in $testProjects) {
+        & $dotnetExe test $tp -c $Config --no-build --nologo
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 }
 
 function Invoke-TestDebug {
     & $dotnetExe build $project -c Debug --nologo
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    & $dotnetExe build $testProject -c Debug --nologo
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    foreach ($tp in $testProjects) {
+        & $dotnetExe build $tp -c Debug --nologo
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 
-    & $dotnetExe test $testProject -c Debug --no-build --nologo
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    foreach ($tp in $testProjects) {
+        & $dotnetExe test $tp -c Debug --no-build --nologo
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 }
 
 switch ($Target) {

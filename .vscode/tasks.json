@@ -75,7 +75,7 @@
 				"Debug",
 				"--blame-hang",
 				"--blame-hang-timeout",
-				"3m",
+				"15m",
 				"--logger",
 				"console;verbosity=normal"
 			],
@@ -90,9 +90,6 @@
 				"C:\\proj\\Onta\\Onta_core\\test\\Onta_core.Tests.csproj",
 				"-c",
 				"Debug",
-				"--blame-hang",
-				"--blame-hang-timeout",
-				"3m",
 				"--logger",
 				"console;verbosity=normal"
 			],
@@ -107,9 +104,26 @@
 				"C:/proj/Onta/Onta_core/test/Onta_core.Tests.csproj",
 				"-c",
 				"Debug",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "test-onta-all-process-blame-hang",
+			"type": "process",
+			"command": "C:/Program Files/dotnet/dotnet.exe",
+			"args": [
+				"test",
+				"C:/proj/Onta/Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
 				"--blame-hang",
 				"--blame-hang-timeout",
-				"3m",
+				"15m",
 				"--logger",
 				"console;verbosity=normal"
 			],

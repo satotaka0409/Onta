@@ -73,6 +73,9 @@ internal static class Program
                 case "9":
                     new OntaTest9().Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise();
                     break;
+                case "10":
+                    new OntaTest10().Decode_ReturnsUserVisibleError_Stereo40Sc16Qam_WithWowLpfAndNoise();
+                    break;
                 case "probe9":
                     ProbeUiStyleDecode(@"C:\proj\Onta\Onta_core\test\out_files\Sample1_test9_rx_st27_qpsk_lpf.wav", correctWow: false);
                     break;
@@ -92,7 +95,7 @@ internal static class Program
                     ProbeTest9BhWowWindow(@"C:\proj\Onta\Onta_core\test\out_files\Sample1_test9_rx_st27_qpsk_lpf.wav");
                     break;
                 default:
-                    Console.Error.WriteLine("Usage: Onta_core.TestHost [...|probe9bh]");
+                    Console.Error.WriteLine("Usage: Onta_core.TestHost [...|10|probe9bh]");
                     return 2;
             }
 
