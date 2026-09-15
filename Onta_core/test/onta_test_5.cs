@@ -28,6 +28,38 @@ public sealed class OntaTest5
         Assert.Equal((8, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 16, ModulationScheme.Bpsk));
         Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 24, ModulationScheme.Qam16));
         Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 32, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 40, ModulationScheme.Qam64));
+    }
+
+    [Fact]
+    public void BlockHeader_RecordsSecondPassSc16_ForBaseSc40()
+    {
+        var (passSc, passMod) = FileWavCodec.ResolveInterleavePassModulation(1, 40, ModulationScheme.Qam64);
+        var method = typeof(FileWavCodec).GetMethod(
+            "BuildBlockHeader",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var blockHash = new byte[32];
+        var fileHash = new byte[64];
+        blockHash[0] = 0x12;
+        fileHash[0] = 0x34;
+
+        var header = (byte[]?)method!.Invoke(
+            null,
+            [
+                (byte)passSc,
+                (byte)passMod,
+                (byte)0,
+                0L,
+                128,
+                blockHash,
+                fileHash
+            ]);
+
+        Assert.NotNull(header);
+        Assert.Equal(16, header![8]);
+        Assert.Equal(2, header[9]);
     }
 
     [Fact]

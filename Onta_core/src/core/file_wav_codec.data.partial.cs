@@ -132,7 +132,7 @@ public sealed partial class FileWavCodec
 
         var sc = baseSubcarriers switch
         {
-            32 or 24 => 16,
+            40 or 32 or 24 => 16,
             16 or 8 => 8,
             _ => throw new ArgumentOutOfRangeException(nameof(baseSubcarriers), baseSubcarriers, "Unsupported subcarrier count.")
         };
