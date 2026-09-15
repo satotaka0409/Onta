@@ -66,7 +66,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"
-                                   MinWidth="320"/>
+                                  MinWidth="320"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
@@ -216,7 +216,8 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <StackPanel Orientation="Horizontal"
+                            Margin="0,0,0,4">
                     <RadioButton x:Name="ErrorRateTabRadio"
                                  Content="エラーレート"
                                  GroupName="ReceiveGraphTab"
@@ -236,7 +237,7 @@
                                 Background="#FF64AAFF"
                                 VerticalAlignment="Center"
                                 Margin="0,0,4,0"/>
-                        <TextBlock Text="青: ビタビ（畳み込み・ブロック単位）"
+                        <TextBlock Text="ビタビ"
                                    VerticalAlignment="Center"
                                    Foreground="{StaticResource BrushTextMuted}"
                                    Margin="0,0,14,0"/>
@@ -245,7 +246,7 @@
                                 Background="#FFFF9646"
                                 VerticalAlignment="Center"
                                 Margin="0,0,4,0"/>
-                        <TextBlock Text="橙: RS／ターボ（ターボは1024B単位）"
+                        <TextBlock Text="RS／ターボ"
                                    VerticalAlignment="Center"
                                    Foreground="{StaticResource BrushTextMuted}"/>
                     </StackPanel>
