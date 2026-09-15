@@ -273,7 +273,11 @@ public partial class MainWindow : Window
         _receiveDetailOpened = false;
         _lastReceiveHistorySnapshotKey = string.Empty;
 
-        if (!_inputCoreWorker.TryStartAudioDecode(ReceivePanel.AudioDeviceNumber, profile, outputDir))
+        if (!_inputCoreWorker.TryStartAudioDecode(
+                ReceivePanel.AudioDeviceNumber,
+                profile,
+                outputDir,
+                ReceivePanel.AudioVolume))
         {
             MessageBox.Show(
                 this,

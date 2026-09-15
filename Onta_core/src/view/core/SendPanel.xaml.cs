@@ -49,7 +49,21 @@ public partial class SendPanel : UserControl
             WavOutputPath: WavPathBox.Text,
             PlayAudio: !writeWav,
             AudioDeviceNumber: ReadSelectedAudioDeviceNumber(),
-            AudioDeviceName: ReadSelectedAudioDeviceName());
+            AudioDeviceName: ReadSelectedAudioDeviceName(),
+            AudioVolume: ReadAudioVolume());
+    }
+
+    /// <summary>
+    /// 音量スライダー値（0〜1）を返します。
+    /// </summary>
+    private double ReadAudioVolume()
+    {
+        if (AudioVolumeSlider is null)
+        {
+            return 0.8;
+        }
+
+        return Math.Clamp(AudioVolumeSlider.Value / 100.0, 0.0, 1.0);
     }
 
     /// <summary>
@@ -102,6 +116,16 @@ public partial class SendPanel : UserControl
 
     private void OnAudioDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnAudioVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (AudioVolumeValueText is not null)
+        {
+            AudioVolumeValueText.Text = $"{(int)Math.Round(e.NewValue)}%";
+        }
+
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 

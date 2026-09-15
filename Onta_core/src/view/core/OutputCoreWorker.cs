@@ -234,7 +234,7 @@ internal sealed class OutputCoreWorker
                     settings.AudioDeviceNumber,
                     profile.SampleRate,
                     profile.ChannelMode,
-                    profile.SamplePeak);
+                    settings.AudioVolume);
                 lock (_sync)
                 {
                     _player = player;

@@ -107,7 +107,8 @@ internal sealed class InputCoreWorker : IDisposable
     public bool TryStartAudioDecode(
         int deviceNumber,
         FileWavCodecProfile profile,
-        string? outputDirectory = null)
+        string? outputDirectory = null,
+        double inputGain = 0.8)
     {
         ArgumentNullException.ThrowIfNull(profile);
 
@@ -173,7 +174,7 @@ internal sealed class InputCoreWorker : IDisposable
             session.Start();
             try
             {
-                capture.Start(deviceNumber, profile.ChannelMode, profile.SampleRate);
+                capture.Start(deviceNumber, profile.ChannelMode, profile.SampleRate, inputGain);
             }
             catch (Exception ex)
             {

@@ -11,6 +11,7 @@ namespace Onta.View.Core;
 internal sealed class RealtimePcmCapture : IDisposable
 {
     private WaveInEvent? _waveIn;
+    private double _inputGain = 1.0;
     private bool _disposed;
 
     /// <summary>
@@ -34,11 +35,17 @@ internal sealed class RealtimePcmCapture : IDisposable
     /// <param name="deviceNumber">WaveIn デバイス番号（-1 は既定）。</param>
     /// <param name="channelMode">モノラル / ステレオ。</param>
     /// <param name="sampleRate">サンプルレート。</param>
-    public void Start(int deviceNumber, Onta.Core.ChannelMode channelMode, int sampleRate = 44100)
+    /// <param name="inputGain">入力ゲイン（0〜1）。</param>
+    public void Start(
+        int deviceNumber,
+        Onta.Core.ChannelMode channelMode,
+        int sampleRate = 44100,
+        double inputGain = 1.0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         Stop();
 
+        _inputGain = inputGain <= 0.0 ? 0.0 : Math.Clamp(inputGain, 0.05, 1.0);
         var channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
         var waveIn = new WaveInEvent
         {
@@ -117,14 +124,15 @@ internal sealed class RealtimePcmCapture : IDisposable
             var right = format.Channels >= 2 ? new Complex[frames] : Array.Empty<Complex>();
             var src = e.Buffer;
             var offset = 0;
+            var gain = _inputGain;
             for (var i = 0; i < frames; i++)
             {
-                var l = BitConverter.ToInt16(src, offset) / 32768.0;
+                var l = BitConverter.ToInt16(src, offset) / 32768.0 * gain;
                 offset += 2;
                 left[i] = new Complex(l, 0.0);
                 if (format.Channels >= 2)
                 {
-                    var r = BitConverter.ToInt16(src, offset) / 32768.0;
+                    var r = BitConverter.ToInt16(src, offset) / 32768.0 * gain;
                     offset += 2;
                     right[i] = new Complex(r, 0.0);
                 }

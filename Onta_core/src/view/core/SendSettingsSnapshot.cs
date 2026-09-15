@@ -15,7 +15,8 @@ public sealed record SendSettingsSnapshot(
     string WavOutputPath,
     bool PlayAudio,
     int AudioDeviceNumber,
-    string AudioDeviceName);
+    string AudioDeviceName,
+    double AudioVolume);
 
 
 

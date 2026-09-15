@@ -40,8 +40,10 @@ internal sealed class RealtimePcmPlayer : IDisposable
 
         _channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
         _sampleRate = Math.Max(1, sampleRate);
-        // クリップを避けるため再生振幅を安全域に制限する。
-        _scale = Math.Clamp(samplePeak <= 0.0 ? 0.8 : samplePeak, 0.05, 1.0);
+        // 音量バー 0% は無音、それ以外は 0.05〜1.0 に制限する。
+        _scale = samplePeak <= 0.0
+            ? 0.0
+            : Math.Clamp(samplePeak, 0.05, 1.0);
         var format = new WaveFormat(_sampleRate, 16, _channels);
         _buffer = new BufferedWaveProvider(format)
         {

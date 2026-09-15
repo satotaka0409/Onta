@@ -145,26 +145,49 @@
                             <TextBlock Text="入力デバイス"
                                        VerticalAlignment="Center"
                                        Margin="0,0,8,0"/>
-                            <ComboBox x:Name="AudioDeviceComboBox"
-                                      Grid.Column="1"
-                                      Foreground="#FF1E2024"
-                                      SelectedValuePath="DeviceNumber"
-                                      SelectionChanged="OnAudioDeviceSelectionChanged">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding Name}"
-                                                   Foreground="#FF1E2024"/>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                                <ComboBox.ItemContainerStyle>
-                                    <Style TargetType="ComboBoxItem">
-                                        <Setter Property="Foreground"
-                                                Value="#FF1E2024"/>
-                                        <Setter Property="Background"
-                                                Value="White"/>
-                                    </Style>
-                                </ComboBox.ItemContainerStyle>
-                            </ComboBox>
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Center">
+                                <ComboBox x:Name="AudioDeviceComboBox"
+                                          Width="220"
+                                          Foreground="#FF1E2024"
+                                          SelectedValuePath="DeviceNumber"
+                                          SelectionChanged="OnAudioDeviceSelectionChanged">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}"
+                                                       Foreground="#FF1E2024"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                    <ComboBox.ItemContainerStyle>
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="Foreground"
+                                                    Value="#FF1E2024"/>
+                                            <Setter Property="Background"
+                                                    Value="White"/>
+                                        </Style>
+                                    </ComboBox.ItemContainerStyle>
+                                </ComboBox>
+                                <TextBlock Text="音量"
+                                           VerticalAlignment="Center"
+                                           Margin="12,0,6,0"/>
+                                <Slider x:Name="AudioVolumeSlider"
+                                        Width="120"
+                                        Minimum="0"
+                                        Maximum="100"
+                                        Value="80"
+                                        TickFrequency="5"
+                                        IsSnapToTickEnabled="False"
+                                        VerticalAlignment="Center"
+                                        ValueChanged="OnAudioVolumeChanged"/>
+                                <TextBlock x:Name="AudioVolumeValueText"
+                                           Text="80%"
+                                           Width="36"
+                                           Margin="6,0,0,0"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Right"/>
+                            </StackPanel>
                         </Grid>
                     </Grid>
                     <Grid Grid.Row="2">

@@ -166,6 +166,22 @@ public partial class ReceivePanel : UserControl
             ? item.Name
             : "既定デバイス";
 
+    /// <summary>
+    /// 音声入力の音量（0〜1）を返します。
+    /// </summary>
+    public double AudioVolume
+    {
+        get
+        {
+            if (AudioVolumeSlider is null)
+            {
+                return 0.8;
+            }
+
+            return Math.Clamp(AudioVolumeSlider.Value / 100.0, 0.0, 1.0);
+        }
+    }
+
     public ErrorRateChartModel ErrorGraph => _errorChart;
 
     public FftChartModel FftGraph => _fftChart;
@@ -501,6 +517,14 @@ public partial class ReceivePanel : UserControl
         if (AudioInputRadio?.IsChecked == true)
         {
             SetFileInfo($"(音声入力: {AudioDeviceName})", "-", "-");
+        }
+    }
+
+    private void OnAudioVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (AudioVolumeValueText is not null)
+        {
+            AudioVolumeValueText.Text = $"{(int)Math.Round(e.NewValue)}%";
         }
     }
 
