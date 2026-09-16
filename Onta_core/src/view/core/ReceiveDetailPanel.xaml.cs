@@ -269,7 +269,8 @@ public partial class ReceiveDetailPanel : UserControl
 
     internal ReceiveHistoryEntry CaptureHistoryEntry(
         IReadOnlyList<ReceiveOrphanHistory>? orphans = null,
-        byte[]? payload = null)
+        byte[]? payload = null,
+        IReadOnlyDictionary<int, ReceiveCapturedBlockInfo>? capturedBlocks = null)
     {
         var fileName = FindInfoValue("File Name", "(未登録データ)");
         if (string.IsNullOrWhiteSpace(fileName)
@@ -293,12 +294,37 @@ public partial class ReceiveDetailPanel : UserControl
                 continue;
             }
 
-            blocks.Add(new ReceiveBlockHistory(i, _blockStates[i], _blockErrors[i]));
+            var state = _blockStates[i];
+            var isComplete = state == ReceiveBlockState.Accepted;
+            var dataModulation = new byte[4];
+            var contentHash = new byte[32];
+            var blockData = Array.Empty<byte>();
+
+            if (capturedBlocks is not null && capturedBlocks.TryGetValue(i, out var captured))
+            {
+                Buffer.BlockCopy(captured.DataModulation, 0, dataModulation, 0, Math.Min(4, captured.DataModulation.Length));
+                Buffer.BlockCopy(captured.ContentHash, 0, contentHash, 0, Math.Min(32, captured.ContentHash.Length));
+                if (isComplete && captured.BlockData.Length > 0)
+                {
+                    blockData = captured.BlockData.ToArray();
+                }
+            }
+
+            blocks.Add(new ReceiveBlockHistory(
+                DataModulation: dataModulation,
+                BlockIndex: i,
+                BlockSize: blockData.Length,
+                ContentHash: contentHash,
+                BlockComplete: isComplete,
+                BlockData: blockData,
+                State: state,
+                ErrorText: _blockErrors[i]));
         }
 
         return new ReceiveHistoryEntry(
             EntryId: Guid.NewGuid().ToString("N"),
             Kind: HistoryEntryKind.Receive,
+            InputDevice: string.IsNullOrWhiteSpace(_sourcePath) ? ReceiveInputDevice.Audio : ReceiveInputDevice.Wav,
             ReceivedAtUtc: DateTime.UtcNow,
             ContentHashHex: ResolveReceiveHash(payload, fileName, fileSize, blockCount),
             SourcePath: _sourcePath,

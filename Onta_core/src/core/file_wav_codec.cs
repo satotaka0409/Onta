@@ -147,6 +147,10 @@ public sealed class ProgressiveDecodeState
 
     internal Dictionary<string, int> BlockHashOwners { get; } = new(StringComparer.Ordinal);
 
+    internal Dictionary<int, byte[]> BlockDataModulationByIndex { get; } = [];
+
+    internal Dictionary<int, byte[]> BlockExpectedHashByIndex { get; } = [];
+
     internal Dictionary<string, byte[]> OrphanPayloadByHash { get; } = new(StringComparer.Ordinal);
 
     internal Dictionary<string, string> OrphanDetailByHash { get; } = new(StringComparer.Ordinal);
@@ -206,6 +210,8 @@ public sealed class ProgressiveDecodeState
         DataTotalAttempts = 0;
         ReceivedFileName = null;
         BlockHashOwners.Clear();
+        BlockDataModulationByIndex.Clear();
+        BlockExpectedHashByIndex.Clear();
         OrphanPayloadByHash.Clear();
         OrphanDetailByHash.Clear();
         DetectedDataSubcarriers = null;
@@ -1324,9 +1330,18 @@ public sealed partial class FileWavCodec
                         var ownerKnown = blockIndex >= 0 && blockIndex < blockCountReady;
                         var ownerBlockIndex = ownerKnown ? (int)blockIndex : -1;
                         var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
+                        var blockDataModulation = new byte[4]
+                        {
+                            blockHeader[8],
+                            blockHeader[9],
+                            blockHeader[10],
+                            blockHeader[11]
+                        };
                         if (ownerKnown)
                         {
                             RegisterHashOwner(ownerBlockIndex, expectedHash);
+                            state.BlockDataModulationByIndex[ownerBlockIndex] = blockDataModulation;
+                            state.BlockExpectedHashByIndex[ownerBlockIndex] = expectedHash;
                         }
 
                         var (blockSc, blockModulation) = ReadBlockDataModulation(blockHeader);
@@ -1416,6 +1431,8 @@ public sealed partial class FileWavCodec
                             {
                                 outputSlots[resolvedOwner] = payload;
                                 slotAccepted[resolvedOwner] = true;
+                                state.BlockDataModulationByIndex[resolvedOwner] = blockDataModulation;
+                                state.BlockExpectedHashByIndex[resolvedOwner] = expectedHash;
                                 effectiveBlockIndex = resolvedOwner;
                                 acceptedForStatus = true;
                                 state.LastError =

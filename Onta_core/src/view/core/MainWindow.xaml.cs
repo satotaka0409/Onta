@@ -435,7 +435,8 @@ public partial class MainWindow : Window
         {
             var orphans = _inputCoreWorker.CaptureOrphans();
             var payload = _inputCoreWorker.CaptureDecodedPayload() ?? Array.Empty<byte>();
-            var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, payload);
+            var blocks = _inputCoreWorker.CaptureReceivedBlocks();
+            var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, payload, blocks);
 
             var snapshotKey = BuildReceiveHistorySnapshotKey(entry);
             if (!force && string.Equals(_lastReceiveHistorySnapshotKey, snapshotKey, StringComparison.Ordinal))
@@ -466,6 +467,7 @@ public partial class MainWindow : Window
                 .Select(b => $"{b.BlockIndex}:{(int)b.State}:{b.ErrorText}"));
 
         return string.Join("|",
+            (byte)entry.InputDevice,
             entry.ContentHashHex,
             entry.SourcePath,
             entry.FileName,

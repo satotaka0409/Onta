@@ -61,6 +61,7 @@ internal static class HistoryService
         var entry = new ReceiveHistoryEntry(
             EntryId: Guid.NewGuid().ToString("N"),
             Kind: HistoryEntryKind.Send,
+            InputDevice: ReceiveInputDevice.Wav,
             ReceivedAtUtc: DateTime.UtcNow,
             ContentHashHex: contentHashHex,
             SourcePath: inputPath ?? string.Empty,

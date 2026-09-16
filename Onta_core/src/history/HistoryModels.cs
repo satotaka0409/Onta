@@ -13,10 +13,26 @@ internal enum ReceiveBlockState : byte
     Error = 2
 }
 
+internal enum ReceiveInputDevice : byte
+{
+    Wav = 0,
+    Audio = 1
+}
+
 internal sealed record ReceiveBlockHistory(
+    byte[] DataModulation,
     int BlockIndex,
+    int BlockSize,
+    byte[] ContentHash,
+    bool BlockComplete,
+    byte[] BlockData,
     ReceiveBlockState State,
     string ErrorText);
+
+internal sealed record ReceiveCapturedBlockInfo(
+    byte[] DataModulation,
+    byte[] ContentHash,
+    byte[] BlockData);
 
 internal sealed record ReceiveOrphanHistory(
     string HashHex,
@@ -26,6 +42,7 @@ internal sealed record ReceiveOrphanHistory(
 internal sealed record ReceiveHistoryEntry(
     string EntryId,
     HistoryEntryKind Kind,
+    ReceiveInputDevice InputDevice,
     DateTime ReceivedAtUtc,
     string ContentHashHex,
     string SourcePath,
