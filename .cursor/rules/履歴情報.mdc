@@ -18,67 +18,80 @@ alwaysApply: true
 
 ### ファイル全体
 
-| 項目       | 型       | 内容                        |
-| :--------- | :------- | :-------------------------- |
-| Magic      | byte[8]  | ASCII "ONTAHIS1"            |
-| Version    | int32    | 1                           |
-| EntryCount | int32    | エントリ件数                |
-| Entries    | 繰り返し | 下記 Entry を EntryCount 件 |
+| 項目                 | 型       | 内容                                           |
+| :------------------- | :------- | :--------------------------------------------- |
+| Magic                | byte[7]  | ASCII "ONTAHIS"                                |
+| Version              | uint16   | 1                                              |
+| ReseiveEntryCount    | uint32   | 受信エントリ件数                               |
+| SendEntryCount       | uint32   | 送信エントリ件数                               |
+| UncompleteEntryCount | uint32   | 未完了エントリ件数                             |
+| ReseiveEntry         | 繰り返し | 下記 受信エントリ を ReseiveEntryCount 件      |
+| SenEntries           | 繰り返し | 下記 送信エントリ を SendEntryCount 件         |
+| Uncomplete           | 繰り返し | 下記 未完了エントリ を UncompleteEntryCount 件 |
 
 - 現行の書き込みバージョンは当面 1 固定とする。
 - バージョン変更は明示合意がある場合のみ行う（自動で上げない）。
 
-### Entry
+#### 受信エントリ
 
-| 項目               | 型       | 内容                                      |
-| :----------------- | :------- | :---------------------------------------- |
-| EntryId            | string   | 履歴エントリ識別子（GUID文字列）          |
-| Kind               | byte     | 1:Receive 2:Send                          |
-| ReceivedAtUtcTicks | int64    | Receive:受信日時 / Send:送信日時 (UTC)    |
-| ContentHashHex     | string   | 比較用SHA-256(16進)。Send更新判定に使用   |
-| SourcePath         | string   | Receive: 受信元WAV / Send: 送信元ファイル |
-| FileName           | string   | 表示用ファイル名                          |
-| FileSize           | int64    | バイト数                                  |
-| BlockCount         | int32    | 受信時ブロック総数（送信は0）             |
-| IsSuccess          | bool     | 完了成功フラグ                            |
-| OutputPath         | string   | Receive: 復号出力先 / Send: 送信WAV出力先 |
-| CompletionMessage  | string   | 完了メッセージ                            |
-| PayloadLength      | int32    | 受信バイナリ長（Sendは0）                 |
-| Payload            | bytes    | 受信成功データ（Sendは空）                |
-| BlockItemCount     | int32    | ブロック履歴件数                          |
-| Blocks             | 繰り返し | 下記 Block を BlockItemCount 件           |
-| OrphanCount        | int32    | 親不明ブロック件数                        |
-| Orphans            | 繰り返し | 下記 Orphan を OrphanCount 件             |
+| 項目               | 型       | 内容                                    |
+| :----------------- | :------- | :-------------------------------------- |
+| ReceivedAtUtcTicks | int64    | Receive:受信日時                        |
+| InputDevice        | byte     | 0:WAV入力 1:音声入力                    |
+| ContentHash        | byte[64] | ファイルハッシュ値 SHA-512              |
+| SourcePath         | string   | 受信元WAVファイル名（音声入力時は空白） |
+| FileName           | string   | 表示用ファイル名                        |
+| IsSuccess          | bool     | 完了フラグ                              |
+| FileSize           | uint64   | バイト数                                |
+| BlockCount         | uint64   | 全体ブロック数                          |
+| Blocks             | 繰り返し | 下記 受信ブロック を BlockCount 件      |
 
-### Block
+#### 未完了エントリ
 
-| 項目       | 型     | 内容                         |
-| :--------- | :----- | :--------------------------- |
-| BlockIndex | int32  | ブロック番号                 |
-| State      | byte   | 0:Unknown 1:Accepted 2:Error |
-| ErrorText  | string | ブロックエラー詳細           |
+| 項目               | 型       | 内容                                    |
+| :----------------- | :------- | :-------------------------------------- |
+| ReceivedAtUtcTicks | int64    | Receive:受信日時                        |
+| InputDevice        | byte     | 0:WAV入力 1:音声入力                    |
+| ContentHash        | byte[64] | ファイルハッシュ値 SHA-512              |
+| SourcePath         | string   | 受信元WAVファイル名（音声入力時は空白） |
+| Block              | 繰り返し | 下記 受信ブロック 1件                   |
 
-### Orphan
+##### 受信ブロック
 
-| 項目          | 型     | 内容                                     |
-| :------------ | :----- | :--------------------------------------- |
-| HashHex       | string | 受信データのSHA-256（16進文字列）        |
-| Detail        | string | 親探索状況（例: 親不明 / 解決済み）      |
-| PayloadLength | int32  | 受信データ長（バイト）                   |
-| Payload       | bytes  | 受信データ本体（親未確定時でも保存する） |
+| 項目          | 型       | 内容                                                         |
+| :------------ | :------- | :----------------------------------------------------------- |
+| BlockIndex    | uint32   | ブロック番号                                                 |
+| BlockSize     | uint32   | ブロックバイト数                                             |
+| ContentHash   | byte[32] | ブロックハッシュ値                                           |
+| BlockComplete | bool     | true:ブロック受信が完了 false:エラーのためブロック受信未完了 |
+| BlockData     | byte[]   | ブロックデータ(BlockComplete=falseの場合は0バイト)           |
+
+#### 送信エントリ
+
+| 項目               | 型       | 内容                                |
+| :----------------- | :------- | :---------------------------------- |
+| ReceivedAtUtcTicks | int64    | Send:送信日時 (UTC)                 |
+| OutputDevice       | byte     | 0:WAV出力 1:音声出力                |
+| ContentHash        | byte[64] | ファイルハッシュ値 SHA-512          |
+| OutputPath         | string   | 送信WAV出力パス（音声出力時は空白） |
+| FileName           | string   | 表示用ファイル名                    |
+| SourcePath         | string   | 送信元ファイルのパス                |
+| FileSize           | uint64   | バイト数                            |
 
 ## 運用ルール
 
 - ブロック単位の受信エラーは復号処理を中断せず、次ブロックへ継続する。
 - 受信側は同一データを複数回受信した場合、ReceivedAtUtcTicks を最新日時で更新する。
 - 送信側は履歴内の ContentHashHex を比較し、同一ハッシュが存在した場合は ReceivedAtUtcTicks を最新日時で更新する。
-- ブロックヘッダー受信時に HashHex -> ブロック番号 の親対応表を更新する。
+- ブロックヘッダー受信時に Hash -> ブロック番号 の親対応表を更新する。
 - インターリーブによりブロック受信順は前後し得るため、受信順ではなく親対応表で組み込み先を決定する。
-- 親が見つからない受信データは Orphan として履歴へ保存する（Payload含む）。
-- 後続のブロックヘッダーで同一HashHexの親が見つかったら、そのOrphanを正式ブロックとして組み込む。
-- Error ブロックは受信詳細の BLK-N 行で NG 表示し、ErrorText で詳細確認する。
-- あるブロックが後続パスで Accepted になった場合は Accepted を優先する。
+- 親が見つからない受信ブロックは 未完了ブロックとして履歴へ保存する。
 - 送信履歴はイベント記録のみで、バイナリデータは保存しない。
-- 受信成功時の Payload は履歴から削除するまで保持する。
-- 履歴削除は EntryId 単位で行い、削除時に Payload/Orphan Payload も同時に削除される。
 - 履歴ファイルが破損またはVersion不一致の場合は履歴なしとして扱い、起動を継続する。
+- FH Block は受信完了時に履歴を更新する
+- FH受信時に未完了ブロックの中からファイルハッシュ値が一致するエントリーを見つけたら、自分のブロックとして移動する
+  - 未完了ブロックからは削除する
+- BH受信時に対応する受信エントリを探して(ファイルハッシュ値比較)見つかったら受信ブロックとして登録する
+  - 受信ブロックは、すでに同一ブロックがあった場合は上書きしない（既存データがエラー未完了で、受信ブロックが正常の場合は上書きする）
+  - 見つからない場合は未完了ブロックとして登録する（エラーの場合でも登録するが、既存データが正常の場合はなにもしない）
+- 受信ブロックは、受信したブロックのみを格納する（FH受信時に予め作成することはしない）
