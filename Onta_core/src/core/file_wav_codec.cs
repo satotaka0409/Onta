@@ -147,6 +147,12 @@ public sealed class ProgressiveDecodeState
 
     internal Dictionary<string, int> BlockHashOwners { get; } = new(StringComparer.Ordinal);
 
+    internal Dictionary<int, byte[]> BlockDataModulationByIndex { get; } = [];
+
+    internal Dictionary<int, byte[]> BlockExpectedHashByIndex { get; } = [];
+
+    internal Dictionary<int, string> BlockHeaderIdentityByIndex { get; } = [];
+
     internal Dictionary<string, byte[]> OrphanPayloadByHash { get; } = new(StringComparer.Ordinal);
 
     internal Dictionary<string, string> OrphanDetailByHash { get; } = new(StringComparer.Ordinal);
@@ -157,7 +163,11 @@ public sealed class ProgressiveDecodeState
     /// <summary>
     /// FH 確定時にファイル名・サイズ・ブロック数を通知します。
     /// </summary>
-    public Action<string, long, int>? FileHeaderReady;
+    public Action<string, long, int, DateTime?, DateTime?>? FileHeaderReady;
+
+    internal DateTime? SourceCreatedAtUtc;
+
+    internal DateTime? SourceUpdatedAtUtc;
 
     /// <summary>
     /// 段階デコード状態を初期化します。
@@ -205,7 +215,12 @@ public sealed class ProgressiveDecodeState
         DataFallbackUsed = 0;
         DataTotalAttempts = 0;
         ReceivedFileName = null;
+        SourceCreatedAtUtc = null;
+        SourceUpdatedAtUtc = null;
         BlockHashOwners.Clear();
+        BlockDataModulationByIndex.Clear();
+        BlockExpectedHashByIndex.Clear();
+        BlockHeaderIdentityByIndex.Clear();
         OrphanPayloadByHash.Clear();
         OrphanDetailByHash.Clear();
         DetectedDataSubcarriers = null;
@@ -1054,6 +1069,13 @@ public sealed partial class FileWavCodec
                     + headerOfdm.SamplesPerOfdmSymbol;
                 if (leftSamples.Length < minForFh)
                 {
+                    if (TryDecodeStandaloneBhBdWithoutFileHeader())
+                    {
+                        return allowIncomplete
+                            ? ProgressiveDecodeStatus.NeedMoreSamples
+                            : ProgressiveDecodeStatus.Failed;
+                    }
+
                     return NeedMoreOrFail();
                 }
 
@@ -1113,6 +1135,27 @@ public sealed partial class FileWavCodec
                 }
                 catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                 {
+                    if (TryDecodeStandaloneBhBdWithoutFileHeader())
+                    {
+                        if (allowIncomplete)
+                        {
+                            state.LastError = null;
+                            PersistCursor();
+                            return ProgressiveDecodeStatus.NeedMoreSamples;
+                        }
+
+                        state.LastError ??= "FH未受信。BH+BD を未完了ブロックとして保存しました。";
+                        PersistCursor();
+                        return ProgressiveDecodeStatus.Failed;
+                    }
+
+                    if (allowIncomplete)
+                    {
+                        state.LastError = null;
+                        PersistCursor();
+                        return ProgressiveDecodeStatus.NeedMoreSamples;
+                    }
+
                     state.LastError = ex.Message;
                     PersistCursor();
                     return ProgressiveDecodeStatus.Failed;
@@ -1128,9 +1171,13 @@ public sealed partial class FileWavCodec
                 }
 
                 var fhFileName = ReadFileHeaderFileName(fileHeader);
+                var sourceCreatedAtUtc = ReadFileHeaderTimestampUtc(fileHeader, 840);
+                var sourceUpdatedAtUtc = ReadFileHeaderTimestampUtc(fileHeader, 847);
                 state.FileSize = fileSize;
                 state.BlockCount = blockCount;
                 state.ReceivedFileName = fhFileName;
+                state.SourceCreatedAtUtc = sourceCreatedAtUtc;
+                state.SourceUpdatedAtUtc = sourceUpdatedAtUtc;
                 state.OutputSlots = new byte[blockCount][];
                 state.SlotAccepted = new bool[blockCount];
                 state.HeaderReady = true;
@@ -1149,7 +1196,7 @@ public sealed partial class FileWavCodec
                     ProgressPercent: 5.0));
                 try
                 {
-                    state.FileHeaderReady?.Invoke(displayName, fileSize, blockCount);
+                    state.FileHeaderReady?.Invoke(displayName, fileSize, blockCount, sourceCreatedAtUtc, sourceUpdatedAtUtc);
                 }
                 catch
                 {
@@ -1172,6 +1219,176 @@ public sealed partial class FileWavCodec
                 return Convert.ToHexString(hash);
             }
 
+            static string BuildBlockHeaderIdentityKey(long blockIndex, ReadOnlySpan<byte> blockHash, ReadOnlySpan<byte> fileHash)
+            {
+                return string.Concat(
+                    blockIndex.ToString(),
+                    ":",
+                    Convert.ToHexString(fileHash),
+                    ":",
+                    Convert.ToHexString(blockHash));
+            }
+
+            bool TryDecodeStandaloneBhBdWithoutFileHeader()
+            {
+                var start = Math.Max(0, warpedCursor);
+                if (start >= leftSamples.Length)
+                {
+                    return false;
+                }
+
+                var progressed = false;
+                var headerCandidates = new[]
+                {
+                    CreateHeaderOfdm(OfdmCarrierGrid.Sc8Family),
+                    CreateHeaderOfdm(OfdmCarrierGrid.Sc24Family)
+                };
+                var scanStep = Math.Max(1, headerOfdm.SamplesPerOfdmSymbol / 4);
+
+                for (var probe = start; probe + headerOfdm.SamplesPerOfdmSymbol < leftSamples.Length; probe += scanStep)
+                {
+                    var consumed = false;
+                    foreach (var probeHeaderOfdm in headerCandidates)
+                    {
+                        var bhRsByteLength = GetReedSolomonEncodedLength(BlockHeaderBytes);
+                        var bhConvByteLength = GetConvolutionalEncodedLength(bhRsByteLength, HeaderPunctureRate);
+                        var bhBitCount = bhConvByteLength * 8;
+                        var bhSampleCount = probeHeaderOfdm.SampleCountForBitCount(bhBitCount);
+                        if (probe + bhSampleCount > leftSamples.Length)
+                        {
+                            continue;
+                        }
+
+                        if (!TryDecodeHeaderAt(
+                                leftSamples,
+                                rightSamples,
+                                probe,
+                                probe,
+                                probeHeaderOfdm,
+                                bhBitCount,
+                                bhBitCount,
+                                bhSampleCount,
+                                BlockHeaderBytes,
+                                bhRsByteLength,
+                                BlockHeaderPilot,
+                                stereoSplit: false,
+                                perSymbolSearchRadius: Math.Max(2, probeHeaderOfdm.SamplesPerOfdmSymbol / 16),
+                                out var blockHeader,
+                                out var bhEnd,
+                                out _,
+                                statusBoard: state.StatusBoard,
+                                frameKind: CoreFrameKind.Bh))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            EnsureHeaderCrc(blockHeader, "standalone block header");
+                            var blockIndex = BinaryPrimitives.ReadInt64BigEndian(blockHeader.AsSpan(12, 8));
+                            var blockSize = BinaryPrimitives.ReadInt32BigEndian(blockHeader.AsSpan(20, 4));
+                            if (blockSize < 0 || blockSize > DataBlockBytes)
+                            {
+                                continue;
+                            }
+
+                            var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
+                            var fileHashInBlockHeader = blockHeader.AsSpan(56, 64).ToArray();
+                            var blockHeaderIdentity = BuildBlockHeaderIdentityKey(blockIndex, expectedHash, fileHashInBlockHeader);
+                            var blockDataModulation = new byte[4]
+                            {
+                                blockHeader[8],
+                                blockHeader[9],
+                                blockHeader[10],
+                                blockHeader[11]
+                            };
+
+                            var (blockSc, blockModulation) = ReadBlockDataModulation(blockHeader);
+                            var blockDataOfdm = ResolveDataOfdmFor(blockSc, blockModulation);
+                            var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
+                            var dataCursor = bhEnd;
+                            var dataLogical = (long)bhEnd;
+                            var padded = DecodeDataBlockSynced(
+                                leftSamples,
+                                rightSamples,
+                                ref dataCursor,
+                                ref dataLogical,
+                                blockDataOfdm,
+                                Math.Max(blockDataOfdm.SamplesPerOfdmSymbol * 2, _profile.SampleRate / 200),
+                                expectedBlockHash: expectedHash,
+                                payloadLength: blockSize,
+                                modulationScheme: blockModulation,
+                                tuning: tuning,
+                                punctureRate: blockDataPunctureRate,
+                                wowLocked: hasTrackedWow,
+                                statusBoard: state.StatusBoard,
+                                out _,
+                                onSoftProgress: null);
+                            if (!IsDataBlockAcceptable(padded, expectedHash, blockSize))
+                            {
+                                continue;
+                            }
+
+                            var payload = new byte[blockSize];
+                            Buffer.BlockCopy(padded, 0, payload, 0, blockSize);
+                            var action = "ADD";
+                            if (blockIndex >= 0 && blockIndex <= int.MaxValue)
+                            {
+                                var idx = (int)blockIndex;
+                                if (state.BlockHeaderIdentityByIndex.TryGetValue(idx, out var knownIdentity))
+                                {
+                                    if (!string.Equals(knownIdentity, blockHeaderIdentity, StringComparison.Ordinal))
+                                    {
+                                        state.LastError =
+                                            $"BH-MISMATCH index={blockIndex} (fileHash+blockHash+blockNo mismatch)";
+                                        continue;
+                                    }
+
+                                    action = state.OrphanPayloadByHash.ContainsKey(blockHeaderIdentity)
+                                        ? "UPDATE"
+                                        : "ADD";
+                                }
+
+                                state.BlockHeaderIdentityByIndex[idx] = blockHeaderIdentity;
+                                state.BlockDataModulationByIndex[idx] = blockDataModulation;
+                                state.BlockExpectedHashByIndex[idx] = expectedHash;
+                            }
+
+                            state.OrphanPayloadByHash[blockHeaderIdentity] = payload;
+                            state.OrphanDetailByHash[blockHeaderIdentity] =
+                                $"{action} BH+BD index={blockIndex} (fileHash+blockHash+blockNo)";
+                            state.DataBlocksDecoded++;
+                            state.DataBlocksAccepted++;
+                            state.AcceptedBlockCount = state.OrphanPayloadByHash.Count;
+                            state.LastError =
+                                $"BH+BD-ONLY {action} index={blockIndex} key={blockHeaderIdentity[..Math.Min(12, blockHeaderIdentity.Length)]}";
+
+                            warpedCursor = dataCursor;
+                            logicalOffset = dataLogical;
+                            state.Local++;
+                            PersistCursor();
+                            PublishStatus(
+                                CoreFrameKind.Bd,
+                                blockIndex >= 0 && blockIndex <= int.MaxValue ? (int)blockIndex : -1);
+                            progressed = true;
+                            consumed = true;
+                            break;
+                        }
+                        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+                        {
+                            continue;
+                        }
+                    }
+
+                    if (consumed)
+                    {
+                        probe = Math.Max(probe + scanStep, warpedCursor);
+                    }
+                }
+
+                return progressed;
+            }
+
             void RegisterHashOwner(int blockIndex, ReadOnlySpan<byte> expectedHash)
             {
                 if (blockIndex < 0 || blockIndex >= blockCountReady)
@@ -1190,6 +1407,28 @@ public sealed partial class FileWavCodec
                     state.OrphanPayloadByHash.Remove(key);
                     state.OrphanDetailByHash.Remove(key);
                     state.LastError = $"ORPHAN-RESOLVED hash={key[..Math.Min(12, key.Length)]} BLK-{blockIndex}";
+                    return;
+                }
+
+                if (slotAccepted[blockIndex])
+                {
+                    return;
+                }
+
+                var suffix = ":" + key;
+                var compositeKey = state.OrphanPayloadByHash.Keys.FirstOrDefault(x => x.EndsWith(suffix, StringComparison.Ordinal));
+                if (string.IsNullOrWhiteSpace(compositeKey))
+                {
+                    return;
+                }
+
+                if (state.OrphanPayloadByHash.TryGetValue(compositeKey, out var compositePayload))
+                {
+                    outputSlots[blockIndex] = compositePayload;
+                    slotAccepted[blockIndex] = true;
+                    state.OrphanPayloadByHash.Remove(compositeKey);
+                    state.OrphanDetailByHash.Remove(compositeKey);
+                    state.LastError = $"ORPHAN-RESOLVED key={compositeKey[..Math.Min(12, compositeKey.Length)]} BLK-{blockIndex}";
                 }
             }
 
@@ -1218,15 +1457,82 @@ public sealed partial class FileWavCodec
 
             for (var pass = state.Pass; pass < _profile.BlockInterleaveFactor; pass++)
             {
-                var (passSc, _) = ResolveInterleavePassModulation(
+                var (passSc, passModBase) = ResolveInterleavePassModulation(
                     pass,
                     _profile.ActiveSubcarriers,
                     _profile.ModulationScheme);
                 headerOfdm = CreateHeaderOfdm(OfdmConfig.ResolveCarrierGrid(passSc));
+                var passDataOfdm = CreateDataOfdm(passSc, passModBase);
+                var passMaxBdSamples = DataPacketSamples(
+                    passDataOfdm,
+                    DataBlockBytes,
+                    _profile.ChannelMode,
+                    passModBase);
                 var passFhPacketSamples = HeaderPacketSamples(
                     headerOfdm, FileHeaderBytes, _profile.FileHeaderUnmodulatedSamples);
                 var passBhPacketSamples = HeaderPacketSamples(
                     headerOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
+
+                bool TrySeekNextBlockHeaderStart(int cursor, long logical, out int nextCursor, out long nextLogical)
+                {
+                    nextCursor = cursor;
+                    nextLogical = logical;
+                    var step = Math.Max(1, headerOfdm.SamplesPerOfdmSymbol / 4);
+                    var minProbe = Math.Max(0, cursor + headerOfdm.SamplesPerOfdmSymbol);
+                    var maxProbe = Math.Min(
+                        leftSamples.Length - headerOfdm.SamplesPerOfdmSymbol,
+                        cursor
+                        + passBhPacketSamples
+                        + passMaxBdSamples
+                        + passBhPacketSamples
+                        + (headerOfdm.SamplesPerOfdmSymbol * 2));
+                    if (minProbe >= maxProbe)
+                    {
+                        return false;
+                    }
+
+                    for (var probe = minProbe; probe <= maxProbe; probe += step)
+                    {
+                        var probeHeaderOfdm = headerOfdm;
+                        var probeCursor = probe;
+                        var probeLogical = logical + (probe - cursor);
+                        try
+                        {
+                            SkipHeaderUnmodulatedPreamble(
+                                leftSamples,
+                                ref probeCursor,
+                                ref probeLogical,
+                                _profile.BlockHeaderUnmodulatedSamples);
+                            var probeHeader = DecodeHeaderPacketSyncedTryingGrids(
+                                ref probeHeaderOfdm,
+                                leftSamples,
+                                rightSamples,
+                                ref probeCursor,
+                                ref probeLogical,
+                                BlockHeaderBytes,
+                                BlockHeaderPilot,
+                                fineRadius,
+                                statusBoard: null,
+                                frameKind: CoreFrameKind.Bh);
+                            EnsureHeaderCrc(probeHeader, "block header resync probe");
+                            var blockSize = BinaryPrimitives.ReadInt32BigEndian(probeHeader.AsSpan(20, 4));
+                            if (blockSize < 0 || blockSize > DataBlockBytes)
+                            {
+                                continue;
+                            }
+
+                            nextCursor = probe;
+                            nextLogical = logical + (probe - cursor);
+                            return true;
+                        }
+                        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+                        {
+                            continue;
+                        }
+                    }
+
+                    return false;
+                }
 
                 var order = GetBlockEmissionOrder(blockCountReady, pass);
                 var localStart = pass == state.Pass ? state.Local : 0;
@@ -1324,9 +1630,33 @@ public sealed partial class FileWavCodec
                         var ownerKnown = blockIndex >= 0 && blockIndex < blockCountReady;
                         var ownerBlockIndex = ownerKnown ? (int)blockIndex : -1;
                         var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
+                        var fileHashInBlockHeader = blockHeader.AsSpan(56, 64).ToArray();
+                        var blockHeaderIdentity = BuildBlockHeaderIdentityKey(blockIndex, expectedHash, fileHashInBlockHeader);
+                        var blockDataModulation = new byte[4]
+                        {
+                            blockHeader[8],
+                            blockHeader[9],
+                            blockHeader[10],
+                            blockHeader[11]
+                        };
+                        if (ownerKnown)
+                        {
+                            if (state.BlockHeaderIdentityByIndex.TryGetValue(ownerBlockIndex, out var knownIdentity)
+                                && !string.Equals(knownIdentity, blockHeaderIdentity, StringComparison.Ordinal))
+                            {
+                                ownerKnown = false;
+                                ownerBlockIndex = -1;
+                                state.LastError =
+                                    $"BH-MISMATCH index={blockIndex} (fileHash+blockHash+blockNo mismatch)";
+                            }
+                        }
+
                         if (ownerKnown)
                         {
                             RegisterHashOwner(ownerBlockIndex, expectedHash);
+                            state.BlockDataModulationByIndex[ownerBlockIndex] = blockDataModulation;
+                            state.BlockExpectedHashByIndex[ownerBlockIndex] = expectedHash;
+                            state.BlockHeaderIdentityByIndex[ownerBlockIndex] = blockHeaderIdentity;
                         }
 
                         var (blockSc, blockModulation) = ReadBlockDataModulation(blockHeader);
@@ -1416,6 +1746,8 @@ public sealed partial class FileWavCodec
                             {
                                 outputSlots[resolvedOwner] = payload;
                                 slotAccepted[resolvedOwner] = true;
+                                state.BlockDataModulationByIndex[resolvedOwner] = blockDataModulation;
+                                state.BlockExpectedHashByIndex[resolvedOwner] = expectedHash;
                                 effectiveBlockIndex = resolvedOwner;
                                 acceptedForStatus = true;
                                 state.LastError =
@@ -1454,6 +1786,13 @@ public sealed partial class FileWavCodec
                     catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                     {
                         MarkBlockError($"BLK-{expectedBlockIndex} デコードエラー: {ex.Message}");
+                        if (TrySeekNextBlockHeaderStart(warpedCursor, logicalOffset, out var seekCursor, out var seekLogical))
+                        {
+                            warpedCursor = seekCursor;
+                            logicalOffset = seekLogical;
+                            continue;
+                        }
+
                         if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol <= leftSamples.Length)
                         {
                             warpedCursor += headerOfdm.SamplesPerOfdmSymbol;

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using Microsoft.Win32;
 using NAudioWaveOut = NAudio.Wave.WaveOut;
 using Onta.Core;
@@ -51,6 +52,39 @@ public partial class SendPanel : UserControl
             AudioDeviceNumber: ReadSelectedAudioDeviceNumber(),
             AudioDeviceName: ReadSelectedAudioDeviceName(),
             AudioVolume: ReadAudioVolume());
+    }
+
+    /// <summary>
+    /// 保存済み設定を UI へ反映します。
+    /// </summary>
+    public void ApplySnapshot(SendSettingsSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        MonoRadio.IsChecked = snapshot.ChannelMode == ChannelMode.Mono;
+        StereoRadio.IsChecked = snapshot.ChannelMode == ChannelMode.Stereo;
+        SetCheckedRadio("Subcarrier", snapshot.ActiveSubcarriers.ToString(), fallbackTag: "8");
+        SetCheckedRadio("Modulation", snapshot.ModulationScheme switch
+        {
+            ModulationScheme.Bpsk => "Bpsk",
+            ModulationScheme.Qpsk => "Qpsk",
+            ModulationScheme.Qam16 => "Qam16",
+            ModulationScheme.Qam64 => "Qam64",
+            _ => "Bpsk"
+        }, fallbackTag: "Bpsk");
+        SetCheckedRadio("Interleave", snapshot.BlockInterleaveFactor.ToString(), fallbackTag: "1");
+
+        InputPathBox.Text = snapshot.InputFilePath ?? string.Empty;
+        WriteWavRadio.IsChecked = snapshot.WriteWav;
+        PlayAudioRadio.IsChecked = !snapshot.WriteWav;
+        WavPathBox.Text = snapshot.WavOutputPath ?? string.Empty;
+        SelectAudioDevice(snapshot.AudioDeviceNumber);
+        var volume = Math.Clamp(snapshot.AudioVolume * 100.0, 0.0, 100.0);
+        AudioVolumeSlider.Value = volume;
+        AudioVolumeValueText.Text = $"{(int)Math.Round(volume)}%";
+
+        UpdateOutputModePanels();
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -255,6 +289,45 @@ public partial class SendPanel : UserControl
         }
 
         return ModulationScheme.Bpsk;
+    }
+
+    private void SetCheckedRadio(string groupName, string? tag, string fallbackTag)
+    {
+        RadioButton? fallback = null;
+        foreach (var radio in FindRadios(this))
+        {
+            if (!string.Equals(radio.GroupName, groupName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals(radio.Tag as string, fallbackTag, StringComparison.Ordinal))
+            {
+                fallback = radio;
+            }
+
+            if (tag is not null && string.Equals(radio.Tag as string, tag, StringComparison.Ordinal))
+            {
+                radio.IsChecked = true;
+                return;
+            }
+        }
+
+        fallback?.SetCurrentValue(ToggleButton.IsCheckedProperty, true);
+    }
+
+    private void SelectAudioDevice(int deviceNumber)
+    {
+        for (var i = 0; i < AudioDeviceComboBox.Items.Count; i++)
+        {
+            if (AudioDeviceComboBox.Items[i] is AudioDeviceItem item && item.DeviceNumber == deviceNumber)
+            {
+                AudioDeviceComboBox.SelectedIndex = i;
+                return;
+            }
+        }
+
+        AudioDeviceComboBox.SelectedIndex = 0;
     }
 
     private static IEnumerable<RadioButton> FindRadios(DependencyObject root)

@@ -29,7 +29,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// ファイルヘッダー（名前/サイズ/ブロック数）確定時に通知します。
     /// </summary>
-    public event Action<string, string, int>? FileHeaderReady;
+    public event Action<string, string, int, DateTime?, DateTime?>? FileHeaderReady;
 
     /// <summary>
     /// 現在デコード実行中かどうかを返します。
@@ -143,9 +143,9 @@ internal sealed class InputCoreWorker : IDisposable
                 AcceptedBlockCount: 0,
                 TotalBlockCount: 0,
                 ProgressPercent: 1.0));
-            state.FileHeaderReady = (fileName, fileSize, blockCount) =>
+            state.FileHeaderReady = (fileName, fileSize, blockCount, createdAtUtc, updatedAtUtc) =>
             {
-                FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount);
+                FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount, createdAtUtc, updatedAtUtc);
             };
 
             var capture = new RealtimePcmCapture();
@@ -266,6 +266,72 @@ internal sealed class InputCoreWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// 受信済みブロックの履歴保存用スナップショットを返します。
+    /// </summary>
+    public IReadOnlyDictionary<int, ReceiveCapturedBlockInfo> CaptureReceivedBlocks()
+    {
+        lock (_sync)
+        {
+            if (_state is null)
+            {
+                return new Dictionary<int, ReceiveCapturedBlockInfo>();
+            }
+
+            var result = new Dictionary<int, ReceiveCapturedBlockInfo>();
+            var slots = _state.OutputSlots;
+            if (slots is null)
+            {
+                return result;
+            }
+
+            for (var i = 0; i < slots.Length; i++)
+            {
+                var payload = slots[i];
+                if (payload is null || payload.Length == 0)
+                {
+                    continue;
+                }
+
+                var dataModulation = _state.BlockDataModulationByIndex.TryGetValue(i, out var dm)
+                    ? NormalizeDataModulation(dm)
+                    : new byte[4];
+                var contentHash = _state.BlockExpectedHashByIndex.TryGetValue(i, out var hash)
+                    ? NormalizeHash32(hash)
+                    : Hash.ComputeSha256(payload);
+
+                result[i] = new ReceiveCapturedBlockInfo(
+                    dataModulation,
+                    contentHash,
+                    payload.ToArray());
+            }
+
+            return result;
+        }
+    }
+
+    private static byte[] NormalizeDataModulation(byte[] source)
+    {
+        var normalized = new byte[4];
+        if (source is { Length: > 0 })
+        {
+            Buffer.BlockCopy(source, 0, normalized, 0, Math.Min(4, source.Length));
+        }
+
+        return normalized;
+    }
+
+    private static byte[] NormalizeHash32(byte[] source)
+    {
+        var normalized = new byte[32];
+        if (source is { Length: > 0 })
+        {
+            Buffer.BlockCopy(source, 0, normalized, 0, Math.Min(32, source.Length));
+        }
+
+        return normalized;
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -286,9 +352,9 @@ internal sealed class InputCoreWorker : IDisposable
             AcceptedBlockCount: 0,
             TotalBlockCount: 0,
             ProgressPercent: 1.0));
-        state.FileHeaderReady = (fileName, fileSize, blockCount) =>
+        state.FileHeaderReady = (fileName, fileSize, blockCount, createdAtUtc, updatedAtUtc) =>
         {
-            FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount);
+            FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount, createdAtUtc, updatedAtUtc);
         };
         return state;
     }

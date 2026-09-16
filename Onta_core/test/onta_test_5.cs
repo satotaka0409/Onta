@@ -1,4 +1,5 @@
 using Onta.Core;
+using System.Numerics;
 using Xunit;
 
 namespace Onta.Core.Tests;
@@ -27,9 +28,9 @@ public sealed class OntaTest5
         Assert.Equal((8, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 8, ModulationScheme.Qpsk));
         Assert.Equal((8, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 16, ModulationScheme.Bpsk));
         Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 24, ModulationScheme.Qam16));
-        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 32, ModulationScheme.Qam64));
-        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 40, ModulationScheme.Qam64));
-        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 48, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 32, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 40, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 48, ModulationScheme.Qam64));
     }
 
     [Fact]
@@ -60,7 +61,7 @@ public sealed class OntaTest5
 
         Assert.NotNull(header);
         Assert.Equal(16, header![8]);
-        Assert.Equal(2, header[9]);
+        Assert.Equal(3, header[9]);
     }
 
     [Fact]
@@ -192,6 +193,194 @@ public sealed class OntaTest5
             "Sample1_test5_x2.wav",
             "Sample1_test5_x2.png",
             nameof(EncodeDecode_QrPng_MatchesOriginal_Mono8ScQpsk_InterleaveX2));
+    }
+
+    [Fact]
+    public void InterleaveX2_DecodeSucceeds_AfterSilencingSomePass1Blocks()
+    {
+        // 2ブロックを強制し、2パス目の奇数・偶数入れ替え順（[1,0]）を必ず通す。
+        var payload = new byte[9000];
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)((i * 73) + 19);
+        }
+
+        var profileX2 = BaseProfile with
+        {
+            ActiveSubcarriers = 48,
+            ModulationScheme = ModulationScheme.Qam64,
+            SampleRate = 12000,
+            BlockInterleaveFactor = 2
+        };
+        var profileX1 = profileX2 with { BlockInterleaveFactor = 1 };
+        var codecX2 = new FileWavCodec(profileX2);
+        var codecX1 = new FileWavCodec(profileX1);
+        var tempPath = Path.Combine(Path.GetTempPath(), $"onta_test5_interleave2_{Guid.NewGuid():N}.bin");
+        var wavPath = TestPaths.ResolveOutputPath($"test5_interleave_x2_degraded_{Guid.NewGuid():N}.wav");
+        File.WriteAllBytes(tempPath, payload);
+
+        try
+        {
+            var fileInfo = new FileInfo(tempPath);
+            var frameRanges = new List<(TransmissionFrameKind Kind, int Start, int End)>();
+            var emitted = 0;
+            var frameStart = 0;
+            var (left, right) = codecX2.EncodeFileToSamples(
+                payload,
+                fileInfo,
+                onFrameTransmitted: kind =>
+                {
+                    frameRanges.Add((kind, frameStart, emitted));
+                    frameStart = emitted;
+                },
+                onPcmChunk: (l, _) =>
+                {
+                    emitted += l.Length;
+                },
+                retainAllSamples: true);
+
+            var blockCount = (payload.Length + 8191) / 8192;
+            var bdFrames = frameRanges.Where(x => x.Kind == TransmissionFrameKind.Bd).ToArray();
+            Assert.True(bdFrames.Length >= blockCount * 2, "Interleave x2 では BD が2パス分必要です。");
+
+            // 1パス目（x1相当）の一部BD区間を1秒無音へ置換して、x1復号を失敗させる。
+            var silenceTargets = Math.Min(2, blockCount);
+            for (var i = 0; i < silenceTargets; i++)
+            {
+                var start = Math.Max(0, bdFrames[i].Start);
+                var length = Math.Max(0, bdFrames[i].End - start);
+                var silence = Math.Min(profileX2.SampleRate, length);
+                if (silence <= 0)
+                {
+                    continue;
+                }
+
+                Array.Clear(left, start, silence);
+                if (right.Length > 0)
+                {
+                    Array.Clear(right, start, Math.Min(silence, right.Length - start));
+                }
+            }
+
+            WavWriter.WriteMono16(wavPath, profileX2.SampleRate, left, profileX2.SamplePeak);
+
+            // x1失敗確認は第1パス相当の範囲だけを与えて高速化する。
+            var firstPassEnd = bdFrames[blockCount - 1].End;
+            var x1ProbeLen = Math.Min(left.Length, firstPassEnd + (profileX2.SampleRate / 2));
+            var x1ProbeLeft = new Complex[x1ProbeLen];
+            Array.Copy(left, 0, x1ProbeLeft, 0, x1ProbeLen);
+            _ = Assert.Throws<InvalidDataException>(() =>
+                codecX1.DecodePcmSamplesToFileBytes(x1ProbeLeft, Array.Empty<Complex>(), correctWow: false));
+
+            var decodedX2 = codecX2.DecodeWavToFileBytes(wavPath, correctWow: false);
+            Assert.Equal(payload, decodedX2);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+
+                if (File.Exists(wavPath))
+                {
+                    File.Delete(wavPath);
+                }
+            }
+            catch
+            {
+                // 一時ファイル削除失敗はテスト結果に影響させない。
+            }
+        }
+    }
+
+    [Fact]
+    public void InterleaveX2_MiddleBlockError_DoesNotPreventFollowingBlocks()
+    {
+        // 3ブロック以上を作り、pass0 の中間 BLK だけ壊しても後続 BLK を含め復号完了できることを確認する。
+        var payload = new byte[20000];
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)((i * 29) + 7);
+        }
+
+        var profile = BaseProfile with
+        {
+            ActiveSubcarriers = 48,
+            ModulationScheme = ModulationScheme.Qam64,
+            SampleRate = 12000,
+            BlockInterleaveFactor = 2
+        };
+
+        var codec = new FileWavCodec(profile);
+        var tempPath = Path.Combine(Path.GetTempPath(), $"onta_test5_midblk_{Guid.NewGuid():N}.bin");
+        var wavPath = TestPaths.ResolveOutputPath($"test5_midblk_resync_{Guid.NewGuid():N}.wav");
+        File.WriteAllBytes(tempPath, payload);
+
+        try
+        {
+            var fileInfo = new FileInfo(tempPath);
+            var frameRanges = new List<(TransmissionFrameKind Kind, int Start, int End)>();
+            var emitted = 0;
+            var frameStart = 0;
+            var (left, right) = codec.EncodeFileToSamples(
+                payload,
+                fileInfo,
+                onFrameTransmitted: kind =>
+                {
+                    frameRanges.Add((kind, frameStart, emitted));
+                    frameStart = emitted;
+                },
+                onPcmChunk: (l, _) =>
+                {
+                    emitted += l.Length;
+                },
+                retainAllSamples: true);
+
+            var blockCount = (payload.Length + 8191) / 8192;
+            Assert.True(blockCount >= 3, "このテストは 3 ブロック以上を前提とします。");
+
+            var bdFrames = frameRanges.Where(x => x.Kind == TransmissionFrameKind.Bd).ToArray();
+            Assert.True(bdFrames.Length >= blockCount * 2, "Interleave x2 のため BD は2パス分必要です。");
+
+            // pass0 の中間ブロック（index=1）だけを強く劣化させる。
+            var middlePass0 = bdFrames[1];
+            var start = Math.Max(0, middlePass0.Start);
+            var len = Math.Max(0, middlePass0.End - start);
+            if (len > 0)
+            {
+                Array.Clear(left, start, len);
+                if (right.Length > 0)
+                {
+                    Array.Clear(right, start, Math.Min(len, right.Length - start));
+                }
+            }
+
+            WavWriter.WriteMono16(wavPath, profile.SampleRate, left, profile.SamplePeak);
+            var decoded = codec.DecodeWavToFileBytes(wavPath, correctWow: false);
+            Assert.Equal(payload, decoded);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+
+                if (File.Exists(wavPath))
+                {
+                    File.Delete(wavPath);
+                }
+            }
+            catch
+            {
+                // 一時ファイル削除失敗はテスト結果に影響させない。
+            }
+        }
     }
 
     [Fact]

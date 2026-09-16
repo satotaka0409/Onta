@@ -24,6 +24,8 @@ public partial class ReceiveDetailPanel : UserControl
     private bool _lastCompletedSuccess;
     private string _lastCompletionMessage = string.Empty;
     private string _lastOutputPath = string.Empty;
+    private DateTime _sourceCreatedAtUtc;
+    private DateTime _sourceUpdatedAtUtc;
     private int _builtBlockCount = -1;
     private bool _awaitingProgressReset;
 
@@ -51,6 +53,8 @@ public partial class ReceiveDetailPanel : UserControl
         _lastCompletedSuccess = false;
         _lastCompletionMessage = string.Empty;
         _lastOutputPath = string.Empty;
+        _sourceCreatedAtUtc = DateTime.MinValue;
+        _sourceUpdatedAtUtc = DateTime.MinValue;
         _fhRow = null;
         _totalRow = null;
         _builtBlockCount = -1;
@@ -124,12 +128,19 @@ public partial class ReceiveDetailPanel : UserControl
     /// <param name="fileName">受信ファイル名。</param>
     /// <param name="fileSizeText">表示用ファイルサイズ。</param>
     /// <param name="blockCount">ブロック数。</param>
-    public void ApplyFileHeader(string fileName, string fileSizeText, int blockCount)
+    public void ApplyFileHeader(
+        string fileName,
+        string fileSizeText,
+        int blockCount,
+        DateTime? createdAtUtc,
+        DateTime? updatedAtUtc)
     {
         var name = string.IsNullOrWhiteSpace(fileName) ? "(不明)" : fileName;
         var size = string.IsNullOrWhiteSpace(fileSizeText) ? "-" : fileSizeText;
         var blocks = Math.Max(0, blockCount);
         EnsureRows(name, size, blocks > 0 ? blocks.ToString() : "-", blocks);
+        _sourceCreatedAtUtc = createdAtUtc?.ToUniversalTime() ?? DateTime.MinValue;
+        _sourceUpdatedAtUtc = updatedAtUtc?.ToUniversalTime() ?? DateTime.MinValue;
         ResetBlockProgressUiIfNeeded();
         if (_fhRow is not null)
         {
@@ -269,7 +280,7 @@ public partial class ReceiveDetailPanel : UserControl
 
     internal ReceiveHistoryEntry CaptureHistoryEntry(
         IReadOnlyList<ReceiveOrphanHistory>? orphans = null,
-        byte[]? payload = null)
+        IReadOnlyDictionary<int, ReceiveCapturedBlockInfo>? capturedBlocks = null)
     {
         var fileName = FindInfoValue("File Name", "(未登録データ)");
         if (string.IsNullOrWhiteSpace(fileName)
@@ -293,14 +304,42 @@ public partial class ReceiveDetailPanel : UserControl
                 continue;
             }
 
-            blocks.Add(new ReceiveBlockHistory(i, _blockStates[i], _blockErrors[i]));
+            var state = _blockStates[i];
+            var isComplete = state == ReceiveBlockState.Accepted;
+            var dataModulation = new byte[4];
+            var contentHash = new byte[32];
+            var blockData = Array.Empty<byte>();
+
+            if (capturedBlocks is not null && capturedBlocks.TryGetValue(i, out var captured))
+            {
+                Buffer.BlockCopy(captured.DataModulation, 0, dataModulation, 0, Math.Min(4, captured.DataModulation.Length));
+                Buffer.BlockCopy(captured.ContentHash, 0, contentHash, 0, Math.Min(32, captured.ContentHash.Length));
+                if (isComplete && captured.BlockData.Length > 0)
+                {
+                    blockData = captured.BlockData.ToArray();
+                }
+            }
+
+            blocks.Add(new ReceiveBlockHistory(
+                DataModulation: dataModulation,
+                BlockIndex: i,
+                BlockSize: blockData.Length,
+                ContentHash: contentHash,
+                BlockComplete: isComplete,
+                BlockData: blockData,
+                State: state,
+                ErrorText: _blockErrors[i]));
         }
 
         return new ReceiveHistoryEntry(
             EntryId: Guid.NewGuid().ToString("N"),
             Kind: HistoryEntryKind.Receive,
+            InputDevice: string.IsNullOrWhiteSpace(_sourcePath) ? ReceiveInputDevice.Audio : ReceiveInputDevice.Wav,
+            DataModulation: new byte[4],
             ReceivedAtUtc: DateTime.UtcNow,
-            ContentHashHex: ResolveReceiveHash(payload, fileName, fileSize, blockCount),
+            CreatedAtUtc: _sourceCreatedAtUtc == DateTime.MinValue ? DateTime.UtcNow : _sourceCreatedAtUtc,
+            UpdatedAtUtc: _sourceUpdatedAtUtc == DateTime.MinValue ? DateTime.UtcNow : _sourceUpdatedAtUtc,
+            ContentHashHex: ResolveReceiveHash(fileName, fileSize, blockCount),
             SourcePath: _sourcePath,
             FileName: fileName,
             FileSize: fileSize,
@@ -308,18 +347,12 @@ public partial class ReceiveDetailPanel : UserControl
             IsSuccess: _lastCompletedSuccess,
             OutputPath: _lastOutputPath,
             CompletionMessage: _lastCompletionMessage,
-            Payload: payload ?? Array.Empty<byte>(),
             Blocks: blocks,
             Orphans: orphans ?? Array.Empty<ReceiveOrphanHistory>());
     }
 
-    private string ResolveReceiveHash(byte[]? payload, string fileName, long fileSize, int blockCount)
+    private string ResolveReceiveHash(string fileName, long fileSize, int blockCount)
     {
-        if (payload is { Length: > 0 })
-        {
-            return Convert.ToHexString(Hash.ComputeSha256(payload));
-        }
-
         if (!string.IsNullOrWhiteSpace(fileName)
             && !string.Equals(fileName, "(未登録データ)", StringComparison.Ordinal)
             && fileSize > 0
@@ -340,6 +373,8 @@ public partial class ReceiveDetailPanel : UserControl
     {
         ArgumentNullException.ThrowIfNull(history);
         _sourcePath = history.SourcePath;
+        _sourceCreatedAtUtc = history.CreatedAtUtc;
+        _sourceUpdatedAtUtc = history.UpdatedAtUtc;
         _lastCompletedSuccess = history.IsSuccess;
         _lastCompletionMessage = history.CompletionMessage;
         _lastOutputPath = history.OutputPath;

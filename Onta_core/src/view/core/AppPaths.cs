@@ -14,6 +14,9 @@ internal static class AppPaths
     /// <summary>受信履歴ファイルの保存先です。</summary>
     public static string ReceiveHistoryFilePath => Path.Combine(ResolveRootDir(), "Onta_history.bin");
 
+    /// <summary>メイン画面設定ファイルの保存先です。</summary>
+    public static string MainSettingsFilePath => Path.Combine(ResolveRootDir(), "Onta_setting.bin");
+
     private static string ResolveRootDir()
     {
         var candidates = new[]

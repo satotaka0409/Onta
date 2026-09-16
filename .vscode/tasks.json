@@ -7,7 +7,7 @@
 			"type": "process",
 			"args": [
 				"build",
-				"C:/proj/Onta/Onta_core/Onta_core.csproj",
+				"Onta_core/Onta_core.csproj",
 				"-c",
 				"Debug",
 				"/property:GenerateFullPaths=true",
@@ -31,7 +31,7 @@
 			"args": [
 				"run",
 				"--project",
-				"C:/proj/Onta/Onta_core/Onta_core.csproj",
+				"Onta_core/Onta_core.csproj",
 				"-c",
 				"Debug",
 				"--no-build"
@@ -52,7 +52,7 @@
 			"type": "process",
 			"args": [
 				"build",
-				"C:/proj/Onta/Onta_core/test_host/Onta_core.TestHost.csproj",
+				"Onta_core/test_host/Onta_core.TestHost.csproj",
 				"-c",
 				"Debug",
 				"/property:GenerateFullPaths=true",
@@ -67,10 +67,10 @@
 		{
 			"label": "test-onta-all",
 			"type": "shell",
-			"command": "C:\\Program Files\\dotnet\\dotnet.exe",
+			"command": "dotnet",
 			"args": [
 				"test",
-				"C:\\proj\\Onta\\Onta_core\\test\\Onta_core.Tests.csproj",
+				"Onta_core/test/Onta_core.Tests.csproj",
 				"-c",
 				"Debug",
 				"--blame-hang",
@@ -84,10 +84,10 @@
 		{
 			"label": "test-onta-all-process-clean",
 			"type": "shell",
-			"command": "C:\\Program Files\\dotnet\\dotnet.exe",
+			"command": "dotnet",
 			"args": [
 				"test",
-				"C:\\proj\\Onta\\Onta_core\\test\\Onta_core.Tests.csproj",
+				"Onta_core/test/Onta_core.Tests.csproj",
 				"-c",
 				"Debug",
 				"--logger",
@@ -98,10 +98,10 @@
 		{
 			"label": "test-onta-all-process",
 			"type": "process",
-			"command": "C:/Program Files/dotnet/dotnet.exe",
+			"command": "dotnet",
 			"args": [
 				"test",
-				"C:/proj/Onta/Onta_core/test/Onta_core.Tests.csproj",
+				"Onta_core/test/Onta_core.Tests.csproj",
 				"-c",
 				"Debug",
 				"--logger",
@@ -115,15 +115,56 @@
 		{
 			"label": "test-onta-all-process-blame-hang",
 			"type": "process",
-			"command": "C:/Program Files/dotnet/dotnet.exe",
+			"command": "dotnet",
 			"args": [
 				"test",
-				"C:/proj/Onta/Onta_core/test/Onta_core.Tests.csproj",
+				"Onta_core/test/Onta_core.Tests.csproj",
 				"-c",
 				"Debug",
 				"--blame-hang",
 				"--blame-hang-timeout",
 				"15m",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "test-onta-short-process",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--filter",
+				"FullyQualifiedName!~OntaTest5.InterleaveX2_DecodeSucceeds_AfterSilencingSomePass1Blocks&FullyQualifiedName!~OntaTest5.InterleaveX2_MiddleBlockError_DoesNotPreventFollowingBlocks",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "test-onta-long-process",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--blame-hang",
+				"--blame-hang-timeout",
+				"15m",
+				"--filter",
+				"FullyQualifiedName~OntaTest5.InterleaveX2_DecodeSucceeds_AfterSilencingSomePass1Blocks|FullyQualifiedName~OntaTest5.InterleaveX2_MiddleBlockError_DoesNotPreventFollowingBlocks",
 				"--logger",
 				"console;verbosity=normal"
 			],

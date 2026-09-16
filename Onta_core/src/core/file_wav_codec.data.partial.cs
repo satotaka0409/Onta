@@ -138,7 +138,8 @@ public sealed partial class FileWavCodec
         };
         var mod = baseModulation switch
         {
-            ModulationScheme.Qam64 or ModulationScheme.Qam16 => ModulationScheme.Qpsk,
+            ModulationScheme.Qam64 => ModulationScheme.Qam16,
+            ModulationScheme.Qam16 => ModulationScheme.Qpsk,
             ModulationScheme.Qpsk or ModulationScheme.Bpsk => ModulationScheme.Bpsk,
             _ => throw new ArgumentOutOfRangeException(nameof(baseModulation), baseModulation, "Unsupported modulation scheme.")
         };
