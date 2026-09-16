@@ -30,6 +30,29 @@ public sealed class IqChartModel
         new(170, 100, 255)   // F 紫
     ];
 
+    private static readonly string[] GroupLabels = ["A", "B", "C", "D", "E", "F"];
+
+    /// <summary>
+    /// I-Q 凡例用のグループ色（A〜F）を返します。
+    /// </summary>
+    public static IReadOnlyList<(string Label, byte R, byte G, byte B)> GroupLegendItems { get; } =
+        CreateGroupLegendItems();
+
+    /// <summary>
+    /// グループ凡例項目を生成します。
+    /// </summary>
+    private static IReadOnlyList<(string Label, byte R, byte G, byte B)> CreateGroupLegendItems()
+    {
+        var items = new (string Label, byte R, byte G, byte B)[GroupCount];
+        for (var i = 0; i < GroupCount; i++)
+        {
+            var c = GroupColors[i];
+            items[i] = (GroupLabels[i], c.Red, c.Green, c.Blue);
+        }
+
+        return items;
+    }
+
     private static readonly SKColor GridColor = new(92, 97, 108);
 
     private readonly ObservableCollection<ObservablePoint>[] _groupPoints =

@@ -233,7 +233,7 @@ internal static class ReceiveHistoryStore
         foreach (var orphan in entry.Orphans)
         {
             writer.Write(orphan.HashHex ?? string.Empty);
-            writer.Write(orphan.Detail ?? string.Empty);
+            writer.Write(EncodeOrphanDetail(orphan.Detail, orphan.DataModulation));
             var orphanPayload = orphan.Payload ?? Array.Empty<byte>();
             writer.Write(orphanPayload.Length);
             writer.Write(orphanPayload);
@@ -296,7 +296,7 @@ internal static class ReceiveHistoryStore
         for (var i = 0; i < orphanCount; i++)
         {
             var hashHex = reader.ReadString();
-            var detail = reader.ReadString();
+            var storedDetail = reader.ReadString();
             var orphanPayloadLength = reader.ReadInt32();
             if (orphanPayloadLength < 0 || orphanPayloadLength > (32 * 1024 * 1024))
             {
@@ -309,7 +309,8 @@ internal static class ReceiveHistoryStore
                 orphanPayload = Array.Empty<byte>();
             }
 
-            orphans.Add(new ReceiveOrphanHistory(hashHex, detail, orphanPayload));
+            DecodeOrphanDetail(storedDetail, out var detail, out var orphanDataModulation);
+            orphans.Add(new ReceiveOrphanHistory(hashHex, detail, orphanPayload, orphanDataModulation));
         }
 
         return new ReceiveHistoryEntry(
@@ -516,6 +517,56 @@ internal static class ReceiveHistoryStore
         }
 
         return map.Values.OrderBy(x => x.BlockIndex).ToArray();
+    }
+
+    /// <summary>
+    /// Orphan の DataModulation を Detail 先頭に埋め込みます（履歴 Version=1 互換）。
+    /// </summary>
+    private static string EncodeOrphanDetail(string? detail, byte[]? dataModulation)
+    {
+        var text = detail ?? string.Empty;
+        if (dataModulation is not { Length: >= 3 })
+        {
+            return text;
+        }
+
+        var hex = Convert.ToHexString(dataModulation.AsSpan(0, Math.Min(4, dataModulation.Length)));
+        return string.Concat("#OM#", hex, "#", text);
+    }
+
+    /// <summary>
+    /// Detail 先頭の DataModulation メタを分離します。
+    /// </summary>
+    private static void DecodeOrphanDetail(string? storedDetail, out string detail, out byte[] dataModulation)
+    {
+        detail = storedDetail ?? string.Empty;
+        dataModulation = Array.Empty<byte>();
+        if (!detail.StartsWith("#OM#", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var end = detail.IndexOf('#', 4);
+        if (end <= 4)
+        {
+            return;
+        }
+
+        var hex = detail[4..end];
+        if (hex.Length < 6 || (hex.Length % 2) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            dataModulation = Convert.FromHexString(hex);
+            detail = end + 1 < detail.Length ? detail[(end + 1)..] : string.Empty;
+        }
+        catch (FormatException)
+        {
+            dataModulation = Array.Empty<byte>();
+        }
     }
 }
 

@@ -21,8 +21,10 @@ public readonly record struct CoreProgressInfo(
     int PassIndex,
     int AcceptedBlockCount,
     int TotalBlockCount,
-    /// <summary>0 から 100 の進捗率です。</summary>
-    double ProgressPercent)
+    /// <summary>0 から 100 の全体進捗率です。</summary>
+    double ProgressPercent,
+    /// <summary>現在ブロック内の局所進捗（0..100）。BH/BD メーター用。</summary>
+    double CurrentBlockProgressPercent = 0)
 {
     /// <summary>
     /// 待機状態を表す初期値です。
@@ -33,7 +35,8 @@ public readonly record struct CoreProgressInfo(
         PassIndex: 0,
         AcceptedBlockCount: 0,
         TotalBlockCount: 0,
-        ProgressPercent: 0);
+        ProgressPercent: 0,
+        CurrentBlockProgressPercent: 0);
 }
 
 /// <summary>
@@ -86,7 +89,9 @@ public readonly record struct CoreIqGraphInfo(
 /// <summary>
 /// FFTグラフ描画用の1ビンサンプルです。
 /// </summary>
-public readonly record struct CoreFftSample(int Bin, double MagnitudeDb);
+/// <param name="FrequencyHz">ビン中心周波数（Hz）。整数丸めせず連続値で保持する。</param>
+/// <param name="MagnitudeDb">振幅（dBFS、フルスケール正弦波≈0 dB）。</param>
+public readonly record struct CoreFftSample(double FrequencyHz, double MagnitudeDb);
 
 /// <summary>
 /// 左右FFTの描画データとモード情報を保持します。
@@ -591,7 +596,7 @@ public sealed class CoreExecutionStatusBoard
             }
 
             var dest = isRightChannel ? _fftRightBins : _fftLeftBins;
-            // 実信号 FFT の片側振幅スケール（ピーク≈時間振幅）
+            // 実信号 FFT の片側振幅スケール（ピーク≈時間振幅、0 dB≒フルスケール正弦波）
             var scale = 2.0 / n;
 
             for (var bin = 0; bin < half; bin++)
@@ -605,7 +610,8 @@ public sealed class CoreExecutionStatusBoard
                 }
 
                 var magnitudeDb = 20.0 * Math.Log10(magnitude + 1e-12);
-                var hz = (int)Math.Round(bin * (double)sr / n);
+                // 整数丸めすると隣接ビンが同じ X になり縦スパイクになるため、Hz は連続値で渡す
+                var hz = bin * (double)sr / n;
                 dest[bin] = new CoreFftSample(hz, magnitudeDb);
             }
         }

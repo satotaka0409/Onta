@@ -72,13 +72,14 @@
 
             <GroupBox Grid.Column="0"
                       Header="ワウフラッター"
+                      Style="{StaticResource GroupBoxCompact}"
                       Width="420"
-                      Margin="0,0,2,0"
-                      VerticalAlignment="Top">
-                <Grid Margin="8,6">
+                      Margin="4"
+                      VerticalAlignment="Stretch">
+                <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="64"/>
+                        <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -106,7 +107,8 @@
             <GroupBox x:Name="IoGroupBox"
                       Grid.Column="1"
                       Header="入出力"
-                      VerticalAlignment="Top">
+                      Margin="4"
+                      VerticalAlignment="Stretch">
                 <Grid Margin="4,2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -225,16 +227,24 @@
                 </Grid>
             </GroupBox>
 
-            <!-- スタート（入出力との間隔 16px。常に見える列幅） -->
-            <Button x:Name="StartButton"
-                    Grid.Column="2"
-                    Content="スタート"
-                    Width="110"
-                    Height="34"
-                    HorizontalAlignment="Left"
-                    VerticalAlignment="Top"
-                    Margin="16,8,4,0"
-                    Click="OnReceiveStartClick"/>
+            <!-- スタート/ストップ（入出力グループ下端に揃える） -->
+            <StackPanel Grid.Column="2"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Bottom"
+                        Margin="16,0,4,4">
+                <Button x:Name="StartButton"
+                        Content="スタート"
+                        Width="110"
+                        Height="34"
+                        Click="OnReceiveStartClick"/>
+                <Button x:Name="StopButton"
+                        Content="ストップ"
+                        Width="110"
+                        Height="34"
+                        Margin="0,8,0,0"
+                        IsEnabled="False"
+                        Click="OnReceiveStopClick"/>
+            </StackPanel>
         </Grid>
 
         <Grid x:Name="ReceiveGraphsRow"
@@ -331,19 +341,28 @@
                            Text="I-Q"
                            Margin="4,0,0,4"
                            Foreground="{StaticResource BrushTextMuted}"/>
-                <Border x:Name="IqChartBorder"
-                        Grid.Row="1"
-                        BorderBrush="{StaticResource BrushBorder}"
-                        BorderThickness="1"
-                        Background="{StaticResource BrushInput}"
-                        CornerRadius="3"
-                        Padding="4"
-                        ClipToBounds="True">
-                    <lvc:CartesianChart x:Name="IqChart"
-                                        Background="{StaticResource BrushInput}"
-                                        AnimationsSpeed="0"
-                                        TooltipPosition="Hidden"/>
-                </Border>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border x:Name="IqChartBorder"
+                            BorderBrush="{StaticResource BrushBorder}"
+                            BorderThickness="1"
+                            Background="{StaticResource BrushInput}"
+                            CornerRadius="3"
+                            Padding="4"
+                            ClipToBounds="True">
+                        <lvc:CartesianChart x:Name="IqChart"
+                                            Background="{StaticResource BrushInput}"
+                                            AnimationsSpeed="0"
+                                            TooltipPosition="Hidden"/>
+                    </Border>
+                    <StackPanel x:Name="IqGroupLegend"
+                                Grid.Column="1"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"/>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

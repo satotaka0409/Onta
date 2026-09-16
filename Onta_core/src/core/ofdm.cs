@@ -4526,6 +4526,7 @@ public sealed partial class OfdmGenerator
 
     /// <summary>
     /// 実数 PCM（Imag=0）から表示用フォワード FFT を計算します。
+    /// Hann 窓をかけてスペクトル漏れを抑え、聴感に近い連続スペクトルにします。
     /// </summary>
     public static void ComputeForwardSpectrumFromRealPcm(
         ReadOnlySpan<Complex> timePcm,
@@ -4543,9 +4544,12 @@ public sealed partial class OfdmGenerator
 
         var n = destination.Length;
         var offset = timePcm.Length - n;
+        // Hann 窓（コヒーレントゲイン 0.5 を打ち消すため 2 倍）
+        var denom = Math.Max(1, n - 1);
         for (var i = 0; i < n; i++)
         {
-            destination[i] = new Complex(timePcm[offset + i].Real, 0.0);
+            var hann = 1.0 - Math.Cos(2.0 * Math.PI * i / denom);
+            destination[i] = new Complex(timePcm[offset + i].Real * hann, 0.0);
         }
 
         FftInPlace(destination);

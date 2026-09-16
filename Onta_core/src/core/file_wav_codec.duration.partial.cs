@@ -6,9 +6,17 @@ namespace Onta.Core;
 public sealed partial class FileWavCodec
 {
     /// <summary>
-    /// 処理の補足説明です。
+    /// 送信時間見積りの 1 セグメントです。
     /// </summary>
-    public readonly record struct TransmissionDurationSegment(string Label, long Samples, double Seconds);
+    /// <param name="Label">項目名。</param>
+    /// <param name="Samples">サンプル数。</param>
+    /// <param name="Seconds">秒数。</param>
+    /// <param name="SizeBytes">表示用サイズ（bytes）。null のとき「-」。</param>
+    public readonly record struct TransmissionDurationSegment(
+        string Label,
+        long Samples,
+        double Seconds,
+        long? SizeBytes);
 
     /// <summary>
     /// 処理の補足説明です。
@@ -33,11 +41,17 @@ public sealed partial class FileWavCodec
         var totalSamples = 0L;
 
         totalSamples += profile.LeadingSilenceSamples;
-        AddSegment(segments, "プリアンブル", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples);
+        AddSegment(segments, "プリアンブル", profile.UnmodulatedPreambleSamples, profile.SampleRate, ref totalSamples, sizeBytes: null);
 
         var openingHeaderOfdm = codec.CreateHeaderOfdm();
         var openingFhSamples = HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples);
-        AddSegment(segments, "FH", openingFhSamples, profile.SampleRate, ref totalSamples);
+        AddSegment(
+            segments,
+            "ファイルヘッダ",
+            openingFhSamples,
+            profile.SampleRate,
+            ref totalSamples,
+            sizeBytes: FileHeaderBytes);
 
         for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
         {
@@ -54,7 +68,13 @@ public sealed partial class FileWavCodec
             {
                 if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                 {
-                    AddSegment(segments, "FH", fhPacketSamples, profile.SampleRate, ref totalSamples);
+                    AddSegment(
+                        segments,
+                        "ファイルヘッダ",
+                        fhPacketSamples,
+                        profile.SampleRate,
+                        ref totalSamples,
+                        sizeBytes: FileHeaderBytes);
                 }
 
                 var blockIndex = order[local];
@@ -67,17 +87,24 @@ public sealed partial class FileWavCodec
                 var blkLabel = profile.BlockInterleaveFactor == 1
                     ? $"BLK-{blockIndex}"
                     : $"BLK-{blockIndex}(P{pass + 1})";
-                AddSegment(segments, blkLabel, blkSamples, profile.SampleRate, ref totalSamples);
+                AddSegment(
+                    segments,
+                    blkLabel,
+                    blkSamples,
+                    profile.SampleRate,
+                    ref totalSamples,
+                    sizeBytes: payloadLengths[blockIndex]);
             }
         }
 
         AddSegment(
             segments,
-            "FH",
+            "ファイルヘッダ",
             HeaderPacketSamples(openingHeaderOfdm, FileHeaderBytes, profile.FileHeaderUnmodulatedSamples),
             profile.SampleRate,
-            ref totalSamples);
-        AddSegment(segments, "TAIL", profile.TrailingSilenceSamples, profile.SampleRate, ref totalSamples);
+            ref totalSamples,
+            sizeBytes: FileHeaderBytes);
+        AddSegment(segments, "TAIL", profile.TrailingSilenceSamples, profile.SampleRate, ref totalSamples, sizeBytes: null);
 
         return new TransmissionDurationEstimate(
             profile.SampleRate,
@@ -166,10 +193,11 @@ public sealed partial class FileWavCodec
         string label,
         long samples,
         int sampleRate,
-        ref long totalSamples)
+        ref long totalSamples,
+        long? sizeBytes)
     {
         totalSamples += samples;
-        segments.Add(new TransmissionDurationSegment(label, samples, samples / (double)sampleRate));
+        segments.Add(new TransmissionDurationSegment(label, samples, samples / (double)sampleRate, sizeBytes));
     }
 }
 

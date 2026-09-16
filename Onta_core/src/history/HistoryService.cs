@@ -121,7 +121,10 @@ internal static class HistoryService
         if (!string.IsNullOrWhiteSpace(entry.ContentHashHex)
             && !entry.ContentHashHex.StartsWith("FH:", StringComparison.Ordinal))
         {
-            var computed = Convert.ToHexString(Hash.ComputeSha256(merged));
+            // 受信は SHA-512（128 hex）、送信履歴は SHA-256（64 hex）を許容する。
+            var computed = entry.ContentHashHex.Trim().Length >= 128
+                ? Convert.ToHexString(Hash.ComputeSha512(merged))
+                : Convert.ToHexString(Hash.ComputeSha256(merged));
             if (!string.Equals(computed, entry.ContentHashHex, StringComparison.OrdinalIgnoreCase))
             {
                 return false;
@@ -165,15 +168,15 @@ internal static class HistoryService
         var fileName = Path.GetFileName(inputPath);
         long fileSize = 0;
         var contentHashHex = string.Empty;
-        var createdAtUtc = DateTime.UtcNow;
-        var updatedAtUtc = DateTime.UtcNow;
+        var createdAtLocal = DateTime.Now;
+        var updatedAtLocal = DateTime.Now;
         if (!string.IsNullOrWhiteSpace(inputPath) && File.Exists(inputPath))
         {
             var fi = new FileInfo(inputPath);
             fileSize = fi.Length;
             contentHashHex = Convert.ToHexString(Hash.ComputeSha256(File.ReadAllBytes(inputPath)));
-            createdAtUtc = fi.CreationTimeUtc;
-            updatedAtUtc = fi.LastWriteTimeUtc;
+            createdAtLocal = fi.CreationTime;
+            updatedAtLocal = fi.LastWriteTime;
         }
 
         var entry = new ReceiveHistoryEntry(
@@ -181,9 +184,9 @@ internal static class HistoryService
             Kind: HistoryEntryKind.Send,
             InputDevice: ReceiveInputDevice.Wav,
             DataModulation: BuildDataModulation(activeSubcarriers, modulationScheme, channelMode),
-            ReceivedAtUtc: DateTime.UtcNow,
-            CreatedAtUtc: createdAtUtc,
-            UpdatedAtUtc: updatedAtUtc,
+            ReceivedAtUtc: DateTime.Now,
+            CreatedAtUtc: createdAtLocal,
+            UpdatedAtUtc: updatedAtLocal,
             ContentHashHex: contentHashHex,
             SourcePath: inputPath ?? string.Empty,
             FileName: string.IsNullOrWhiteSpace(fileName) ? "(不明)" : fileName,

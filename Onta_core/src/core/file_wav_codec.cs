@@ -145,17 +145,29 @@ public sealed class ProgressiveDecodeState
 
     internal string? ReceivedFileName;
 
+    /// <summary>FH/BH から得たファイル全体ハッシュ（SHA-512 の 16 進）。</summary>
+    internal string? ReceivedFileHashHex;
+
     internal Dictionary<string, int> BlockHashOwners { get; } = new(StringComparer.Ordinal);
 
     internal Dictionary<int, byte[]> BlockDataModulationByIndex { get; } = [];
 
     internal Dictionary<int, byte[]> BlockExpectedHashByIndex { get; } = [];
 
+    /// <summary>BH で宣言されたブロックペイロードサイズ（バイト）。</summary>
+    internal Dictionary<int, int> BlockSizeByIndex { get; } = [];
+
+    /// <summary>BD 受信結果（true=成功 / false=失敗）。キーがある＝BD 処理済み。</summary>
+    internal Dictionary<int, bool> BlockBdOutcomeByIndex { get; } = [];
+
     internal Dictionary<int, string> BlockHeaderIdentityByIndex { get; } = [];
 
     internal Dictionary<string, byte[]> OrphanPayloadByHash { get; } = new(StringComparer.Ordinal);
 
     internal Dictionary<string, string> OrphanDetailByHash { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>孤立ブロックキー → BH データ変調 4 バイト。</summary>
+    internal Dictionary<string, byte[]> OrphanDataModulationByHash { get; } = new(StringComparer.Ordinal);
 
     internal int? DetectedDataSubcarriers;
     internal ModulationScheme? DetectedModulationScheme;
@@ -215,14 +227,18 @@ public sealed class ProgressiveDecodeState
         DataFallbackUsed = 0;
         DataTotalAttempts = 0;
         ReceivedFileName = null;
+        ReceivedFileHashHex = null;
         SourceCreatedAtUtc = null;
         SourceUpdatedAtUtc = null;
         BlockHashOwners.Clear();
         BlockDataModulationByIndex.Clear();
         BlockExpectedHashByIndex.Clear();
+        BlockSizeByIndex.Clear();
+        BlockBdOutcomeByIndex.Clear();
         BlockHeaderIdentityByIndex.Clear();
         OrphanPayloadByHash.Clear();
         OrphanDetailByHash.Clear();
+        OrphanDataModulationByHash.Clear();
         DetectedDataSubcarriers = null;
         DetectedModulationScheme = null;
         StatusBoard.Reset();
@@ -873,13 +889,26 @@ public sealed partial class FileWavCodec
                     ? 2.0
                     : Math.Clamp(5.0 + (90.0 * doneWork / totalWork), 0.0, 99.0);
 
+            // 受信詳細のブロックメーター用。全体進捗とは独立した局所進捗。
+            var blockLocal = 0.0;
+            if (blockIndex >= 0)
+            {
+                blockLocal = frame switch
+                {
+                    CoreFrameKind.Bh => 20.0,
+                    CoreFrameKind.Bd => Math.Clamp(20.0 + (79.0 * Math.Clamp(blockFraction, 0.0, 1.0)), 20.0, 99.0),
+                    _ => 0.0
+                };
+            }
+
             state.StatusBoard.SetProgress(new CoreProgressInfo(
                 CurrentFrame: frame,
                 CurrentBlockIndex: blockIndex,
                 PassIndex: state.Pass,
                 AcceptedBlockCount: state.AcceptedBlockCount,
                 TotalBlockCount: blockCount,
-                ProgressPercent: percent));
+                ProgressPercent: percent,
+                CurrentBlockProgressPercent: blockLocal));
 
             state.StatusBoard.SetErrorFrameKind(frame);
 
@@ -1176,6 +1205,7 @@ public sealed partial class FileWavCodec
                 state.FileSize = fileSize;
                 state.BlockCount = blockCount;
                 state.ReceivedFileName = fhFileName;
+                state.ReceivedFileHashHex = Convert.ToHexString(fileHeader.AsSpan(776, 64));
                 state.SourceCreatedAtUtc = sourceCreatedAtUtc;
                 state.SourceUpdatedAtUtc = sourceUpdatedAtUtc;
                 state.OutputSlots = new byte[blockCount][];
@@ -1294,6 +1324,11 @@ public sealed partial class FileWavCodec
 
                             var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
                             var fileHashInBlockHeader = blockHeader.AsSpan(56, 64).ToArray();
+                            if (string.IsNullOrWhiteSpace(state.ReceivedFileHashHex))
+                            {
+                                state.ReceivedFileHashHex = Convert.ToHexString(fileHashInBlockHeader);
+                            }
+
                             var blockHeaderIdentity = BuildBlockHeaderIdentityKey(blockIndex, expectedHash, fileHashInBlockHeader);
                             var blockDataModulation = new byte[4]
                             {
@@ -1352,11 +1387,14 @@ public sealed partial class FileWavCodec
                                 state.BlockHeaderIdentityByIndex[idx] = blockHeaderIdentity;
                                 state.BlockDataModulationByIndex[idx] = blockDataModulation;
                                 state.BlockExpectedHashByIndex[idx] = expectedHash;
+                                state.BlockSizeByIndex[idx] = blockSize;
+                                state.BlockBdOutcomeByIndex[idx] = true;
                             }
 
                             state.OrphanPayloadByHash[blockHeaderIdentity] = payload;
                             state.OrphanDetailByHash[blockHeaderIdentity] =
                                 $"{action} BH+BD index={blockIndex} (fileHash+blockHash+blockNo)";
+                            state.OrphanDataModulationByHash[blockHeaderIdentity] = blockDataModulation.ToArray();
                             state.DataBlocksDecoded++;
                             state.DataBlocksAccepted++;
                             state.AcceptedBlockCount = state.OrphanPayloadByHash.Count;
@@ -1406,6 +1444,7 @@ public sealed partial class FileWavCodec
                     slotAccepted[blockIndex] = true;
                     state.OrphanPayloadByHash.Remove(key);
                     state.OrphanDetailByHash.Remove(key);
+                    state.OrphanDataModulationByHash.Remove(key);
                     state.LastError = $"ORPHAN-RESOLVED hash={key[..Math.Min(12, key.Length)]} BLK-{blockIndex}";
                     return;
                 }
@@ -1428,6 +1467,7 @@ public sealed partial class FileWavCodec
                     slotAccepted[blockIndex] = true;
                     state.OrphanPayloadByHash.Remove(compositeKey);
                     state.OrphanDetailByHash.Remove(compositeKey);
+                    state.OrphanDataModulationByHash.Remove(compositeKey);
                     state.LastError = $"ORPHAN-RESOLVED key={compositeKey[..Math.Min(12, compositeKey.Length)]} BLK-{blockIndex}";
                 }
             }
@@ -1447,11 +1487,20 @@ public sealed partial class FileWavCodec
                 return false;
             }
 
-            void SaveOrphanPayload(byte[] payload, string detail)
+            void SaveOrphanPayload(
+                byte[] payload,
+                string detail,
+                long blockIndex,
+                ReadOnlySpan<byte> blockHash,
+                ReadOnlySpan<byte> fileHash,
+                byte[] dataModulation)
             {
-                var key = HashToKey(Hash.ComputeSha256(payload));
+                var key = BuildBlockHeaderIdentityKey(blockIndex, blockHash, fileHash);
                 state.OrphanPayloadByHash[key] = payload;
                 state.OrphanDetailByHash[key] = detail;
+                state.OrphanDataModulationByHash[key] = dataModulation is { Length: 4 }
+                    ? dataModulation.ToArray()
+                    : new byte[4];
                 state.LastError = $"ORPHAN hash={key[..Math.Min(12, key.Length)]} {detail}";
             }
 
@@ -1551,6 +1600,13 @@ public sealed partial class FileWavCodec
                             }
                         }
 
+                        if (expectedBlockIndex >= 0
+                            && expectedBlockIndex < slotAccepted.Length
+                            && !slotAccepted[expectedBlockIndex])
+                        {
+                            state.BlockBdOutcomeByIndex[expectedBlockIndex] = false;
+                        }
+
                         state.LastError = message;
                         state.Pass = pass;
                         state.Local = local + 1;
@@ -1631,6 +1687,11 @@ public sealed partial class FileWavCodec
                         var ownerBlockIndex = ownerKnown ? (int)blockIndex : -1;
                         var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
                         var fileHashInBlockHeader = blockHeader.AsSpan(56, 64).ToArray();
+                        if (string.IsNullOrWhiteSpace(state.ReceivedFileHashHex))
+                        {
+                            state.ReceivedFileHashHex = Convert.ToHexString(fileHashInBlockHeader);
+                        }
+
                         var blockHeaderIdentity = BuildBlockHeaderIdentityKey(blockIndex, expectedHash, fileHashInBlockHeader);
                         var blockDataModulation = new byte[4]
                         {
@@ -1656,6 +1717,7 @@ public sealed partial class FileWavCodec
                             RegisterHashOwner(ownerBlockIndex, expectedHash);
                             state.BlockDataModulationByIndex[ownerBlockIndex] = blockDataModulation;
                             state.BlockExpectedHashByIndex[ownerBlockIndex] = expectedHash;
+                            state.BlockSizeByIndex[ownerBlockIndex] = blockSize;
                             state.BlockHeaderIdentityByIndex[ownerBlockIndex] = blockHeaderIdentity;
                         }
 
@@ -1735,10 +1797,17 @@ public sealed partial class FileWavCodec
                         {
                             outputSlots[ownerBlockIndex] = payload;
                             slotAccepted[ownerBlockIndex] = true;
+                            state.BlockBdOutcomeByIndex[ownerBlockIndex] = true;
                         }
                         else if (acceptable)
                         {
-                            SaveOrphanPayload(payload, $"孤立ブロック index={blockIndex} (pass {pass}, local {local})");
+                            SaveOrphanPayload(
+                                payload,
+                                $"孤立ブロック index={blockIndex} (pass {pass}, local {local})",
+                                blockIndex,
+                                expectedHash,
+                                fileHashInBlockHeader,
+                                blockDataModulation);
                         }
                         else if (!acceptable)
                         {
@@ -1748,17 +1817,26 @@ public sealed partial class FileWavCodec
                                 slotAccepted[resolvedOwner] = true;
                                 state.BlockDataModulationByIndex[resolvedOwner] = blockDataModulation;
                                 state.BlockExpectedHashByIndex[resolvedOwner] = expectedHash;
+                                state.BlockSizeByIndex[resolvedOwner] = blockSize;
+                                state.BlockBdOutcomeByIndex[resolvedOwner] = true;
                                 effectiveBlockIndex = resolvedOwner;
                                 acceptedForStatus = true;
                                 state.LastError =
                                     $"ORPHAN-RESOLVED hash一致で BLK-{resolvedOwner} に再割当 (pass {pass}, local {local})";
                             }
+                            else if (ownerKnown)
+                            {
+                                // BH は成功したが BD が不一致 → 当該ブロックは NG。
+                                state.BlockBdOutcomeByIndex[ownerBlockIndex] = false;
+                                state.LastError =
+                                    $"BLK-{ownerBlockIndex} BD受信失敗 (pass {pass}, local {local})";
+                                effectiveBlockIndex = ownerBlockIndex;
+                            }
                             else
                             {
-                                var detail = ownerKnown
-                                    ? $"管理BLK-{ownerBlockIndex} と不一致 (pass {pass}, local {local})"
-                                    : $"孤立ブロック index={blockIndex} (pass {pass}, local {local})";
-                                SaveOrphanPayload(payload, detail);
+                                // BD 失敗かつ親不明は不明ブロックに残さない（OK ペイロードのみ孤立登録）。
+                                state.LastError =
+                                    $"BLK-{blockIndex} BD受信失敗（親不明・破棄） (pass {pass}, local {local})";
                             }
                         }
 

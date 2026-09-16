@@ -14,11 +14,6 @@
                     Content="再読込"
                     Width="90"
                     Click="OnReloadClick"/>
-            <Button x:Name="ExportButton"
-                    Content="Payloadを保存"
-                    Width="130"
-                    Margin="8,0,0,0"
-                    Click="OnExportClick"/>
             <Button x:Name="DeleteButton"
                     Content="履歴を削除"
                     Width="110"
@@ -43,40 +38,53 @@
                           IsReadOnly="True"
                           SelectionMode="Single"
                           SelectionUnit="FullRow"
-                          RowDetailsVisibilityMode="VisibleWhenSelected"
+                          RowDetailsVisibilityMode="Collapsed"
                           SelectionChanged="OnSelectionChanged">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="受信日時"
-                                            Binding="{Binding TimestampText}"
-                                            Width="170"/>
+                        <DataGridTemplateColumn Header="受信日時"
+                                                Width="120">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding TimestampText}"
+                                               Cursor="Hand"
+                                               TextDecorations="Underline"
+                                               VerticalAlignment="Center"
+                                               ToolTip="クリックでブロック明細を開閉"
+                                               PreviewMouseLeftButtonDown="OnReceiveTimestampClick"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn Header="ファイル名"
                                             Binding="{Binding FileName}"
-                                            Width="2*"/>
+                                            Width="3*"/>
                         <DataGridTextColumn Header="ファイルサイズ"
                                             Binding="{Binding FileSizeText}"
-                                            Width="120"/>
+                                            Width="80"/>
                         <DataGridTextColumn Header="結果"
                                             Binding="{Binding ResultText}"
-                                            Width="120"/>
+                                            Width="70"/>
                         <DataGridTextColumn Header="ブロック数"
                                             Binding="{Binding BlockCountText}"
-                                            Width="110"/>
-                        <DataGridTextColumn Header="音声/WAV入力"
+                                            Width="65"/>
+                        <DataGridTextColumn Header="音声/WAV"
                                             Binding="{Binding InputDeviceText}"
-                                            Width="110"/>
+                                            Width="70"/>
                         <DataGridTextColumn Header="WAVファイル名"
                                             Binding="{Binding SourceWavFileName}"
-                                            Width="2*"/>
+                                            Width="4*"/>
                         <DataGridTemplateColumn Header="ダウンロード"
-                                                Width="130">
+                                                Width="80">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Button Content="ダウンロード"
                                             Padding="8,2"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
                                             Click="OnRowDownloadClick"
                                             Tag="{Binding Entry}">
                                         <Button.Style>
-                                            <Style TargetType="Button">
+                                            <Style TargetType="Button"
+                                                   BasedOn="{StaticResource {x:Type Button}}">
                                                 <Setter Property="Visibility"
                                                         Value="Collapsed"/>
                                                 <Style.Triggers>
@@ -94,10 +102,10 @@
                         </DataGridTemplateColumn>
                         <DataGridTextColumn Header="作成タイムスタンプ"
                                             Binding="{Binding CreatedAtText}"
-                                            Width="170"/>
+                                            Width="130"/>
                         <DataGridTextColumn Header="更新タイムスタンプ"
                                             Binding="{Binding UpdatedAtText}"
-                                            Width="170"/>
+                                            Width="130"/>
                     </DataGrid.Columns>
                     <DataGrid.RowDetailsTemplate>
                         <DataTemplate>
@@ -114,22 +122,22 @@
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="BLK"
                                                             Binding="{Binding BlockIndexText}"
-                                                            Width="90"/>
+                                                            Width="50"/>
                                         <DataGridTextColumn Header="結果"
                                                             Binding="{Binding ResultText}"
-                                                            Width="110"/>
+                                                            Width="50"/>
                                         <DataGridTextColumn Header="サブキャリア数"
                                                             Binding="{Binding SubcarrierText}"
-                                                            Width="110"/>
+                                                            Width="90"/>
                                         <DataGridTextColumn Header="変調"
                                                             Binding="{Binding ModulationText}"
-                                                            Width="100"/>
+                                                            Width="60"/>
                                         <DataGridTextColumn Header="Stereo/mono"
                                                             Binding="{Binding ChannelText}"
-                                                            Width="110"/>
+                                                            Width="90"/>
                                         <DataGridTextColumn Header="ブロックサイズ"
                                                             Binding="{Binding BlockSizeText}"
-                                                            Width="120"/>
+                                                            Width="90"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </Border>
@@ -152,34 +160,34 @@
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="送信日時"
                                             Binding="{Binding TimestampText}"
-                                            Width="170"/>
+                                            Width="130"/>
                         <DataGridTextColumn Header="ファイル名"
                                             Binding="{Binding FileName}"
-                                            Width="2*"/>
+                                            Width="3*"/>
                         <DataGridTextColumn Header="ファイルサイズ"
                                             Binding="{Binding FileSizeText}"
-                                            Width="120"/>
-                        <DataGridTextColumn Header="音声/WAV入力"
+                                            Width="80"/>
+                        <DataGridTextColumn Header="音声/WAV"
                                             Binding="{Binding OutputDeviceText}"
-                                            Width="110"/>
+                                            Width="70"/>
                         <DataGridTextColumn Header="WAVファイル名"
                                             Binding="{Binding OutputWavFileName}"
-                                            Width="2*"/>
+                                            Width="4*"/>
                         <DataGridTextColumn Header="サブキャリア数"
                                             Binding="{Binding SubcarrierText}"
-                                            Width="110"/>
+                                            Width="80"/>
                         <DataGridTextColumn Header="変調"
                                             Binding="{Binding ModulationText}"
-                                            Width="100"/>
+                                            Width="60"/>
                         <DataGridTextColumn Header="Stereo/mono"
                                             Binding="{Binding ChannelText}"
-                                            Width="110"/>
+                                            Width="90"/>
                         <DataGridTextColumn Header="作成タイムスタンプ"
                                             Binding="{Binding CreatedAtText}"
-                                            Width="170"/>
+                                            Width="130"/>
                         <DataGridTextColumn Header="更新タイムスタンプ"
                                             Binding="{Binding UpdatedAtText}"
-                                            Width="170"/>
+                                            Width="130"/>
                     </DataGrid.Columns>
                 </DataGrid>
             </TabItem>
@@ -214,6 +222,9 @@
                         <DataGridTextColumn Header="Stereo/mono"
                                             Binding="{Binding ChannelText}"
                                             Width="110"/>
+                        <DataGridTextColumn Header="ブロック位置"
+                                            Binding="{Binding BlockPositionText}"
+                                            Width="90"/>
                         <DataGridTextColumn Header="ファイルハッシュ値"
                                             Binding="{Binding FileHashText}"
                                             Width="2*"/>

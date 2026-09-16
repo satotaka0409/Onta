@@ -39,7 +39,7 @@ public partial class FileEstimatePanel : UserControl
 
         if (fileSizeBytes <= 0)
         {
-            _rows.Add(EstimateRow.Info("Input file", "Not selected"));
+            _rows.Add(EstimateRow.Info("Input file", "Not selected", "-"));
             return;
         }
 
@@ -59,15 +59,14 @@ public partial class FileEstimatePanel : UserControl
             var start = cursor;
             var end = cursor + Math.Max(0.0, seg.Seconds);
             cursor = end;
-            var row = EstimateRow.Segment(seg.Label, seg.Seconds);
+            var row = EstimateRow.Segment(seg.Label, seg.Seconds, FormatSize(seg.SizeBytes));
             _rows.Add(row);
             _segmentTimings.Add(new SegmentTiming(row, start, end));
         }
 
         var blockCount = Math.Max(1, (int)((fileSizeBytes + DataBlockBytes - 1) / DataBlockBytes));
-        _rows.Add(EstimateRow.Info("ファイルサイズ", $"{fileSizeBytes:N0} bytes"));
-        _rows.Add(EstimateRow.Info("ブロック数", blockCount.ToString()));
-        _rows.Add(EstimateRow.Segment("Total", estimate.TotalSeconds));
+        _rows.Add(EstimateRow.Info("ブロック数", "-", blockCount.ToString()));
+        _rows.Add(EstimateRow.Segment("Total", estimate.TotalSeconds, $"{fileSizeBytes:N0}"));
     }
 
     /// <summary>
@@ -159,6 +158,16 @@ public partial class FileEstimatePanel : UserControl
     }
 
     /// <summary>
+    /// サイズ列の表示文字列を返します。
+    /// </summary>
+    /// <param name="sizeBytes">バイト数。null のとき「-」。</param>
+    /// <returns>表示用サイズ。</returns>
+    private static string FormatSize(long? sizeBytes)
+    {
+        return sizeBytes is null ? "-" : $"{sizeBytes.Value:N0}";
+    }
+
+    /// <summary>
     /// セグメント行とその時間範囲を関連付ける内部データです。
     /// </summary>
     private readonly record struct SegmentTiming(EstimateRow Row, double StartSeconds, double EndSeconds);
@@ -174,12 +183,14 @@ public partial class FileEstimatePanel : UserControl
         /// 見積り行を生成します。
         /// </summary>
         /// <param name="name">項目名。</param>
-        /// <param name="seconds">表示値文字列。</param>
+        /// <param name="seconds">秒数表示。</param>
+        /// <param name="sizeText">サイズ表示。</param>
         /// <param name="showMeter">メーター表示有無。</param>
-        private EstimateRow(string name, string seconds, bool showMeter)
+        private EstimateRow(string name, string seconds, string sizeText, bool showMeter)
         {
             Name = name;
             Seconds = seconds;
+            SizeText = sizeText;
             MeterVisibility = showMeter ? Visibility.Visible : Visibility.Collapsed;
         }
 
@@ -187,10 +198,17 @@ public partial class FileEstimatePanel : UserControl
         /// 項目名です。
         /// </summary>
         public string Name { get; }
+
         /// <summary>
-        /// 表示値文字列です。
+        /// 秒数表示です。
         /// </summary>
         public string Seconds { get; }
+
+        /// <summary>
+        /// サイズ表示です。
+        /// </summary>
+        public string SizeText { get; }
+
         /// <summary>
         /// メーター表示有無です。
         /// </summary>
@@ -225,18 +243,24 @@ public partial class FileEstimatePanel : UserControl
         /// </summary>
         /// <param name="name">セグメント名。</param>
         /// <param name="seconds">セグメント秒数。</param>
+        /// <param name="sizeText">サイズ表示。</param>
         /// <returns>セグメント行。</returns>
-        public static EstimateRow Segment(string name, double seconds) =>
-            new(name, Math.Round(seconds, 1, MidpointRounding.AwayFromZero).ToString("0.0"), showMeter: true);
+        public static EstimateRow Segment(string name, double seconds, string sizeText) =>
+            new(
+                name,
+                Math.Round(seconds, 1, MidpointRounding.AwayFromZero).ToString("0.0"),
+                sizeText,
+                showMeter: true);
 
         /// <summary>
         /// メーターなしの情報行を作成します。
         /// </summary>
         /// <param name="name">項目名。</param>
-        /// <param name="seconds">表示値文字列。</param>
+        /// <param name="seconds">秒数表示。</param>
+        /// <param name="sizeText">サイズ表示。</param>
         /// <returns>情報行。</returns>
-        public static EstimateRow Info(string name, string seconds) =>
-            new(name, seconds, showMeter: false);
+        public static EstimateRow Info(string name, string seconds, string sizeText) =>
+            new(name, seconds, sizeText, showMeter: false);
 
         /// <summary>
         /// プロパティ変更通知を発火します。
@@ -246,7 +270,3 @@ public partial class FileEstimatePanel : UserControl
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
-
-
-
-

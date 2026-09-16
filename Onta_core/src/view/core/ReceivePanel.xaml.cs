@@ -1,9 +1,11 @@
 ﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.Win32;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
 using Onta.Core;
+using Ellipse = System.Windows.Shapes.Ellipse;
 
 namespace Onta.View.Core;
 
@@ -53,6 +55,7 @@ public partial class ReceivePanel : UserControl
         BindChart(FftChart, _fftChart.Series, _fftChart.XAxes, _fftChart.YAxes);
         BindChart(IqChart, _iqChart.Series, _iqChart.XAxes, _iqChart.YAxes);
         BindChart(WowFlutterChart, _wowChart.Series, _wowChart.XAxes, _wowChart.YAxes);
+        BuildIqGroupLegend();
         ErrorRateTabRadio.Checked += OnReceiveGraphTabChanged;
         FftTabRadio.Checked += OnReceiveGraphTabChanged;
         InitializeAudioDevices();
@@ -62,7 +65,7 @@ public partial class ReceivePanel : UserControl
 
         Loaded += (_, _) =>
         {
-            SetWowFlutterPercent(0, 0);
+            UpdateWowMeters(0, 0);
             ErrorGraph.Clear();
             _fftChart.Clear();
             _iqChart.Clear();
@@ -114,6 +117,38 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
+    /// I-Q グラフ横のグループ凡例（色ドット + A〜F）を構築します。
+    /// </summary>
+    private void BuildIqGroupLegend()
+    {
+        IqGroupLegend.Children.Clear();
+        foreach (var item in IqChartModel.GroupLegendItems)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 2, 0, 2)
+            };
+            row.Children.Add(new Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                Fill = new SolidColorBrush(Color.FromRgb(item.R, item.G, item.B)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0)
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = item.Label,
+                Foreground = (Brush)FindResource("BrushTextMuted"),
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 11
+            });
+            IqGroupLegend.Children.Add(row);
+        }
+    }
+
+    /// <summary>
     /// グラフ行のリサイズに合わせて I-Q を正方形に保ちます。
     /// </summary>
     private void OnReceiveGraphsRowSizeChanged(object sender, SizeChangedEventArgs e)
@@ -122,7 +157,7 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// I-Q パネル全体を正方形（タイトル込みで高さを合わせ）にします。
+    /// I-Q チャート領域を正方形にし、凡例分だけホスト幅を広げます。
     /// </summary>
     private void UpdateIqSquareSize()
     {
@@ -144,18 +179,24 @@ public partial class ReceivePanel : UserControl
         }
 
         side = Math.Clamp(side, 180, 420);
-        if (Math.Abs(IqPanelHost.Width - side) <= 0.5
+        IqGroupLegend.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var legendWidth = Math.Ceiling(IqGroupLegend.DesiredSize.Width) + 8;
+        var hostWidth = side + legendWidth;
+        if (Math.Abs(IqPanelHost.Width - hostWidth) <= 0.5
             && Math.Abs(IqPanelHost.Height - side) <= 0.5)
         {
             return;
         }
 
-        IqPanelHost.Width = side;
+        IqPanelHost.Width = hostWidth;
         IqPanelHost.Height = side;
-        ReceiveGraphsRow.ColumnDefinitions[1].Width = new GridLength(side);
+        ReceiveGraphsRow.ColumnDefinitions[1].Width = new GridLength(hostWidth);
     }
 
     public event EventHandler? ReceiveStartRequested;
+    public event EventHandler? ReceiveStopRequested;
+
+    private bool _receiveRunning;
 
     /// <summary>WAV入力モードが選択中なら true。</summary>
     public bool UseWavInput => WavInputRadio.IsChecked == true;
@@ -309,12 +350,16 @@ public partial class ReceivePanel : UserControl
         }
 
         ApplyWowFlutterFromStatus(status);
-        try
+        // FH 解析中／ワウ未ロック時は時系列を進めない（エラー率と同じ方針）
+        if (status.WowTrackingActive && !status.IsAnalyzing)
         {
-            _wowChart.Tick();
-        }
-        catch
-        {
+            try
+            {
+                _wowChart.Tick();
+            }
+            catch
+            {
+            }
         }
 
         // I-Q / FFT を先に更新する（エラーレート側の LiveCharts 更新で例外・遅延しても可視化を落とさない）
@@ -396,7 +441,7 @@ public partial class ReceivePanel : UserControl
         _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
         _lastErrorSequence = -1;
         ClearWowTracking();
-        SetWowFlutterPercent(0, 0);
+        UpdateWowMeters(0, 0);
         SetFileInfo("(未受信)", "-", "-");
         ProgressBox.Text = "-";
         IqTitle.Text = "I-Q";
@@ -439,8 +484,27 @@ public partial class ReceivePanel : UserControl
     /// <param name="enabled">有効なら true。</param>
     public void SetInteractionEnabled(bool enabled)
     {
+        if (_receiveRunning)
+        {
+            return;
+        }
+
         IoGroupBox.IsEnabled = enabled;
         StartButton.IsEnabled = enabled;
+        StopButton.IsEnabled = false;
+    }
+
+    /// <summary>
+    /// 受信実行中状態に合わせて入力 UI の有効/無効を切り替えます。
+    /// </summary>
+    /// <param name="isRunning">受信中なら true。</param>
+    public void SetReceiveRunning(bool isRunning)
+    {
+        _receiveRunning = isRunning;
+        // 受信中は入出力グループを操作不可にする
+        IoGroupBox.IsEnabled = !isRunning;
+        StartButton.IsEnabled = !isRunning;
+        StopButton.IsEnabled = isRunning;
     }
 
     /// <summary>
@@ -488,10 +552,11 @@ public partial class ReceivePanel : UserControl
     /// </summary>
     private void ApplyWowFlutterFromStatus(CoreExecutionStatus status)
     {
-        if (!status.WowTrackingActive)
+        if (!status.WowTrackingActive || status.IsAnalyzing)
         {
             ClearWowTracking();
-            SetWowFlutterPercent(status.WowLeftPercent, status.WowRightPercent);
+            // メーターのみ更新。FH 解析中はグラフへは載せない。
+            UpdateWowMeters(status.WowLeftPercent, status.WowRightPercent);
             return;
         }
 
@@ -526,14 +591,22 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
+    /// ワウメーターのみを更新します（時系列グラフは更新しない）。
+    /// </summary>
+    private void UpdateWowMeters(double leftPercent, double rightPercent)
+    {
+        WowLeft.AddSample(leftPercent * WowFlutterDisplayGain);
+        WowRight.AddSample(rightPercent * WowFlutterDisplayGain);
+    }
+
+    /// <summary>
     /// WOW/Flutter パーセント値をメーターと時系列グラフへ反映します。
     /// </summary>
     /// <param name="leftPercent">左チャネル値。</param>
     /// <param name="rightPercent">右チャネル値。</param>
     public void SetWowFlutterPercent(double leftPercent, double rightPercent)
     {
-        WowLeft.AddSample(leftPercent * WowFlutterDisplayGain);
-        WowRight.AddSample(rightPercent * WowFlutterDisplayGain);
+        UpdateWowMeters(leftPercent, rightPercent);
         try
         {
             // グラフは実偏差%（±1%軸）。メーター用の表示ゲインは掛けない。
@@ -678,6 +751,11 @@ public partial class ReceivePanel : UserControl
     private void OnReceiveStartClick(object sender, RoutedEventArgs e)
     {
         ReceiveStartRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnReceiveStopClick(object sender, RoutedEventArgs e)
+    {
+        ReceiveStopRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private sealed record AudioDeviceItem(int DeviceNumber, string Name);

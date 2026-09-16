@@ -34,10 +34,19 @@ internal sealed record ReceiveCapturedBlockInfo(
     byte[] ContentHash,
     byte[] BlockData);
 
+/// <summary>
+/// BH 受信済みで BD 未確定でも持てるブロックメタです。
+/// </summary>
+internal sealed record ReceiveCapturedBlockHeaderInfo(
+    byte[] DataModulation,
+    byte[] ContentHash,
+    int BlockSize);
+
 internal sealed record ReceiveOrphanHistory(
     string HashHex,
     string Detail,
-    byte[] Payload);
+    byte[] Payload,
+    byte[] DataModulation);
 
 internal sealed record ReceiveHistoryEntry(
     string EntryId,

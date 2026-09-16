@@ -20,6 +20,8 @@ internal sealed class InputCoreWorker : IDisposable
     private bool _completionPending;
     private string? _lastError;
     private bool _liveMode;
+    /// <summary>実行世代。停止要求で進め、古いワーカーの完了を無視する。</summary>
+    private int _runGeneration;
 
     /// <summary>
     /// コアが進捗・グラフ用データを書き込む共有状態です。画面は問い合わせせず定期的に Read します。
@@ -91,9 +93,10 @@ internal sealed class InputCoreWorker : IDisposable
             _lastDecodedPath = null;
             _lastError = null;
             _completionPending = false;
+            var runGeneration = ++_runGeneration;
 
             _worker = Task.Factory.StartNew(
-                () => RunBatchWavDecode(wavPath, profile, state, outDir),
+                () => RunBatchWavDecode(wavPath, profile, state, outDir, runGeneration),
                 CancellationToken.None,
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
@@ -170,6 +173,7 @@ internal sealed class InputCoreWorker : IDisposable
             _lastDecodedPath = null;
             _lastError = null;
             _completionPending = false;
+            var runGeneration = ++_runGeneration;
 
             session.Start();
             try
@@ -187,10 +191,43 @@ internal sealed class InputCoreWorker : IDisposable
 
             // 完了監視（デコード成功/失敗）
             _worker = Task.Factory.StartNew(
-                () => WatchLiveCompletion(session, outDir),
+                () => WatchLiveCompletion(session, outDir, runGeneration),
                 CancellationToken.None,
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 受信中のデコードを中断します。
+    /// </summary>
+    /// <returns>中断要求を受理した場合 true。</returns>
+    public bool RequestStop()
+    {
+        lock (_sync)
+        {
+            var busy = (_liveMode && _liveSession is not null)
+                || _worker is { IsCompleted: false };
+            if (!busy && !_completionPending)
+            {
+                return false;
+            }
+
+            _runGeneration++;
+            StopLiveLocked();
+            _liveMode = false;
+            _worker = null;
+
+            if (!_completionPending)
+            {
+                _lastError = "受信を中断しました。";
+                _decodedBytes = null;
+                _lastDecodedPath = null;
+                _completionPending = true;
+                _state?.StatusBoard.Complete(faulted: true, _lastError);
+            }
+
             return true;
         }
     }
@@ -245,13 +282,34 @@ internal sealed class InputCoreWorker : IDisposable
             var result = new List<ReceiveOrphanHistory>(_state.OrphanPayloadByHash.Count);
             foreach (var pair in _state.OrphanPayloadByHash)
             {
+                // 不明ブロックはペイロード受信成功分のみ。
+                if (pair.Value is not { Length: > 0 })
+                {
+                    continue;
+                }
+
                 var detail = _state.OrphanDetailByHash.TryGetValue(pair.Key, out var text)
                     ? text
                     : string.Empty;
-                result.Add(new ReceiveOrphanHistory(pair.Key, detail, pair.Value.ToArray()));
+                var dataModulation = _state.OrphanDataModulationByHash.TryGetValue(pair.Key, out var dm)
+                    && dm is { Length: > 0 }
+                    ? dm.ToArray()
+                    : new byte[4];
+                result.Add(new ReceiveOrphanHistory(pair.Key, detail, pair.Value.ToArray(), dataModulation));
             }
 
             return result.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// FH/BH から得たファイル全体ハッシュ（SHA-512 16進）を返します。
+    /// </summary>
+    public string CaptureFileHashHex()
+    {
+        lock (_sync)
+        {
+            return _state?.ReceivedFileHashHex ?? string.Empty;
         }
     }
 
@@ -307,6 +365,57 @@ internal sealed class InputCoreWorker : IDisposable
             }
 
             return result;
+        }
+    }
+
+    /// <summary>
+    /// BH 受信済みブロックのメタ（変調・宣言サイズ）を返します。BD 未受信でも含みます。
+    /// </summary>
+    public IReadOnlyDictionary<int, ReceiveCapturedBlockHeaderInfo> CaptureReceivedBlockHeaders()
+    {
+        lock (_sync)
+        {
+            if (_state is null)
+            {
+                return new Dictionary<int, ReceiveCapturedBlockHeaderInfo>();
+            }
+
+            var result = new Dictionary<int, ReceiveCapturedBlockHeaderInfo>();
+            foreach (var pair in _state.BlockDataModulationByIndex)
+            {
+                var index = pair.Key;
+                if (index < 0)
+                {
+                    continue;
+                }
+
+                var dataModulation = NormalizeDataModulation(pair.Value);
+                var contentHash = _state.BlockExpectedHashByIndex.TryGetValue(index, out var hash)
+                    ? NormalizeHash32(hash)
+                    : new byte[32];
+                var blockSize = _state.BlockSizeByIndex.TryGetValue(index, out var size)
+                    ? Math.Max(0, size)
+                    : 0;
+                result[index] = new ReceiveCapturedBlockHeaderInfo(dataModulation, contentHash, blockSize);
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// BD 処理済みブロックの成否（true=OK / false=NG）を返します。
+    /// </summary>
+    public IReadOnlyDictionary<int, bool> CaptureBlockBdOutcomes()
+    {
+        lock (_sync)
+        {
+            if (_state is null)
+            {
+                return new Dictionary<int, bool>();
+            }
+
+            return new Dictionary<int, bool>(_state.BlockBdOutcomeByIndex);
         }
     }
 
@@ -395,33 +504,22 @@ internal sealed class InputCoreWorker : IDisposable
         _liveSession = null;
     }
 
-    private void FailLive(string message, string outputDirectory)
-    {
-        lock (_sync)
-        {
-            if (_completionPending)
-            {
-                return;
-            }
-
-            _lastError = message;
-            _decodedBytes = null;
-            _lastDecodedPath = null;
-            _completionPending = true;
-            _state?.StatusBoard.Complete(faulted: true, message);
-            StopLiveLocked();
-            _liveMode = false;
-        }
-    }
-
-    private void WatchLiveCompletion(RealtimeDecodeSession session, string outputDirectory)
+    private void WatchLiveCompletion(RealtimeDecodeSession session, string outputDirectory, int runGeneration)
     {
         while (true)
         {
             Thread.Sleep(100);
+            lock (_sync)
+            {
+                if (runGeneration != _runGeneration || _completionPending)
+                {
+                    return;
+                }
+            }
+
             if (session.TryConsumeDecoded(out var decoded) && decoded.Length > 0)
             {
-                CompleteLiveSuccess(decoded, outputDirectory);
+                CompleteLiveSuccess(decoded, outputDirectory, runGeneration);
                 return;
             }
 
@@ -430,14 +528,14 @@ internal sealed class InputCoreWorker : IDisposable
             {
                 lock (_sync)
                 {
-                    if (_completionPending || _liveSession is null)
+                    if (runGeneration != _runGeneration || _completionPending || _liveSession is null)
                     {
                         return;
                     }
 
                     if (_state is { Completed: true, CompletedFile: not null } done)
                     {
-                        CompleteLiveSuccess(done.CompletedFile, outputDirectory);
+                        CompleteLiveSuccess(done.CompletedFile, outputDirectory, runGeneration);
                         return;
                     }
 
@@ -445,7 +543,8 @@ internal sealed class InputCoreWorker : IDisposable
                     {
                         FailLive(
                             _state?.LastError ?? snap.LastError ?? "Receive failed.",
-                            outputDirectory);
+                            outputDirectory,
+                            runGeneration);
                         return;
                     }
                 }
@@ -453,31 +552,31 @@ internal sealed class InputCoreWorker : IDisposable
 
             lock (_sync)
             {
-                if (_completionPending || _liveSession is null)
+                if (runGeneration != _runGeneration || _completionPending || _liveSession is null)
                 {
                     return;
                 }
 
                 if (_state is { Completed: true, CompletedFile: not null } state)
                 {
-                    CompleteLiveSuccess(state.CompletedFile, outputDirectory);
+                    CompleteLiveSuccess(state.CompletedFile, outputDirectory, runGeneration);
                     return;
                 }
 
                 if (_state is { Completed: true } failed && failed.CompletedFile is null)
                 {
-                    FailLive(failed.LastError ?? "Receive failed.", outputDirectory);
+                    FailLive(failed.LastError ?? "Receive failed.", outputDirectory, runGeneration);
                     return;
                 }
             }
         }
     }
 
-    private void CompleteLiveSuccess(byte[] decoded, string outputDirectory)
+    private void CompleteLiveSuccess(byte[] decoded, string outputDirectory, int runGeneration)
     {
         lock (_sync)
         {
-            if (_completionPending)
+            if (_completionPending || runGeneration != _runGeneration)
             {
                 return;
             }
@@ -485,7 +584,7 @@ internal sealed class InputCoreWorker : IDisposable
             try
             {
                 // 復号結果は履歴（Onta_history.bin）に保持する。out_files への自動ダンプはしない
-                //（必要なときだけ履歴画面から Payload を保存する）。
+                //（必要なときだけ履歴画面のダウンロードから保存する）。
                 _ = outputDirectory;
                 _decodedBytes = decoded;
                 _lastDecodedPath = null;
@@ -509,6 +608,30 @@ internal sealed class InputCoreWorker : IDisposable
         }
     }
 
+    private void FailLive(string message, string outputDirectory, int runGeneration = -1)
+    {
+        lock (_sync)
+        {
+            if (_completionPending)
+            {
+                return;
+            }
+
+            if (runGeneration >= 0 && runGeneration != _runGeneration)
+            {
+                return;
+            }
+
+            _lastError = message;
+            _decodedBytes = null;
+            _lastDecodedPath = null;
+            _completionPending = true;
+            _state?.StatusBoard.Complete(faulted: true, message);
+            StopLiveLocked();
+            _liveMode = false;
+        }
+    }
+
     /// <summary>
     /// WAV を一括読み込みして復号します（テストと同じ経路。進捗は StatusBoard）。
     /// </summary>
@@ -516,7 +639,8 @@ internal sealed class InputCoreWorker : IDisposable
         string wavPath,
         FileWavCodecProfile profile,
         ProgressiveDecodeState state,
-        string outputDirectory)
+        string outputDirectory,
+        int runGeneration)
     {
         try
         {
@@ -530,6 +654,14 @@ internal sealed class InputCoreWorker : IDisposable
 
             var codec = new FileWavCodec(profile);
             var (leftSamples, rightSamples) = WavReader.ReadPcm16(wavPath);
+
+            lock (_sync)
+            {
+                if (runGeneration != _runGeneration || _completionPending)
+                {
+                    return;
+                }
+            }
 
             state.StatusBoard.SetProgress(new CoreProgressInfo(
                 CurrentFrame: CoreFrameKind.Fh,
@@ -550,15 +682,15 @@ internal sealed class InputCoreWorker : IDisposable
 
             if (status == ProgressiveDecodeStatus.Completed && state.CompletedFile is not null)
             {
-                CompleteLiveSuccess(state.CompletedFile, outputDirectory);
+                CompleteLiveSuccess(state.CompletedFile, outputDirectory, runGeneration);
                 return;
             }
 
-            FailLive(state.LastError ?? "Decode failed.", outputDirectory);
+            FailLive(state.LastError ?? "Decode failed.", outputDirectory, runGeneration);
         }
         catch (Exception ex)
         {
-            FailLive(ex.Message, outputDirectory);
+            FailLive(ex.Message, outputDirectory, runGeneration);
         }
     }
 
@@ -650,7 +782,13 @@ internal sealed class InputCoreWorker : IDisposable
             }
 
             session.NotifyInputCompleted();
-            WatchLiveCompletion(session, outputDirectory);
+            int runGeneration;
+            lock (_sync)
+            {
+                runGeneration = _runGeneration;
+            }
+
+            WatchLiveCompletion(session, outputDirectory, runGeneration);
 
             lock (_sync)
             {

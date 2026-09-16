@@ -20,6 +20,8 @@ internal sealed class OutputCoreWorker
     private long _totalSamples;
     private int _sampleRate = 44100;
     private double _totalAudioSeconds;
+    /// <summary>音声出力開始時刻（メーター用壁時計の起点）。</summary>
+    private DateTime _audioProgressAnchorUtc;
 
     /// <summary>
     /// 送信中 FFT など可視化用の共有状態です。
@@ -78,6 +80,7 @@ internal sealed class OutputCoreWorker
             _sampleRate = 44100;
             _totalAudioSeconds = 0;
             _player = null;
+            _audioProgressAnchorUtc = default;
             _vizBoard.BeginRun(fileName);
         }
 
@@ -130,22 +133,49 @@ internal sealed class OutputCoreWorker
     /// <returns>送信進捗。</returns>
     public CoreProgressSnapshot GetProgress()
     {
+        CoreProgressSnapshot snapshot;
+        RealtimePcmPlayer? player;
+        long emittedSamples;
+        long totalSamples;
+        int sampleRate;
+        double totalAudioSeconds;
+        DateTime audioAnchorUtc;
         lock (_sync)
         {
-            // 進捗算出に必要な情報が欠ける場合は直近スナップショットを返す。
-            if (!_snapshot.IsRunning || _player is null || _player.IsDisposed || _totalSamples <= 0)
+            snapshot = _snapshot;
+            if (!snapshot.IsRunning || _totalSamples <= 0)
             {
-                return _snapshot;
+                return snapshot;
             }
 
-            var elapsed = ResolveElapsedSeconds(_emittedSamples, _player, _sampleRate, _totalSamples);
-            var total = Math.Max(_totalAudioSeconds, 1e-9);
-            return _snapshot with
+            // WAV のみはエンコード側 UpdateSnapshot をそのまま返す。
+            if (_player is null || _player.IsDisposed)
             {
-                ElapsedAudioSeconds = elapsed,
-                ProgressPercent = Math.Clamp(100.0 * elapsed / total, 0.0, 100.0)
-            };
+                return snapshot;
+            }
+
+            player = _player;
+            emittedSamples = _emittedSamples;
+            totalSamples = _totalSamples;
+            sampleRate = _sampleRate;
+            totalAudioSeconds = _totalAudioSeconds;
+            audioAnchorUtc = _audioProgressAnchorUtc;
         }
+
+        // プレイヤー状態はロック外で読み、UI ポーリングと再生待機の競合を避ける。
+        var elapsed = ResolveMeterElapsedSeconds(
+            emittedSamples,
+            player,
+            sampleRate,
+            totalSamples,
+            totalAudioSeconds,
+            audioAnchorUtc);
+        var total = Math.Max(totalAudioSeconds, 1e-9);
+        return snapshot with
+        {
+            ElapsedAudioSeconds = elapsed,
+            ProgressPercent = Math.Clamp(100.0 * elapsed / total, 0.0, 100.0)
+        };
     }
 
     /// <summary>
@@ -238,6 +268,7 @@ internal sealed class OutputCoreWorker
                 lock (_sync)
                 {
                     _player = player;
+                    _audioProgressAnchorUtc = DateTime.UtcNow;
                 }
             }
 
@@ -274,8 +305,19 @@ internal sealed class OutputCoreWorker
                     {
                         void SyncPlayheadViz()
                         {
-                            var liveElapsed = ResolveElapsedSeconds(
-                                emittedSamples, player, profile.SampleRate, totalSamples);
+                            DateTime audioAnchorUtc;
+                            lock (_sync)
+                            {
+                                audioAnchorUtc = _audioProgressAnchorUtc;
+                            }
+
+                            var liveElapsed = ResolveMeterElapsedSeconds(
+                                emittedSamples,
+                                player,
+                                profile.SampleRate,
+                                totalSamples,
+                                totalSeconds,
+                                audioAnchorUtc);
                             spectrumPublisher.PublishPlayhead(
                                 ResolvePlayedSamples(emittedSamples, player));
                             UpdateSnapshot(
@@ -347,7 +389,19 @@ internal sealed class OutputCoreWorker
 
                     PublishEmittedSamples(emittedSamples);
                     spectrumPublisher.PublishPlayhead(ResolvePlayedSamples(emittedSamples, player));
-                    var elapsed = ResolveElapsedSeconds(emittedSamples, player, profile.SampleRate, totalSamples);
+                    DateTime audioAnchorUtc;
+                    lock (_sync)
+                    {
+                        audioAnchorUtc = _audioProgressAnchorUtc;
+                    }
+
+                    var elapsed = ResolveMeterElapsedSeconds(
+                        emittedSamples,
+                        player,
+                        profile.SampleRate,
+                        totalSamples,
+                        totalSeconds,
+                        audioAnchorUtc);
                     UpdateSnapshot(
                         100.0 * elapsed / Math.Max(totalSeconds, 1e-9),
                         elapsed,
@@ -478,6 +532,29 @@ internal sealed class OutputCoreWorker
     }
 
     /// <summary>
+    /// 送信詳細メーター用の経過秒を返します。
+    /// 再生ヘッドが止まっても壁時計で進むようにします。
+    /// </summary>
+    private static double ResolveMeterElapsedSeconds(
+        long emittedSamples,
+        RealtimePcmPlayer? player,
+        int sampleRate,
+        long totalSamples,
+        double totalAudioSeconds,
+        DateTime audioAnchorUtc)
+    {
+        var playhead = ResolveElapsedSeconds(emittedSamples, player, sampleRate, totalSamples);
+        if (player is null || player.IsDisposed || audioAnchorUtc == default)
+        {
+            return playhead;
+        }
+
+        var wall = Math.Max(0.0, (DateTime.UtcNow - audioAnchorUtc).TotalSeconds);
+        var total = Math.Max(totalAudioSeconds, 1e-9);
+        return Math.Clamp(Math.Max(playhead, wall), 0.0, total);
+    }
+
+    /// <summary>
     /// 投入済みサンプル数を共有状態へ反映します。
     /// </summary>
     /// <param name="emittedSamples">投入済みサンプル数。</param>
@@ -552,7 +629,10 @@ internal sealed class OutputCoreWorker
     /// </summary>
     private sealed class TxPcmSpectrumPublisher
     {
-        private const int FftSize = 256;
+        /// <summary>
+        /// 表示用解析 FFT 長。OFDM 合成 FFT(256) と分離し、キャリア間の空ビン鋸歯を抑える。
+        /// </summary>
+        private const int FftSize = 2048;
         private const int MinPublishIntervalMs = 33;
         /// <summary>再生バッファ（3秒）＋余白を覆うリング長（秒）。</summary>
         private const double RingSeconds = 4.0;
@@ -624,8 +704,8 @@ internal sealed class OutputCoreWorker
                 return;
             }
 
-            // 再生ヘッドが進んでいないときは再計算しない。
-            if (_lastPublishedPlayhead >= 0 && playedSamples - _lastPublishedPlayhead < FftSize / 4)
+            // 再生ヘッドが進んでいないときは再計算しない（約 1/8 窓ぶん）。
+            if (_lastPublishedPlayhead >= 0 && playedSamples - _lastPublishedPlayhead < FftSize / 8)
             {
                 return;
             }

@@ -9,24 +9,38 @@
               CanUserResizeRows="False"
               IsReadOnly="True"
               HeadersVisibility="Column"
-              GridLinesVisibility="Horizontal"
+              GridLinesVisibility="All"
               SelectionMode="Single"
               SelectionUnit="FullRow">
       <DataGrid.Columns>
         <DataGridTextColumn Header="項目"
             Binding="{Binding Name}"
-            Width="2*"/>
-        <DataGridTextColumn Header="値"
-            Binding="{Binding Seconds}"
+            Width="1.6*"/>
+        <DataGridTextColumn Header="結果"
+            Binding="{Binding ResultText}"
+            Width="0.8*"/>
+        <DataGridTextColumn Header="サイズ"
+            Binding="{Binding SizeText}"
+            Width="0.9*"/>
+        <DataGridTextColumn Header="stereo/mono"
+            Binding="{Binding ChannelText}"
             Width="*"/>
+        <DataGridTextColumn Header="サブキャリア数"
+            Binding="{Binding SubcarrierText}"
+            Width="*"/>
+        <DataGridTextColumn Header="変調"
+            Binding="{Binding ModulationText}"
+            Width="0.9*"/>
         <DataGridTemplateColumn Header="メーター"
-            Width="1.5*">
+            Width="1.4*">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <ProgressBar Height="14"
                            Margin="2,0"
                            Minimum="0"
                            Maximum="100"
+                           HorizontalAlignment="Stretch"
+                           VerticalAlignment="Center"
                            Value="{Binding ProgressPercent, Mode=OneWay}"
                            Visibility="{Binding MeterVisibility}"/>
             </DataTemplate>
@@ -36,4 +50,3 @@
     </DataGrid>
   </DockPanel>
 </UserControl>
-

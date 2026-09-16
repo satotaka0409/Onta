@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using Microsoft.Win32;
 using Onta.History;
 using Onta.View.Core;
@@ -71,18 +73,6 @@ public partial class HistoryPanel : UserControl
         ReloadHistory();
     }
 
-    private void OnExportClick(object sender, RoutedEventArgs e)
-    {
-        var entry = GetSelectedEntry();
-        if (entry is null)
-        {
-            return;
-        }
-
-        SavePayloadWithDialog(entry);
-    }
-
-
     private void OnRowDownloadClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: ReceiveHistoryEntry entry })
@@ -91,6 +81,63 @@ public partial class HistoryPanel : UserControl
         }
 
         SavePayloadWithDialog(entry);
+    }
+
+    /// <summary>
+    /// 受信日時クリックで、その行のブロック明細を開閉します。
+    /// </summary>
+    private void OnReceiveTimestampClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not DependencyObject source)
+        {
+            return;
+        }
+
+        var row = FindAncestor<DataGridRow>(source);
+        if (row is null)
+        {
+            return;
+        }
+
+        var open = row.DetailsVisibility != Visibility.Visible;
+        row.DetailsVisibility = open ? Visibility.Visible : Visibility.Collapsed;
+
+        var grid = FindAncestor<DataGrid>(source);
+        if (open)
+        {
+            row.IsSelected = true;
+        }
+        else
+        {
+            // 閉じたあとにセル選択色が残らないよう解除する
+            row.IsSelected = false;
+            if (grid is not null)
+            {
+                grid.UnselectAll();
+                grid.CurrentCell = default;
+            }
+        }
+
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// 視覚ツリーを遡って指定型の祖先を探します。
+    /// </summary>
+    private static T? FindAncestor<T>(DependencyObject current)
+        where T : DependencyObject
+    {
+        while (current is not null)
+        {
+            if (current is T match)
+            {
+                return match;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
     }
 
     private void SavePayloadWithDialog(ReceiveHistoryEntry entry)
@@ -106,11 +153,11 @@ public partial class HistoryPanel : UserControl
             : entry.FileName;
         var dlg = new SaveFileDialog
         {
-            Title = "履歴Payloadを保存",
+            Title = "ファイルを保存",
             FileName = defaultName,
-            Filter = "バイナリ (*.bin)|*.bin|すべてのファイル (*.*)|*.*",
+            Filter = "すべてのファイル (*.*)|*.*|バイナリ (*.bin)|*.bin",
             AddExtension = true,
-            DefaultExt = ".bin"
+            DefaultExt = Path.GetExtension(defaultName)
         };
         if (dlg.ShowDialog() != true)
         {
@@ -125,7 +172,7 @@ public partial class HistoryPanel : UserControl
             }
             else
             {
-                StatusText.Text = "保存対象のPayloadがありません。";
+                StatusText.Text = "保存対象のデータがありません。";
             }
         }
         catch (Exception ex)
@@ -170,9 +217,7 @@ public partial class HistoryPanel : UserControl
 
     private void UpdateButtons()
     {
-        var selected = GetSelectedEntry();
-        ExportButton.IsEnabled = selected is not null && HistoryService.CanExportPayload(selected);
-        DeleteButton.IsEnabled = selected is not null;
+        DeleteButton.IsEnabled = GetSelectedEntry() is not null;
     }
 
     private ReceiveHistoryEntry? GetSelectedEntry()
@@ -197,14 +242,34 @@ public partial class HistoryPanel : UserControl
 
     private void AddUncompleteRows(ReceiveHistoryEntry entry)
     {
-        foreach (var block in entry.Blocks)
+        // 不明ブロック = BD 受信成功かつ親 FH 未解決の孤立のみ。
+        // 受信 NG / BH のみの未完了は受信履歴側に残し、ここには出さない。
+        foreach (var orphan in entry.Orphans)
         {
-            if (block.BlockComplete)
+            if (orphan.Payload is not { Length: > 0 })
             {
                 continue;
             }
 
-            var dm = ParseDataModulation(block.DataModulation);
+            var fileHashText = ResolveFileHashText(entry.ContentHashHex);
+            var blockHashText = NormalizeHex(orphan.HashHex);
+            var blockPositionText = "-";
+            if (ReceiveDetailPanel.TrySplitOrphanIdentity(
+                    orphan.HashHex,
+                    out var orphanBlockIndex,
+                    out var orphanFileHash,
+                    out var orphanBlockHash))
+            {
+                if (fileHashText == "-")
+                {
+                    fileHashText = NormalizeHex(orphanFileHash);
+                }
+
+                blockHashText = NormalizeHex(orphanBlockHash);
+                blockPositionText = string.IsNullOrWhiteSpace(orphanBlockIndex) ? "-" : orphanBlockIndex;
+            }
+
+            var dm = ParseDataModulation(orphan.DataModulation);
             _uncompleteRows.Add(new UncompleteBlockRow(
                 entry,
                 resultText: "IN-COMPLETE",
@@ -212,22 +277,27 @@ public partial class HistoryPanel : UserControl
                 subcarrierText: dm.SubcarrierText,
                 modulationText: dm.ModulationText,
                 channelText: dm.ChannelText,
-                fileHashText: NormalizeHex(entry.ContentHashHex),
-                blockHashText: ToHex(block.ContentHash)));
+                blockPositionText: blockPositionText,
+                fileHashText: fileHashText,
+                blockHashText: blockHashText));
+        }
+    }
+
+    /// <summary>
+    /// 表示用ファイルハッシュを正規化します（旧 FH: プレースホルダは非表示）。
+    /// </summary>
+    private static string ResolveFileHashText(string? contentHashHex)
+    {
+        if (string.IsNullOrWhiteSpace(contentHashHex)
+            || contentHashHex.StartsWith("FH:", StringComparison.Ordinal)
+            || contentHashHex.Contains('|', StringComparison.Ordinal)
+            || contentHashHex.Contains('\\', StringComparison.Ordinal)
+            || contentHashHex.Contains('/', StringComparison.Ordinal))
+        {
+            return "-";
         }
 
-        foreach (var orphan in entry.Orphans)
-        {
-            _uncompleteRows.Add(new UncompleteBlockRow(
-                entry,
-                resultText: "IN-COMPLETE",
-                inputDeviceText: ResolveInputDeviceText(entry),
-                subcarrierText: "-",
-                modulationText: "-",
-                channelText: "-",
-                fileHashText: NormalizeHex(entry.ContentHashHex),
-                blockHashText: NormalizeHex(orphan.HashHex)));
-        }
+        return NormalizeHex(contentHashHex);
     }
 
     private static string ResolveInputDeviceText(ReceiveHistoryEntry entry)
@@ -265,11 +335,6 @@ public partial class HistoryPanel : UserControl
 
         var name = Path.GetFileName(entry.OutputPath);
         return string.IsNullOrWhiteSpace(name) ? entry.OutputPath : name;
-    }
-
-    private static string ResolveDownloadText(ReceiveHistoryEntry entry)
-    {
-        return HistoryService.CanExportPayload(entry) ? "保存可" : "-";
     }
 
     private static string NormalizeHex(string? value)
@@ -320,6 +385,14 @@ public partial class HistoryPanel : UserControl
         return (sc, modulation, channel);
     }
 
+    /// <summary>
+    /// 履歴日時をローカル時刻文字列にします。
+    /// </summary>
+    private static string FormatLocalDateTime(DateTime value)
+    {
+        return value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+    }
+
     private sealed class HistoryRow
     {
         public HistoryRow(ReceiveHistoryEntry entry)
@@ -336,7 +409,7 @@ public partial class HistoryPanel : UserControl
         }
 
         public ReceiveHistoryEntry Entry { get; }
-        public string TimestampText => Entry.ReceivedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        public string TimestampText => FormatLocalDateTime(Entry.ReceivedAtUtc);
         public string FileName => Entry.FileName;
         public string FileSizeText => Entry.FileSize > 0 ? $"{Entry.FileSize:N0}" : "-";
         public string ResultText => Entry.IsSuccess ? "COMPLETE" : "IN-COMPLETE";
@@ -345,10 +418,9 @@ public partial class HistoryPanel : UserControl
         public string OutputDeviceText => ResolveOutputDeviceText(Entry);
         public string SourceWavFileName => ResolveSourceWavFileName(Entry);
         public string OutputWavFileName => ResolveOutputWavFileName(Entry);
-        public string DownloadText => ResolveDownloadText(Entry);
         public bool CanDownload => HistoryService.CanExportPayload(Entry);
-        public string CreatedAtText => Entry.CreatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
-        public string UpdatedAtText => Entry.UpdatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        public string CreatedAtText => FormatLocalDateTime(Entry.CreatedAtUtc);
+        public string UpdatedAtText => FormatLocalDateTime(Entry.UpdatedAtUtc);
         public string SubcarrierText { get; }
         public string ModulationText { get; }
         public string ChannelText { get; }
@@ -361,7 +433,7 @@ public partial class HistoryPanel : UserControl
         {
             SortBlockIndex = block.BlockIndex;
             BlockIndexText = block.BlockIndex.ToString();
-            ResultText = block.BlockComplete ? "OK" : "NG";
+            ResultText = IsBlockOk(block) ? "OK" : "NG";
             var dm = ParseDataModulation(block.DataModulation);
             SubcarrierText = dm.SubcarrierText;
             ModulationText = dm.ModulationText;
@@ -378,6 +450,19 @@ public partial class HistoryPanel : UserControl
         public string ModulationText { get; }
         public string ChannelText { get; }
         public string BlockSizeText { get; }
+
+        /// <summary>
+        /// 実データ付きで完了したブロックだけ OK とみなします。
+        /// </summary>
+        private static bool IsBlockOk(ReceiveBlockHistory block)
+        {
+            if (!block.BlockComplete)
+            {
+                return false;
+            }
+
+            return block.BlockSize > 0 || block.BlockData.Length > 0;
+        }
     }
 
     private sealed class UncompleteBlockRow
@@ -389,6 +474,7 @@ public partial class HistoryPanel : UserControl
             string subcarrierText,
             string modulationText,
             string channelText,
+            string blockPositionText,
             string fileHashText,
             string blockHashText)
         {
@@ -398,18 +484,20 @@ public partial class HistoryPanel : UserControl
             SubcarrierText = subcarrierText;
             ModulationText = modulationText;
             ChannelText = channelText;
+            BlockPositionText = blockPositionText;
             FileHashText = fileHashText;
             BlockHashText = blockHashText;
         }
 
         public ReceiveHistoryEntry Entry { get; }
         public DateTime SortAtUtc => Entry.ReceivedAtUtc;
-        public string TimestampText => Entry.ReceivedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        public string TimestampText => FormatLocalDateTime(Entry.ReceivedAtUtc);
         public string ResultText { get; }
         public string InputDeviceText { get; }
         public string SubcarrierText { get; }
         public string ModulationText { get; }
         public string ChannelText { get; }
+        public string BlockPositionText { get; }
         public string FileHashText { get; }
         public string BlockHashText { get; }
     }

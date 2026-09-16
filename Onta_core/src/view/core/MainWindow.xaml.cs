@@ -32,6 +32,7 @@ public partial class MainWindow : Window
         SendPanel.OutputRequested += OnOutputRequested;
         SendPanel.StopRequested += OnStopRequested;
         ReceivePanel.ReceiveStartRequested += OnReceiveStartRequested;
+        ReceivePanel.ReceiveStopRequested += OnReceiveStopRequested;
         _inputCoreWorker.FileHeaderReady += OnReceiveFileHeaderReady;
         _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _progressPollTimer.Tick += OnProgressPollTick;
@@ -180,6 +181,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 受信停止要求を Input ワーカーへ伝搬します。
+    /// </summary>
+    private void OnReceiveStopRequested(object? sender, EventArgs e)
+    {
+        _ = _inputCoreWorker.RequestStop();
+    }
+
+    /// <summary>
     /// 受信FH確定時に受信パネルと詳細パネルへヘッダー情報を反映します。
     /// </summary>
     /// <param name="fileName">受信ファイル名。</param>
@@ -258,6 +267,7 @@ public partial class MainWindow : Window
             var profile = CodecProfileFactory.ForWavReceive(ReceivePanel.SelectedWavPath);
             ReceivePanel.SetWowChannelMode(profile.ChannelMode);
             ReceivePanel.PrepareForNewReceive();
+            ReceivePanel.SetReceiveRunning(true);
             ReceiveDetailPanel.Clear();
             ReceiveDetailPanel.SetSourcePath(ReceivePanel.SelectedWavPath);
             _receiveDetailOpened = false;
@@ -265,9 +275,14 @@ public partial class MainWindow : Window
 
             if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile, outputDir))
             {
+                ReceivePanel.SetReceiveRunning(false);
                 MessageBox.Show(this, "Receive core is already running.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
+
+            // 受信スタート直後に受信詳細タブへ切り替える。
+            BottomTabs.SelectedItem = ReceiveDetailTab;
+            _receiveDetailOpened = true;
 
             // 受信開始時点の入力情報をパネルへ表示する。
             var inputDisplayName = Path.GetFileName(ReceivePanel.SelectedWavPath);
@@ -295,6 +310,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            ReceivePanel.SetReceiveRunning(false);
             MessageBox.Show(this, $"受信開始に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -308,6 +324,7 @@ public partial class MainWindow : Window
         var profile = CodecProfileFactory.ForAudioReceive(Onta.Core.ChannelMode.Stereo);
         ReceivePanel.SetWowChannelMode(profile.ChannelMode);
         ReceivePanel.PrepareForNewReceive();
+        ReceivePanel.SetReceiveRunning(true);
         ReceiveDetailPanel.Clear();
         ReceiveDetailPanel.SetSourcePath($"(音声入力: {ReceivePanel.AudioDeviceName})");
         _receiveDetailOpened = false;
@@ -319,6 +336,7 @@ public partial class MainWindow : Window
                 outputDir,
                 ReceivePanel.AudioVolume))
         {
+            ReceivePanel.SetReceiveRunning(false);
             MessageBox.Show(
                 this,
                 "Receive core is already running, or audio device failed to start.",
@@ -327,6 +345,10 @@ public partial class MainWindow : Window
                 MessageBoxImage.Information);
             return;
         }
+
+        // 受信スタート直後に受信詳細タブへ切り替える。
+        BottomTabs.SelectedItem = ReceiveDetailTab;
+        _receiveDetailOpened = true;
 
         ReceivePanel.SetFileInfo($"(音声入力: {ReceivePanel.AudioDeviceName})", "-", "-");
         ReceivePanel.SetProgressText("音声入力中 / FH 待機...");
@@ -348,6 +370,9 @@ public partial class MainWindow : Window
     {
         var sendProgress = _coreWorker.SharedProgress;
 
+        // 送信見積りメーターは FFT より先に更新し、可視化負荷で止まらないようにする。
+        EstimatePanel.ApplyProgress(sendProgress.ElapsedAudioSeconds, sendProgress.IsRunning);
+
         if (sendProgress.IsRunning)
         {
             var sendStatus = _coreWorker.SharedVizStatus.Read();
@@ -366,6 +391,9 @@ public partial class MainWindow : Window
                 var status = _inputCoreWorker.SharedStatus.Read();
                 ReceivePanel.ApplyExecutionStatus(status);
                 ReceiveDetailPanel.ApplyStatus(status);
+                ReceiveDetailPanel.SyncBlockHeaders(_inputCoreWorker.CaptureReceivedBlockHeaders());
+                ReceiveDetailPanel.SyncCapturedBlocks(_inputCoreWorker.CaptureReceivedBlocks());
+                ReceiveDetailPanel.SyncBlockBdOutcomes(_inputCoreWorker.CaptureBlockBdOutcomes());
 
                 // 受信実行中は履歴保存を省略（ディスク I/O が画面更新を遅らせる）。
                 // FH 確定コールバックと完了時のみ保存する。
@@ -385,6 +413,7 @@ public partial class MainWindow : Window
             if (_inputCoreWorker.TryConsumeCompletion(out var success, out var message, out var outputPath))
             {
                 _pollingReceive = false;
+                ReceivePanel.SetReceiveRunning(false);
                 if (!sendProgress.IsRunning)
                 {
                     ReceiveDetailPanel.MarkCompletion(success, message, outputPath);
@@ -407,6 +436,10 @@ public partial class MainWindow : Window
                             MessageBoxButton.OK,
                             MessageBoxImage.Information);
                     }
+                    else if (string.Equals(completionMessage, "受信を中断しました。", StringComparison.Ordinal))
+                    {
+                        // ユーザー操作による停止はエラー扱いにしない
+                    }
                     else
                     {
                         MessageBox.Show(this, completionMessage, "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -415,8 +448,6 @@ public partial class MainWindow : Window
             }
         }
 
-        // 送信見積りの全体進捗メーターを更新する。
-        EstimatePanel.ApplyProgress(sendProgress.ElapsedAudioSeconds, sendProgress.IsRunning);
         _ = _coreWorker.ConsumeFrameEvents();
 
         if (_coreWorker.TryConsumeCompletion(out var completion))
@@ -475,7 +506,9 @@ public partial class MainWindow : Window
         {
             var orphans = _inputCoreWorker.CaptureOrphans();
             var blocks = _inputCoreWorker.CaptureReceivedBlocks();
-            var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, blocks);
+            var headers = _inputCoreWorker.CaptureReceivedBlockHeaders();
+            var fileHashHex = _inputCoreWorker.CaptureFileHashHex();
+            var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, blocks, fileHashHex, headers);
 
             var snapshotKey = BuildReceiveHistorySnapshotKey(entry);
             if (!force && string.Equals(_lastReceiveHistorySnapshotKey, snapshotKey, StringComparison.Ordinal))

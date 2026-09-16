@@ -9,15 +9,18 @@
               CanUserResizeRows="False"
               IsReadOnly="True"
               HeadersVisibility="Column"
-              GridLinesVisibility="Horizontal"
+              GridLinesVisibility="All"
               SelectionMode="Single"
               SelectionUnit="FullRow">
       <DataGrid.Columns>
         <DataGridTextColumn Header="項目"
             Binding="{Binding Name}"
             Width="2*"/>
-        <DataGridTextColumn Header="値"
+        <DataGridTextColumn Header="秒数"
             Binding="{Binding Seconds}"
+            Width="*"/>
+        <DataGridTextColumn Header="サイズ"
+            Binding="{Binding SizeText}"
             Width="*"/>
         <DataGridTemplateColumn Header="メーター"
             Width="1.5*">
@@ -27,6 +30,8 @@
                            Margin="2,0"
                            Minimum="0"
                            Maximum="100"
+                           HorizontalAlignment="Stretch"
+                           VerticalAlignment="Center"
                            Value="{Binding ProgressPercent, Mode=OneWay}"
                            Visibility="{Binding MeterVisibility}"/>
             </DataTemplate>
@@ -36,4 +41,3 @@
     </DataGrid>
   </DockPanel>
 </UserControl>
-
