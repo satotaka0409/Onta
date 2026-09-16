@@ -1,4 +1,5 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -29,14 +30,12 @@ public partial class HistoryPanel : UserControl
         _sendRows.Clear();
         _uncompleteRows.Clear();
 
-        var entries = HistoryService.LoadEntries(AppPaths.ReceiveHistoryFilePath)
-            .ToArray();
+        var entries = HistoryService.LoadEntries(AppPaths.ReceiveHistoryFilePath).ToArray();
 
         var receiveEntries = entries
             .Where(x => x.Kind == HistoryEntryKind.Receive)
             .OrderByDescending(x => x.ReceivedAtUtc)
             .ToArray();
-
         var sendEntries = entries
             .Where(x => x.Kind == HistoryEntryKind.Send)
             .OrderByDescending(x => x.ReceivedAtUtc)
@@ -53,7 +52,17 @@ public partial class HistoryPanel : UserControl
             _sendRows.Add(new HistoryRow(entry));
         }
 
-        StatusText.Text = $"受信 {_receiveRows.Count} 件 / 送信 {_sendRows.Count} 件 / 未完了 {_uncompleteRows.Count} 件";
+        var sortedUncomplete = _uncompleteRows
+            .OrderByDescending(x => x.SortAtUtc)
+            .ThenBy(x => x.BlockHashText, StringComparer.Ordinal)
+            .ToArray();
+        _uncompleteRows.Clear();
+        foreach (var row in sortedUncomplete)
+        {
+            _uncompleteRows.Add(row);
+        }
+
+        StatusText.Text = $"受信 {_receiveRows.Count} 件 / 送信 {_sendRows.Count} 件 / 不明ブロック {_uncompleteRows.Count} 件";
         UpdateButtons();
     }
 
@@ -172,7 +181,6 @@ public partial class HistoryPanel : UserControl
 
     private void AddUncompleteRows(ReceiveHistoryEntry entry)
     {
-        var hasUncomplete = false;
         foreach (var block in entry.Blocks)
         {
             if (block.BlockComplete)
@@ -180,64 +188,120 @@ public partial class HistoryPanel : UserControl
                 continue;
             }
 
-            hasUncomplete = true;
+            var dm = ParseDataModulation(block.DataModulation);
             _uncompleteRows.Add(new UncompleteBlockRow(
                 entry,
-                $"BLK-{block.BlockIndex}",
-                FormatDataModulation(block.DataModulation),
-                block.State == ReceiveBlockState.Error ? "エラー" : "未完了",
-                string.IsNullOrWhiteSpace(block.ErrorText) ? "詳細なし" : block.ErrorText));
+                resultText: "IN-COMPLETE",
+                inputDeviceText: ResolveInputDeviceText(entry),
+                subcarrierText: dm.SubcarrierText,
+                modulationText: dm.ModulationText,
+                channelText: dm.ChannelText,
+                fileHashText: NormalizeHex(entry.ContentHashHex),
+                blockHashText: ToHex(block.ContentHash)));
         }
 
         foreach (var orphan in entry.Orphans)
         {
-            hasUncomplete = true;
-            var orphanDetail = string.IsNullOrWhiteSpace(orphan.Detail) ? "親不明" : orphan.Detail;
             _uncompleteRows.Add(new UncompleteBlockRow(
                 entry,
-                "ORPHAN",
-                "-",
-                "親未解決",
-                $"{orphanDetail} / {orphan.Payload.Length:N0} bytes"));
-        }
-
-        if (!entry.IsSuccess && !hasUncomplete)
-        {
-            _uncompleteRows.Add(new UncompleteBlockRow(
-                entry,
-                "-",
-                "-",
-                "未完了",
-                string.IsNullOrWhiteSpace(entry.CompletionMessage) ? "詳細なし" : entry.CompletionMessage));
+                resultText: "IN-COMPLETE",
+                inputDeviceText: ResolveInputDeviceText(entry),
+                subcarrierText: "-",
+                modulationText: "-",
+                channelText: "-",
+                fileHashText: NormalizeHex(entry.ContentHashHex),
+                blockHashText: NormalizeHex(orphan.HashHex)));
         }
     }
 
-    private static string FormatDataModulation(byte[]? dataModulation)
+    private static string ResolveInputDeviceText(ReceiveHistoryEntry entry)
     {
-        if (dataModulation is null || dataModulation.Length < 3)
+        return entry.InputDevice == ReceiveInputDevice.Audio ? "Audio" : "WAV";
+    }
+
+    private static string ResolveOutputDeviceText(ReceiveHistoryEntry entry)
+    {
+        return string.IsNullOrWhiteSpace(entry.OutputPath) ? "Audio" : "WAV";
+    }
+
+    private static string ResolveSourceWavFileName(ReceiveHistoryEntry entry)
+    {
+        if (entry.InputDevice != ReceiveInputDevice.Wav)
         {
             return "-";
         }
 
+        if (string.IsNullOrWhiteSpace(entry.SourcePath))
+        {
+            return "-";
+        }
+
+        var name = Path.GetFileName(entry.SourcePath);
+        return string.IsNullOrWhiteSpace(name) ? entry.SourcePath : name;
+    }
+
+    private static string ResolveOutputWavFileName(ReceiveHistoryEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.OutputPath))
+        {
+            return "-";
+        }
+
+        var name = Path.GetFileName(entry.OutputPath);
+        return string.IsNullOrWhiteSpace(name) ? entry.OutputPath : name;
+    }
+
+    private static string ResolveDownloadText(ReceiveHistoryEntry entry)
+    {
+        return entry.IsSuccess && entry.Payload.Length > 0 ? "保存可" : "-";
+    }
+
+    private static string NormalizeHex(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "-";
+        }
+
+        return value.Trim().ToUpperInvariant();
+    }
+
+    private static string ToHex(byte[]? bytes)
+    {
+        if (bytes is null || bytes.Length == 0)
+        {
+            return "-";
+        }
+
+        return Convert.ToHexString(bytes);
+    }
+
+    private static (string SubcarrierText, string ModulationText, string ChannelText) ParseDataModulation(byte[]? dataModulation)
+    {
+        if (dataModulation is null || dataModulation.Length < 3)
+        {
+            return ("-", "-", "-");
+        }
+
         var sc = dataModulation[0] is 8 or 16 or 24 or 32 or 40 or 48
             ? dataModulation[0].ToString()
-            : "?";
+            : "-";
         var modulation = dataModulation[1] switch
         {
             1 => "BPSK",
             2 => "QPSK",
             3 => "16QAM",
             4 => "64QAM",
-            _ => "?"
+            _ => "-"
         };
         var channel = dataModulation[2] switch
         {
-            0 => "モノラル",
-            1 => "ステレオ",
-            _ => "?"
+            0 => "mono",
+            1 => "stereo",
+            _ => "-"
         };
 
-        return $"{sc}/{modulation}/{channel}";
+        return (sc, modulation, channel);
     }
 
     private sealed class HistoryRow
@@ -245,44 +309,91 @@ public partial class HistoryPanel : UserControl
         public HistoryRow(ReceiveHistoryEntry entry)
         {
             Entry = entry;
+            var dm = ParseDataModulation(entry.DataModulation);
+            SubcarrierText = dm.SubcarrierText;
+            ModulationText = dm.ModulationText;
+            ChannelText = dm.ChannelText;
+            BlockRows = Entry.Blocks
+                .Select(block => new ReceiveBlockRow(block))
+                .OrderBy(x => x.SortBlockIndex)
+                .ToArray();
         }
 
         public ReceiveHistoryEntry Entry { get; }
-        public string EntryId => Entry.EntryId;
-        public string KindText => Entry.Kind == HistoryEntryKind.Receive ? "受信" : "送信";
         public string TimestampText => Entry.ReceivedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
-        public string InputDeviceText => Entry.InputDevice == ReceiveInputDevice.Audio ? "音声" : "WAV";
         public string FileName => Entry.FileName;
         public string FileSizeText => Entry.FileSize > 0 ? $"{Entry.FileSize:N0}" : "-";
-        public string StatusText => Entry.IsSuccess ? "成功" : "失敗";
-        public string PayloadBytesText => Entry.Payload.Length > 0 ? $"{Entry.Payload.Length:N0} bytes" : "-";
+        public string ResultText => Entry.IsSuccess ? "COMPLETE" : "IN-COMPLETE";
+        public string BlockCountText => Entry.BlockCount > 0 ? Entry.BlockCount.ToString() : "-";
+        public string InputDeviceText => ResolveInputDeviceText(Entry);
+        public string OutputDeviceText => ResolveOutputDeviceText(Entry);
+        public string SourceWavFileName => ResolveSourceWavFileName(Entry);
+        public string OutputWavFileName => ResolveOutputWavFileName(Entry);
+        public string DownloadText => ResolveDownloadText(Entry);
+        public string CreatedAtText => Entry.CreatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        public string UpdatedAtText => Entry.UpdatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        public string SubcarrierText { get; }
+        public string ModulationText { get; }
+        public string ChannelText { get; }
+        public IReadOnlyList<ReceiveBlockRow> BlockRows { get; }
+    }
+
+    private sealed class ReceiveBlockRow
+    {
+        public ReceiveBlockRow(ReceiveBlockHistory block)
+        {
+            SortBlockIndex = block.BlockIndex;
+            BlockIndexText = block.BlockIndex.ToString();
+            ResultText = block.BlockComplete ? "OK" : "NG";
+            var dm = ParseDataModulation(block.DataModulation);
+            SubcarrierText = dm.SubcarrierText;
+            ModulationText = dm.ModulationText;
+            ChannelText = dm.ChannelText;
+            BlockSizeText = block.BlockSize > 0
+                ? block.BlockSize.ToString("N0")
+                : (block.BlockData.Length > 0 ? block.BlockData.Length.ToString("N0") : "0");
+        }
+
+        public int SortBlockIndex { get; }
+        public string BlockIndexText { get; }
+        public string ResultText { get; }
+        public string SubcarrierText { get; }
+        public string ModulationText { get; }
+        public string ChannelText { get; }
+        public string BlockSizeText { get; }
     }
 
     private sealed class UncompleteBlockRow
     {
         public UncompleteBlockRow(
             ReceiveHistoryEntry entry,
-            string targetText,
-            string dataModulationText,
-            string stateText,
-            string detailText)
+            string resultText,
+            string inputDeviceText,
+            string subcarrierText,
+            string modulationText,
+            string channelText,
+            string fileHashText,
+            string blockHashText)
         {
             Entry = entry;
-            TargetText = targetText;
-            DataModulationText = dataModulationText;
-            StateText = stateText;
-            DetailText = detailText;
+            ResultText = resultText;
+            InputDeviceText = inputDeviceText;
+            SubcarrierText = subcarrierText;
+            ModulationText = modulationText;
+            ChannelText = channelText;
+            FileHashText = fileHashText;
+            BlockHashText = blockHashText;
         }
 
         public ReceiveHistoryEntry Entry { get; }
-        public string EntryId => Entry.EntryId;
-        public string KindText => Entry.Kind == HistoryEntryKind.Receive ? "受信" : "送信";
+        public DateTime SortAtUtc => Entry.ReceivedAtUtc;
         public string TimestampText => Entry.ReceivedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
-        public string FileName => Entry.FileName;
-        public string TargetText { get; }
-        public string DataModulationText { get; }
-        public string StateText { get; }
-        public string DetailText { get; }
+        public string ResultText { get; }
+        public string InputDeviceText { get; }
+        public string SubcarrierText { get; }
+        public string ModulationText { get; }
+        public string ChannelText { get; }
+        public string FileHashText { get; }
+        public string BlockHashText { get; }
     }
 }
-

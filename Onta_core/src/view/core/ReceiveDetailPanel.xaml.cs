@@ -24,6 +24,8 @@ public partial class ReceiveDetailPanel : UserControl
     private bool _lastCompletedSuccess;
     private string _lastCompletionMessage = string.Empty;
     private string _lastOutputPath = string.Empty;
+    private DateTime _sourceCreatedAtUtc;
+    private DateTime _sourceUpdatedAtUtc;
     private int _builtBlockCount = -1;
     private bool _awaitingProgressReset;
 
@@ -51,6 +53,8 @@ public partial class ReceiveDetailPanel : UserControl
         _lastCompletedSuccess = false;
         _lastCompletionMessage = string.Empty;
         _lastOutputPath = string.Empty;
+        _sourceCreatedAtUtc = DateTime.MinValue;
+        _sourceUpdatedAtUtc = DateTime.MinValue;
         _fhRow = null;
         _totalRow = null;
         _builtBlockCount = -1;
@@ -124,12 +128,19 @@ public partial class ReceiveDetailPanel : UserControl
     /// <param name="fileName">受信ファイル名。</param>
     /// <param name="fileSizeText">表示用ファイルサイズ。</param>
     /// <param name="blockCount">ブロック数。</param>
-    public void ApplyFileHeader(string fileName, string fileSizeText, int blockCount)
+    public void ApplyFileHeader(
+        string fileName,
+        string fileSizeText,
+        int blockCount,
+        DateTime? createdAtUtc,
+        DateTime? updatedAtUtc)
     {
         var name = string.IsNullOrWhiteSpace(fileName) ? "(不明)" : fileName;
         var size = string.IsNullOrWhiteSpace(fileSizeText) ? "-" : fileSizeText;
         var blocks = Math.Max(0, blockCount);
         EnsureRows(name, size, blocks > 0 ? blocks.ToString() : "-", blocks);
+        _sourceCreatedAtUtc = createdAtUtc?.ToUniversalTime() ?? DateTime.MinValue;
+        _sourceUpdatedAtUtc = updatedAtUtc?.ToUniversalTime() ?? DateTime.MinValue;
         ResetBlockProgressUiIfNeeded();
         if (_fhRow is not null)
         {
@@ -325,7 +336,10 @@ public partial class ReceiveDetailPanel : UserControl
             EntryId: Guid.NewGuid().ToString("N"),
             Kind: HistoryEntryKind.Receive,
             InputDevice: string.IsNullOrWhiteSpace(_sourcePath) ? ReceiveInputDevice.Audio : ReceiveInputDevice.Wav,
+            DataModulation: new byte[4],
             ReceivedAtUtc: DateTime.UtcNow,
+            CreatedAtUtc: _sourceCreatedAtUtc == DateTime.MinValue ? DateTime.UtcNow : _sourceCreatedAtUtc,
+            UpdatedAtUtc: _sourceUpdatedAtUtc == DateTime.MinValue ? DateTime.UtcNow : _sourceUpdatedAtUtc,
             ContentHashHex: ResolveReceiveHash(payload, fileName, fileSize, blockCount),
             SourcePath: _sourcePath,
             FileName: fileName,
@@ -366,6 +380,8 @@ public partial class ReceiveDetailPanel : UserControl
     {
         ArgumentNullException.ThrowIfNull(history);
         _sourcePath = history.SourcePath;
+        _sourceCreatedAtUtc = history.CreatedAtUtc;
+        _sourceUpdatedAtUtc = history.UpdatedAtUtc;
         _lastCompletedSuccess = history.IsSuccess;
         _lastCompletionMessage = history.CompletionMessage;
         _lastOutputPath = history.OutputPath;

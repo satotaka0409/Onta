@@ -37,12 +37,47 @@ public partial class MainWindow : Window
         _progressPollTimer.Tick += OnProgressPollTick;
         Closed += (_, _) =>
         {
+            SaveMainSettings();
             _inputCoreWorker.FileHeaderReady -= OnReceiveFileHeaderReady;
             _inputCoreWorker.Dispose();
             StopAudioPlayback();
         };
+        LoadMainSettings();
         LoadReceiveHistoryAtStartup();
         RefreshEstimate();
+    }
+
+    private void LoadMainSettings()
+    {
+        try
+        {
+            if (!MainWindowSettingsStore.TryLoad(AppPaths.MainSettingsFilePath, out var settings))
+            {
+                return;
+            }
+
+            SendPanel.ApplySnapshot(settings.Send);
+            ReceivePanel.ApplySettings(settings.Receive);
+        }
+        catch
+        {
+            // 設定読込失敗時は既定値で継続する。
+        }
+    }
+
+    private void SaveMainSettings()
+    {
+        try
+        {
+            var settings = new MainWindowSettings(
+                Send: SendPanel.CreateSnapshot(),
+                Receive: ReceivePanel.CaptureSettings());
+            MainWindowSettingsStore.Save(AppPaths.MainSettingsFilePath, settings);
+        }
+        catch
+        {
+            // 設定保存失敗時も終了処理は継続する。
+        }
     }
 
     /// <summary>
@@ -150,7 +185,12 @@ public partial class MainWindow : Window
     /// <param name="fileName">受信ファイル名。</param>
     /// <param name="fileSizeText">表示用ファイルサイズ。</param>
     /// <param name="blockCount">総ブロック数。</param>
-    private void OnReceiveFileHeaderReady(string fileName, string fileSizeText, int blockCount)
+    private void OnReceiveFileHeaderReady(
+        string fileName,
+        string fileSizeText,
+        int blockCount,
+        DateTime? createdAtUtc,
+        DateTime? updatedAtUtc)
     {
         _ = Dispatcher.BeginInvoke(() =>
         {
@@ -161,7 +201,7 @@ public partial class MainWindow : Window
             }
 
             ReceivePanel.SetFileInfo(fileName, fileSizeText, blockCount.ToString());
-            ReceiveDetailPanel.ApplyFileHeader(fileName, fileSizeText, blockCount);
+            ReceiveDetailPanel.ApplyFileHeader(fileName, fileSizeText, blockCount, createdAtUtc, updatedAtUtc);
             SaveReceiveHistoryIfChanged(force: false);
             if (!_receiveDetailOpened)
             {
@@ -496,7 +536,14 @@ public partial class MainWindow : Window
 
             var input = completion.Settings.InputFilePath ?? string.Empty;
             var outputPath = completion.OutputWavPath ?? string.Empty;
-            HistoryService.SaveSend(AppPaths.ReceiveHistoryFilePath, input, outputPath, "Send completed");
+            HistoryService.SaveSend(
+                AppPaths.ReceiveHistoryFilePath,
+                input,
+                outputPath,
+                completion.Settings.ActiveSubcarriers,
+                completion.Settings.ModulationScheme,
+                completion.Settings.ChannelMode,
+                "Send completed");
         }
         catch
         {

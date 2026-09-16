@@ -49,20 +49,47 @@ internal static class HistoryService
         string outputWavPath,
         string completionMessage = "送信完了")
     {
+        SaveSend(
+            historyFilePath,
+            inputPath,
+            outputWavPath,
+            activeSubcarriers: 8,
+            modulationScheme: ModulationScheme.Bpsk,
+            channelMode: ChannelMode.Mono,
+            completionMessage);
+    }
+
+    public static void SaveSend(
+        string historyFilePath,
+        string inputPath,
+        string outputWavPath,
+        int activeSubcarriers,
+        ModulationScheme modulationScheme,
+        ChannelMode channelMode,
+        string completionMessage = "送信完了")
+    {
         var fileName = Path.GetFileName(inputPath);
         long fileSize = 0;
         var contentHashHex = string.Empty;
+        var createdAtUtc = DateTime.UtcNow;
+        var updatedAtUtc = DateTime.UtcNow;
         if (!string.IsNullOrWhiteSpace(inputPath) && File.Exists(inputPath))
         {
-            fileSize = new FileInfo(inputPath).Length;
+            var fi = new FileInfo(inputPath);
+            fileSize = fi.Length;
             contentHashHex = Convert.ToHexString(Hash.ComputeSha256(File.ReadAllBytes(inputPath)));
+            createdAtUtc = fi.CreationTimeUtc;
+            updatedAtUtc = fi.LastWriteTimeUtc;
         }
 
         var entry = new ReceiveHistoryEntry(
             EntryId: Guid.NewGuid().ToString("N"),
             Kind: HistoryEntryKind.Send,
             InputDevice: ReceiveInputDevice.Wav,
+            DataModulation: BuildDataModulation(activeSubcarriers, modulationScheme, channelMode),
             ReceivedAtUtc: DateTime.UtcNow,
+            CreatedAtUtc: createdAtUtc,
+            UpdatedAtUtc: updatedAtUtc,
             ContentHashHex: contentHashHex,
             SourcePath: inputPath ?? string.Empty,
             FileName: string.IsNullOrWhiteSpace(fileName) ? "(不明)" : fileName,
@@ -76,6 +103,32 @@ internal static class HistoryService
             Orphans: Array.Empty<ReceiveOrphanHistory>());
 
         ReceiveHistoryStore.Append(historyFilePath, entry);
+    }
+
+    private static byte[] BuildDataModulation(
+        int activeSubcarriers,
+        ModulationScheme modulationScheme,
+        ChannelMode channelMode)
+    {
+        var subcarriers = activeSubcarriers is 8 or 16 or 24 or 32 or 40 or 48
+            ? (byte)activeSubcarriers
+            : (byte)0;
+        var modulation = modulationScheme switch
+        {
+            ModulationScheme.Bpsk => (byte)1,
+            ModulationScheme.Qpsk => (byte)2,
+            ModulationScheme.Qam16 => (byte)3,
+            ModulationScheme.Qam64 => (byte)4,
+            _ => (byte)0
+        };
+        var channel = channelMode switch
+        {
+            ChannelMode.Mono => (byte)0,
+            ChannelMode.Stereo => (byte)1,
+            _ => (byte)0
+        };
+
+        return [subcarriers, modulation, channel, 0];
     }
 }
 

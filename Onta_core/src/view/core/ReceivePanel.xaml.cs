@@ -35,6 +35,13 @@ public partial class ReceivePanel : UserControl
     private long _wowSampleIndexAtSync;
     private long _wowSyncTimestamp;
 
+    public readonly record struct ReceiveSettingsSnapshot(
+        bool UseWavInput,
+        string WavInputPath,
+        string OutputDirectory,
+        int AudioDeviceNumber,
+        double AudioVolume);
+
     /// <summary>
     /// 受信パネルを初期化します。
     /// </summary>
@@ -179,6 +186,66 @@ public partial class ReceivePanel : UserControl
             }
 
             return Math.Clamp(AudioVolumeSlider.Value / 100.0, 0.0, 1.0);
+        }
+    }
+
+    /// <summary>
+    /// 現在の受信設定を取得します。
+    /// </summary>
+    public ReceiveSettingsSnapshot CaptureSettings()
+    {
+        return new ReceiveSettingsSnapshot(
+            UseWavInput: UseWavInput,
+            WavInputPath: _selectedWavPath ?? string.Empty,
+            OutputDirectory: SelectedOutputDir,
+            AudioDeviceNumber: AudioDeviceNumber,
+            AudioVolume: AudioVolume);
+    }
+
+    /// <summary>
+    /// 保存済み受信設定を UI へ反映します。
+    /// </summary>
+    public void ApplySettings(ReceiveSettingsSnapshot snapshot)
+    {
+        if (snapshot.UseWavInput)
+        {
+            WavInputRadio.IsChecked = true;
+        }
+        else
+        {
+            AudioInputRadio.IsChecked = true;
+        }
+
+        _selectedWavPath = string.IsNullOrWhiteSpace(snapshot.WavInputPath)
+            ? null
+            : snapshot.WavInputPath;
+        WavPathBox.Text = _selectedWavPath ?? string.Empty;
+
+        _outputDir = string.IsNullOrWhiteSpace(snapshot.OutputDirectory)
+            ? AppPaths.OutputDir
+            : Path.GetFullPath(snapshot.OutputDirectory);
+        OutputDirBox.Text = _outputDir;
+
+        SelectAudioDevice(snapshot.AudioDeviceNumber);
+        var volume = Math.Clamp(snapshot.AudioVolume * 100.0, 0.0, 100.0);
+        AudioVolumeSlider.Value = volume;
+        AudioVolumeValueText.Text = $"{(int)Math.Round(volume)}%";
+
+        UpdateInputModePanels();
+        if (UseWavInput)
+        {
+            if (!string.IsNullOrWhiteSpace(_selectedWavPath))
+            {
+                SetFileInfo(Path.GetFileName(_selectedWavPath), "-", "-");
+            }
+            else
+            {
+                SetFileInfo("(未受信)", "-", "-");
+            }
+        }
+        else
+        {
+            SetFileInfo($"(音声入力: {AudioDeviceName})", "-", "-");
         }
     }
 
@@ -507,6 +574,20 @@ public partial class ReceivePanel : UserControl
         catch
         {
             // デバイス列挙失敗時は既定デバイスのみで動作継続する。
+        }
+
+        AudioDeviceComboBox.SelectedIndex = 0;
+    }
+
+    private void SelectAudioDevice(int deviceNumber)
+    {
+        for (var i = 0; i < AudioDeviceComboBox.Items.Count; i++)
+        {
+            if (AudioDeviceComboBox.Items[i] is AudioDeviceItem item && item.DeviceNumber == deviceNumber)
+            {
+                AudioDeviceComboBox.SelectedIndex = i;
+                return;
+            }
         }
 
         AudioDeviceComboBox.SelectedIndex = 0;

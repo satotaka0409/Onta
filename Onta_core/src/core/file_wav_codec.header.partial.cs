@@ -527,6 +527,41 @@ public sealed partial class FileWavCodec
         return Encoding.UTF8.GetString(nameBytes[..end]).Trim();
     }
 
+    private static DateTime? ReadFileHeaderTimestampUtc(ReadOnlySpan<byte> fileHeader, int offset)
+    {
+        if (offset < 0 || fileHeader.Length < offset + 7)
+        {
+            return null;
+        }
+
+        var year = BinaryPrimitives.ReadUInt16BigEndian(fileHeader.Slice(offset, 2));
+        var month = fileHeader[offset + 2];
+        var day = fileHeader[offset + 3];
+        var hour = fileHeader[offset + 4];
+        var minute = fileHeader[offset + 5];
+        var second = fileHeader[offset + 6];
+
+        if (year is < 1900 or > 9999
+            || month is < 1 or > 12
+            || day is < 1 or > 31
+            || hour > 23
+            || minute > 59
+            || second > 59)
+        {
+            return null;
+        }
+
+        try
+        {
+            var local = new DateTime(year, month, day, hour, minute, second, DateTimeKind.Local);
+            return local.ToUniversalTime();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static byte[] BuildFileHeader(FileInfo fileInfo, long fileSize, int blockCount, byte[] fileHash)
     {
         if (fileHash.Length != 64)

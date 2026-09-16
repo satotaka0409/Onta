@@ -161,7 +161,11 @@ public sealed class ProgressiveDecodeState
     /// <summary>
     /// FH 確定時にファイル名・サイズ・ブロック数を通知します。
     /// </summary>
-    public Action<string, long, int>? FileHeaderReady;
+    public Action<string, long, int, DateTime?, DateTime?>? FileHeaderReady;
+
+    internal DateTime? SourceCreatedAtUtc;
+
+    internal DateTime? SourceUpdatedAtUtc;
 
     /// <summary>
     /// 段階デコード状態を初期化します。
@@ -209,6 +213,8 @@ public sealed class ProgressiveDecodeState
         DataFallbackUsed = 0;
         DataTotalAttempts = 0;
         ReceivedFileName = null;
+        SourceCreatedAtUtc = null;
+        SourceUpdatedAtUtc = null;
         BlockHashOwners.Clear();
         BlockDataModulationByIndex.Clear();
         BlockExpectedHashByIndex.Clear();
@@ -1134,9 +1140,13 @@ public sealed partial class FileWavCodec
                 }
 
                 var fhFileName = ReadFileHeaderFileName(fileHeader);
+                var sourceCreatedAtUtc = ReadFileHeaderTimestampUtc(fileHeader, 840);
+                var sourceUpdatedAtUtc = ReadFileHeaderTimestampUtc(fileHeader, 847);
                 state.FileSize = fileSize;
                 state.BlockCount = blockCount;
                 state.ReceivedFileName = fhFileName;
+                state.SourceCreatedAtUtc = sourceCreatedAtUtc;
+                state.SourceUpdatedAtUtc = sourceUpdatedAtUtc;
                 state.OutputSlots = new byte[blockCount][];
                 state.SlotAccepted = new bool[blockCount];
                 state.HeaderReady = true;
@@ -1155,7 +1165,7 @@ public sealed partial class FileWavCodec
                     ProgressPercent: 5.0));
                 try
                 {
-                    state.FileHeaderReady?.Invoke(displayName, fileSize, blockCount);
+                    state.FileHeaderReady?.Invoke(displayName, fileSize, blockCount, sourceCreatedAtUtc, sourceUpdatedAtUtc);
                 }
                 catch
                 {

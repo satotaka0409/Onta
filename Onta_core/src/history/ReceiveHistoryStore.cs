@@ -8,6 +8,7 @@ internal static class ReceiveHistoryStore
     // 履歴フォーマット版数は当面 v1 固定。互換性に影響するため勝手に上げない。
     private const ushort FormatVersion = 1;
     private const int MaxEntryCount = 10000;
+    private static readonly string HistoryLoadLogPath = Path.Combine(AppContext.BaseDirectory, "Onta_history_load.log");
 
     public static ReceiveHistoryEntry? TryLoadLatestReceive(string filePath)
     {
@@ -124,130 +125,71 @@ internal static class ReceiveHistoryStore
             var magic = reader.ReadBytes(Magic.Length);
             if (magic.Length != Magic.Length || !magic.SequenceEqual(Magic))
             {
+                AppendLoadLog($"Invalid magic. file={filePath}");
                 return [];
             }
 
-            if (TryReadCurrentFormat(reader, out var currentEntries))
-            {
-                return currentEntries;
-            }
-
-            reader.BaseStream.Seek(Magic.Length, SeekOrigin.Begin);
-            if (TryReadLegacyFormat(reader, out var legacyEntries))
-            {
-                return legacyEntries;
-            }
-
-            return [];
+            return ReadCurrentFormatEntries(reader);
         }
-        catch
+        catch (Exception ex)
         {
+            AppendLoadLog($"Load failed. file={filePath} error={ex}");
             return [];
         }
     }
 
-    private static bool TryReadCurrentFormat(BinaryReader reader, out List<ReceiveHistoryEntry> entries)
+    private static void AppendLoadLog(string message)
     {
-        entries = [];
         try
         {
-            var version = reader.ReadUInt16();
-            if (version != FormatVersion)
+            var directory = Path.GetDirectoryName(HistoryLoadLogPath);
+            if (!string.IsNullOrWhiteSpace(directory))
             {
-                return false;
+                Directory.CreateDirectory(directory);
             }
 
-            var receiveCount = reader.ReadUInt32();
-            var sendCount = reader.ReadUInt32();
-            _ = reader.ReadUInt32(); // Uncomplete EntryCount（情報用途）
-
-            if (receiveCount > MaxEntryCount || sendCount > MaxEntryCount)
-            {
-                return false;
-            }
-
-            var totalCountLong = (long)receiveCount + sendCount;
-            if (totalCountLong < 0 || totalCountLong > MaxEntryCount)
-            {
-                return false;
-            }
-
-            var totalCount = (int)totalCountLong;
-            var entryStart = reader.BaseStream.Position;
-            if (TryReadEntries(reader, totalCount, hasInputDeviceField: true, useCurrentBlockLayout: true, out entries))
-            {
-                return true;
-            }
-
-            reader.BaseStream.Seek(entryStart, SeekOrigin.Begin);
-            if (TryReadEntries(reader, totalCount, hasInputDeviceField: true, useCurrentBlockLayout: false, out entries))
-            {
-                return true;
-            }
-
-            return false;
+            File.AppendAllText(
+                HistoryLoadLogPath,
+                $"[{DateTime.UtcNow:O}] {message}{Environment.NewLine}",
+                Encoding.UTF8);
         }
         catch
         {
-            entries = [];
-            return false;
+            // ログ書き込み失敗は処理継続。
         }
     }
 
-    private static bool TryReadLegacyFormat(BinaryReader reader, out List<ReceiveHistoryEntry> entries)
+    private static List<ReceiveHistoryEntry> ReadCurrentFormatEntries(BinaryReader reader)
     {
-        entries = [];
-        try
+        var version = reader.ReadUInt16();
+        if (version != FormatVersion)
         {
-            var version = reader.ReadInt32();
-            if (version != FormatVersion)
-            {
-                return false;
-            }
-
-            var count = reader.ReadInt32();
-            if (count < 0 || count > MaxEntryCount)
-            {
-                return false;
-            }
-
-            if (TryReadEntries(reader, count, hasInputDeviceField: false, useCurrentBlockLayout: false, out entries))
-            {
-                return true;
-            }
-
-            return false;
+            throw new InvalidDataException($"Unsupported history version: {version}");
         }
-        catch
+
+        var receiveCount = reader.ReadUInt32();
+        var sendCount = reader.ReadUInt32();
+        _ = reader.ReadUInt32(); // Uncomplete EntryCount（情報用途）
+
+        if (receiveCount > MaxEntryCount || sendCount > MaxEntryCount)
         {
-            entries = [];
-            return false;
+            throw new InvalidDataException("History entry count is out of range.");
         }
-    }
 
-    private static bool TryReadEntries(
-        BinaryReader reader,
-        int count,
-        bool hasInputDeviceField,
-        bool useCurrentBlockLayout,
-        out List<ReceiveHistoryEntry> entries)
-    {
-        entries = [];
-        try
+        var totalCountLong = (long)receiveCount + sendCount;
+        if (totalCountLong < 0 || totalCountLong > MaxEntryCount)
         {
-            entries = new List<ReceiveHistoryEntry>(count);
-            for (var i = 0; i < count; i++)
-            {
-                entries.Add(ReadEntry(reader, hasInputDeviceField, useCurrentBlockLayout));
-            }
+            throw new InvalidDataException("History total entry count is out of range.");
+        }
 
-            return true;
-        }
-        catch
+        var totalCount = (int)totalCountLong;
+        var entries = new List<ReceiveHistoryEntry>(totalCount);
+        for (var i = 0; i < totalCount; i++)
         {
-            entries = [];
-            return false;
+            entries.Add(ReadEntry(reader));
         }
+
+        return entries;
     }
 
     private static void WriteEntry(BinaryWriter writer, ReceiveHistoryEntry entry)
@@ -258,8 +200,14 @@ internal static class ReceiveHistoryStore
         {
             writer.Write((byte)entry.InputDevice);
         }
+        else if (entry.Kind == HistoryEntryKind.Send)
+        {
+            writer.Write(NormalizeDataModulation(entry.DataModulation));
+        }
 
         writer.Write(entry.ReceivedAtUtc.ToUniversalTime().Ticks);
+        writer.Write(entry.CreatedAtUtc.ToUniversalTime().Ticks);
+        writer.Write(entry.UpdatedAtUtc.ToUniversalTime().Ticks);
         writer.Write(entry.ContentHashHex ?? string.Empty);
         writer.Write(entry.SourcePath ?? string.Empty);
         writer.Write(entry.FileName ?? string.Empty);
@@ -302,27 +250,36 @@ internal static class ReceiveHistoryStore
         }
     }
 
-    private static ReceiveHistoryEntry ReadEntry(BinaryReader reader, bool hasInputDeviceField, bool useCurrentBlockLayout)
+    private static ReceiveHistoryEntry ReadEntry(BinaryReader reader)
     {
         var entryId = reader.ReadString();
         var kind = (HistoryEntryKind)reader.ReadByte();
         var normalizedKind = Enum.IsDefined(typeof(HistoryEntryKind), kind) ? kind : HistoryEntryKind.Receive;
         var inputDevice = ReceiveInputDevice.Wav;
-        if (normalizedKind == HistoryEntryKind.Receive && hasInputDeviceField)
+        var dataModulation = new byte[4];
+        if (normalizedKind == HistoryEntryKind.Receive)
         {
             var inputDeviceByte = reader.ReadByte();
             inputDevice = Enum.IsDefined(typeof(ReceiveInputDevice), inputDeviceByte)
                 ? (ReceiveInputDevice)inputDeviceByte
                 : ReceiveInputDevice.Wav;
         }
+        else if (normalizedKind == HistoryEntryKind.Send)
+        {
+            var sendDataModulation = reader.ReadBytes(4);
+            if (sendDataModulation.Length != 4)
+            {
+                throw new InvalidDataException("Invalid send entry: DataModulation is missing.");
+            }
+
+            dataModulation = sendDataModulation;
+        }
 
         var ticks = reader.ReadInt64();
+        var createdAtTicks = reader.ReadInt64();
+        var updatedAtTicks = reader.ReadInt64();
         var contentHashHex = reader.ReadString();
         var sourcePath = reader.ReadString();
-        if (normalizedKind == HistoryEntryKind.Receive && !hasInputDeviceField)
-        {
-            inputDevice = string.IsNullOrWhiteSpace(sourcePath) ? ReceiveInputDevice.Audio : ReceiveInputDevice.Wav;
-        }
 
         var fileName = reader.ReadString();
         var fileSize = reader.ReadInt64();
@@ -348,9 +305,7 @@ internal static class ReceiveHistoryStore
             blockItemCount = 0;
         }
 
-        var blocks = useCurrentBlockLayout
-            ? ReadCurrentBlocks(reader, blockItemCount)
-            : ReadLegacyBlocks(reader, blockItemCount);
+        var blocks = ReadCurrentBlocks(reader, blockItemCount);
 
         var orphanCount = reader.ReadInt32();
         if (orphanCount < 0 || orphanCount > 100000)
@@ -382,7 +337,10 @@ internal static class ReceiveHistoryStore
             EntryId: string.IsNullOrWhiteSpace(entryId) ? Guid.NewGuid().ToString("N") : entryId,
             Kind: normalizedKind,
             InputDevice: inputDevice,
+            DataModulation: dataModulation,
             ReceivedAtUtc: new DateTime(ticks, DateTimeKind.Utc),
+            CreatedAtUtc: new DateTime(createdAtTicks, DateTimeKind.Utc),
+            UpdatedAtUtc: new DateTime(updatedAtTicks, DateTimeKind.Utc),
             ContentHashHex: contentHashHex,
             SourcePath: sourcePath,
             FileName: fileName,
@@ -449,32 +407,6 @@ internal static class ReceiveHistoryStore
         return blocks;
     }
 
-    private static List<ReceiveBlockHistory> ReadLegacyBlocks(BinaryReader reader, int blockItemCount)
-    {
-        var blocks = new List<ReceiveBlockHistory>(blockItemCount);
-        for (var i = 0; i < blockItemCount; i++)
-        {
-            var blockIndex = reader.ReadInt32();
-            var stateByte = reader.ReadByte();
-            var errorText = reader.ReadString();
-            var state = Enum.IsDefined(typeof(ReceiveBlockState), stateByte)
-                ? (ReceiveBlockState)stateByte
-                : ReceiveBlockState.Unknown;
-
-            blocks.Add(new ReceiveBlockHistory(
-                DataModulation: new byte[4],
-                BlockIndex: blockIndex,
-                BlockSize: 0,
-                ContentHash: new byte[32],
-                BlockComplete: state == ReceiveBlockState.Accepted,
-                BlockData: Array.Empty<byte>(),
-                State: state,
-                ErrorText: errorText));
-        }
-
-        return blocks;
-    }
-
     private static byte[] NormalizeDataModulation(byte[]? source)
     {
         var normalized = new byte[4];
@@ -530,6 +462,11 @@ internal static class ReceiveHistoryStore
         return existing with
         {
             ReceivedAtUtc = latest,
+            DataModulation = incoming.DataModulation is { Length: > 0 }
+                ? NormalizeDataModulation(incoming.DataModulation)
+                : existing.DataModulation,
+            CreatedAtUtc = incoming.CreatedAtUtc > DateTime.MinValue ? incoming.CreatedAtUtc : existing.CreatedAtUtc,
+            UpdatedAtUtc = incoming.UpdatedAtUtc > DateTime.MinValue ? incoming.UpdatedAtUtc : existing.UpdatedAtUtc,
             ContentHashHex = string.IsNullOrWhiteSpace(incoming.ContentHashHex) ? existing.ContentHashHex : incoming.ContentHashHex,
             SourcePath = string.IsNullOrWhiteSpace(incoming.SourcePath) ? existing.SourcePath : incoming.SourcePath,
             FileName = string.IsNullOrWhiteSpace(incoming.FileName) ? existing.FileName : incoming.FileName,

@@ -29,7 +29,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// ファイルヘッダー（名前/サイズ/ブロック数）確定時に通知します。
     /// </summary>
-    public event Action<string, string, int>? FileHeaderReady;
+    public event Action<string, string, int, DateTime?, DateTime?>? FileHeaderReady;
 
     /// <summary>
     /// 現在デコード実行中かどうかを返します。
@@ -143,9 +143,9 @@ internal sealed class InputCoreWorker : IDisposable
                 AcceptedBlockCount: 0,
                 TotalBlockCount: 0,
                 ProgressPercent: 1.0));
-            state.FileHeaderReady = (fileName, fileSize, blockCount) =>
+            state.FileHeaderReady = (fileName, fileSize, blockCount, createdAtUtc, updatedAtUtc) =>
             {
-                FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount);
+                FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount, createdAtUtc, updatedAtUtc);
             };
 
             var capture = new RealtimePcmCapture();
@@ -352,9 +352,9 @@ internal sealed class InputCoreWorker : IDisposable
             AcceptedBlockCount: 0,
             TotalBlockCount: 0,
             ProgressPercent: 1.0));
-        state.FileHeaderReady = (fileName, fileSize, blockCount) =>
+        state.FileHeaderReady = (fileName, fileSize, blockCount, createdAtUtc, updatedAtUtc) =>
         {
-            FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount);
+            FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount, createdAtUtc, updatedAtUtc);
         };
         return state;
     }

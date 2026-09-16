@@ -67,6 +67,19 @@ alwaysApply: true
 | BlockComplete  | bool     | true:ブロック受信が完了 false:エラーのためブロック受信未完了 |
 | BlockData      | byte[]   | ブロックデータ(BlockComplete=falseの場合は0バイト)           |
 
+#### 送信エントリ
+
+| 項目               | 型       | 内容                                |
+| :----------------- | :------- | :---------------------------------- |
+| DataModulation     | byte[4]  | データ部変調方式(下記参照)          |
+| ReceivedAtUtcTicks | int64    | Send:送信日時 (UTC)                 |
+| OutputDevice       | byte     | 0:WAV出力 1:音声出力                |
+| ContentHash        | byte[64] | ファイルハッシュ値 SHA-512          |
+| OutputPath         | string   | 送信WAV出力パス（音声出力時は空白） |
+| FileName           | string   | 表示用ファイル名                    |
+| SourcePath         | string   | 送信元ファイルのパス                |
+| FileSize           | uint64   | バイト数                            |
+
 ##### データ部変調方式
 
 | データ位置 | バイト数 | 内容                                   |
@@ -77,18 +90,6 @@ alwaysApply: true
 | 3          | 1        | 予備                                   |
 | 4          | -        |                                        |
 
-#### 送信エントリ
-
-| 項目               | 型       | 内容                                |
-| :----------------- | :------- | :---------------------------------- |
-| ReceivedAtUtcTicks | int64    | Send:送信日時 (UTC)                 |
-| OutputDevice       | byte     | 0:WAV出力 1:音声出力                |
-| ContentHash        | byte[64] | ファイルハッシュ値 SHA-512          |
-| OutputPath         | string   | 送信WAV出力パス（音声出力時は空白） |
-| FileName           | string   | 表示用ファイル名                    |
-| SourcePath         | string   | 送信元ファイルのパス                |
-| FileSize           | uint64   | バイト数                            |
-
 ## 運用ルール
 
 - ブロック単位の受信エラーは復号処理を中断せず、次ブロックへ継続する。
@@ -98,6 +99,7 @@ alwaysApply: true
 - インターリーブによりブロック受信順は前後し得るため、受信順ではなく親対応表で組み込み先を決定する。
 - 親が見つからない受信ブロックは 未完了ブロックとして履歴へ保存する。
 - 送信履歴はイベント記録のみで、バイナリデータは保存しない。
+  - 送信が完了した時点で記録する
 - 履歴ファイルが破損またはVersion不一致の場合は履歴なしとして扱い、起動を継続する。
 - FH Block は受信完了時に履歴を更新する
 - FH受信時に未完了ブロックの中からファイルハッシュ値が一致するエントリーを見つけたら、自分のブロックとして移動する
