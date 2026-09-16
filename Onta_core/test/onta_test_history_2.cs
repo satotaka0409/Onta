@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Reflection;
+using System.Security.Cryptography;
 using Xunit;
 
 namespace Onta.Core.Tests;
@@ -11,6 +12,7 @@ namespace Onta.Core.Tests;
 /// 4.ブロックデータのみを受信して、既存データに追加されることを確認
 /// 5.同じデータを受信した際に、重複して履歴に登録されないことを確認（受信日時の更新のみ行われることを確認）
 /// 6.履歴削除が正しく行われることを確認（送信、受信、未完了ブロックを含むすべての履歴が削除されることを確認）
+/// 7.ファイルを受信して履歴に登録されて、履歴からダウンロードして、同じファイルかどうか確認
 /// </summary>
 public sealed class OntaTestHistory2
 {
@@ -54,7 +56,6 @@ public sealed class OntaTestHistory2
                 isSuccess: true,
                 outputPath: "C:/tmp/receive_main.bin",
                 completionMessage: "受信完了",
-                payload: new byte[] { 1, 2, 3, 4 },
                 blocks: Array.Empty<object>(),
                 orphans: Array.Empty<object>(),
                 receivedAtUtc: DateTime.UtcNow.AddMinutes(-10));
@@ -84,7 +85,6 @@ public sealed class OntaTestHistory2
                 isSuccess: false,
                 outputPath: "",
                 completionMessage: "未完了",
-                payload: Array.Empty<byte>(),
                 blocks: new[] { block0Incomplete },
                 orphans: Array.Empty<object>(),
                 receivedAtUtc: DateTime.UtcNow.AddMinutes(-5));
@@ -116,7 +116,6 @@ public sealed class OntaTestHistory2
                 isSuccess: false,
                 outputPath: "",
                 completionMessage: "未完了",
-                payload: Array.Empty<byte>(),
                 blocks: new[] { block1Incomplete },
                 orphans: Array.Empty<object>(),
                 receivedAtUtc: DateTime.UtcNow.AddMinutes(-2));
@@ -142,7 +141,6 @@ public sealed class OntaTestHistory2
                 isSuccess: false,
                 outputPath: "",
                 completionMessage: "未完了",
-                payload: Array.Empty<byte>(),
                 blocks: Array.Empty<object>(),
                 orphans: Array.Empty<object>(),
                 receivedAtUtc: DateTime.UtcNow.AddMinutes(1));
@@ -199,7 +197,6 @@ public sealed class OntaTestHistory2
                 isSuccess: true,
                 outputPath: "C:/tmp/rx_delete_main.bin",
                 completionMessage: "受信完了",
-                payload: new byte[] { 10, 20, 30 },
                 blocks: Array.Empty<object>(),
                 orphans: Array.Empty<object>(),
                 receivedAtUtc: DateTime.UtcNow.AddMinutes(-3));
@@ -224,7 +221,6 @@ public sealed class OntaTestHistory2
                 isSuccess: false,
                 outputPath: "",
                 completionMessage: "未完了",
-                payload: Array.Empty<byte>(),
                 blocks: new[] { incompleteBlock },
                 orphans: Array.Empty<object>(),
                 receivedAtUtc: DateTime.UtcNow.AddMinutes(-2));
@@ -252,6 +248,83 @@ public sealed class OntaTestHistory2
                 if (File.Exists(historyPath))
                 {
                     File.Delete(historyPath);
+                }
+            }
+            catch
+            {
+                // 一時ファイル削除失敗はテスト結果に影響させない。
+            }
+        }
+    }
+
+    [Fact]
+    public void History_ExportPayload_RebuildsOriginalFile()
+    {
+        var historyPath = Path.Combine(
+            Path.GetTempPath(),
+            "onta_test_history",
+            $"history_export_{Guid.NewGuid():N}.bin");
+        var downloadPath = Path.Combine(
+            Path.GetTempPath(),
+            "onta_test_history",
+            $"history_export_download_{Guid.NewGuid():N}.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(historyPath)!);
+
+        var original = new byte[1027];
+        for (var i = 0; i < original.Length; i++)
+        {
+            original[i] = (byte)((i * 17 + 31) & 0xFF);
+        }
+
+        var block0 = original.Take(400).ToArray();
+        var block1 = original.Skip(400).Take(400).ToArray();
+        var block2 = original.Skip(800).ToArray();
+        var fileHashHex = Convert.ToHexString(SHA256.HashData(original));
+
+        try
+        {
+            var receiveMain = CreateReceiveEntry(
+                entryId: "RX_EXPORT_MAIN",
+                contentHashHex: fileHashHex,
+                sourcePath: "C:/tmp/rx_export_main.wav",
+                fileName: "rx_export_main.bin",
+                fileSize: original.Length,
+                blockCount: 3,
+                isSuccess: true,
+                outputPath: string.Empty,
+                completionMessage: "受信完了",
+                blocks: new[]
+                {
+                    CreateBlock(blockIndex: 0, blockSize: block0.Length, blockComplete: true, stateValue: 1, errorText: string.Empty, blockHashSeed: 0x11, payload: block0),
+                    CreateBlock(blockIndex: 1, blockSize: block1.Length, blockComplete: true, stateValue: 1, errorText: string.Empty, blockHashSeed: 0x22, payload: block1),
+                    CreateBlock(blockIndex: 2, blockSize: block2.Length, blockComplete: true, stateValue: 1, errorText: string.Empty, blockHashSeed: 0x33, payload: block2)
+                },
+                orphans: Array.Empty<object>(),
+                receivedAtUtc: DateTime.UtcNow);
+            InvokeSaveReceive(historyPath, receiveMain);
+
+            var entries = LoadEntries(historyPath);
+            var receive = entries.Single(e => string.Equals(ReadProperty(e, "EntryId")?.ToString(), "RX_EXPORT_MAIN", StringComparison.Ordinal));
+            var exported = InvokeExportPayloadToFile(receive, downloadPath);
+            Assert.True(exported, "履歴ブロックからファイルを再構成して保存できること");
+            Assert.True(File.Exists(downloadPath), "エクスポート先ファイルが作成されること");
+
+            var downloaded = File.ReadAllBytes(downloadPath);
+            Assert.Equal(original.Length, downloaded.Length);
+            Assert.True(original.SequenceEqual(downloaded), "履歴からダウンロードした内容が元データと一致すること");
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(historyPath))
+                {
+                    File.Delete(historyPath);
+                }
+
+                if (File.Exists(downloadPath))
+                {
+                    File.Delete(downloadPath);
                 }
             }
             catch
@@ -303,6 +376,22 @@ public sealed class OntaTestHistory2
         return (bool)result!;
     }
 
+    private static bool InvokeExportPayloadToFile(object receiveEntry, string targetPath)
+    {
+        var historyServiceType = ResolveType(HistoryServiceTypeName);
+        var receiveEntryType = ResolveType(ReceiveEntryTypeName);
+        var export = historyServiceType.GetMethod(
+            "ExportPayloadToFile",
+            BindingFlags.Public | BindingFlags.Static,
+            binder: null,
+            types: [receiveEntryType, typeof(string)],
+            modifiers: null);
+        Assert.NotNull(export);
+        var result = export!.Invoke(null, [receiveEntry, targetPath]);
+        Assert.IsType<bool>(result);
+        return (bool)result!;
+    }
+
     private static List<object> LoadEntries(string historyPath)
     {
         var historyServiceType = ResolveType(HistoryServiceTypeName);
@@ -335,7 +424,6 @@ public sealed class OntaTestHistory2
         bool isSuccess,
         string outputPath,
         string completionMessage,
-        byte[] payload,
         IReadOnlyList<object> blocks,
         IReadOnlyList<object> orphans,
         DateTime receivedAtUtc)
@@ -375,7 +463,6 @@ public sealed class OntaTestHistory2
             isSuccess,
             outputPath,
             completionMessage,
-            payload,
             blockArray,
             orphanArray
         ])!;

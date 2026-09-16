@@ -55,7 +55,6 @@ internal sealed record ReceiveHistoryEntry(
     bool IsSuccess,
     string OutputPath,
     string CompletionMessage,
-    byte[] Payload,
     IReadOnlyList<ReceiveBlockHistory> Blocks,
     IReadOnlyList<ReceiveOrphanHistory> Orphans);
 

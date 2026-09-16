@@ -79,9 +79,25 @@ public partial class HistoryPanel : UserControl
             return;
         }
 
-        if (entry.Payload.Length == 0)
+        SavePayloadWithDialog(entry);
+    }
+
+
+    private void OnRowDownloadClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ReceiveHistoryEntry entry })
         {
-            StatusText.Text = "Payload がありません。";
+            return;
+        }
+
+        SavePayloadWithDialog(entry);
+    }
+
+    private void SavePayloadWithDialog(ReceiveHistoryEntry entry)
+    {
+        if (!HistoryService.CanExportPayload(entry))
+        {
+            StatusText.Text = "履歴データから復元可能なデータがありません。";
             return;
         }
 
@@ -155,7 +171,7 @@ public partial class HistoryPanel : UserControl
     private void UpdateButtons()
     {
         var selected = GetSelectedEntry();
-        ExportButton.IsEnabled = selected is not null && selected.Payload.Length > 0;
+        ExportButton.IsEnabled = selected is not null && HistoryService.CanExportPayload(selected);
         DeleteButton.IsEnabled = selected is not null;
     }
 
@@ -253,7 +269,7 @@ public partial class HistoryPanel : UserControl
 
     private static string ResolveDownloadText(ReceiveHistoryEntry entry)
     {
-        return entry.IsSuccess && entry.Payload.Length > 0 ? "保存可" : "-";
+        return HistoryService.CanExportPayload(entry) ? "保存可" : "-";
     }
 
     private static string NormalizeHex(string? value)
@@ -330,6 +346,7 @@ public partial class HistoryPanel : UserControl
         public string SourceWavFileName => ResolveSourceWavFileName(Entry);
         public string OutputWavFileName => ResolveOutputWavFileName(Entry);
         public string DownloadText => ResolveDownloadText(Entry);
+        public bool CanDownload => HistoryService.CanExportPayload(Entry);
         public string CreatedAtText => Entry.CreatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
         public string UpdatedAtText => Entry.UpdatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
         public string SubcarrierText { get; }

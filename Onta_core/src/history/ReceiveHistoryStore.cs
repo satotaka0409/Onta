@@ -5,7 +5,7 @@ namespace Onta.History;
 internal static class ReceiveHistoryStore
 {
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("ONTAHIS1");
-    // 履歴フォーマット版数は当面 v1 固定。互換性に影響するため勝手に上げない。
+    // v2: Entry Payloadを削除。
     private const ushort FormatVersion = 1;
     private const int MaxEntryCount = 10000;
     private static readonly string HistoryLoadLogPath = Path.Combine(AppContext.BaseDirectory, "Onta_history_load.log");
@@ -27,6 +27,13 @@ internal static class ReceiveHistoryStore
     public static IReadOnlyList<ReceiveHistoryEntry> LoadEntries(string filePath)
     {
         return LoadAll(filePath);
+    }
+
+    public static void ReplaceAll(string filePath, IReadOnlyList<ReceiveHistoryEntry> entries)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ArgumentNullException.ThrowIfNull(entries);
+        WriteAll(filePath, entries);
     }
 
     public static void Append(string filePath, ReceiveHistoryEntry entry)
@@ -53,26 +60,7 @@ internal static class ReceiveHistoryStore
             all.Add(entry);
         }
 
-        var directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        using var stream = File.Create(filePath);
-        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false);
-        writer.Write(Magic);
-        writer.Write(FormatVersion);
-        var receiveCount = all.Count(x => x.Kind == HistoryEntryKind.Receive);
-        var sendCount = all.Count - receiveCount;
-        var uncompleteCount = all.Count(x => !x.IsSuccess);
-        writer.Write((uint)receiveCount);
-        writer.Write((uint)sendCount);
-        writer.Write((uint)uncompleteCount);
-        foreach (var current in all)
-        {
-            WriteEntry(writer, current);
-        }
+        WriteAll(filePath, all);
     }
 
     public static bool DeleteEntry(string filePath, string entryId)
@@ -87,26 +75,7 @@ internal static class ReceiveHistoryStore
             return false;
         }
 
-        var directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        using var stream = File.Create(filePath);
-        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false);
-        writer.Write(Magic);
-        writer.Write(FormatVersion);
-        var receiveCount = all.Count(x => x.Kind == HistoryEntryKind.Receive);
-        var sendCount = all.Count - receiveCount;
-        var uncompleteCount = all.Count(x => !x.IsSuccess);
-        writer.Write((uint)receiveCount);
-        writer.Write((uint)sendCount);
-        writer.Write((uint)uncompleteCount);
-        foreach (var current in all)
-        {
-            WriteEntry(writer, current);
-        }
+        WriteAll(filePath, all);
 
         return true;
     }
@@ -135,6 +104,30 @@ internal static class ReceiveHistoryStore
         {
             AppendLoadLog($"Load failed. file={filePath} error={ex}");
             return [];
+        }
+    }
+
+    private static void WriteAll(string filePath, IReadOnlyList<ReceiveHistoryEntry> entries)
+    {
+        var directory = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        using var stream = File.Create(filePath);
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false);
+        writer.Write(Magic);
+        writer.Write(FormatVersion);
+        var receiveCount = entries.Count(x => x.Kind == HistoryEntryKind.Receive);
+        var sendCount = entries.Count - receiveCount;
+        var uncompleteCount = entries.Count(x => !x.IsSuccess);
+        writer.Write((uint)receiveCount);
+        writer.Write((uint)sendCount);
+        writer.Write((uint)uncompleteCount);
+        foreach (var current in entries)
+        {
+            WriteEntry(writer, current);
         }
     }
 
@@ -216,9 +209,6 @@ internal static class ReceiveHistoryStore
         writer.Write(entry.IsSuccess);
         writer.Write(entry.OutputPath ?? string.Empty);
         writer.Write(entry.CompletionMessage ?? string.Empty);
-        var payload = entry.Payload ?? Array.Empty<byte>();
-        writer.Write(payload.Length);
-        writer.Write(payload);
         writer.Write(entry.Blocks.Count);
         foreach (var block in entry.Blocks)
         {
@@ -287,17 +277,6 @@ internal static class ReceiveHistoryStore
         var isSuccess = reader.ReadBoolean();
         var outputPath = reader.ReadString();
         var completionMessage = reader.ReadString();
-        var payloadLength = reader.ReadInt32();
-        if (payloadLength < 0 || payloadLength > (512 * 1024 * 1024))
-        {
-            payloadLength = 0;
-        }
-
-        var payload = reader.ReadBytes(payloadLength);
-        if (payload.Length != payloadLength)
-        {
-            payload = Array.Empty<byte>();
-        }
 
         var blockItemCount = reader.ReadInt32();
         if (blockItemCount < 0 || blockItemCount > 100000)
@@ -349,7 +328,6 @@ internal static class ReceiveHistoryStore
             IsSuccess: isSuccess,
             OutputPath: outputPath,
             CompletionMessage: completionMessage,
-            Payload: payload,
             Blocks: blocks,
             Orphans: orphans);
     }
@@ -455,7 +433,6 @@ internal static class ReceiveHistoryStore
     private static ReceiveHistoryEntry MergeEntry(ReceiveHistoryEntry existing, ReceiveHistoryEntry incoming)
     {
         var latest = incoming.ReceivedAtUtc >= existing.ReceivedAtUtc ? incoming.ReceivedAtUtc : existing.ReceivedAtUtc;
-        var payload = incoming.Payload.Length > 0 ? incoming.Payload : existing.Payload;
         var orphans = incoming.Orphans.Count > 0 ? incoming.Orphans : existing.Orphans;
         var blocks = MergeBlocks(existing.Blocks, incoming.Blocks);
 
@@ -475,7 +452,6 @@ internal static class ReceiveHistoryStore
             IsSuccess = incoming.IsSuccess || existing.IsSuccess,
             OutputPath = string.IsNullOrWhiteSpace(incoming.OutputPath) ? existing.OutputPath : incoming.OutputPath,
             CompletionMessage = string.IsNullOrWhiteSpace(incoming.CompletionMessage) ? existing.CompletionMessage : incoming.CompletionMessage,
-            Payload = payload,
             Blocks = blocks,
             Orphans = orphans
         };

@@ -474,9 +474,8 @@ public partial class MainWindow : Window
         try
         {
             var orphans = _inputCoreWorker.CaptureOrphans();
-            var payload = _inputCoreWorker.CaptureDecodedPayload() ?? Array.Empty<byte>();
             var blocks = _inputCoreWorker.CaptureReceivedBlocks();
-            var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, payload, blocks);
+            var entry = ReceiveDetailPanel.CaptureHistoryEntry(orphans, blocks);
 
             var snapshotKey = BuildReceiveHistorySnapshotKey(entry);
             if (!force && string.Equals(_lastReceiveHistorySnapshotKey, snapshotKey, StringComparison.Ordinal))
@@ -515,7 +514,6 @@ public partial class MainWindow : Window
             entry.BlockCount,
             blockFingerprint,
             entry.Orphans.Count,
-            entry.Payload.Length,
             entry.IsSuccess,
             entry.OutputPath,
             entry.CompletionMessage);

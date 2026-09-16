@@ -67,9 +67,31 @@
                         <DataGridTextColumn Header="WAVファイル名"
                                             Binding="{Binding SourceWavFileName}"
                                             Width="2*"/>
-                        <DataGridTextColumn Header="ダウンロード"
-                                            Binding="{Binding DownloadText}"
-                                            Width="110"/>
+                        <DataGridTemplateColumn Header="ダウンロード"
+                                                Width="130">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="ダウンロード"
+                                            Padding="8,2"
+                                            Click="OnRowDownloadClick"
+                                            Tag="{Binding Entry}">
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Setter Property="Visibility"
+                                                        Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding CanDownload}"
+                                                                 Value="True">
+                                                        <Setter Property="Visibility"
+                                                                Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn Header="作成タイムスタンプ"
                                             Binding="{Binding CreatedAtText}"
                                             Width="170"/>

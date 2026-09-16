@@ -280,7 +280,6 @@ public partial class ReceiveDetailPanel : UserControl
 
     internal ReceiveHistoryEntry CaptureHistoryEntry(
         IReadOnlyList<ReceiveOrphanHistory>? orphans = null,
-        byte[]? payload = null,
         IReadOnlyDictionary<int, ReceiveCapturedBlockInfo>? capturedBlocks = null)
     {
         var fileName = FindInfoValue("File Name", "(未登録データ)");
@@ -340,7 +339,7 @@ public partial class ReceiveDetailPanel : UserControl
             ReceivedAtUtc: DateTime.UtcNow,
             CreatedAtUtc: _sourceCreatedAtUtc == DateTime.MinValue ? DateTime.UtcNow : _sourceCreatedAtUtc,
             UpdatedAtUtc: _sourceUpdatedAtUtc == DateTime.MinValue ? DateTime.UtcNow : _sourceUpdatedAtUtc,
-            ContentHashHex: ResolveReceiveHash(payload, fileName, fileSize, blockCount),
+            ContentHashHex: ResolveReceiveHash(fileName, fileSize, blockCount),
             SourcePath: _sourcePath,
             FileName: fileName,
             FileSize: fileSize,
@@ -348,18 +347,12 @@ public partial class ReceiveDetailPanel : UserControl
             IsSuccess: _lastCompletedSuccess,
             OutputPath: _lastOutputPath,
             CompletionMessage: _lastCompletionMessage,
-            Payload: payload ?? Array.Empty<byte>(),
             Blocks: blocks,
             Orphans: orphans ?? Array.Empty<ReceiveOrphanHistory>());
     }
 
-    private string ResolveReceiveHash(byte[]? payload, string fileName, long fileSize, int blockCount)
+    private string ResolveReceiveHash(string fileName, long fileSize, int blockCount)
     {
-        if (payload is { Length: > 0 })
-        {
-            return Convert.ToHexString(Hash.ComputeSha256(payload));
-        }
-
         if (!string.IsNullOrWhiteSpace(fileName)
             && !string.Equals(fileName, "(未登録データ)", StringComparison.Ordinal)
             && fileSize > 0
