@@ -19,6 +19,7 @@ public partial class ReceivePanel : UserControl
     private readonly ErrorRateChartModel _errorChart = new();
     private readonly FftChartModel _fftChart = new();
     private readonly IqChartModel _iqChart = new();
+    private readonly WowFlutterChartModel _wowChart = new();
     private string? _selectedWavPath;
     private string _outputDir = AppPaths.OutputDir;
     private CoreFrameKind _lastErrorFrame = CoreFrameKind.Fh;
@@ -44,6 +45,7 @@ public partial class ReceivePanel : UserControl
         BindChart(ErrorChart, _errorChart.Series, _errorChart.XAxes, _errorChart.YAxes);
         BindChart(FftChart, _fftChart.Series, _fftChart.XAxes, _fftChart.YAxes);
         BindChart(IqChart, _iqChart.Series, _iqChart.XAxes, _iqChart.YAxes);
+        BindChart(WowFlutterChart, _wowChart.Series, _wowChart.XAxes, _wowChart.YAxes);
         ErrorRateTabRadio.Checked += OnReceiveGraphTabChanged;
         FftTabRadio.Checked += OnReceiveGraphTabChanged;
         InitializeAudioDevices();
@@ -57,6 +59,7 @@ public partial class ReceivePanel : UserControl
             ErrorGraph.Clear();
             _fftChart.Clear();
             _iqChart.Clear();
+            _wowChart.Clear();
             SetFileInfo("(未受信)", "-", "-");
             ProgressBox.Text = "-";
             UpdateInputModePanels();
@@ -239,6 +242,13 @@ public partial class ReceivePanel : UserControl
         }
 
         ApplyWowFlutterFromStatus(status);
+        try
+        {
+            _wowChart.Tick();
+        }
+        catch
+        {
+        }
 
         // I-Q / FFT を先に更新する（エラーレート側の LiveCharts 更新で例外・遅延しても可視化を落とさない）
         _iqChart.ReplacePoints(status.IqGraph.Points, status.IqGraph.ModulationScheme);
@@ -313,6 +323,7 @@ public partial class ReceivePanel : UserControl
         _errorChart.Clear();
         _fftChart.Clear();
         _iqChart.Clear();
+        _wowChart.Clear();
         _lastErrorPercent = -1;
         _lastErrorFrame = CoreFrameKind.Fh;
         _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
@@ -448,7 +459,7 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// WOW/Flutter パーセント値をメーターへ反映します。
+    /// WOW/Flutter パーセント値をメーターと時系列グラフへ反映します。
     /// </summary>
     /// <param name="leftPercent">左チャネル値。</param>
     /// <param name="rightPercent">右チャネル値。</param>
@@ -456,6 +467,14 @@ public partial class ReceivePanel : UserControl
     {
         WowLeft.AddSample(leftPercent * WowFlutterDisplayGain);
         WowRight.AddSample(rightPercent * WowFlutterDisplayGain);
+        try
+        {
+            // グラフは実偏差%（±1%軸）。メーター用の表示ゲインは掛けない。
+            _wowChart.AddSample(leftPercent, rightPercent);
+        }
+        catch
+        {
+        }
     }
 
     private void OnInputModeChanged(object sender, RoutedEventArgs e)
