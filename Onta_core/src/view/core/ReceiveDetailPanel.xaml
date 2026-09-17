@@ -11,7 +11,11 @@
               HeadersVisibility="Column"
               GridLinesVisibility="All"
               SelectionMode="Single"
-              SelectionUnit="FullRow">
+              SelectionUnit="FullRow"
+              EnableRowVirtualization="False"
+              EnableColumnVirtualization="False"
+              VirtualizingPanel.IsVirtualizing="False"
+              VirtualizingPanel.VirtualizationMode="Standard">
       <DataGrid.Columns>
         <DataGridTextColumn Header="項目"
             Binding="{Binding Name}"

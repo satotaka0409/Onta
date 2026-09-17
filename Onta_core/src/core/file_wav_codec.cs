@@ -402,10 +402,11 @@ public sealed partial class FileWavCodec
         var rightPcm = new List<Complex>(1 << 20);
         var pcmEmitted = 0;
 
-        if (txStatusBoard is not null)
-        {
-            txStatusBoard.SetFftStereoMode(_profile.ChannelMode == ChannelMode.Stereo);
-        }
+                if (txStatusBoard is not null)
+                {
+                    // エンコード開始時は先頭がプリアンブル／FH（L のみ表示）。
+                    txStatusBoard.SetFftStereoMode(false);
+                }
 
         void EnsureStereoParity(string stage)
         {
@@ -919,7 +920,7 @@ public sealed partial class FileWavCodec
 
             if (hasTrackedWow)
             {
-                // 固定 Amount ではなく、現在サンプル位置の瞬間速度偏差を公開する
+                // ヘッダー中も L ロック済みモデルで表示する（途中 FH での再推定はしない）。
                 var sampleIndex = state.StreamSampleBase + Math.Max(0L, logicalOffset);
                 state.StatusBoard.SetWowFlutterTracking(
                     trackedWow.Amount,
@@ -1091,6 +1092,8 @@ public sealed partial class FileWavCodec
             if (!state.HeaderReady)
             {
                 PublishStatus(CoreFrameKind.Fh, blockIndex: -1);
+                // ヘッダーはモノラル（L のみ）。ステレオ表示にしない。
+                state.StatusBoard.SetFftStereoMode(false);
 
                 var minForFh = _profile.LeadingSilenceSamples
                     + _profile.UnmodulatedPreambleSamples
@@ -1108,9 +1111,16 @@ public sealed partial class FileWavCodec
                     return NeedMoreOrFail();
                 }
 
+                // FH 確定前は in-place wow 補正しない（失敗時に BH+BD only WAV の先頭を壊さない）。
                 warpedCursor = SkipSamples(leftSamples, 0, _profile.LeadingSilenceSamples);
-                warpedCursor = SkipSamples(leftSamples, warpedCursor, _profile.UnmodulatedPreambleSamples);
                 logicalOffset = warpedCursor;
+                SkipHeaderUnmodulatedPreamble(
+                    leftSamples,
+                    ref warpedCursor,
+                    ref logicalOffset,
+                    _profile.UnmodulatedPreambleSamples,
+                    state.StatusBoard,
+                    _profile.SampleRate);
 
                 state.StatusBoard.SetProgress(new CoreProgressInfo(
                     CurrentFrame: CoreFrameKind.Fh,
@@ -1119,13 +1129,13 @@ public sealed partial class FileWavCodec
                     AcceptedBlockCount: 0,
                     TotalBlockCount: 0,
                     ProgressPercent: 3.0));
-                ApplyAdaptiveWowCorrectionPair();
                 SkipHeaderUnmodulatedPreamble(
                     leftSamples,
                     ref warpedCursor,
                     ref logicalOffset,
-                    _profile.FileHeaderUnmodulatedSamples);
-                ApplyAdaptiveWowCorrectionPair();
+                    _profile.FileHeaderUnmodulatedSamples,
+                    state.StatusBoard,
+                    _profile.SampleRate);
                 state.StatusBoard.SetProgress(new CoreProgressInfo(
                     CurrentFrame: CoreFrameKind.Fh,
                     CurrentBlockIndex: -1,
@@ -1164,6 +1174,10 @@ public sealed partial class FileWavCodec
                 }
                 catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                 {
+                    // FH 無し（BH+BD only）を想定し、先頭から再スキャンする。
+                    warpedCursor = 0;
+                    logicalOffset = 0;
+                    hasTrackedWow = false;
                     if (TryDecodeStandaloneBhBdWithoutFileHeader())
                     {
                         if (allowIncomplete)
@@ -1214,6 +1228,8 @@ public sealed partial class FileWavCodec
                 state.Pass = 0;
                 state.Local = 0;
                 PersistCursor();
+                // 初回 FH 確定後に L でワウを一度ロック（以降の途中 FH では再推定しない）。
+                ApplyAdaptiveWowCorrectionPair();
                 var displayName = string.IsNullOrWhiteSpace(fhFileName) ? "(不明)" : fhFileName;
                 state.StatusBoard.SetAnalyzing(false);
                 state.StatusBoard.SetFileInfo(displayName, $"{fileSize:N0} bytes", blockCount.ToString());
@@ -1261,7 +1277,8 @@ public sealed partial class FileWavCodec
 
             bool TryDecodeStandaloneBhBdWithoutFileHeader()
             {
-                var start = Math.Max(0, warpedCursor);
+                // FH 未確定時は常に先頭から BH を探す（先行スキップ後のカーソルでは BH+BD only を落とす）。
+                var start = state.HeaderReady ? Math.Max(0, warpedCursor) : 0;
                 if (start >= leftSamples.Length)
                 {
                     return false;
@@ -1551,7 +1568,9 @@ public sealed partial class FileWavCodec
                                 leftSamples,
                                 ref probeCursor,
                                 ref probeLogical,
-                                _profile.BlockHeaderUnmodulatedSamples);
+                                _profile.BlockHeaderUnmodulatedSamples,
+                                statusBoard: null,
+                                _profile.SampleRate);
                             var probeHeader = DecodeHeaderPacketSyncedTryingGrids(
                                 ref probeHeaderOfdm,
                                 leftSamples,
@@ -1608,6 +1627,7 @@ public sealed partial class FileWavCodec
                         }
 
                         state.LastError = message;
+                        // Local は for の local++ に任せる（ここで +1 すると1ブロック飛ばす）。
                         state.Pass = pass;
                         state.Local = local + 1;
                         PersistCursor();
@@ -1630,12 +1650,15 @@ public sealed partial class FileWavCodec
                     {
                         if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                         {
+                            PublishStatus(CoreFrameKind.Fh, blockIndex: -1);
                             SkipHeaderUnmodulatedPreamble(
                                 leftSamples,
                                 ref warpedCursor,
                                 ref logicalOffset,
-                                _profile.FileHeaderUnmodulatedSamples);
-                            ApplyAdaptiveWowCorrectionPair();
+                                _profile.FileHeaderUnmodulatedSamples,
+                                state.StatusBoard,
+                                _profile.SampleRate);
+                            // 途中 FH はモノラル固定。ここでワウ再推定するとステレオ BD のロックが崩れる。
                             var midFh = DecodeHeaderPacketSyncedTryingGrids(
                                 ref headerOfdm,
                                 leftSamples,
@@ -1655,11 +1678,16 @@ public sealed partial class FileWavCodec
                             leftSamples,
                             ref warpedCursor,
                             ref logicalOffset,
-                            _profile.BlockHeaderUnmodulatedSamples);
+                            _profile.BlockHeaderUnmodulatedSamples,
+                            state.StatusBoard,
+                            _profile.SampleRate);
                         if (!tuning.AdaptiveWowOnlyOnFileHeaderBoundaries)
                         {
                             ApplyAdaptiveWowCorrectionPair();
                         }
+
+                        // BH 復号前にメーターを正しいブロックへ（同期探索中も進捗が見えるようにする）
+                        PublishStatus(CoreFrameKind.Bh, expectedBlockIndex);
 
                         var blockHeader = DecodeHeaderPacketSyncedTryingGrids(
                             ref headerOfdm,
@@ -1857,9 +1885,12 @@ public sealed partial class FileWavCodec
                         {
                             state.LastError = null;
                         }
+
+                        // 完了ブロックは局所メーターを満タン寄りに（次ブロックへ進む前に UI が追いつく）。
                         PublishStatus(
                             CoreFrameKind.Bd,
-                            effectiveBlockIndex);
+                            effectiveBlockIndex,
+                            blockFraction: acceptedForStatus ? 1.0 : 0.0);
                     }
                     catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                     {
@@ -1894,8 +1925,10 @@ public sealed partial class FileWavCodec
                         leftSamples,
                         ref warpedCursor,
                         ref logicalOffset,
-                        _profile.FileHeaderUnmodulatedSamples);
-                    ApplyAdaptiveWowCorrectionPair();
+                        _profile.FileHeaderUnmodulatedSamples,
+                        state.StatusBoard,
+                        _profile.SampleRate);
+                    // 末尾 FH でもワウ再推定しない（ステレオ受信中の mono ヘッダー誤ロック防止）。
                     var endFh = DecodeHeaderPacketSyncedTryingGrids(
                         ref headerOfdm,
                         leftSamples,

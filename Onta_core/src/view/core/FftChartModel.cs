@@ -17,7 +17,6 @@ public sealed class FftChartModel
     private const double MaxDisplayHz = 14000;
     private readonly ObservableCollection<ObservablePoint> _leftPoints = [];
     private readonly ObservableCollection<ObservablePoint> _rightPoints = [];
-    private static readonly SKColor MonoColor = new(143, 202, 255);
     private static readonly SKColor LeftColor = new(166, 221, 176);
     private static readonly SKColor RightColor = new(255, 182, 120);
     private static readonly SKColor AxisColor = new(176, 181, 191);
@@ -32,7 +31,7 @@ public sealed class FftChartModel
             Values = _leftPoints,
             Name = "L",
             Fill = null,
-            Stroke = new SolidColorPaint(MonoColor, 1.5f),
+            Stroke = new SolidColorPaint(LeftColor, 1.5f),
             GeometrySize = 0,
             LineSmoothness = 0
         };
@@ -135,7 +134,8 @@ public sealed class FftChartModel
         }
         else
         {
-            _leftSeries.Stroke = new SolidColorPaint(MonoColor, 1.5f);
+            // ヘッダー／モノラルは L のみ（L 色）。R 系列は出さない。
+            _leftSeries.Stroke = new SolidColorPaint(LeftColor, 1.5f);
             _rightSeries.IsVisible = false;
         }
 
@@ -151,7 +151,7 @@ public sealed class FftChartModel
     {
         _leftPoints.Clear();
         _rightPoints.Clear();
-        _leftSeries.Stroke = new SolidColorPaint(MonoColor, 1.5f);
+        _leftSeries.Stroke = new SolidColorPaint(LeftColor, 1.5f);
         _rightSeries.IsVisible = false;
         XAxes[0].MinLimit = 0;
         XAxes[0].MaxLimit = MaxDisplayHz;

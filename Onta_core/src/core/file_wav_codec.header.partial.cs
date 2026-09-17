@@ -141,10 +141,50 @@ public sealed partial class FileWavCodec
         Complex[] samples,
         ref int warpedCursor,
         ref long logicalOffset,
-        int unmodulatedSamples)
+        int unmodulatedSamples,
+        CoreExecutionStatusBoard? statusBoard = null,
+        int sampleRate = 44100)
     {
-        warpedCursor = SkipSamples(samples, warpedCursor, unmodulatedSamples);
-        logicalOffset += unmodulatedSamples;
+        if (unmodulatedSamples <= 0)
+        {
+            return;
+        }
+
+        // 無変調区間でも FFT が止まって見えないよう、短いチャンクで進めつつ可視化する。
+        var remaining = unmodulatedSamples;
+        var chunk = Math.Max(ReceiveVizFftSize / 8, Math.Max(1, sampleRate / 20));
+        Complex[]? window = null;
+        Complex[]? work = null;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (remaining > 0)
+        {
+            var n = Math.Min(remaining, chunk);
+            warpedCursor = SkipSamples(samples, warpedCursor, n);
+            logicalOffset += n;
+            remaining -= n;
+            if (statusBoard is null)
+            {
+                continue;
+            }
+
+            if (remaining > 0 && clock.ElapsedMilliseconds < 33)
+            {
+                continue;
+            }
+
+            window ??= new Complex[ReceiveVizFftSize];
+            work ??= new Complex[ReceiveVizFftSize];
+            clock.Restart();
+            PublishReceivePcmFft(
+                statusBoard,
+                samples,
+                Array.Empty<Complex>(),
+                warpedCursor,
+                stereo: false,
+                sampleRate,
+                window,
+                work);
+        }
     }
 
     private static byte[] DecodeHeaderPacketSynced(
@@ -169,7 +209,37 @@ public sealed partial class FileWavCodec
         var symbolLength = ofdm.SamplesPerOfdmSymbol;
         var probeSymbols = Math.Clamp(sampleCount / symbolLength, 1, 4);
 
+        Complex[]? fftWindow = null;
+        Complex[]? fftWork = null;
+        var fftClock = System.Diagnostics.Stopwatch.StartNew();
+        void MaybePublishHeaderFft(int sampleEnd, bool force = false)
+        {
+            if (statusBoard is null)
+            {
+                return;
+            }
+
+            if (!force && fftClock.ElapsedMilliseconds < 33)
+            {
+                return;
+            }
+
+            fftWindow ??= new Complex[ReceiveVizFftSize];
+            fftWork ??= new Complex[ReceiveVizFftSize];
+            fftClock.Restart();
+            PublishReceivePcmFft(
+                statusBoard,
+                leftSamples,
+                rightSamples,
+                sampleEnd,
+                stereo: false,
+                ofdm.SampleRate,
+                fftWindow,
+                fftWork);
+        }
+
         onSyncProgress?.Invoke(0, 1);
+        MaybePublishHeaderFft(warpedCursor, force: true);
         if (TryDecodeHeaderAt(
                 leftSamples,
                 rightSamples,
@@ -192,6 +262,7 @@ public sealed partial class FileWavCodec
         {
             warpedCursor = exactEnd;
             logicalOffset += sampleCount;
+            MaybePublishHeaderFft(warpedCursor, force: true);
             onSyncProgress?.Invoke(1, 1);
             return exactPayload;
         }
@@ -203,13 +274,15 @@ public sealed partial class FileWavCodec
             searchRadius,
             ofdm,
             probeSymbols,
-            useRightChannel: false);
+            useRightChannel: false,
+            onProbe: start => MaybePublishHeaderFft(start));
 
         Exception? lastError = null;
         for (var i = 0; i < candidateStarts.Count; i++)
         {
             var start = candidateStarts[i];
             onSyncProgress?.Invoke(i + 1, Math.Max(1, candidateStarts.Count));
+            MaybePublishHeaderFft(start);
             if (start == warpedCursor)
             {
                 continue;
@@ -239,6 +312,7 @@ public sealed partial class FileWavCodec
                 {
                     warpedCursor = endCursor;
                     logicalOffset += sampleCount;
+                    MaybePublishHeaderFft(warpedCursor, force: true);
                     return payload;
                 }
             }
@@ -343,7 +417,10 @@ public sealed partial class FileWavCodec
                     logicalOffset,
                     searchRadius: Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
                     noiseVariance: 0.05,
-                    ModulationScheme.Bpsk);
+                    ModulationScheme.Bpsk,
+                    statusBoard,
+                    onBlockProgress: null,
+                    captureIq: false);
                 endCursor = cursor;
             }
             else
@@ -360,7 +437,10 @@ public sealed partial class FileWavCodec
                     logicalOffset,
                     perSymbolSearchRadius,
                     noiseVariance: 0.05,
-                    ModulationScheme.Bpsk);
+                    ModulationScheme.Bpsk,
+                    statusBoard,
+                    onBlockProgress: null,
+                    captureIq: false);
                 endCursor = cursor;
             }
 
@@ -427,7 +507,8 @@ public sealed partial class FileWavCodec
         int searchRadius,
         OfdmGenerator ofdm,
         int probeSymbols,
-        bool useRightChannel)
+        bool useRightChannel,
+        Action<int>? onProbe = null)
     {
         var symbolLength = ofdm.SamplesPerOfdmSymbol;
         var step = Math.Max(1, symbolLength / 16);
@@ -448,6 +529,7 @@ public sealed partial class FileWavCodec
         }
 
         Add(expectedStart);
+        onProbe?.Invoke(expectedStart);
         Add(ofdm.FindBestSymbolStart(samples, expectedStart, Math.Min(searchRadius, symbolLength), useRightChannel));
 
         var scored = new List<(int Start, double Score)>();
@@ -456,12 +538,14 @@ public sealed partial class FileWavCodec
             var startA = expectedStart - radius;
             if (startA >= 0 && startA + sampleCount <= samples.Length)
             {
+                onProbe?.Invoke(startA);
                 scored.Add((startA, ofdm.ScoreLock(samples, startA, probeSymbols, useRightChannel)));
             }
 
             var startB = expectedStart + radius;
             if (startB >= 0 && startB + sampleCount <= samples.Length)
             {
+                onProbe?.Invoke(startB);
                 scored.Add((startB, ofdm.ScoreLock(samples, startB, probeSymbols, useRightChannel)));
             }
         }

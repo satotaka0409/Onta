@@ -97,7 +97,7 @@ public sealed partial class OfdmGenerator
         Action<Complex>? onEqualizedDataSymbol = null,
         Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame = null,
         Action<Complex[], int>? onFftSymbolFrame = null,
-        Action<int, int>? onOfdmSymbolProgress = null)
+        Action<int, int, int>? onOfdmSymbolProgress = null)
     {
         return DemodulateSoftLlrsFromStreamCore(
             samples,

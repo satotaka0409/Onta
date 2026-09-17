@@ -19,7 +19,8 @@ public sealed class OntaTestHistory1
     [Fact]
     public void Decode_BlockOnlyWav_RegistersOrphan()
     {
-        var input = BuildPayload(size: 9000);
+        // 1ブロック分のペイロードのみ（末尾短ブロックにしない）。
+        var input = BuildPayload(size: 4096);
         var fileName = "history_orphan_input.bin";
         var tempDir = Path.Combine(Path.GetTempPath(), "onta_test_history");
         Directory.CreateDirectory(tempDir);
@@ -51,53 +52,41 @@ public sealed class OntaTestHistory1
 
         var bhFrames = frameLeft.Where(x => x.Kind == TransmissionFrameKind.Bh).ToArray();
         var bdFrames = frameLeft.Where(x => x.Kind == TransmissionFrameKind.Bd).ToArray();
-        Assert.True(bhFrames.Length >= 2, "2ブロック分のBHが必要です。");
-        Assert.True(bdFrames.Length >= 2, "2ブロック分のBDが必要です。");
+        Assert.True(bhFrames.Length >= 1, "1ブロック分のBHが必要です。");
+        Assert.True(bdFrames.Length >= 1, "1ブロック分のBDが必要です。");
 
-        // 2ブロック目(BLK-1)の BH+BD のみを連結して block-only WAV を作る。
-        var blockOnly = Concat(bhFrames[1].Samples, bdFrames[1].Samples);
+        // BLK-0 の BH+BD のみを連結して block-only WAV を作る（FH 無し）。
+        var blockOnly = Concat(bhFrames[0].Samples, bdFrames[0].Samples);
         WavWriter.WriteMono16(wavPath, Profile.SampleRate, blockOnly, Profile.SamplePeak);
 
         var (leftRead, rightRead) = WavReader.ReadPcm16(wavPath);
         Assert.Empty(rightRead);
 
+        // UI と同じく FH 無しのまま復号し、standalone BH+BD → 不明ブロック登録を確認する。
         var state = new ProgressiveDecodeState();
-        PrepareStateForBlockOnlyDecode(state, expectedBlockCount: 1, expectedFileSize: 8192);
-
         var status = codec.DecodePcmSamplesProgressive(
             leftRead,
             rightRead,
             state,
-            correctWow: false,
+            correctWow: true,
             wowParams: null,
             tuning: DecodeRuntimeTuning.Default,
             allowIncomplete: false);
 
         Assert.Equal(ProgressiveDecodeStatus.Failed, status);
+        Assert.False(state.HeaderReady);
 
         var orphanPayloadByHash = GetPropertyValue<Dictionary<string, byte[]>>(state, "OrphanPayloadByHash");
         var orphanDetailByHash = GetPropertyValue<Dictionary<string, string>>(state, "OrphanDetailByHash");
 
         Assert.NotNull(orphanPayloadByHash);
         Assert.NotNull(orphanDetailByHash);
-        Assert.NotEmpty(orphanPayloadByHash);
-        Assert.NotEmpty(orphanDetailByHash);
+        Assert.Single(orphanPayloadByHash);
+        Assert.Single(orphanDetailByHash);
+        Assert.Equal(4096, orphanPayloadByHash.Values.First().Length);
 
         var detail = orphanDetailByHash.Values.First();
-        Assert.Contains("孤立ブロック index=1", detail);
-    }
-
-    private static void PrepareStateForBlockOnlyDecode(ProgressiveDecodeState state, int expectedBlockCount, long expectedFileSize)
-    {
-        SetProperty(state, nameof(ProgressiveDecodeState.HeaderReady), true);
-        SetProperty(state, nameof(ProgressiveDecodeState.BlockCount), expectedBlockCount);
-        SetProperty(state, nameof(ProgressiveDecodeState.FileSize), expectedFileSize);
-        SetField(state, "OutputSlots", new byte[expectedBlockCount][]);
-        SetField(state, "SlotAccepted", new bool[expectedBlockCount]);
-        SetField(state, "Pass", 0);
-        SetField(state, "Local", 0);
-        SetField(state, "WarpedCursor", 0);
-        SetField(state, "LogicalOffset", 0L);
+        Assert.Contains("BH+BD index=0", detail);
     }
 
     private static byte[] BuildPayload(int size)
@@ -117,20 +106,6 @@ public sealed class OntaTestHistory1
         Array.Copy(first, 0, merged, 0, first.Length);
         Array.Copy(second, 0, merged, first.Length, second.Length);
         return merged;
-    }
-
-    private static void SetProperty<T>(object target, string propertyName, T value)
-    {
-        var prop = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                   ?? throw new MissingMemberException(target.GetType().FullName, propertyName);
-        prop.SetValue(target, value);
-    }
-
-    private static void SetField<T>(object target, string fieldName, T value)
-    {
-        var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?? throw new MissingFieldException(target.GetType().FullName, fieldName);
-        field.SetValue(target, value);
     }
 
     private static T GetPropertyValue<T>(object target, string propertyName) where T : class

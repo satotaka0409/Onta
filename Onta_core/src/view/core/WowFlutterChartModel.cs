@@ -23,7 +23,7 @@ public sealed class WowFlutterChartModel
     private bool _leftHasHold;
     private bool _rightHasHold;
 
-    // FFT と同じ L/R 色
+    // FFT と同じ L/R 色（L=緑系 / R=オレンジ系）
     private static readonly SKColor LeftColor = new(166, 221, 176);
     private static readonly SKColor RightColor = new(255, 182, 120);
     private static readonly SKColor AxisColor = new(176, 181, 191);

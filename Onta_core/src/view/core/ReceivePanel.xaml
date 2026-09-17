@@ -300,6 +300,29 @@
                                    VerticalAlignment="Center"
                                    Foreground="{StaticResource BrushTextMuted}"/>
                     </StackPanel>
+                    <StackPanel x:Name="FftLegend"
+                                Orientation="Horizontal"
+                                Margin="20,0,0,0"
+                                VerticalAlignment="Center"
+                                Visibility="Collapsed">
+                        <Border Width="12"
+                                Height="3"
+                                Background="#FFA6DDB0"
+                                VerticalAlignment="Center"
+                                Margin="0,0,4,0"/>
+                        <TextBlock Text="L"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   Margin="0,0,14,0"/>
+                        <Border Width="12"
+                                Height="3"
+                                Background="#FFFFB678"
+                                VerticalAlignment="Center"
+                                Margin="0,0,4,0"/>
+                        <TextBlock Text="R"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource BrushTextMuted}"/>
+                    </StackPanel>
                 </StackPanel>
                 <Border x:Name="ErrorChartHost"
                         Grid.Row="1"

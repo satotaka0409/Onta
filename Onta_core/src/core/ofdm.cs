@@ -3727,7 +3727,7 @@ public sealed partial class OfdmGenerator
         return (normalizedCp * 2.0) + Math.Log10(pilotPower + 1e-12);
     }
 
-    /// <param name="onOfdmSymbolProgress">OFDM シンボル進捗 (index, count)。</param>
+    /// <param name="onOfdmSymbolProgress">OFDM シンボル進捗 (index, count, sampleEndExclusive)。</param>
     /// <returns>処理結果。</returns>
     private double[] DemodulateSoftLlrsFromStreamCore(
         Complex[] samples,
@@ -3743,7 +3743,7 @@ public sealed partial class OfdmGenerator
         Action<Complex>? onEqualizedDataSymbol,
         Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame,
         Action<Complex[], int>? onFftSymbolFrame,
-        Action<int, int>? onOfdmSymbolProgress)
+        Action<int, int, int>? onOfdmSymbolProgress)
     {
         if (bitCount < 0)
         {
@@ -3794,7 +3794,6 @@ public sealed partial class OfdmGenerator
                 primaryTimeNoCp,
                 primaryFreqBins,
                 primaryEqualizers);
-            onFftSymbolFrame?.Invoke(primaryFreqBins, primaryFreqBins.Length);
 
             var effectiveVariance = noiseVariance;
             if (estimateNoiseFromPilots)
@@ -3872,7 +3871,7 @@ public sealed partial class OfdmGenerator
                     onEqualizedDataSymbolFrame: null);
             }
 
-            onOfdmSymbolProgress?.Invoke(s, symbolCount);
+            onOfdmSymbolProgress?.Invoke(s, symbolCount, start + symbolLength);
             position = start + symbolLength;
         }
 

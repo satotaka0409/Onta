@@ -179,6 +179,14 @@ public partial class ReceiveDetailPanel : UserControl
                 return;
             }
 
+            // 既に FH OK なら全体進捗でメーターを上書きしない。
+            if (_fhRow is not null
+                && string.Equals(_fhRow.ResultText, "OK", StringComparison.Ordinal))
+            {
+                EnsureFileHeaderMeterComplete();
+                return;
+            }
+
             if (_fhRow is not null && status.IsRunning)
             {
                 _fhRow.SetProgressPercent(Math.Clamp(status.Progress.ProgressPercent, 0.0, 99.0));
@@ -203,7 +211,6 @@ public partial class ReceiveDetailPanel : UserControl
             if (totalBlocks > 0)
             {
                 ApplyFileHeaderDefaults(_fhRow, ready: true);
-                _fhRow.SetProgressPercent(100);
             }
             else if (status.IsRunning)
             {
@@ -217,9 +224,22 @@ public partial class ReceiveDetailPanel : UserControl
             }
         }
 
+        EnsureFileHeaderMeterComplete();
+
         // 現在処理中のブロックとフレーム種別を取得する。
         var currentBlock = status.Progress.CurrentBlockIndex;
         var frame = status.Progress.CurrentFrame;
+        var passIndex = Math.Max(0, status.Progress.PassIndex);
+        var emissionOrder = _blockRows.Count > 0
+            ? FileWavCodec.GetBlockEmissionOrder(_blockRows.Count, passIndex)
+            : [];
+        var currentOrdinal = -1;
+        if (currentBlock >= 0
+            && frame is CoreFrameKind.Bh or CoreFrameKind.Bd
+            && emissionOrder.Length > 0)
+        {
+            currentOrdinal = Array.IndexOf(emissionOrder, currentBlock);
+        }
 
         // OK 判定は実受信ペイロード同期（SyncCapturedBlocks）に任せ、
         // ここでのエラー率ヒューリスティックでは Accepted にしない。
@@ -255,13 +275,28 @@ public partial class ReceiveDetailPanel : UserControl
                     local = frame == CoreFrameKind.Bh ? 20.0 : 50.0;
                 }
 
-                _blockRows[i].SetProgressPercent(Math.Clamp(local, 1.0, 99.0));
+                _blockRows[i].SetProgressPercent(Math.Clamp(local, 1.0, 99.0), force: true);
 
                 if (status.ErrorRate.FrameKind == CoreFrameKind.Bd
                     && status.ErrorRate.LatestPercent >= 99.9
                     && !string.IsNullOrWhiteSpace(status.LastError))
                 {
                     SetBlockError(i, status.LastError);
+                }
+
+                continue;
+            }
+
+            // 送信順で現在より前のブロックは通過済み。ポーリング間隔で取りこぼしてもメーターを消さない。
+            var ordinal = emissionOrder.Length > 0 ? Array.IndexOf(emissionOrder, i) : i;
+            if (status.IsRunning
+                && currentOrdinal >= 0
+                && ordinal >= 0
+                && ordinal < currentOrdinal)
+            {
+                if (_blockRows[i].ProgressPercent < 99.0)
+                {
+                    _blockRows[i].SetProgressPercent(99.0);
                 }
 
                 continue;
@@ -279,7 +314,12 @@ public partial class ReceiveDetailPanel : UserControl
                 continue;
             }
 
-            _blockRows[i].SetProgressPercent(0, force: true);
+            // 未着手（現在より後ろ）だけ 0 に戻す。FH 中は触らない。
+            if (frame is CoreFrameKind.Bh or CoreFrameKind.Bd
+                && _blockRows[i].ProgressPercent > 0.0)
+            {
+                _blockRows[i].SetProgressPercent(0, force: true);
+            }
         }
 
         if (_totalRow is not null)
@@ -683,6 +723,26 @@ public partial class ReceiveDetailPanel : UserControl
         fhRow.SetSize(FileHeaderBytes.ToString("N0"));
         fhRow.SetModulationFields("mono", "8", "BPSK");
         fhRow.SetResult(ready ? "OK" : "-");
+        if (ready)
+        {
+            fhRow.SetProgressPercent(100);
+        }
+    }
+
+    /// <summary>
+    /// FH が確定済みならメーターを 100% に固定します。
+    /// </summary>
+    private void EnsureFileHeaderMeterComplete()
+    {
+        if (_fhRow is null)
+        {
+            return;
+        }
+
+        if (string.Equals(_fhRow.ResultText, "OK", StringComparison.Ordinal))
+        {
+            _fhRow.SetProgressPercent(100);
+        }
     }
 
     /// <summary>
@@ -807,6 +867,7 @@ public partial class ReceiveDetailPanel : UserControl
         _blockStates[index] = ReceiveBlockState.Accepted;
         _blockErrors[index] = string.Empty;
         _blockRows[index].SetResult("OK");
+        _blockRows[index].SetProgressPercent(100);
     }
 
     /// <summary>
@@ -1069,7 +1130,7 @@ public partial class ReceiveDetailPanel : UserControl
         public void SetProgressPercent(double value, bool force = false)
         {
             var clamped = Math.Clamp(value, 0.0, 100.0);
-            if (!force && Math.Abs(_progressPercent - clamped) < 0.001)
+            if (!force && Math.Abs(_progressPercent - clamped) < 0.05)
             {
                 return;
             }

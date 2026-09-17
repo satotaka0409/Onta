@@ -19,8 +19,6 @@ public partial class ReceivePanel : UserControl
     private const double WowFlutterDisplayGain = 2.0;
     private static readonly SolidColorBrush ErrorLegendViterbiBrush = new(Color.FromRgb(100, 170, 255));
     private static readonly SolidColorBrush ErrorLegendOuterBrush = new(Color.FromRgb(255, 150, 70));
-    private static readonly SolidColorBrush ErrorLegendLeftBrush = new(Color.FromRgb(166, 221, 176));
-    private static readonly SolidColorBrush ErrorLegendRightBrush = new(Color.FromRgb(255, 182, 120));
 
     private readonly ErrorRateChartModel _errorChart = new();
     private readonly FftChartModel _fftChart = new();
@@ -32,7 +30,6 @@ public partial class ReceivePanel : UserControl
     private CoreEccDecoderKind _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
     private double _lastErrorPercent = -1;
     private int _lastErrorSequence = -1;
-    private bool _errorChartStereoMode;
 
     // ワウメーター用: コアのモデルを壁時計で補間して左右に揺らす
     private bool _wowTrackingActive;
@@ -66,7 +63,7 @@ public partial class ReceivePanel : UserControl
         InitializeAudioDevices();
         UpdateInputModePanels();
         OutputDirBox.Text = _outputDir;
-        SetErrorChartStereoMode(false);
+        EnsureErrorRateLegend();
         UpdateReceiveGraphTabVisibility();
 
         Loaded += (_, _) =>
@@ -78,7 +75,7 @@ public partial class ReceivePanel : UserControl
             _wowChart.Clear();
             SetFileInfo("(未受信)", "-", "-");
             ProgressBox.Text = "-";
-            SetErrorChartStereoMode(false);
+            EnsureErrorRateLegend();
             UpdateInputModePanels();
             UpdateReceiveGraphTabVisibility();
             UpdateIqSquareSize();
@@ -120,6 +117,11 @@ public partial class ReceivePanel : UserControl
         if (ErrorRateLegend is not null)
         {
             ErrorRateLegend.Visibility = showFft ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        if (FftLegend is not null)
+        {
+            FftLegend.Visibility = showFft ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 
@@ -351,14 +353,8 @@ public partial class ReceivePanel : UserControl
             $"{frameLabel} {status.Progress.ProgressPercent:0.0}% " +
             $"({status.Progress.AcceptedBlockCount}/{Math.Max(status.Progress.TotalBlockCount, 0)})";
 
-        if (status.IsRunning && status.FftGraph.FftSize > 0)
-        {
-            SetWowStereoEnabled(status.FftGraph.IsStereo);
-            SetErrorChartStereoMode(status.FftGraph.IsStereo);
-        }
-
         ApplyWowFlutterFromStatus(status);
-        // FH 解析中／ワウ未ロック時は時系列を進めない（エラー率と同じ方針）
+        // 解析中・ワウ未ロック時は時系列を進めない（ヘッダー中もロック済みなら表示する）
         if (status.WowTrackingActive && !status.IsAnalyzing)
         {
             try
@@ -397,7 +393,7 @@ public partial class ReceivePanel : UserControl
                 _lastErrorSequence = sample.Sequence;
                 try
                 {
-                    _errorChart.AddSample(sample.LatestPercent, sample.DecoderKind, sample.RightPercent);
+                    _errorChart.AddSample(sample.LatestPercent, sample.DecoderKind);
                 }
                 catch
                 {
@@ -417,7 +413,7 @@ public partial class ReceivePanel : UserControl
             _lastErrorSequence = err.Sequence;
             try
             {
-                _errorChart.AddSample(err.LatestPercent, err.DecoderKind, err.RightPercent);
+                _errorChart.AddSample(err.LatestPercent, err.DecoderKind);
             }
             catch
             {
@@ -448,12 +444,12 @@ public partial class ReceivePanel : UserControl
         _lastErrorFrame = CoreFrameKind.Fh;
         _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
         _lastErrorSequence = -1;
-        _errorChartStereoMode = false;
         ClearWowTracking();
         UpdateWowMeters(0, 0);
         SetFileInfo("(未受信)", "-", "-");
         ProgressBox.Text = "-";
         IqTitle.Text = "I-Q";
+        EnsureErrorRateLegend();
     }
 
     /// <summary>
@@ -475,7 +471,6 @@ public partial class ReceivePanel : UserControl
             return;
         }
 
-        SetErrorChartStereoMode(fft.IsStereo);
         _fftChart.ReplacePoints(fft.LeftPoints, fft.RightPoints, fft.IsStereo);
     }
 
@@ -545,7 +540,6 @@ public partial class ReceivePanel : UserControl
     {
         var stereo = channelMode == ChannelMode.Stereo;
         SetWowStereoEnabled(stereo);
-        SetErrorChartStereoMode(stereo);
     }
 
     /// <summary>WOW/Flutter 表示の右チャネル活性状態を切り替えます。</summary>
@@ -559,19 +553,10 @@ public partial class ReceivePanel : UserControl
         }
     }
 
-    private void SetErrorChartStereoMode(bool stereo)
-    {
-        if (_errorChartStereoMode == stereo)
-        {
-            return;
-        }
-
-        _errorChartStereoMode = stereo;
-        _errorChart.SetStereoChannelMode(stereo);
-        UpdateErrorRateLegend(stereo);
-    }
-
-    private void UpdateErrorRateLegend(bool stereo)
+    /// <summary>
+    /// エラーレート凡例をビタビ / RS・ターボに固定します。
+    /// </summary>
+    private void EnsureErrorRateLegend()
     {
         if (ErrorLegendAColor is null
             || ErrorLegendAText is null
@@ -581,20 +566,10 @@ public partial class ReceivePanel : UserControl
             return;
         }
 
-        if (stereo)
-        {
-            ErrorLegendAColor.Background = ErrorLegendLeftBrush;
-            ErrorLegendAText.Text = "L";
-            ErrorLegendBColor.Background = ErrorLegendRightBrush;
-            ErrorLegendBText.Text = "R";
-        }
-        else
-        {
-            ErrorLegendAColor.Background = ErrorLegendViterbiBrush;
-            ErrorLegendAText.Text = "ビタビ";
-            ErrorLegendBColor.Background = ErrorLegendOuterBrush;
-            ErrorLegendBText.Text = "RS／ターボ";
-        }
+        ErrorLegendAColor.Background = ErrorLegendViterbiBrush;
+        ErrorLegendAText.Text = "ビタビ";
+        ErrorLegendBColor.Background = ErrorLegendOuterBrush;
+        ErrorLegendBText.Text = "RS／ターボ";
     }
 
     /// <summary>
@@ -605,7 +580,7 @@ public partial class ReceivePanel : UserControl
         if (!status.WowTrackingActive || status.IsAnalyzing)
         {
             ClearWowTracking();
-            // メーターのみ更新。FH 解析中はグラフへは載せない。
+            // メーターのみ更新。FH 解析中（未ロック）はグラフへは載せない。
             UpdateWowMeters(status.WowLeftPercent, status.WowRightPercent);
             return;
         }
@@ -627,6 +602,7 @@ public partial class ReceivePanel : UserControl
         var sampleIndex = _wowSampleIndexAtSync + (long)(dt * _wowSampleRate);
         var percent = WowFlutterWarp.EvaluateSpeedDeviationPercent(
             _wowSampleRate, _wowAmount, _wowPhase, _flutterPhase, sampleIndex);
+        // ヘッダーも L 推定で表示。ステレオ UI はプロファイル依存（FFT mono 切替とは分離）。
         SetWowFlutterPercent(percent, percent);
     }
 
@@ -646,7 +622,10 @@ public partial class ReceivePanel : UserControl
     private void UpdateWowMeters(double leftPercent, double rightPercent)
     {
         WowLeft.AddSample(leftPercent * WowFlutterDisplayGain);
-        WowRight.AddSample(rightPercent * WowFlutterDisplayGain);
+        if (WowRight.IsActive)
+        {
+            WowRight.AddSample(rightPercent * WowFlutterDisplayGain);
+        }
     }
 
     /// <summary>
@@ -660,7 +639,15 @@ public partial class ReceivePanel : UserControl
         try
         {
             // グラフは実偏差%（±1%軸）。メーター用の表示ゲインは掛けない。
-            _wowChart.AddSample(leftPercent, rightPercent);
+            // モノラル時は R 系列を進めず、ヘッダー mono 切替での橙ノイズを防ぐ。
+            if (WowRight.IsActive)
+            {
+                _wowChart.AddSample(leftPercent, rightPercent);
+            }
+            else
+            {
+                _wowChart.AddSample(leftPercent, leftPercent);
+            }
         }
         catch
         {

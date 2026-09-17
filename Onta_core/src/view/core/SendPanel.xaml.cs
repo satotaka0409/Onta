@@ -133,6 +133,27 @@ public partial class SendPanel : UserControl
     }
 
     /// <summary>
+    /// 送信操作（設定・スタート／ストップ）の有効/無効を切り替えます。
+    /// 受信実行中など、送信を触らせないときに使います。
+    /// </summary>
+    /// <param name="enabled">有効なら true。</param>
+    public void SetInteractionEnabled(bool enabled)
+    {
+        if (_transmissionRunning)
+        {
+            return;
+        }
+
+        SettingsHost.IsEnabled = enabled;
+        StartButton.IsEnabled = enabled;
+        StopButton.IsEnabled = false;
+        if (enabled)
+        {
+            UpdateOutputModePanels();
+        }
+    }
+
+    /// <summary>
     /// 送信実行中状態に合わせて入力UIの有効/無効を切り替えます。
     /// </summary>
     /// <param name="isRunning">送信中なら true。</param>

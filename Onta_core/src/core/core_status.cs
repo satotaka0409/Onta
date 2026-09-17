@@ -564,8 +564,12 @@ public sealed class CoreExecutionStatusBoard
             {
                 if (isRightChannel)
                 {
+                    if (!_fftIsStereo)
+                    {
+                        return;
+                    }
+
                     _fftRightCount = 0;
-                    _fftIsStereo = true;
                 }
                 else
                 {
@@ -587,8 +591,13 @@ public sealed class CoreExecutionStatusBoard
 
             if (isRightChannel)
             {
+                // モノラル表示中（ヘッダー等）は R 更新を無視する。
+                if (!_fftIsStereo)
+                {
+                    return;
+                }
+
                 _fftRightCount = pointCount;
-                _fftIsStereo = true;
             }
             else
             {

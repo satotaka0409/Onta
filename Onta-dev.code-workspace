@@ -5,6 +5,10 @@
 			"path": "./Onta_core"
 		},
 		{
+			"name": "manual",
+			"path": "./Onta_manual",
+		},
+		{
 			"name": "cursor rules",
 			"path": "./.cursor/rules",
 		},

@@ -138,7 +138,7 @@ public partial class MainWindow : Window
             // 送信開始前に既存の再生状態をリセットする。
             StopAudioPlayback();
 
-            // 送信中は受信操作を止め、前回の受信可視化をクリアする。
+            // 送信中は受信側ボタン類を止め、前回の受信可視化をクリアする。
             ReceivePanel.ResetVisualization();
             ReceiveDetailPanel.Clear();
             ReceivePanel.SetInteractionEnabled(false);
@@ -177,7 +177,7 @@ public partial class MainWindow : Window
     private void OnStopRequested(object? sender, EventArgs e)
     {
         _ = _coreWorker.RequestStop();
-        ReceivePanel.SetInteractionEnabled(true);
+        // 受信側の再有効化は送信完了時（TryConsumeCompletion）で行う。
     }
 
     /// <summary>
@@ -186,6 +186,7 @@ public partial class MainWindow : Window
     private void OnReceiveStopRequested(object? sender, EventArgs e)
     {
         _ = _inputCoreWorker.RequestStop();
+        // 送信側の再有効化は受信完了時（TryConsumeCompletion）で行う。
     }
 
     /// <summary>
@@ -268,6 +269,8 @@ public partial class MainWindow : Window
             ReceivePanel.SetWowChannelMode(profile.ChannelMode);
             ReceivePanel.PrepareForNewReceive();
             ReceivePanel.SetReceiveRunning(true);
+            // 受信中は送信側ボタン類を操作不可にする。
+            SendPanel.SetInteractionEnabled(false);
             ReceiveDetailPanel.Clear();
             ReceiveDetailPanel.SetSourcePath(ReceivePanel.SelectedWavPath);
             _receiveDetailOpened = false;
@@ -276,6 +279,7 @@ public partial class MainWindow : Window
             if (!_inputCoreWorker.TryStartWavDecode(ReceivePanel.SelectedWavPath, profile, outputDir))
             {
                 ReceivePanel.SetReceiveRunning(false);
+                SendPanel.SetInteractionEnabled(true);
                 MessageBox.Show(this, "Receive core is already running.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -311,6 +315,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             ReceivePanel.SetReceiveRunning(false);
+            SendPanel.SetInteractionEnabled(true);
             MessageBox.Show(this, $"受信開始に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -325,6 +330,8 @@ public partial class MainWindow : Window
         ReceivePanel.SetWowChannelMode(profile.ChannelMode);
         ReceivePanel.PrepareForNewReceive();
         ReceivePanel.SetReceiveRunning(true);
+        // 受信中は送信側ボタン類を操作不可にする。
+        SendPanel.SetInteractionEnabled(false);
         ReceiveDetailPanel.Clear();
         ReceiveDetailPanel.SetSourcePath($"(音声入力: {ReceivePanel.AudioDeviceName})");
         _receiveDetailOpened = false;
@@ -337,6 +344,7 @@ public partial class MainWindow : Window
                 ReceivePanel.AudioVolume))
         {
             ReceivePanel.SetReceiveRunning(false);
+            SendPanel.SetInteractionEnabled(true);
             MessageBox.Show(
                 this,
                 "Receive core is already running, or audio device failed to start.",
@@ -390,10 +398,11 @@ public partial class MainWindow : Window
                 // 送信中は受信可視化を触らない（送信開始時にクリアした表示を維持する）。
                 var status = _inputCoreWorker.SharedStatus.Read();
                 ReceivePanel.ApplyExecutionStatus(status);
-                ReceiveDetailPanel.ApplyStatus(status);
+                // ブロック成否・受理を先に反映してからメーター更新する（ApplyStatus が未受理を 0 に戻すため）。
                 ReceiveDetailPanel.SyncBlockHeaders(_inputCoreWorker.CaptureReceivedBlockHeaders());
                 ReceiveDetailPanel.SyncCapturedBlocks(_inputCoreWorker.CaptureReceivedBlocks());
                 ReceiveDetailPanel.SyncBlockBdOutcomes(_inputCoreWorker.CaptureBlockBdOutcomes());
+                ReceiveDetailPanel.ApplyStatus(status);
 
                 // 受信実行中は履歴保存を省略（ディスク I/O が画面更新を遅らせる）。
                 // FH 確定コールバックと完了時のみ保存する。
@@ -416,6 +425,7 @@ public partial class MainWindow : Window
                 ReceivePanel.SetReceiveRunning(false);
                 if (!sendProgress.IsRunning)
                 {
+                    SendPanel.SetInteractionEnabled(true);
                     ReceiveDetailPanel.MarkCompletion(success, message, outputPath);
                     SaveReceiveHistoryIfChanged(force: true);
                     HistoryPanel.ReloadHistory();

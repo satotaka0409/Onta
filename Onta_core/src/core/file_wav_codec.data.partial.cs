@@ -796,48 +796,74 @@ public sealed partial class FileWavCodec
         double noiseVariance,
         ModulationScheme modulationScheme,
         CoreExecutionStatusBoard? statusBoard = null,
-        Action<double>? onBlockProgress = null)
+        Action<double>? onBlockProgress = null,
+        bool captureIq = true)
     {
         statusBoard?.SetFftStereoMode(stereoSplit);
-        statusBoard?.BeginIqCapture(ofdm.ActiveSubcarriers, modulationScheme);
+        if (captureIq)
+        {
+            statusBoard?.BeginIqCapture(ofdm.ActiveSubcarriers, modulationScheme);
+        }
 
-        Action<Complex[], byte[], int>? onIqFrame = statusBoard is null
+        Action<Complex[], byte[], int>? onIqFrame = statusBoard is null || !captureIq
             ? null
             : (symbols, groups, count) =>
                 statusBoard.AppendIqFrame(symbols.AsSpan(0, count), groups.AsSpan(0, count));
-        Action<Complex[], int>? onFftLeftFrame = statusBoard is null
-            ? null
-            : (spectrum, count) => statusBoard.SetFftFrame(
-                spectrum.AsSpan(0, count),
-                isRightChannel: false,
-                sampleRate: ofdm.SampleRate);
-        Action<Complex[], int>? onFftRightFrame = statusBoard is null
-            ? null
-            : (spectrum, count) => statusBoard.SetFftFrame(
-                spectrum.AsSpan(0, count),
-                isRightChannel: true,
-                sampleRate: ofdm.SampleRate);
 
-        // UI 更新頻度を抑え、復調処理のスループット低下を防ぐ。
-        var progressClock = System.Diagnostics.Stopwatch.StartNew();
-        Action<int, int>? onSymbolProgress = onBlockProgress is null
-            ? null
-            : (symbolIndex, symbolCount) =>
+        // 送信側と同じ実 PCM スペクトル（Hann+2048）で可視化する。
+        Complex[]? fftWindow = null;
+        Complex[]? fftWork = null;
+        var fftClock = System.Diagnostics.Stopwatch.StartNew();
+        if (statusBoard is not null)
+        {
+            fftWindow = new Complex[ReceiveVizFftSize];
+            fftWork = new Complex[ReceiveVizFftSize];
+        }
+
+        void MaybePublishPcmFft(int sampleEndExclusive, bool force)
+        {
+            if (statusBoard is null || fftWindow is null || fftWork is null)
             {
-                if (symbolCount <= 0)
-                {
-                    return;
-                }
+                return;
+            }
 
-                var isLast = symbolIndex + 1 >= symbolCount;
-                if (!isLast && progressClock.ElapsedMilliseconds < 33)
-                {
-                    return;
-                }
+            if (!force && fftClock.ElapsedMilliseconds < 33)
+            {
+                return;
+            }
 
-                progressClock.Restart();
-                onBlockProgress((symbolIndex + 1.0) / symbolCount);
-            };
+            fftClock.Restart();
+            PublishReceivePcmFft(
+                statusBoard,
+                leftSamples,
+                rightSamples,
+                sampleEndExclusive,
+                stereoSplit,
+                ofdm.SampleRate,
+                fftWindow,
+                fftWork);
+        }
+
+        // 進捗・FFT ともに UI 負荷を抑えるため 33ms スロットル。
+        var progressClock = System.Diagnostics.Stopwatch.StartNew();
+        Action<int, int, int>? onSymbolProgressThrottled = (symbolIndex, symbolCount, sampleEnd) =>
+        {
+            var isLast = symbolCount > 0 && symbolIndex + 1 >= symbolCount;
+            MaybePublishPcmFft(sampleEnd, force: isLast);
+
+            if (onBlockProgress is null || symbolCount <= 0)
+            {
+                return;
+            }
+
+            if (!isLast && progressClock.ElapsedMilliseconds < 33)
+            {
+                return;
+            }
+
+            progressClock.Restart();
+            onBlockProgress((symbolIndex + 1.0) / symbolCount);
+        };
 
         if (!stereoSplit)
         {
@@ -851,8 +877,8 @@ public sealed partial class FileWavCodec
                 noiseVariance,
                 onEqualizedDataSymbol: null,
                 onEqualizedDataSymbolFrame: onIqFrame,
-                onFftSymbolFrame: onFftLeftFrame,
-                onOfdmSymbolProgress: onSymbolProgress);
+                onFftSymbolFrame: null,
+                onOfdmSymbolProgress: onSymbolProgressThrottled);
         }
 
         var leftCursor = cursor;
@@ -867,8 +893,14 @@ public sealed partial class FileWavCodec
             noiseVariance,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: onIqFrame,
-            onFftSymbolFrame: onFftLeftFrame,
-            onOfdmSymbolProgress: onSymbolProgress);
+            onFftSymbolFrame: null,
+            onOfdmSymbolProgress: onSymbolProgressThrottled);
+        // 右チャネル復調中も同じサンプル位置の L/R PCM を更新（R が止まって見えないのを防ぐ）
+        Action<int, int, int>? onRightProgress = (symbolIndex, symbolCount, sampleEnd) =>
+        {
+            var isLast = symbolCount > 0 && symbolIndex + 1 >= symbolCount;
+            MaybePublishPcmFft(sampleEnd, force: isLast);
+        };
         var rightLlrs = ofdm.DemodulateSoftLlrsFromStream(
             rightSamples,
             ref rightCursor,
@@ -879,8 +911,8 @@ public sealed partial class FileWavCodec
             noiseVariance,
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: onIqFrame,
-            onFftSymbolFrame: onFftRightFrame,
-            onOfdmSymbolProgress: null);
+            onFftSymbolFrame: null,
+            onOfdmSymbolProgress: onRightProgress);
         cursor = leftCursor;
         var joined = new double[totalBitCount];
         var half = (totalBitCount + 1) / 2;
@@ -892,6 +924,59 @@ public sealed partial class FileWavCodec
         }
 
         return joined;
+    }
+
+    /// <summary>送信 FFT 可視化と同じ解析長。</summary>
+    private const int ReceiveVizFftSize = 2048;
+
+    /// <summary>
+    /// 受信 PCM から送信側と同じ連続スペクトルを StatusBoard へ書き込みます。
+    /// </summary>
+    private static void PublishReceivePcmFft(
+        CoreExecutionStatusBoard statusBoard,
+        Complex[] leftSamples,
+        Complex[] rightSamples,
+        int endExclusive,
+        bool stereo,
+        int sampleRate,
+        Complex[] windowScratch,
+        Complex[] fftScratch)
+    {
+        if (endExclusive < ReceiveVizFftSize
+            || leftSamples.Length < endExclusive
+            || windowScratch.Length < ReceiveVizFftSize
+            || fftScratch.Length < ReceiveVizFftSize)
+        {
+            return;
+        }
+
+        statusBoard.SetFftStereoMode(stereo);
+        var start = endExclusive - ReceiveVizFftSize;
+        for (var i = 0; i < ReceiveVizFftSize; i++)
+        {
+            windowScratch[i] = new Complex(leftSamples[start + i].Real, 0.0);
+        }
+
+        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(windowScratch, fftScratch);
+        statusBoard.SetFftFrame(fftScratch, isRightChannel: false, sampleRate: sampleRate);
+
+        if (!stereo)
+        {
+            return;
+        }
+
+        if (rightSamples.Length < endExclusive)
+        {
+            return;
+        }
+
+        for (var i = 0; i < ReceiveVizFftSize; i++)
+        {
+            windowScratch[i] = new Complex(rightSamples[start + i].Real, 0.0);
+        }
+
+        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(windowScratch, fftScratch);
+        statusBoard.SetFftFrame(fftScratch, isRightChannel: true, sampleRate: sampleRate);
     }
 
     /// <summary>

@@ -742,9 +742,13 @@ internal sealed class OutputCoreWorker
                 }
             }
 
+            // ヘッダーは L/R 同一波形。窓内がほぼ一致なら L のみ（緑）で表示する。
+            var publishStereo = _stereo && !AreWindowsNearlyIdentical(_leftWindow, _rightWindow);
+            _board.SetFftStereoMode(publishStereo);
+
             OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_leftWindow, _fftWork);
             _board.SetFftFrame(_fftWork, isRightChannel: false, sampleRate: _sampleRate);
-            if (_stereo)
+            if (publishStereo)
             {
                 OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_rightWindow, _fftWork);
                 _board.SetFftFrame(_fftWork, isRightChannel: true, sampleRate: _sampleRate);
@@ -752,6 +756,31 @@ internal sealed class OutputCoreWorker
 
             _lastPublishMs = now;
             _lastPublishedPlayhead = playedSamples;
+        }
+
+        /// <summary>
+        /// L/R 窓が実質同一か判定します（ヘッダー／無音のモノラル扱い用）。
+        /// </summary>
+        private static bool AreWindowsNearlyIdentical(Complex[] left, Complex[] right)
+        {
+            double sumSqDiff = 0.0;
+            double sumSq = 0.0;
+            var n = Math.Min(left.Length, right.Length);
+            for (var i = 0; i < n; i++)
+            {
+                var l = left[i].Real;
+                var r = right[i].Real;
+                var d = l - r;
+                sumSqDiff += d * d;
+                sumSq += (l * l) + (r * r);
+            }
+
+            if (sumSq <= 1e-18)
+            {
+                return true;
+            }
+
+            return (sumSqDiff / sumSq) <= 1e-8;
         }
     }
 }
