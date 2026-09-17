@@ -59,7 +59,8 @@ public readonly record struct CoreErrorRateInfo(
     double LatestPercent,
     CoreFrameKind FrameKind,
     CoreEccDecoderKind DecoderKind,
-    int Sequence)
+    int Sequence,
+    double? RightPercent = null)
 {
     /// <summary>
     /// 初期エラー率情報です。
@@ -340,10 +341,12 @@ public sealed class CoreExecutionStatusBoard
     /// <param name="percent">誤り訂正段階の推定エラー率（0 から 100）。</param>
     /// <param name="frameKind">エラー率の対象フレーム種別。</param>
     /// <param name="decoderKind">ビタビ / ターボの区別。</param>
+    /// <param name="rightPercent">右チャネルの推定エラー率（ステレオ時）。null の場合は単一系列として扱います。</param>
     public void SetErrorRate(
         double percent,
         CoreFrameKind frameKind,
-        CoreEccDecoderKind decoderKind = CoreEccDecoderKind.Viterbi)
+        CoreEccDecoderKind decoderKind = CoreEccDecoderKind.Viterbi,
+        double? rightPercent = null)
     {
         lock (_sync)
         {
@@ -351,7 +354,8 @@ public sealed class CoreExecutionStatusBoard
                 Math.Clamp(percent, 0.0, 100.0),
                 frameKind,
                 decoderKind,
-                _status.ErrorRate.Sequence + 1);
+                _status.ErrorRate.Sequence + 1,
+                rightPercent is null ? null : Math.Clamp(rightPercent.Value, 0.0, 100.0));
             _status = _status with { ErrorRate = info };
             // コアが共有リングへ追記。画面の Read が追いつかない場合は最古を上書きする。
             var nextWrite = _errorRateWriteSeq + 1;

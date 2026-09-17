@@ -17,6 +17,10 @@ public partial class ReceivePanel : UserControl
     private const int DefaultAudioDeviceNumber = -1;
     /// <summary>ワウフラッターメーターの表示感度（実偏差%に対する倍率）。</summary>
     private const double WowFlutterDisplayGain = 2.0;
+    private static readonly SolidColorBrush ErrorLegendViterbiBrush = new(Color.FromRgb(100, 170, 255));
+    private static readonly SolidColorBrush ErrorLegendOuterBrush = new(Color.FromRgb(255, 150, 70));
+    private static readonly SolidColorBrush ErrorLegendLeftBrush = new(Color.FromRgb(166, 221, 176));
+    private static readonly SolidColorBrush ErrorLegendRightBrush = new(Color.FromRgb(255, 182, 120));
 
     private readonly ErrorRateChartModel _errorChart = new();
     private readonly FftChartModel _fftChart = new();
@@ -28,6 +32,7 @@ public partial class ReceivePanel : UserControl
     private CoreEccDecoderKind _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
     private double _lastErrorPercent = -1;
     private int _lastErrorSequence = -1;
+    private bool _errorChartStereoMode;
 
     // ワウメーター用: コアのモデルを壁時計で補間して左右に揺らす
     private bool _wowTrackingActive;
@@ -61,6 +66,7 @@ public partial class ReceivePanel : UserControl
         InitializeAudioDevices();
         UpdateInputModePanels();
         OutputDirBox.Text = _outputDir;
+        SetErrorChartStereoMode(false);
         UpdateReceiveGraphTabVisibility();
 
         Loaded += (_, _) =>
@@ -72,6 +78,7 @@ public partial class ReceivePanel : UserControl
             _wowChart.Clear();
             SetFileInfo("(未受信)", "-", "-");
             ProgressBox.Text = "-";
+            SetErrorChartStereoMode(false);
             UpdateInputModePanels();
             UpdateReceiveGraphTabVisibility();
             UpdateIqSquareSize();
@@ -347,6 +354,7 @@ public partial class ReceivePanel : UserControl
         if (status.IsRunning && status.FftGraph.FftSize > 0)
         {
             SetWowStereoEnabled(status.FftGraph.IsStereo);
+            SetErrorChartStereoMode(status.FftGraph.IsStereo);
         }
 
         ApplyWowFlutterFromStatus(status);
@@ -389,7 +397,7 @@ public partial class ReceivePanel : UserControl
                 _lastErrorSequence = sample.Sequence;
                 try
                 {
-                    _errorChart.AddSample(sample.LatestPercent, sample.DecoderKind);
+                    _errorChart.AddSample(sample.LatestPercent, sample.DecoderKind, sample.RightPercent);
                 }
                 catch
                 {
@@ -409,7 +417,7 @@ public partial class ReceivePanel : UserControl
             _lastErrorSequence = err.Sequence;
             try
             {
-                _errorChart.AddSample(err.LatestPercent, err.DecoderKind);
+                _errorChart.AddSample(err.LatestPercent, err.DecoderKind, err.RightPercent);
             }
             catch
             {
@@ -440,6 +448,7 @@ public partial class ReceivePanel : UserControl
         _lastErrorFrame = CoreFrameKind.Fh;
         _lastErrorDecoder = CoreEccDecoderKind.Viterbi;
         _lastErrorSequence = -1;
+        _errorChartStereoMode = false;
         ClearWowTracking();
         UpdateWowMeters(0, 0);
         SetFileInfo("(未受信)", "-", "-");
@@ -466,6 +475,7 @@ public partial class ReceivePanel : UserControl
             return;
         }
 
+        SetErrorChartStereoMode(fft.IsStereo);
         _fftChart.ReplacePoints(fft.LeftPoints, fft.RightPoints, fft.IsStereo);
     }
 
@@ -533,7 +543,9 @@ public partial class ReceivePanel : UserControl
     /// <param name="channelMode">チャネルモード。</param>
     public void SetWowChannelMode(ChannelMode channelMode)
     {
-        SetWowStereoEnabled(channelMode == ChannelMode.Stereo);
+        var stereo = channelMode == ChannelMode.Stereo;
+        SetWowStereoEnabled(stereo);
+        SetErrorChartStereoMode(stereo);
     }
 
     /// <summary>WOW/Flutter 表示の右チャネル活性状態を切り替えます。</summary>
@@ -544,6 +556,44 @@ public partial class ReceivePanel : UserControl
         if (!stereo)
         {
             WowRight.Clear();
+        }
+    }
+
+    private void SetErrorChartStereoMode(bool stereo)
+    {
+        if (_errorChartStereoMode == stereo)
+        {
+            return;
+        }
+
+        _errorChartStereoMode = stereo;
+        _errorChart.SetStereoChannelMode(stereo);
+        UpdateErrorRateLegend(stereo);
+    }
+
+    private void UpdateErrorRateLegend(bool stereo)
+    {
+        if (ErrorLegendAColor is null
+            || ErrorLegendAText is null
+            || ErrorLegendBColor is null
+            || ErrorLegendBText is null)
+        {
+            return;
+        }
+
+        if (stereo)
+        {
+            ErrorLegendAColor.Background = ErrorLegendLeftBrush;
+            ErrorLegendAText.Text = "L";
+            ErrorLegendBColor.Background = ErrorLegendRightBrush;
+            ErrorLegendBText.Text = "R";
+        }
+        else
+        {
+            ErrorLegendAColor.Background = ErrorLegendViterbiBrush;
+            ErrorLegendAText.Text = "ビタビ";
+            ErrorLegendBColor.Background = ErrorLegendOuterBrush;
+            ErrorLegendBText.Text = "RS／ターボ";
         }
     }
 

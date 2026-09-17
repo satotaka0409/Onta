@@ -18,6 +18,14 @@ alwaysApply: true
 - 画面仕様
   - `.cursor/rules/画面仕様.mdc`（実装: WPF + LiveCharts2、`Onta_core/src/view/`）
   - 送信ラジオは 8–48 SC、I-Q 点色は A–F（青/緑/白/オレンジ/茶/紫）
+- 履歴仕様
+  - `.cursor/rules/履歴情報.mdc`（実装: `Onta_core/src/history/`）
+  - 要点: `Onta_history.bin`（Version=1）に送受信/未完了を保存、受信ブロックは Hash/BlockIndex で紐付け
+- ユーザマニュアル
+  - `Onta_manual/README.md`
+  - `Onta_manual/01_音多とは何か.md`
+  - `Onta_manual/02_メイン画面の説明.md`
+  - `Onta_manual/03_履歴画面の説明.md`
 
 ## AIへの依頼テンプレート
 

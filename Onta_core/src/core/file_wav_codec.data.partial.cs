@@ -362,10 +362,12 @@ public sealed partial class FileWavCodec
                             out var hardConvMetrics,
                             terminated: true,
                             punctureRate: punctureRate);
+                        var hardConvPercent = hardConvMetrics.CorrectionRate * 100.0;
                         statusBoard?.SetErrorRate(
-                            hardConvMetrics.CorrectionRate * 100.0,
+                            hardConvPercent,
                             CoreFrameKind.Bd,
-                            CoreEccDecoderKind.Viterbi);
+                            CoreEccDecoderKind.Viterbi,
+                            useStereoSplit ? hardConvPercent : null);
                         candidate = DecodeTurboBlock(
                             turboEncoded,
                             paddedLen,
@@ -375,7 +377,8 @@ public sealed partial class FileWavCodec
                                 statusBoard?.SetErrorRate(
                                     rate * 100.0,
                                     CoreFrameKind.Bd,
-                                    CoreEccDecoderKind.Turbo));
+                                    CoreEccDecoderKind.Turbo,
+                                    useStereoSplit ? rate * 100.0 : null));
                     }
                     else
                     {
@@ -405,10 +408,22 @@ public sealed partial class FileWavCodec
                             terminated: true,
                             punctureRate: punctureRate);
                         ClampLlrsInPlace(infoLlrs, 16.0);
-                        statusBoard?.SetErrorRate(
-                            softConvMetrics.CorrectionRate * 100.0,
-                            CoreFrameKind.Bd,
-                            CoreEccDecoderKind.Viterbi);
+                        if (useStereoSplit)
+                        {
+                            var (leftErrorPercent, rightErrorPercent) = EstimateStereoSoftBitErrorPercent(qamLlrs);
+                            statusBoard?.SetErrorRate(
+                                leftErrorPercent,
+                                CoreFrameKind.Bd,
+                                CoreEccDecoderKind.Viterbi,
+                                rightErrorPercent);
+                        }
+                        else
+                        {
+                            statusBoard?.SetErrorRate(
+                                softConvMetrics.CorrectionRate * 100.0,
+                                CoreFrameKind.Bd,
+                                CoreEccDecoderKind.Viterbi);
+                        }
 
                         var meanAbs = MeanAbsLlrs(infoLlrs);
                         if (meanAbs < softLlrAbortMeanAbs)
@@ -427,7 +442,8 @@ public sealed partial class FileWavCodec
                                 statusBoard?.SetErrorRate(
                                     rate * 100.0,
                                     CoreFrameKind.Bd,
-                                    CoreEccDecoderKind.Turbo));
+                                    CoreEccDecoderKind.Turbo,
+                                    useStereoSplit ? rate * 100.0 : null));
                         if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
                         {
                             candidate = softCandidate;
@@ -443,7 +459,8 @@ public sealed partial class FileWavCodec
                                     statusBoard?.SetErrorRate(
                                         rate * 100.0,
                                         CoreFrameKind.Bd,
-                                        CoreEccDecoderKind.Turbo));
+                                        CoreEccDecoderKind.Turbo,
+                                        useStereoSplit ? rate * 100.0 : null));
                             candidate = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                         }
                         else
@@ -581,10 +598,22 @@ public sealed partial class FileWavCodec
             ClampLlrsInPlace(infoLlrs, 16.0);
             _ = lastError;
             var turboIterations = ResolveTurboIterations(infoLlrs, tuning);
-            statusBoard?.SetErrorRate(
-                fallbackConvMetrics.CorrectionRate * 100.0,
-                CoreFrameKind.Bd,
-                CoreEccDecoderKind.Viterbi);
+            if (useStereoSplit)
+            {
+                var (leftErrorPercent, rightErrorPercent) = EstimateStereoSoftBitErrorPercent(qamLlrs);
+                statusBoard?.SetErrorRate(
+                    leftErrorPercent,
+                    CoreFrameKind.Bd,
+                    CoreEccDecoderKind.Viterbi,
+                    rightErrorPercent);
+            }
+            else
+            {
+                statusBoard?.SetErrorRate(
+                    fallbackConvMetrics.CorrectionRate * 100.0,
+                    CoreFrameKind.Bd,
+                    CoreEccDecoderKind.Viterbi);
+            }
             var softCandidate = DecodeTurboBlockFromLlrs(
                 infoLlrs,
                 turboEncoded,
@@ -595,7 +624,8 @@ public sealed partial class FileWavCodec
                     statusBoard?.SetErrorRate(
                         rate * 100.0,
                         CoreFrameKind.Bd,
-                        CoreEccDecoderKind.Turbo));
+                        CoreEccDecoderKind.Turbo,
+                        useStereoSplit ? rate * 100.0 : null));
             if (IsDataBlockAcceptable(softCandidate, expectedBlockHash, payloadLength))
             {
                 softMatchSucceeded = true;
@@ -619,7 +649,8 @@ public sealed partial class FileWavCodec
                         statusBoard?.SetErrorRate(
                             rate * 100.0,
                             CoreFrameKind.Bd,
-                            CoreEccDecoderKind.Turbo));
+                            CoreEccDecoderKind.Turbo,
+                            useStereoSplit ? rate * 100.0 : null));
                 var preferred = PreferHashMatch(softCandidate, hardCandidate, expectedBlockHash, payloadLength);
                 if (IsDataBlockAcceptable(preferred, expectedBlockHash, payloadLength))
                 {
@@ -925,6 +956,23 @@ public sealed partial class FileWavCodec
         }
 
         return 100.0 * sum / llrs.Length;
+    }
+
+    /// <summary>
+    /// 結合済み LLR（前半=L, 後半=R）から左右チャネル別の推定ビット誤り率（%）を返します。
+    /// </summary>
+    private static (double LeftPercent, double RightPercent) EstimateStereoSoftBitErrorPercent(ReadOnlySpan<double> llrs)
+    {
+        if (llrs.Length <= 1)
+        {
+            var value = EstimateSoftBitErrorPercent(llrs);
+            return (value, value);
+        }
+
+        var half = (llrs.Length + 1) / 2;
+        var left = EstimateSoftBitErrorPercent(llrs[..half]);
+        var right = EstimateSoftBitErrorPercent(llrs[half..]);
+        return (left, right);
     }
 
     /// <summary>
