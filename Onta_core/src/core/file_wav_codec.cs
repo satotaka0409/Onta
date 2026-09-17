@@ -2615,52 +2615,70 @@ public sealed partial class FileWavCodec
         (double Amount, double WowPhase, double FlutterPhase, double Score)? bestBh = null;
         foreach (var center in centers)
         {
-            foreach (var amount in new[] { 0.005, center.Amount, 0.01 }.Distinct())
+            var amountA = 0.005;
+            if (TryEvaluateBhAmount(amountA, center, ref bestBh))
             {
-                var bag = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
-                Parallel.For(
-                    -20,
-                    21,
-                    parallelOpts,
-                    CreateWorker,
-                    (k, _, worker) =>
-                    {
-                        ReportProgress();
-                        var hit = EvalOpening(
-                            worker.Left,
-                            worker.Right,
-                            worker.Ofdm,
-                            amount,
-                            center.WowPhase + (k * 0.02),
-                            center.FlutterPhase,
-                            tryDataBlock: false);
-                        if (hit is { } h)
-                        {
-                            bag.Add(h);
-                        }
+                break;
+            }
 
-                        return worker;
-                    },
-                    _ => { });
+            var amountB = center.Amount;
+            if (amountB != amountA && TryEvaluateBhAmount(amountB, center, ref bestBh))
+            {
+                break;
+            }
 
-                foreach (var hit in bag)
-                {
-                    if (bestBh is null || hit.Score > bestBh.Value.Score)
-                    {
-                        bestBh = hit;
-                    }
-                }
-
-                if (bestBh is { } b0 && b0.Score >= 1000.0 && Math.Abs(b0.Amount - amount) < 1e-9)
-                {
-                    break;
-                }
+            const double amountC = 0.01;
+            if (amountC != amountA && amountC != amountB && TryEvaluateBhAmount(amountC, center, ref bestBh))
+            {
+                break;
             }
 
             if (bestBh is { } locked && locked.Score >= 1000.0)
             {
                 break;
             }
+        }
+
+        bool TryEvaluateBhAmount(
+            double amount,
+            (double Amount, double WowPhase, double FlutterPhase, double Score) center,
+            ref (double Amount, double WowPhase, double FlutterPhase, double Score)? best)
+        {
+            var bag = new ConcurrentBag<(double Amount, double WowPhase, double FlutterPhase, double Score)>();
+            Parallel.For(
+                -20,
+                21,
+                parallelOpts,
+                CreateWorker,
+                (k, _, worker) =>
+                {
+                    ReportProgress();
+                    var hit = EvalOpening(
+                        worker.Left,
+                        worker.Right,
+                        worker.Ofdm,
+                        amount,
+                        center.WowPhase + (k * 0.02),
+                        center.FlutterPhase,
+                        tryDataBlock: false);
+                    if (hit is { } h)
+                    {
+                        bag.Add(h);
+                    }
+
+                    return worker;
+                },
+                _ => { });
+
+            foreach (var hit in bag)
+            {
+                if (best is null || hit.Score > best.Value.Score)
+                {
+                    best = hit;
+                }
+            }
+
+            return best is { } b0 && b0.Score >= 1000.0 && Math.Abs(b0.Amount - amount) < 1e-9;
         }
 
         if (bestBh is null)

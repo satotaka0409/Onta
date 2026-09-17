@@ -259,37 +259,37 @@ public sealed record OfdmConfig
     /// Group A の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group A のキャリア番号配列。</returns>
-    public static int[] ResolveGroupALeftBins() => Enumerable.Range(1, 8).ToArray();
+    public static int[] ResolveGroupALeftBins() => CopyBins(GroupALeftBins);
 
     /// <summary>
     /// Group B の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group B のキャリア番号配列。</returns>
-    public static int[] ResolveGroupBLeftBins() => Enumerable.Range(9, 8).ToArray();
+    public static int[] ResolveGroupBLeftBins() => CopyBins(GroupBLeftBins);
 
     /// <summary>
     /// Group C の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group C のキャリア番号配列。</returns>
-    public static int[] ResolveGroupCLeftBins() => Enumerable.Range(17, 8).ToArray();
+    public static int[] ResolveGroupCLeftBins() => CopyBins(GroupCLeftBins);
 
     /// <summary>
     /// Group D の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group D のキャリア番号配列。</returns>
-    public static int[] ResolveGroupDLeftBins() => Enumerable.Range(25, 8).ToArray();
+    public static int[] ResolveGroupDLeftBins() => CopyBins(GroupDLeftBins);
 
     /// <summary>
     /// Group E の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group E のキャリア番号配列。</returns>
-    public static int[] ResolveGroupELeftBins() => Enumerable.Range(33, 8).ToArray();
+    public static int[] ResolveGroupELeftBins() => CopyBins(GroupELeftBins);
 
     /// <summary>
     /// Group F の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group F のキャリア番号配列。</returns>
-    public static int[] ResolveGroupFLeftBins() => Enumerable.Range(41, 8).ToArray();
+    public static int[] ResolveGroupFLeftBins() => CopyBins(GroupFLeftBins);
 
     /// <summary>
     /// サブキャリア数に応じた概念左キャリア番号列を返します。
@@ -299,32 +299,67 @@ public sealed record OfdmConfig
     public static int[] ResolveConceptualLeftBins(int activeSubcarriers) =>
         activeSubcarriers switch
         {
-            8 => ResolveGroupBLeftBins(),
-            16 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).ToArray(),
-            24 => ResolveGroupALeftBins().Concat(ResolveGroupBLeftBins()).Concat(ResolveGroupCLeftBins()).ToArray(),
-            32 => ResolveGroupALeftBins()
-                .Concat(ResolveGroupBLeftBins())
-                .Concat(ResolveGroupCLeftBins())
-                .Concat(ResolveGroupDLeftBins())
-                .ToArray(),
-            40 => ResolveGroupALeftBins()
-                .Concat(ResolveGroupBLeftBins())
-                .Concat(ResolveGroupCLeftBins())
-                .Concat(ResolveGroupDLeftBins())
-                .Concat(ResolveGroupELeftBins())
-                .ToArray(),
-            48 => ResolveGroupALeftBins()
-                .Concat(ResolveGroupBLeftBins())
-                .Concat(ResolveGroupCLeftBins())
-                .Concat(ResolveGroupDLeftBins())
-                .Concat(ResolveGroupELeftBins())
-                .Concat(ResolveGroupFLeftBins())
-                .ToArray(),
+            8 => CopyBins(GroupBLeftBins),
+            16 => CopyBins(ConceptualLeftBins16),
+            24 => CopyBins(ConceptualLeftBins24),
+            32 => CopyBins(ConceptualLeftBins32),
+            40 => CopyBins(ConceptualLeftBins40),
+            48 => CopyBins(ConceptualLeftBins48),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(activeSubcarriers),
                 activeSubcarriers,
                 "Active subcarriers must be 8, 16, 24, 32, 40, or 48.")
         };
+
+    private static readonly int[] GroupALeftBins = CreateRange(1, 8);
+    private static readonly int[] GroupBLeftBins = CreateRange(9, 8);
+    private static readonly int[] GroupCLeftBins = CreateRange(17, 8);
+    private static readonly int[] GroupDLeftBins = CreateRange(25, 8);
+    private static readonly int[] GroupELeftBins = CreateRange(33, 8);
+    private static readonly int[] GroupFLeftBins = CreateRange(41, 8);
+    private static readonly int[] ConceptualLeftBins16 = ConcatBins(GroupALeftBins, GroupBLeftBins);
+    private static readonly int[] ConceptualLeftBins24 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins);
+    private static readonly int[] ConceptualLeftBins32 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins);
+    private static readonly int[] ConceptualLeftBins40 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins);
+    private static readonly int[] ConceptualLeftBins48 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins, GroupFLeftBins);
+
+    private static int[] CreateRange(int start, int count)
+    {
+        var bins = new int[count];
+        for (var i = 0; i < count; i++)
+        {
+            bins[i] = start + i;
+        }
+
+        return bins;
+    }
+
+    private static int[] ConcatBins(params int[][] groups)
+    {
+        var length = 0;
+        for (var i = 0; i < groups.Length; i++)
+        {
+            length += groups[i].Length;
+        }
+
+        var result = new int[length];
+        var offset = 0;
+        for (var i = 0; i < groups.Length; i++)
+        {
+            var group = groups[i];
+            Array.Copy(group, 0, result, offset, group.Length);
+            offset += group.Length;
+        }
+
+        return result;
+    }
+
+    private static int[] CopyBins(int[] source)
+    {
+        var copy = new int[source.Length];
+        Array.Copy(source, copy, source.Length);
+        return copy;
+    }
 
     /// <summary>
     /// サブキャリア構成の最大概念左キャリア番号を返します。
@@ -1886,6 +1921,16 @@ public sealed partial class OfdmGenerator
             return (0.0, 0.0, reference.Length);
         }
 
+        if (Avx.IsSupported && reference.Length >= 8)
+        {
+            return BuildCorrelationReferenceRealsAvx(reference);
+        }
+
+        if (AdvSimd.Arm64.IsSupported && reference.Length >= 4)
+        {
+            return BuildCorrelationReferenceRealsAdvSimd(reference);
+        }
+
         var sum = 0.0;
         for (var i = 0; i < reference.Length; i++)
         {
@@ -1895,6 +1940,87 @@ public sealed partial class OfdmGenerator
         var mean = sum / reference.Length;
         var energy = 0.0;
         for (var i = 0; i < reference.Length; i++)
+        {
+            var centered = reference[i] - mean;
+            energy += centered * centered;
+        }
+
+        return (mean, energy, reference.Length);
+    }
+
+    private static (double Mean, double Energy, int Count) BuildCorrelationReferenceRealsAvx(ReadOnlySpan<double> reference)
+    {
+        ref var first = ref MemoryMarshal.GetReference(reference);
+        var sumVec = Vector256<double>.Zero;
+        var i = 0;
+        for (; i + 4 <= reference.Length; i += 4)
+        {
+            var vec = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref first, i)));
+            sumVec = Avx.Add(sumVec, vec);
+        }
+
+        var sum = sumVec.GetElement(0) + sumVec.GetElement(1) + sumVec.GetElement(2) + sumVec.GetElement(3);
+        for (; i < reference.Length; i++)
+        {
+            sum += reference[i];
+        }
+
+        var mean = sum / reference.Length;
+        var meanVec = Vector256.Create(mean);
+        var energyVec = Vector256<double>.Zero;
+        i = 0;
+        for (; i + 4 <= reference.Length; i += 4)
+        {
+            var vec = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref first, i)));
+            var centered = Avx.Subtract(vec, meanVec);
+            energyVec = Avx.Add(energyVec, Avx.Multiply(centered, centered));
+        }
+
+        var energy = energyVec.GetElement(0) + energyVec.GetElement(1)
+            + energyVec.GetElement(2) + energyVec.GetElement(3);
+        for (; i < reference.Length; i++)
+        {
+            var centered = reference[i] - mean;
+            energy += centered * centered;
+        }
+
+        return (mean, energy, reference.Length);
+    }
+
+    private static (double Mean, double Energy, int Count) BuildCorrelationReferenceRealsAdvSimd(ReadOnlySpan<double> reference)
+    {
+        ref var first = ref MemoryMarshal.GetReference(reference);
+        var sumVec = Vector128<double>.Zero;
+        var i = 0;
+        for (; i + 2 <= reference.Length; i += 2)
+        {
+            var vec = Unsafe.ReadUnaligned<Vector128<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref first, i)));
+            sumVec = AdvSimd.Arm64.Add(sumVec, vec);
+        }
+
+        var sum = sumVec.GetElement(0) + sumVec.GetElement(1);
+        for (; i < reference.Length; i++)
+        {
+            sum += reference[i];
+        }
+
+        var mean = sum / reference.Length;
+        var meanVec = Vector128.Create(mean);
+        var energyVec = Vector128<double>.Zero;
+        i = 0;
+        for (; i + 2 <= reference.Length; i += 2)
+        {
+            var vec = Unsafe.ReadUnaligned<Vector128<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref first, i)));
+            var centered = AdvSimd.Arm64.Subtract(vec, meanVec);
+            energyVec = AdvSimd.Arm64.Add(energyVec, AdvSimd.Arm64.Multiply(centered, centered));
+        }
+
+        var energy = energyVec.GetElement(0) + energyVec.GetElement(1);
+        for (; i < reference.Length; i++)
         {
             var centered = reference[i] - mean;
             energy += centered * centered;
@@ -1986,6 +2112,20 @@ public sealed partial class OfdmGenerator
     private static (double Mean, double Energy, int Count) BuildCorrelationReference(ReadOnlySpan<Complex> reference, int stride)
     {
         stride = Math.Max(1, stride);
+
+        if (stride == 1)
+        {
+            if (Avx.IsSupported && reference.Length >= 4)
+            {
+                return BuildCorrelationReferenceDenseAvx(reference);
+            }
+
+            if (AdvSimd.Arm64.IsSupported && reference.Length >= 2)
+            {
+                return BuildCorrelationReferenceDenseAdvSimd(reference);
+            }
+        }
+
         var sum = 0.0;
         var count = 0;
         for (var i = 0; i < reference.Length; i += stride)
@@ -2002,6 +2142,101 @@ public sealed partial class OfdmGenerator
         var mean = sum / count;
         var energy = 0.0;
         for (var i = 0; i < reference.Length; i += stride)
+        {
+            var centered = reference[i].Real - mean;
+            energy += centered * centered;
+        }
+
+        return (mean, energy, count);
+    }
+
+    private static (double Mean, double Energy, int Count) BuildCorrelationReferenceDenseAvx(ReadOnlySpan<Complex> reference)
+    {
+        var count = reference.Length;
+        if (count <= 1)
+        {
+            return (0.0, 0.0, count);
+        }
+
+        var doubles = MemoryMarshal.Cast<Complex, double>(reference);
+        ref var baseRef = ref MemoryMarshal.GetReference(doubles);
+        var sumVec = Vector256<double>.Zero;
+        var i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            var vec = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref baseRef, i * 2)));
+            sumVec = Avx.Add(sumVec, Avx.Multiply(vec, RealLaneMask));
+        }
+
+        var sum = sumVec.GetElement(0) + sumVec.GetElement(1) + sumVec.GetElement(2) + sumVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            sum += reference[i].Real;
+        }
+
+        var mean = sum / count;
+        var meanRealLaneVec = Vector256.Create(mean, 0.0, mean, 0.0);
+        var energyVec = Vector256<double>.Zero;
+        i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            var vec = Unsafe.ReadUnaligned<Vector256<double>>(
+                ref Unsafe.As<double, byte>(ref Unsafe.Add(ref baseRef, i * 2)));
+            var realOnly = Avx.Multiply(vec, RealLaneMask);
+            var centered = Avx.Subtract(realOnly, meanRealLaneVec);
+            energyVec = Avx.Add(energyVec, Avx.Multiply(centered, centered));
+        }
+
+        var energy = energyVec.GetElement(0) + energyVec.GetElement(1)
+            + energyVec.GetElement(2) + energyVec.GetElement(3);
+        for (; i < count; i++)
+        {
+            var centered = reference[i].Real - mean;
+            energy += centered * centered;
+        }
+
+        return (mean, energy, count);
+    }
+
+    private static (double Mean, double Energy, int Count) BuildCorrelationReferenceDenseAdvSimd(ReadOnlySpan<Complex> reference)
+    {
+        var count = reference.Length;
+        if (count <= 1)
+        {
+            return (0.0, 0.0, count);
+        }
+
+        var doubles = MemoryMarshal.Cast<Complex, double>(reference);
+        var sumVec = Vector128<double>.Zero;
+        var i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            var baseIdx = i * 2;
+            var realPair = Vector128.Create(doubles[baseIdx], doubles[baseIdx + 2]);
+            sumVec = AdvSimd.Arm64.Add(sumVec, realPair);
+        }
+
+        var sum = sumVec.GetElement(0) + sumVec.GetElement(1);
+        for (; i < count; i++)
+        {
+            sum += reference[i].Real;
+        }
+
+        var mean = sum / count;
+        var meanVec = Vector128.Create(mean);
+        var energyVec = Vector128<double>.Zero;
+        i = 0;
+        for (; i + 2 <= count; i += 2)
+        {
+            var baseIdx = i * 2;
+            var realPair = Vector128.Create(doubles[baseIdx], doubles[baseIdx + 2]);
+            var centered = AdvSimd.Arm64.Subtract(realPair, meanVec);
+            energyVec = AdvSimd.Arm64.Add(energyVec, AdvSimd.Arm64.Multiply(centered, centered));
+        }
+
+        var energy = energyVec.GetElement(0) + energyVec.GetElement(1);
+        for (; i < count; i++)
         {
             var centered = reference[i].Real - mean;
             energy += centered * centered;

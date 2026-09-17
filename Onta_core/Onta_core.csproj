@@ -20,9 +20,12 @@
   <ItemGroup>
     <Compile Remove="test\**" />
     <Compile Remove="test_host\**" />
+    <Compile Remove="bench\**" />
     <None Include="test\**" Exclude="test\bin\**;test\obj\**" />
     <None Include="test_host\**" Exclude="test_host\bin\**;test_host\obj\**" />
+    <None Include="bench\**" Exclude="bench\bin\**;bench\obj\**" />
     <Page Remove="test\**" />
     <Page Remove="test_host\**" />
+    <Page Remove="bench\**" />
   </ItemGroup>
 </Project>

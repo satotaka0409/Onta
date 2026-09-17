@@ -453,14 +453,16 @@ public sealed partial class FileWavCodec
         var scored = new List<(int Start, double Score)>();
         for (var radius = 0; radius <= searchRadius; radius += Math.Max(step, symbolLength / 4))
         {
-            foreach (var start in new[] { expectedStart - radius, expectedStart + radius })
+            var startA = expectedStart - radius;
+            if (startA >= 0 && startA + sampleCount <= samples.Length)
             {
-                if (start < 0 || start + sampleCount > samples.Length)
-                {
-                    continue;
-                }
+                scored.Add((startA, ofdm.ScoreLock(samples, startA, probeSymbols, useRightChannel)));
+            }
 
-                scored.Add((start, ofdm.ScoreLock(samples, start, probeSymbols, useRightChannel)));
+            var startB = expectedStart + radius;
+            if (startB >= 0 && startB + sampleCount <= samples.Length)
+            {
+                scored.Add((startB, ofdm.ScoreLock(samples, startB, probeSymbols, useRightChannel)));
             }
         }
 

@@ -6,5 +6,8 @@
   <Folder Name="/Onta_core/test_host/">
     <Project Path="Onta_core/test_host/Onta_core.TestHost.csproj" />
   </Folder>
+  <Folder Name="/Onta_core/bench/">
+    <Project Path="Onta_core/bench/Onta_core.Benchmarks.csproj" />
+  </Folder>
   <Project Path="Onta_core/Onta_core.csproj" />
 </Solution>

@@ -2,3 +2,10 @@ obj/
 bin/
 out_files/
 TestResults/
+**/BenchmarkDotNet.Artifacts
+*.log
+*.tmp
+*.cache
+*.bak
+*.swp
+*.swo

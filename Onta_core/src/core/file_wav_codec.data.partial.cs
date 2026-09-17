@@ -321,8 +321,10 @@ public sealed partial class FileWavCodec
 
             try
             {
-                foreach (var useSoft in allowHardFallback ? new[] { true, false } : new[] { true })
+                var modeCount = allowHardFallback ? 2 : 1;
+                for (var mode = 0; mode < modeCount; mode++)
                 {
+                    var useSoft = mode == 0;
                     totalAttempts++;
                     var cursor = start;
                     byte[] candidate;
