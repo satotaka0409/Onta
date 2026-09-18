@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Onta.View.Core"
         xmlns:hist="clr-namespace:Onta.View.History"
+        xmlns:perf="clr-namespace:Onta.View.Performance"
         Title="Onta"
         Width="1280"
         Height="1024"
@@ -62,6 +63,15 @@
                     Margin="0,8,0,0"
                     Padding="8">
                 <hist:HistoryPanel x:Name="HistoryPanel"/>
+            </Border>
+        </TabItem>
+
+        <TabItem x:Name="PerformanceRootTab"
+                 Header="性能測定">
+            <Border Style="{StaticResource PanelBorder}"
+                    Margin="0,8,0,0"
+                    Padding="8">
+                <perf:PerformancePanel x:Name="PerformancePanel"/>
             </Border>
         </TabItem>
     </TabControl>
