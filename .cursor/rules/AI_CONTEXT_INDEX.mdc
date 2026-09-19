@@ -18,7 +18,7 @@ alwaysApply: true
 - 画面仕様
   - `.cursor/rules/画面仕様.mdc`（実装: WPF + LiveCharts2、`Onta_core/src/view/`）
   - 送信ラジオは 8–48 SC、I-Q 点色は A–F（青/緑/白/オレンジ/茶/紫）。性能測定は 56/64 SC と G/H（黄/赤）も可
-  - 性能測定: `Onta_core/src/view/performance/`（無変調/変調はタブ切替。変調ラジオは BPSK〜256QAM。L/R は FFT⇔オシロをタブ切替・I-Q はタブ外、オシロは AUTO 起立＋L/R 別レンジスライダー）
+  - 性能測定: `Onta_core/src/view/performance/`（無変調/変調はタブ切替。変調ラジオは BPSK〜256QAM。L/R は FFT⇔オシロ⇔**リサージュ（アジマス・L→X/R→Y）**をタブ切替・I-Q はタブ外、オシロは AUTO 起立＋L/R 別レンジスライダー）
 - 履歴仕様
   - `.cursor/rules/履歴情報.mdc`（実装: `Onta_core/src/history/`）
   - 要点: `Onta_history.bin`（Version=1）に送受信/未完了を保存、受信ブロックは Hash/BlockIndex で紐付け

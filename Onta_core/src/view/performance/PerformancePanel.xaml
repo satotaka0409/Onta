@@ -314,60 +314,27 @@
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
           <RowDefinition Height="*" MinHeight="400"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="受信"
-                   FontSize="14"
-                   FontWeight="SemiBold"
-                   Margin="4,0,0,8"/>
-
-        <!-- ワウ | 入力 | スタート/ストップ（出力フォルダーなし） -->
-        <Grid Grid.Row="1" Margin="0,0,0,8">
+        <!-- 受信ラベル | 入力 | スタート/ストップ -->
+        <Grid Grid.Row="0" Margin="0,0,0,8">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="*" MinWidth="320"/>
             <ColumnDefinition Width="Auto"/>
           </Grid.ColumnDefinitions>
 
-          <GroupBox Grid.Column="0"
-                    Header="ワウフラッター"
-                    Style="{StaticResource GroupBoxCompact}"
-                    Width="420"
-                    Margin="4"
-                    VerticalAlignment="Stretch">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-              </Grid.RowDefinitions>
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <core:WowFlutterMeter x:Name="WowLeftMeter"
-                                      ChannelLabel="L"
-                                      Margin="0,0,2,0"/>
-                <core:WowFlutterMeter x:Name="WowRightMeter"
-                                      Grid.Column="1"
-                                      ChannelLabel="R"
-                                      Margin="2,0,0,0"/>
-              </Grid>
-              <lvc:CartesianChart x:Name="WowFlutterChart"
-                                  Grid.Row="1"
-                                  Margin="0,4,0,0"
-                                  Background="{StaticResource BrushInput}"
-                                  AnimationsSpeed="0"
-                                  TooltipPosition="Hidden"
-                                  LegendPosition="Hidden"/>
-            </Grid>
-          </GroupBox>
+          <TextBlock Grid.Column="0"
+                     Text="受信"
+                     FontSize="14"
+                     FontWeight="SemiBold"
+                     Margin="4,6,12,0"
+                     VerticalAlignment="Top"/>
 
           <GroupBox Grid.Column="1"
                     Header="入力"
-                    Margin="4"
+                    Margin="4,0,4,0"
                     VerticalAlignment="Stretch">
             <Grid Margin="4,2">
               <Grid.RowDefinitions>
@@ -488,7 +455,7 @@
         </Grid>
 
         <!-- FFT / オシロはタブ（チャートは TabItem 外で Opacity 切替。I-Q はタブ外） -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="1">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="8"/>
@@ -529,6 +496,8 @@
                          IsSelected="True"/>
                 <TabItem x:Name="ScopeWaveTabItem"
                          Header="オシロスコープ"/>
+                <TabItem x:Name="LissajousWaveTabItem"
+                         Header="リサージュ・ワウ・Fカウンタ"/>
               </TabControl>
               <CheckBox x:Name="ScopeLrSyncCheck"
                         Grid.Column="1"
@@ -652,12 +621,68 @@
                               Opacity="0"
                               IsHitTestVisible="False"
                               ClipToBounds="False">
-                        <lvc:CartesianChart x:Name="ScopeLeftChart"
-                                            Background="{StaticResource BrushInput}"
-                                            ClipToBounds="False"
-                                            AnimationsSpeed="0"
-                                            TooltipPosition="Hidden"
-                                            LegendPosition="Hidden"/>
+                        <Grid ClipToBounds="False">
+                          <lvc:CartesianChart x:Name="ScopeLeftChart"
+                                              Background="{StaticResource BrushInput}"
+                                              ClipToBounds="False"
+                                              AnimationsSpeed="0"
+                                              TooltipPosition="Hidden"
+                                              LegendPosition="Hidden"/>
+                          <!-- 目盛り／横線／黄ゼロ線。位置は CoreChart.DrawMargin に同期する -->
+                          <Grid x:Name="ScopeLeftYOverlay"
+                                IsHitTestVisible="False">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition x:Name="ScopeLeftYLabelCol" Width="40"/>
+                              <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0" Margin="0,0,4,0">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*"/>
+                              </Grid.RowDefinitions>
+                              <TextBlock x:Name="ScopeLeftYLabel0" Grid.Row="0" Text="1.0" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel1" Grid.Row="1" Text="0.5" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel2" Grid.Row="2" Text="0.0" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel3" Grid.Row="3" Text="-0.5" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel4" Grid.Row="3" Text="-1.0" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                         Margin="0,0,0,-5" Foreground="{StaticResource BrushTextMuted}"/>
+                            </Grid>
+                            <Grid Grid.Column="1">
+                              <Canvas x:Name="ScopeLeftWaveCanvas"
+                                      ClipToBounds="True"
+                                      SizeChanged="OnScopeWaveCanvasSizeChanged"/>
+                              <Grid IsHitTestVisible="False">
+                                <Grid.RowDefinitions>
+                                  <RowDefinition Height="*"/>
+                                  <RowDefinition Height="*"/>
+                                  <RowDefinition Height="*"/>
+                                  <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0" Height="1" VerticalAlignment="Top"
+                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border Grid.Row="1" Height="1" VerticalAlignment="Top"
+                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border x:Name="ScopeLeftZeroLine" Grid.Row="2" Height="1" VerticalAlignment="Top"
+                                        Background="#FFD650"/>
+                                <Border Grid.Row="3" Height="1" VerticalAlignment="Top"
+                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border Grid.Row="3" Height="1" VerticalAlignment="Bottom"
+                                        Background="#5C616C" Opacity="0.85"/>
+                              </Grid>
+                            </Grid>
+                          </Grid>
+                        </Grid>
                       </Border>
                     </Grid>
                   </Grid>
@@ -814,12 +839,67 @@
                               Opacity="0"
                               IsHitTestVisible="False"
                               ClipToBounds="False">
-                        <lvc:CartesianChart x:Name="ScopeRightChart"
-                                            Background="{StaticResource BrushInput}"
-                                            ClipToBounds="False"
-                                            AnimationsSpeed="0"
-                                            TooltipPosition="Hidden"
-                                            LegendPosition="Hidden"/>
+                        <Grid ClipToBounds="False">
+                          <lvc:CartesianChart x:Name="ScopeRightChart"
+                                              Background="{StaticResource BrushInput}"
+                                              ClipToBounds="False"
+                                              AnimationsSpeed="0"
+                                              TooltipPosition="Hidden"
+                                              LegendPosition="Hidden"/>
+                          <Grid x:Name="ScopeRightYOverlay"
+                                IsHitTestVisible="False">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition x:Name="ScopeRightYLabelCol" Width="40"/>
+                              <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0" Margin="0,0,4,0">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*"/>
+                              </Grid.RowDefinitions>
+                              <TextBlock x:Name="ScopeRightYLabel0" Grid.Row="0" Text="1.0" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel1" Grid.Row="1" Text="0.5" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel2" Grid.Row="2" Text="0.0" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel3" Grid.Row="3" Text="-0.5" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel4" Grid.Row="3" Text="-1.0" FontSize="8"
+                                         HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                         Margin="0,0,0,-5" Foreground="{StaticResource BrushTextMuted}"/>
+                            </Grid>
+                            <Grid Grid.Column="1">
+                              <Canvas x:Name="ScopeRightWaveCanvas"
+                                      ClipToBounds="True"
+                                      SizeChanged="OnScopeWaveCanvasSizeChanged"/>
+                              <Grid IsHitTestVisible="False">
+                                <Grid.RowDefinitions>
+                                  <RowDefinition Height="*"/>
+                                  <RowDefinition Height="*"/>
+                                  <RowDefinition Height="*"/>
+                                  <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0" Height="1" VerticalAlignment="Top"
+                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border Grid.Row="1" Height="1" VerticalAlignment="Top"
+                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border x:Name="ScopeRightZeroLine" Grid.Row="2" Height="1" VerticalAlignment="Top"
+                                        Background="#FFD650"/>
+                                <Border Grid.Row="3" Height="1" VerticalAlignment="Top"
+                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border Grid.Row="3" Height="1" VerticalAlignment="Bottom"
+                                        Background="#5C616C" Opacity="0.85"/>
+                              </Grid>
+                            </Grid>
+                          </Grid>
+                        </Grid>
                       </Border>
                     </Grid>
                   </Grid>
@@ -863,6 +943,221 @@
                 </Grid>
               </Border>
             </Grid>
+
+            <!-- リサージュ（L→X / R→Y）。FFT・オシロの L/R 行の上に重ねる -->
+            <Border x:Name="LissajousHost"
+                    Grid.Row="1"
+                    Grid.RowSpan="2"
+                    Visibility="Collapsed"
+                    BorderBrush="{StaticResource BrushBorder}"
+                    BorderThickness="1"
+                    CornerRadius="3"
+                    Background="{StaticResource BrushInput}"
+                    Padding="6"
+                    ClipToBounds="True"
+                    SizeChanged="OnLissajousHostSizeChanged">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="LissajousTitle"
+                           Text="リサージュ（アジマス）  L→X / R→Y  ・同位相で対角線"
+                           Foreground="{StaticResource BrushTextMuted}"
+                           Margin="0,0,0,4"/>
+                <Grid Grid.Row="1">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="*"/>
+                      <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <!-- R (Y) ラベル -->
+                    <TextBlock Grid.Row="0" Grid.Column="0"
+                               Text="R"
+                               FontSize="10"
+                               Foreground="{StaticResource BrushTextMuted}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,6,0"/>
+                    <Grid x:Name="LissajousPlotHost"
+                          Grid.Row="0" Grid.Column="1"
+                          Width="360" Height="360"
+                          ClipToBounds="True"
+                          SizeChanged="OnLissajousPlotSizeChanged">
+                      <Border Background="{StaticResource BrushInput}"/>
+                      <!-- 目盛り枠 -->
+                      <Grid IsHitTestVisible="False">
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="*"/>
+                          <RowDefinition Height="*"/>
+                          <RowDefinition Height="*"/>
+                          <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#FFD650"/>
+                        <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Bottom" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="0" Width="1" HorizontalAlignment="Left" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="1" Width="1" HorizontalAlignment="Left" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="2" Width="1" HorizontalAlignment="Left" Background="#FFD650"/>
+                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="3" Width="1" HorizontalAlignment="Left" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="3" Width="1" HorizontalAlignment="Right" Background="#5C616C" Opacity="0.7"/>
+                      </Grid>
+                      <!-- 理想対角線（同位相） -->
+                      <Canvas IsHitTestVisible="False">
+                        <Line X1="0" Y1="360" X2="360" Y2="0"
+                              Stroke="#6E7380" StrokeThickness="1" StrokeDashArray="4 3"
+                              x:Name="LissajousIdealDiagonal"/>
+                      </Canvas>
+                      <Canvas x:Name="LissajousCanvas" ClipToBounds="True"/>
+                      <!-- 軸数値 -->
+                      <TextBlock Text="1.0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4,2,0,0"/>
+                      <TextBlock Text="-1.0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="4,0,0,2"/>
+                      <TextBlock Text="1.0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,2"/>
+                      <TextBlock Text="0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,2"/>
+                    </Grid>
+                    <TextBlock Grid.Row="1" Grid.Column="1"
+                               Text="L"
+                               FontSize="10"
+                               HorizontalAlignment="Center"
+                               Foreground="{StaticResource BrushTextMuted}"
+                               Margin="0,4,0,0"/>
+                  </Grid>
+
+                  <!-- ワウ / 周波数カウンタ / 歪み率（リサージュ右） -->
+                  <StackPanel Grid.Column="1"
+                              Margin="16,0,4,0"
+                              VerticalAlignment="Center"
+                              Width="320">
+                    <GroupBox Header="ワウフラッター"
+                              Style="{StaticResource GroupBoxCompact}"
+                              Margin="0,0,0,10">
+                      <Grid>
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto"/>
+                          <RowDefinition Height="120"/>
+                        </Grid.RowDefinitions>
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                          </Grid.ColumnDefinitions>
+                          <core:WowFlutterMeter x:Name="WowLeftMeter"
+                                                ChannelLabel="L"
+                                                Margin="0,0,2,0"/>
+                          <core:WowFlutterMeter x:Name="WowRightMeter"
+                                                Grid.Column="1"
+                                                ChannelLabel="R"
+                                                Margin="2,0,0,0"/>
+                        </Grid>
+                        <lvc:CartesianChart x:Name="WowFlutterChart"
+                                            Grid.Row="1"
+                                            Margin="0,4,0,0"
+                                            Background="{StaticResource BrushInput}"
+                                            AnimationsSpeed="0"
+                                            TooltipPosition="Hidden"
+                                            LegendPosition="Hidden"/>
+                      </Grid>
+                    </GroupBox>
+
+                    <Border Padding="12,10"
+                            BorderBrush="{StaticResource BrushBorder}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Background="{StaticResource BrushPanel}">
+                      <StackPanel>
+                        <TextBlock Text="周波数カウンタ"
+                                   FontSize="11"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   Margin="0,0,0,6"/>
+                        <Grid Margin="0,0,0,4">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="28"/>
+                            <ColumnDefinition Width="*"/>
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="L" VerticalAlignment="Center"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock x:Name="LissFreqLeftText"
+                                     Grid.Column="1"
+                                     Text="---- Hz"
+                                     FontSize="16"
+                                     FontFamily="Consolas"
+                                     HorizontalAlignment="Right"
+                                     Foreground="{StaticResource BrushText}"/>
+                        </Grid>
+                        <Grid Margin="0,0,0,12">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="28"/>
+                            <ColumnDefinition Width="*"/>
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="R" VerticalAlignment="Center"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock x:Name="LissFreqRightText"
+                                     Grid.Column="1"
+                                     Text="---- Hz"
+                                     FontSize="16"
+                                     FontFamily="Consolas"
+                                     HorizontalAlignment="Right"
+                                     Foreground="{StaticResource BrushText}"/>
+                        </Grid>
+                        <TextBlock Text="歪み率"
+                                   FontSize="11"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   Margin="0,0,0,6"/>
+                        <Grid Margin="0,0,0,4">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="28"/>
+                            <ColumnDefinition Width="*"/>
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="L" VerticalAlignment="Center"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock x:Name="LissThdLeftText"
+                                     Grid.Column="1"
+                                     Text="--.-- %"
+                                     FontSize="16"
+                                     FontFamily="Consolas"
+                                     HorizontalAlignment="Right"
+                                     Foreground="{StaticResource BrushText}"/>
+                        </Grid>
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="28"/>
+                            <ColumnDefinition Width="*"/>
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="R" VerticalAlignment="Center"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock x:Name="LissThdRightText"
+                                     Grid.Column="1"
+                                     Text="--.-- %"
+                                     FontSize="16"
+                                     FontFamily="Consolas"
+                                     HorizontalAlignment="Right"
+                                     Foreground="{StaticResource BrushText}"/>
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+              </Grid>
+            </Border>
           </Grid>
 
           <!-- I-Q はタブの外（L/R を波形行に合わせて縦並び） -->

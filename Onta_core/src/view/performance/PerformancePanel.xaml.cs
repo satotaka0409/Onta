@@ -1,8 +1,10 @@
+using System.Numerics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using LiveChartsCore;
+using LiveChartsCore.Kernel.Sketches;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.WPF;
 using Microsoft.Win32;
@@ -11,6 +13,8 @@ using Onta.View.Core;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
 using NAudioWaveOut = NAudio.Wave.WaveOut;
 using Ellipse = System.Windows.Shapes.Ellipse;
+using ShapePath = System.Windows.Shapes.Path;
+using ShapeLine = System.Windows.Shapes.Line;
 
 namespace Onta.View.Performance;
 
@@ -28,12 +32,14 @@ public partial class PerformancePanel : UserControl
     private readonly FftChartModel _fftLeft = new();
     private readonly FftChartModel _fftRight = new();
     private readonly OscilloscopeChartModel _scopeLeft = new();
-    private readonly OscilloscopeChartModel _scopeRight = new(new SkiaSharp.SKColor(255, 182, 120));
+    private readonly OscilloscopeChartModel _scopeRight = new();
     private readonly IqChartModel _iqLeft = new();
     private readonly IqChartModel _iqRight = new();
     private readonly WowFlutterChartModel _wowChart = new();
     private readonly double[] _scopeLeftBuf = new double[PerformanceConstants.ScopeCaptureSamples];
     private readonly double[] _scopeRightBuf = new double[PerformanceConstants.ScopeCaptureSamples];
+    private readonly Complex[] _lissTimeScratch = new Complex[LissajousMeterAnalyzer.FftSize];
+    private readonly Complex[] _lissFftScratch = new Complex[LissajousMeterAnalyzer.FftSize];
     private DateTime _lastWowSampleUtc = DateTime.MinValue;
     private bool _scopeRangeSyncing;
 
@@ -81,6 +87,12 @@ public partial class PerformancePanel : UserControl
         BindChart(ScopeRightChart, _scopeRight.Series, _scopeRight.XAxes, _scopeRight.YAxes);
         ApplyScopeChartLayout(ScopeLeftChart);
         ApplyScopeChartLayout(ScopeRightChart);
+        HookScopeOverlaySync(ScopeLeftChart, ScopeLeftYOverlay, ScopeLeftYLabelCol);
+        HookScopeOverlaySync(ScopeRightChart, ScopeRightYOverlay, ScopeRightYLabelCol);
+        ScopeLeftChart.Loaded += OnScopeChartLoaded;
+        ScopeRightChart.Loaded += OnScopeChartLoaded;
+        ScopeLeftChart.SizeChanged += OnScopeChartSizeChanged;
+        ScopeRightChart.SizeChanged += OnScopeChartSizeChanged;
         BindChart(IqLeftChart, _iqLeft.Series, _iqLeft.XAxes, _iqLeft.YAxes);
         BindChart(IqRightChart, _iqRight.Series, _iqRight.XAxes, _iqRight.YAxes);
         ApplyIqChartLayout(IqLeftChart);
@@ -100,6 +112,11 @@ public partial class PerformancePanel : UserControl
                 ApplyFftChartLayout(FftRightChart);
                 LayoutFftFreqLabels(FftLeftFreqLabels);
                 LayoutFftFreqLabels(FftRightFreqLabels);
+                ApplyScopeChartLayout(ScopeLeftChart);
+                ApplyScopeChartLayout(ScopeRightChart);
+                ApplyScopeAxisRanges();
+                SyncScopeYOverlay(ScopeLeftChart, ScopeLeftYOverlay, ScopeLeftYLabelCol);
+                SyncScopeYOverlay(ScopeRightChart, ScopeRightYOverlay, ScopeRightYLabelCol);
                 UpdateIqHostSquares();
             },
             DispatcherPriority.Loaded);
@@ -127,14 +144,50 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// オシロスコープタブが選択中かどうかです。
+    /// 波形タブの種類です。
     /// </summary>
-    private bool IsScopeWaveTabSelected =>
-        ScopeWaveTabItem?.IsSelected == true
-        || (WaveGraphTabs is not null && WaveGraphTabs.SelectedIndex == 1);
+    private enum WaveGraphMode
+    {
+        Fft,
+        Scope,
+        Lissajous
+    }
 
     /// <summary>
-    /// FFT とオシロスコープの表示切替（チャートは常時レイアウト、Opacity で重ねる）。
+    /// 現在選択中の波形タブです。
+    /// </summary>
+    private WaveGraphMode CurrentWaveGraphMode
+    {
+        get
+        {
+            if (LissajousWaveTabItem?.IsSelected == true
+                || (WaveGraphTabs is not null && WaveGraphTabs.SelectedIndex == 2))
+            {
+                return WaveGraphMode.Lissajous;
+            }
+
+            if (ScopeWaveTabItem?.IsSelected == true
+                || (WaveGraphTabs is not null && WaveGraphTabs.SelectedIndex == 1))
+            {
+                return WaveGraphMode.Scope;
+            }
+
+            return WaveGraphMode.Fft;
+        }
+    }
+
+    /// <summary>
+    /// オシロスコープタブが選択中かどうかです。
+    /// </summary>
+    private bool IsScopeWaveTabSelected => CurrentWaveGraphMode == WaveGraphMode.Scope;
+
+    /// <summary>
+    /// リサージュタブが選択中かどうかです。
+    /// </summary>
+    private bool IsLissajousTabSelected => CurrentWaveGraphMode == WaveGraphMode.Lissajous;
+
+    /// <summary>
+    /// FFT / オシロ / リサージュの表示切替です。
     /// </summary>
     private void UpdateWaveGraphTabUi()
     {
@@ -145,12 +198,43 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
-        var showScope = IsScopeWaveTabSelected;
-        SetHostVisible(FftLeftHost, !showScope);
-        SetHostVisible(FftRightHost, !showScope);
+        var mode = CurrentWaveGraphMode;
+        var showScope = mode == WaveGraphMode.Scope;
+        var showFft = mode == WaveGraphMode.Fft;
+        var showLiss = mode == WaveGraphMode.Lissajous;
+
+        if (LeftWaveRow is not null)
+        {
+            LeftWaveRow.Visibility = showLiss ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        if (RightWaveRow is not null)
+        {
+            RightWaveRow.Visibility = showLiss ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        if (LissajousHost is not null)
+        {
+            LissajousHost.Visibility = showLiss ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // アジマス（リサージュ）時は I-Q を隠す
+        if (IqLeftHost is not null)
+        {
+            IqLeftHost.Visibility = showLiss ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        if (IqRightHost is not null)
+        {
+            IqRightHost.Visibility = showLiss ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        SetHostVisible(FftLeftHost, showFft);
+        SetHostVisible(FftRightHost, showFft);
         SetHostVisible(ScopeLeftHost, showScope);
         SetHostVisible(ScopeRightHost, showScope);
-        var fftChrome = showScope ? Visibility.Collapsed : Visibility.Visible;
+
+        var fftChrome = showFft ? Visibility.Visible : Visibility.Collapsed;
         if (FftLeftFreqLabels is not null)
         {
             FftLeftFreqLabels.Visibility = fftChrome;
@@ -210,6 +294,11 @@ public partial class PerformancePanel : UserControl
         if (showScope)
         {
             ApplyScopeFromWorkers();
+        }
+        else if (showLiss)
+        {
+            ApplyLissajousFromWorkers();
+            UpdateLissajousPlotSquare();
         }
     }
 
@@ -419,14 +508,163 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
+    /// オシロチャートの Loaded で Skia DPI 設定と軸を再適用します。
+    /// </summary>
+    private void OnScopeChartLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is CartesianChart chart)
+        {
+            ApplyScopeChartLayout(chart);
+            SyncScopeOverlayFor(chart);
+        }
+
+        ApplyScopeAxisRanges();
+    }
+
+    /// <summary>
+    /// オシロチャートのサイズ変化で軸・外部目盛り位置を更新します。
+    /// </summary>
+    private void OnScopeChartSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Height <= 1 || e.NewSize.Width <= 1)
+        {
+            return;
+        }
+
+        if (sender is CartesianChart chart)
+        {
+            TrySetIgnorePixelScaling(chart);
+            SyncScopeOverlayFor(chart);
+        }
+
+        if (IsScopeWaveTabSelected)
+        {
+            ApplyScopeAxisRanges();
+        }
+    }
+
+    /// <summary>
     /// オシロスコープの軸ラベル用余白を設定します。
     /// </summary>
     private static void ApplyScopeChartLayout(CartesianChart chart)
     {
         chart.DrawMargin = OscilloscopeChartModel.CreateDrawMargin();
         chart.ClipToBounds = false;
-        // LiveCharts が自動余白をいじって L/R で目盛り位置がずれるのを防ぐ。
         chart.ZoomMode = LiveChartsCore.Measure.ZoomAndPanMode.None;
+        // HiDPI で Skia が物理ピクセル描画し下半分が欠けるのを防ぐ。
+        TrySetIgnorePixelScaling(chart);
+    }
+
+    /// <summary>
+    /// LiveCharts の実プロット矩形へ外部 Y 目盛りを同期します。
+    /// </summary>
+    private void HookScopeOverlaySync(
+        CartesianChart chart,
+        FrameworkElement? overlay,
+        ColumnDefinition? labelCol)
+    {
+        if (overlay is null || labelCol is null)
+        {
+            return;
+        }
+
+        void Sync() => SyncScopeYOverlay(chart, overlay, labelCol);
+
+        chart.UpdateFinished += _ => Dispatcher.BeginInvoke(Sync, DispatcherPriority.Render);
+        if (chart.CoreChart is CartesianChartEngine engine)
+        {
+            engine.DrawMarginDefined += _ => Dispatcher.BeginInvoke(Sync, DispatcherPriority.Render);
+        }
+    }
+
+    /// <summary>
+    /// 左右どちら側のオーバーレイを同期するか振り分けます。
+    /// </summary>
+    private void SyncScopeOverlayFor(CartesianChart chart)
+    {
+        if (ReferenceEquals(chart, ScopeLeftChart))
+        {
+            SyncScopeYOverlay(chart, ScopeLeftYOverlay, ScopeLeftYLabelCol);
+        }
+        else if (ReferenceEquals(chart, ScopeRightChart))
+        {
+            SyncScopeYOverlay(chart, ScopeRightYOverlay, ScopeRightYLabelCol);
+        }
+    }
+
+    /// <summary>
+    /// CoreChart の DrawMargin 実座標に合わせて目盛りオーバーレイを置きます。
+    /// これにより波形 y=0 と「0.0」／黄ゼロ線が一致します。
+    /// </summary>
+    private static void SyncScopeYOverlay(
+        CartesianChart chart,
+        FrameworkElement? overlay,
+        ColumnDefinition? labelCol)
+    {
+        if (overlay is null || labelCol is null || chart.CoreChart is null)
+        {
+            return;
+        }
+
+        var core = chart.CoreChart;
+        var loc = core.DrawMarginLocation;
+        var size = core.DrawMarginSize;
+        var chartW = chart.ActualWidth;
+        var chartH = chart.ActualHeight;
+        if (chartW <= 1 || chartH <= 1 || size.Width <= 1 || size.Height <= 1)
+        {
+            return;
+        }
+
+        // DrawMargin が物理ピクセルのときは DIP に戻す。
+        var scaleX = 1.0;
+        var scaleY = 1.0;
+        if (loc.X + size.Width > chartW * 1.2 || loc.Y + size.Height > chartH * 1.2)
+        {
+            var dpi = VisualTreeHelper.GetDpi(chart);
+            scaleX = Math.Max(1.0, dpi.DpiScaleX);
+            scaleY = Math.Max(1.0, dpi.DpiScaleY);
+        }
+
+        var plotLeft = loc.X / scaleX;
+        var plotTop = loc.Y / scaleY;
+        var plotW = size.Width / scaleX;
+        var plotH = size.Height / scaleY;
+        if (plotW <= 1 || plotH <= 1)
+        {
+            return;
+        }
+
+        const double labelWidth = 40.0;
+        var marginLeft = Math.Max(0.0, plotLeft - labelWidth);
+        var marginRight = Math.Max(0.0, chartW - plotLeft - plotW);
+        var marginBottom = Math.Max(0.0, chartH - plotTop - plotH);
+        overlay.Margin = new Thickness(marginLeft, plotTop, marginRight, marginBottom);
+        labelCol.Width = new GridLength(Math.Max(1.0, plotLeft - marginLeft));
+    }
+
+    /// <summary>
+    /// SkiaSharp 要素の IgnorePixelScaling を有効化します（DIP＝描画座標にする）。
+    /// </summary>
+    private static void TrySetIgnorePixelScaling(DependencyObject root)
+    {
+        if (root is null)
+        {
+            return;
+        }
+
+        var type = root.GetType();
+        var prop = type.GetProperty("IgnorePixelScaling");
+        if (prop is { CanWrite: true } && prop.PropertyType == typeof(bool))
+        {
+            prop.SetValue(root, true);
+        }
+
+        var n = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < n; i++)
+        {
+            TrySetIgnorePixelScaling(VisualTreeHelper.GetChild(root, i));
+        }
     }
 
     /// <summary>
@@ -563,7 +801,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// スライダー値をチャート軸へ反映します。
+    /// スライダー値をチャート軸へ反映し、外部縦目盛り文言も更新します。
     /// </summary>
     private void ApplyScopeAxisRanges()
     {
@@ -573,14 +811,45 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
-        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleY;
-        if (dpi < 0.5)
+        var ampLeft = ReadScopeAmp(ScopeLeftAmpSlider);
+        var ampRight = ReadScopeAmp(ScopeRightAmpSlider);
+        _scopeLeft.ApplyRanges(ampLeft, ReadScopeTimeMs(ScopeLeftTimeSlider));
+        _scopeRight.ApplyRanges(ampRight, ReadScopeTimeMs(ScopeRightTimeSlider));
+        ApplyScopeExternalYLabels(ampLeft, ampRight);
+    }
+
+    /// <summary>
+    /// オシロ縦軸の外部ラベル（中央=0）を更新します。
+    /// </summary>
+    private void ApplyScopeExternalYLabels(double ampLeft, double ampRight)
+    {
+        var left = OscilloscopeChartModel.FormatAmplitudeTickLabels(ampLeft);
+        var right = OscilloscopeChartModel.FormatAmplitudeTickLabels(ampRight);
+        SetScopeYLabelTexts(
+            ScopeLeftYLabel0, ScopeLeftYLabel1, ScopeLeftYLabel2, ScopeLeftYLabel3, ScopeLeftYLabel4,
+            left);
+        SetScopeYLabelTexts(
+            ScopeRightYLabel0, ScopeRightYLabel1, ScopeRightYLabel2, ScopeRightYLabel3, ScopeRightYLabel4,
+            right);
+    }
+
+    /// <summary>
+    /// 外部縦目盛り TextBlock へ文言を割り当てます。
+    /// </summary>
+    private static void SetScopeYLabelTexts(
+        TextBlock? t0, TextBlock? t1, TextBlock? t2, TextBlock? t3, TextBlock? t4,
+        string[] labels)
+    {
+        if (labels.Length < 5)
         {
-            dpi = 1.0;
+            return;
         }
 
-        _scopeLeft.ApplyRanges(ReadScopeAmp(ScopeLeftAmpSlider), ReadScopeTimeMs(ScopeLeftTimeSlider), dpi);
-        _scopeRight.ApplyRanges(ReadScopeAmp(ScopeRightAmpSlider), ReadScopeTimeMs(ScopeRightTimeSlider), dpi);
+        if (t0 is not null) t0.Text = labels[0];
+        if (t1 is not null) t1.Text = labels[1];
+        if (t2 is not null) t2.Text = labels[2];
+        if (t3 is not null) t3.Text = labels[3];
+        if (t4 is not null) t4.Text = labels[4];
     }
 
     /// <summary>
@@ -986,10 +1255,14 @@ public partial class PerformancePanel : UserControl
     /// </summary>
     private void ApplyRxStatus(CoreExecutionStatus status)
     {
-        var showScope = IsScopeWaveTabSelected;
-        if (showScope)
+        var mode = CurrentWaveGraphMode;
+        if (mode == WaveGraphMode.Scope)
         {
             ApplyScopeFromWorkers();
+        }
+        else if (mode == WaveGraphMode.Lissajous)
+        {
+            ApplyLissajousFromWorkers();
         }
         else
         {
@@ -1004,17 +1277,7 @@ public partial class PerformancePanel : UserControl
         var iq = status.IqGraph.Points;
         if (iq.Count > 0)
         {
-            var leftCount = status.IqGraph.LeftPointCount;
-            if (leftCount <= 0 || leftCount >= iq.Count)
-            {
-                _iqLeft.ReplacePoints(iq, status.IqGraph.ModulationScheme);
-                _iqRight.ReplacePoints(iq, status.IqGraph.ModulationScheme);
-            }
-            else
-            {
-                _iqLeft.ReplacePoints(iq.Take(leftCount).ToList(), status.IqGraph.ModulationScheme);
-                _iqRight.ReplacePoints(iq.Skip(leftCount).ToList(), status.IqGraph.ModulationScheme);
-            }
+            ApplyIqFromStatus(status);
         }
 
         var left = status.WowLeftPercent;
@@ -1040,15 +1303,21 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送信中の FFT 可視化を反映します。
+    /// 送信中の FFT / I-Q 可視化を反映します。
     /// </summary>
     private void ApplyTxViz(CoreExecutionStatus status)
     {
+        ApplyIqFromStatus(status);
+
         if (status.FftGraph.FftSize <= 0)
         {
             if (IsScopeWaveTabSelected)
             {
                 ApplyScopeFromWorkers();
+            }
+            else if (IsLissajousTabSelected)
+            {
+                ApplyLissajousFromWorkers();
             }
 
             return;
@@ -1057,6 +1326,12 @@ public partial class PerformancePanel : UserControl
         if (IsScopeWaveTabSelected)
         {
             ApplyScopeFromWorkers();
+            return;
+        }
+
+        if (IsLissajousTabSelected)
+        {
+            ApplyLissajousFromWorkers();
             return;
         }
 
@@ -1071,6 +1346,43 @@ public partial class PerformancePanel : UserControl
         }
 
         RestorePerfFftXMax();
+    }
+
+    /// <summary>
+    /// 共有状態の I-Q 点を L/R チャートへ載せます。
+    /// </summary>
+    private void ApplyIqFromStatus(CoreExecutionStatus status)
+    {
+        var iq = status.IqGraph.Points;
+        if (iq.Count <= 0)
+        {
+            return;
+        }
+
+        var leftCount = status.IqGraph.LeftPointCount;
+        if (leftCount <= 0 || leftCount >= iq.Count)
+        {
+            _iqLeft.ReplacePoints(iq, status.IqGraph.ModulationScheme);
+            _iqRight.ReplacePoints(iq, status.IqGraph.ModulationScheme);
+        }
+        else
+        {
+            _iqLeft.ReplacePoints(iq.Take(leftCount).ToList(), status.IqGraph.ModulationScheme);
+            _iqRight.ReplacePoints(iq.Skip(leftCount).ToList(), status.IqGraph.ModulationScheme);
+        }
+
+        if (status.IqGraph.ActiveSubcarrierCount > 0)
+        {
+            if (IqLeftTitle is not null)
+            {
+                IqLeftTitle.Text = $"L I-Q ({status.IqGraph.ModulationScheme} / SC={status.IqGraph.ActiveSubcarrierCount})";
+            }
+
+            if (IqRightTitle is not null)
+            {
+                IqRightTitle.Text = $"R I-Q ({status.IqGraph.ModulationScheme} / SC={status.IqGraph.ActiveSubcarrierCount})";
+            }
+        }
     }
 
     /// <summary>
@@ -1112,6 +1424,7 @@ public partial class PerformancePanel : UserControl
             rightCap.Level);
         ApplyScopeChartLayout(ScopeLeftChart);
         ApplyScopeChartLayout(ScopeRightChart);
+        RedrawScopeWaveCanvases();
 
         if (LeftWaveTitle is not null)
         {
@@ -1121,6 +1434,356 @@ public partial class PerformancePanel : UserControl
         if (RightWaveTitle is not null)
         {
             RightWaveTitle.Text = rightCap.Triggered ? "R オシロスコープ  AUTO ↑" : "R オシロスコープ  AUTO";
+        }
+    }
+
+    /// <summary>
+    /// 受信（優先）または送信の L/R PCM をリサージュ（L→X / R→Y）へ描きます。
+    /// ステレオカセットのアジマス調整用：同位相なら対角線、位相差があると楕円になります。
+    /// </summary>
+    private void ApplyLissajousFromWorkers()
+    {
+        var copied = _rxWorker.TryCopyLatestPcm(_scopeLeftBuf, _scopeRightBuf, out var count, out var sampleRate);
+        if (!copied)
+        {
+            copied = _txWorker.TryCopyLatestPcm(_scopeLeftBuf, _scopeRightBuf, out count, out sampleRate);
+        }
+
+        if (!copied || count <= 1)
+        {
+            return;
+        }
+
+        if (sampleRate <= 0)
+        {
+            sampleRate = PerformanceConstants.SampleRate;
+        }
+
+        var leftSpan = _scopeLeftBuf.AsSpan(0, count);
+        var rightSpan = _scopeRightBuf.AsSpan(0, count);
+        DrawLissajous(leftSpan, rightSpan);
+
+        var leftMeters = LissajousMeterAnalyzer.Analyze(
+            leftSpan, sampleRate, _lissTimeScratch, _lissFftScratch);
+        var rightMeters = LissajousMeterAnalyzer.Analyze(
+            rightSpan, sampleRate, _lissTimeScratch, _lissFftScratch);
+        UpdateLissajousMeterTexts(leftMeters, rightMeters);
+    }
+
+    /// <summary>
+    /// 周波数カウンタ・歪み率の表示文言を更新します。
+    /// </summary>
+    private void UpdateLissajousMeterTexts(
+        LissajousMeterAnalyzer.ChannelMeters left,
+        LissajousMeterAnalyzer.ChannelMeters right)
+    {
+        if (LissFreqLeftText is not null)
+        {
+            LissFreqLeftText.Text = left.FrequencyHz > 0 ? $"{left.FrequencyHz} Hz" : "---- Hz";
+        }
+
+        if (LissFreqRightText is not null)
+        {
+            LissFreqRightText.Text = right.FrequencyHz > 0 ? $"{right.FrequencyHz} Hz" : "---- Hz";
+        }
+
+        if (LissThdLeftText is not null)
+        {
+            LissThdLeftText.Text = left.ThdPercent >= 0 ? $"{left.ThdPercent:0.00} %" : "--.-- %";
+        }
+
+        if (LissThdRightText is not null)
+        {
+            LissThdRightText.Text = right.ThdPercent >= 0 ? $"{right.ThdPercent:0.00} %" : "--.-- %";
+        }
+    }
+
+    /// <summary>
+    /// リサージュホストのサイズ変化で正方形を合わせます。
+    /// </summary>
+    private void OnLissajousHostSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!IsLissajousTabSelected)
+        {
+            return;
+        }
+
+        UpdateLissajousPlotSquare();
+    }
+
+    /// <summary>
+    /// リサージュ描画領域のサイズ変化です。
+    /// </summary>
+    private void OnLissajousPlotSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateLissajousIdealDiagonal();
+        if (IsLissajousTabSelected)
+        {
+            ApplyLissajousFromWorkers();
+        }
+    }
+
+    /// <summary>
+    /// リサージュ枠をホスト高さに合わせて正方形にします。
+    /// </summary>
+    private void UpdateLissajousPlotSquare()
+    {
+        if (LissajousHost is null || LissajousPlotHost is null)
+        {
+            return;
+        }
+
+        var availH = Math.Max(120.0, LissajousHost.ActualHeight - 36);
+        var availW = Math.Max(120.0, LissajousHost.ActualWidth - 40);
+        var side = Math.Min(availH, availW);
+        side = Math.Min(side, 420);
+        LissajousPlotHost.Width = side;
+        LissajousPlotHost.Height = side;
+        UpdateLissajousIdealDiagonal();
+    }
+
+    /// <summary>
+    /// 同位相の理想対角線（−1,−1）→（+1,+1）を更新します。
+    /// </summary>
+    private void UpdateLissajousIdealDiagonal()
+    {
+        if (LissajousIdealDiagonal is null || LissajousPlotHost is null)
+        {
+            return;
+        }
+
+        var w = LissajousPlotHost.ActualWidth;
+        var h = LissajousPlotHost.ActualHeight;
+        if (w <= 1 || h <= 1)
+        {
+            return;
+        }
+
+        LissajousIdealDiagonal.X1 = 0;
+        LissajousIdealDiagonal.Y1 = h;
+        LissajousIdealDiagonal.X2 = w;
+        LissajousIdealDiagonal.Y2 = 0;
+    }
+
+    /// <summary>
+    /// L=X / R=Y の点列を Canvas に描きます（±1.0 レンジ、中央 0）。
+    /// </summary>
+    private void DrawLissajous(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
+    {
+        if (LissajousCanvas is null || LissajousPlotHost is null)
+        {
+            return;
+        }
+
+        var w = LissajousPlotHost.ActualWidth;
+        var h = LissajousPlotHost.ActualHeight;
+        if (w <= 1 || h <= 1)
+        {
+            return;
+        }
+
+        LissajousCanvas.Children.Clear();
+        var n = Math.Min(left.Length, right.Length);
+        if (n < 2)
+        {
+            return;
+        }
+
+        const int maxPts = 2400;
+        var stride = Math.Max(1, n / maxPts);
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            var started = false;
+            for (var i = 0; i < n; i += stride)
+            {
+                var lx = Math.Clamp(left[i], -1.0, 1.0);
+                var ry = Math.Clamp(right[i], -1.0, 1.0);
+                var x = (lx + 1.0) * 0.5 * w;
+                var y = (1.0 - ry) * 0.5 * h;
+                var pt = new Point(x, y);
+                if (!started)
+                {
+                    ctx.BeginFigure(pt, isFilled: false, isClosed: false);
+                    started = true;
+                }
+                else
+                {
+                    ctx.LineTo(pt, isStroked: true, isSmoothJoin: false);
+                }
+            }
+        }
+
+        geo.Freeze();
+        LissajousCanvas.Children.Add(new ShapePath
+        {
+            Data = geo,
+            Stroke = new SolidColorBrush(Color.FromRgb(166, 221, 176)),
+            StrokeThickness = 1.2,
+            StrokeLineJoin = PenLineJoin.Round
+        });
+
+        if (LissajousTitle is not null)
+        {
+            var corr = EstimatePhaseCorrelation(left, right);
+            var hint = corr >= 0.95
+                ? "ほぼ同位相（対角線）"
+                : corr >= 0.5
+                    ? "位相差あり（楕円）"
+                    : corr >= 0
+                        ? "位相差大"
+                        : "逆相寄り";
+            LissajousTitle.Text = $"リサージュ（アジマス）  L→X / R→Y  ・{hint}";
+        }
+    }
+
+    /// <summary>
+    /// L/R の正規化相関で位相同期の目安を返します（1=同位相、0=直交、-1=逆相）。
+    /// </summary>
+    private static double EstimatePhaseCorrelation(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
+    {
+        var n = Math.Min(left.Length, right.Length);
+        if (n < 8)
+        {
+            return 0;
+        }
+
+        double sumL = 0, sumR = 0, sumLL = 0, sumRR = 0, sumLR = 0;
+        var step = Math.Max(1, n / 2048);
+        var count = 0;
+        for (var i = 0; i < n; i += step)
+        {
+            var l = left[i];
+            var r = right[i];
+            sumL += l;
+            sumR += r;
+            sumLL += l * l;
+            sumRR += r * r;
+            sumLR += l * r;
+            count++;
+        }
+
+        if (count < 2)
+        {
+            return 0;
+        }
+
+        var meanL = sumL / count;
+        var meanR = sumR / count;
+        var cov = sumLR / count - meanL * meanR;
+        var varL = sumLL / count - meanL * meanL;
+        var varR = sumRR / count - meanR * meanR;
+        if (varL <= 1e-12 || varR <= 1e-12)
+        {
+            return 0;
+        }
+
+        return cov / Math.Sqrt(varL * varR);
+    }
+
+    /// <summary>
+    /// オシロ波形 Canvas のサイズ変化で再描画します。
+    /// </summary>
+    private void OnScopeWaveCanvasSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width <= 1 || e.NewSize.Height <= 1)
+        {
+            return;
+        }
+
+        RedrawScopeWaveCanvases();
+    }
+
+    /// <summary>
+    /// L/R の外部 Canvas へ波形を描き直します（目盛り 0 と対称になる座標系）。
+    /// </summary>
+    private void RedrawScopeWaveCanvases()
+    {
+        DrawScopeWaveOnCanvas(
+            ScopeLeftWaveCanvas,
+            _scopeLeft,
+            new SolidColorBrush(Color.FromRgb(166, 221, 176)));
+        DrawScopeWaveOnCanvas(
+            ScopeRightWaveCanvas,
+            _scopeRight,
+            new SolidColorBrush(Color.FromRgb(166, 221, 176)));
+    }
+
+    /// <summary>
+    /// 1 チャネル分の波形とトリガー縦線を Canvas に描きます。
+    /// Y: +amp=上端、0=中央、−amp=下端（外部目盛りと同じ）。
+    /// </summary>
+    private static void DrawScopeWaveOnCanvas(
+        Canvas? canvas,
+        OscilloscopeChartModel model,
+        Brush stroke)
+    {
+        if (canvas is null)
+        {
+            return;
+        }
+
+        canvas.Children.Clear();
+        var w = canvas.ActualWidth;
+        var h = canvas.ActualHeight;
+        if (w <= 1 || h <= 1)
+        {
+            return;
+        }
+
+        var times = model.DisplayTimes;
+        var amps = model.DisplayAmplitudes;
+        if (times.Count == 0 || times.Count != amps.Count)
+        {
+            return;
+        }
+
+        var amp = Math.Max(0.05, model.AmplitudeHalf);
+        var t0 = model.TimeStartMs;
+        var t1 = model.TimeEndMs;
+        var span = Math.Max(1e-9, t1 - t0);
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            var started = false;
+            for (var i = 0; i < times.Count; i++)
+            {
+                var x = (times[i] - t0) / span * w;
+                var y = (amp - amps[i]) / (2.0 * amp) * h;
+                var pt = new Point(x, y);
+                if (!started)
+                {
+                    ctx.BeginFigure(pt, isFilled: false, isClosed: false);
+                    started = true;
+                }
+                else
+                {
+                    ctx.LineTo(pt, isStroked: true, isSmoothJoin: false);
+                }
+            }
+        }
+
+        geo.Freeze();
+        canvas.Children.Add(new ShapePath
+        {
+            Data = geo,
+            Stroke = stroke,
+            StrokeThickness = 1.4,
+            StrokeLineJoin = PenLineJoin.Round
+        });
+
+        if (model.HasTriggerMarker)
+        {
+            var tx = (0.0 - t0) / span * w;
+            canvas.Children.Add(new ShapeLine
+            {
+                X1 = tx,
+                X2 = tx,
+                Y1 = 0,
+                Y2 = h,
+                Stroke = new SolidColorBrush(Color.FromRgb(255, 214, 80)),
+                StrokeThickness = 1.2
+            });
         }
     }
 

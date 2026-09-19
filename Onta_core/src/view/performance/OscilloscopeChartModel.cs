@@ -11,15 +11,14 @@ namespace Onta.View.Performance;
 /// <summary>
 /// オシロスコープ（時間波形）用チャートモデルです。
 /// トリガー点を t=0、プリトリガーを負時間に置きます。
+/// 波形本体は LiveCharts（HiDPI で Y がずれる）ではなく、外部 Canvas へ渡す点列で描画します。
 /// </summary>
 public sealed class OscilloscopeChartModel
 {
     private const int MaxDisplayPoints = 640;
     private static readonly SKColor WaveColor = new(166, 221, 176);
-    private static readonly SKColor AxisColor = new(176, 181, 191);
     private static readonly SKColor GridColor = new(92, 97, 108);
     private static readonly SKColor TriggerColor = new(255, 214, 80);
-    private static readonly SKColor LevelColor = new(196, 168, 72);
 
     private readonly ObservableCollection<ObservablePoint> _points = [];
     private readonly ObservableCollection<ObservablePoint> _triggerTime = [];
@@ -27,7 +26,9 @@ public sealed class OscilloscopeChartModel
     private readonly LineSeries<ObservablePoint> _series;
     private double _amplitudeHalf = 1.0;
     private double _timeSpanMs = 20.0;
-    private double _dpiScale = 1.0;
+    private double[] _displayT = [];
+    private double[] _displayY = [];
+    private bool _triggered;
 
     /// <summary>縦軸レンジ（片振幅）。スライダー順は狭い→広い。</summary>
     public static readonly double[] AmplitudeRangeHalf = [0.1, 0.2, 0.5, 1.0];
@@ -50,7 +51,8 @@ public sealed class OscilloscopeChartModel
             Stroke = new SolidColorPaint(color, 1.4f),
             GeometrySize = 0,
             LineSmoothness = 0,
-            EnableNullSplitting = false
+            EnableNullSplitting = false,
+            IsVisible = false
         };
 
         Series =
@@ -70,9 +72,9 @@ public sealed class OscilloscopeChartModel
             new LineSeries<ObservablePoint>
             {
                 Values = _triggerLevel,
-                Name = "Level",
+                Name = "Zero",
                 Fill = null,
-                Stroke = new SolidColorPaint(LevelColor, 1.0f),
+                Stroke = new SolidColorPaint(TriggerColor, 1.0f),
                 GeometrySize = 0,
                 LineSmoothness = 0,
                 IsVisible = false,
@@ -86,12 +88,12 @@ public sealed class OscilloscopeChartModel
                 Name = null,
                 MinLimit = -0.2,
                 MaxLimit = 0.8,
-                TextSize = 8,
+                TextSize = 0,
                 NameTextSize = 0,
                 NamePadding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0),
                 Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 2),
                 NamePaint = null,
-                LabelsPaint = new SolidColorPaint(AxisColor),
+                LabelsPaint = null,
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 },
                 SeparatorsAtCenter = false,
                 TicksAtCenter = false,
@@ -110,17 +112,16 @@ public sealed class OscilloscopeChartModel
                 MaxLimit = 1.0,
                 MinStep = 0.5,
                 ForceStepToMin = true,
-                CustomSeparators = [-1.0, -0.5, 0.0, 0.5, 1.0],
+                CustomSeparators = null,
                 SeparatorsAtCenter = false,
                 TicksAtCenter = false,
-                Labeler = v => $"{v:0.0}",
-                TextSize = 8,
+                LabelsPaint = null,
+                TextSize = 0,
                 NameTextSize = 0,
                 NamePadding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0),
-                Padding = new LiveChartsCore.Drawing.Padding(0, 0, 4, 0),
+                Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0),
                 NamePaint = null,
-                LabelsPaint = new SolidColorPaint(AxisColor),
-                SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
+                SeparatorsPaint = null
             }
         ];
     }
@@ -131,10 +132,28 @@ public sealed class OscilloscopeChartModel
 
     public Axis[] YAxes { get; }
 
+    /// <summary>現在の片振幅レンジです。</summary>
+    public double AmplitudeHalf => _amplitudeHalf;
+
+    /// <summary>表示窓の開始時刻（ms、トリガー相対）です。</summary>
+    public double TimeStartMs => -_timeSpanMs * OscilloscopeTrigger.PreTriggerRatio;
+
+    /// <summary>表示窓の終了時刻（ms、トリガー相対）です。</summary>
+    public double TimeEndMs => _timeSpanMs + TimeStartMs;
+
+    /// <summary>起立トリガーを検出できたかです。</summary>
+    public bool HasTriggerMarker => _triggered;
+
+    /// <summary>外部 Canvas 描画用の時刻列（ms）です。</summary>
+    public IReadOnlyList<double> DisplayTimes => _displayT;
+
+    /// <summary>外部 Canvas 描画用の振幅列です。</summary>
+    public IReadOnlyList<double> DisplayAmplitudes => _displayY;
+
     /// <summary>
-    /// オシロ用の描画余白です（左=振幅、下=時間。下を厚めにして端が見切れないようにする）。
+    /// オシロ用の描画余白です（左=外部振幅ラベル分。上下右は最小）。
     /// </summary>
-    public static Margin CreateDrawMargin() => new(40, 18, 10, 38);
+    public static Margin CreateDrawMargin() => new(40, 8, 8, 8);
 
     /// <summary>
     /// スライダーインデックスから片振幅レンジを返します。
@@ -160,44 +179,32 @@ public sealed class OscilloscopeChartModel
     public static string FormatTimeSpan(double ms) => $"{ms:0} ms";
 
     /// <summary>
-    /// 縦軸・横軸の表示レンジを設定します。
+    /// 縦軸・横軸の表示レンジを設定します。センター 0、上下 ±amplitudeHalf。
     /// </summary>
     /// <param name="amplitudeHalf">片振幅（±この値）。</param>
     /// <param name="timeSpanMs">表示幅（ms）。</param>
-    /// <param name="dpiScale">WPF DPI 倍率。Skia 物理ピクセル描画の見切れ補正に使う。</param>
-    public void ApplyRanges(double amplitudeHalf, double timeSpanMs, double dpiScale = 1.0)
+    public void ApplyRanges(double amplitudeHalf, double timeSpanMs)
     {
         _amplitudeHalf = Math.Max(0.05, amplitudeHalf);
         _timeSpanMs = Math.Max(0.2, timeSpanMs);
-        _dpiScale = dpiScale < 0.5 ? 1.0 : dpiScale;
 
-        // LiveCharts は Skia を物理ピクセル高さで描き、WPF は DIP で上側だけ見える。
-        // 可視範囲が ±amp になるよう Min/Max を DPI で広げ、上端は線幅用に少し余白を残す。
-        const double topPad = 1.08;
-        YAxes[0].MaxLimit = _amplitudeHalf * topPad;
-        YAxes[0].MinLimit = _amplitudeHalf * (topPad - (_dpiScale * (topPad + 1.0)));
+        YAxes[0].MinLimit = -_amplitudeHalf;
+        YAxes[0].MaxLimit = _amplitudeHalf;
         YAxes[0].MinStep = _amplitudeHalf / 2.0;
         YAxes[0].ForceStepToMin = true;
         YAxes[0].SeparatorsAtCenter = false;
         YAxes[0].TicksAtCenter = false;
-        YAxes[0].CustomSeparators =
-        [
-            -_amplitudeHalf,
-            -_amplitudeHalf / 2.0,
-            0.0,
-            _amplitudeHalf / 2.0,
-            _amplitudeHalf
-        ];
-        var decimals = _amplitudeHalf < 0.15 ? "0.00" : "0.0";
-        YAxes[0].Labeler = v => v.ToString(decimals);
+        YAxes[0].LabelsPaint = null;
+        YAxes[0].TextSize = 0;
+        YAxes[0].SeparatorsPaint = null;
+        YAxes[0].CustomSeparators = null;
 
-        var pre = _timeSpanMs * OscilloscopeTrigger.PreTriggerRatio;
-        var t0 = -pre;
-        var t1 = _timeSpanMs - pre;
+        var t0 = TimeStartMs;
+        var t1 = TimeEndMs;
         XAxes[0].MinLimit = t0;
-        XAxes[0].MaxLimit = t0 + ((t1 - t0) * _dpiScale);
-        XAxes[0].LabelsPaint = new SolidColorPaint(AxisColor);
-        XAxes[0].TextSize = 8;
+        XAxes[0].MaxLimit = t1;
+        XAxes[0].LabelsPaint = null;
+        XAxes[0].TextSize = 0;
         XAxes[0].Labeler = FormatTimeLabel;
         var step = NiceTimeStep(_timeSpanMs);
         XAxes[0].MinStep = step;
@@ -208,11 +215,27 @@ public sealed class OscilloscopeChartModel
     }
 
     /// <summary>
+    /// 外部縦軸ラベル用の文言（上→下：+amp … 0 … −amp）です。
+    /// </summary>
+    public static string[] FormatAmplitudeTickLabels(double amplitudeHalf)
+    {
+        var amp = Math.Max(0.05, amplitudeHalf);
+        var decimals = amp < 0.15 ? "0.00" : "0.0";
+        return
+        [
+            amp.ToString(decimals),
+            (amp / 2.0).ToString(decimals),
+            0.0.ToString(decimals),
+            (-amp / 2.0).ToString(decimals),
+            (-amp).ToString(decimals)
+        ];
+    }
+
+    /// <summary>
     /// 表示幅に対して読みやすい時間ステップ（ms）を選びます。
     /// </summary>
     private static double NiceTimeStep(double spanMs)
     {
-        // だいたい 8〜12 本の縦線になる刻み。
         double[] candidates = [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50];
         var target = spanMs / 10.0;
         foreach (var c in candidates)
@@ -274,61 +297,65 @@ public sealed class OscilloscopeChartModel
         bool triggered,
         double level)
     {
-        ApplyRanges(_amplitudeHalf, _timeSpanMs, _dpiScale);
+        ApplyRanges(_amplitudeHalf, _timeSpanMs);
         _points.Clear();
         _triggerTime.Clear();
         _triggerLevel.Clear();
+        Series[0].IsVisible = false;
+        Series[1].IsVisible = false;
+        Series[2].IsVisible = false;
+        _ = level;
+
         if (samples.IsEmpty || sampleRate <= 0)
         {
-            Series[1].IsVisible = false;
-            Series[2].IsVisible = false;
+            _displayT = [];
+            _displayY = [];
+            _triggered = false;
             return;
         }
 
         var sr = Math.Max(1, sampleRate);
         var trig = Math.Clamp(triggerOffset, 0, samples.Length - 1);
-        var pre = _timeSpanMs * OscilloscopeTrigger.PreTriggerRatio;
-        var t0 = -pre;
-        var t1 = _timeSpanMs - pre;
-        var y0 = -_amplitudeHalf;
-        var y1 = _amplitudeHalf;
-
         var stride = Math.Max(1, samples.Length / MaxDisplayPoints);
+        var times = new List<double>(MaxDisplayPoints + 2);
+        var amps = new List<double>(MaxDisplayPoints + 2);
         var addedTrigger = false;
         for (var i = 0; i < samples.Length; i += stride)
         {
-            _points.Add(new ObservablePoint(SampleToMs(i, trig, sr), samples[i]));
-            if (i >= trig)
+            times.Add(SampleToMs(i, trig, sr));
+            amps.Add(samples[i]);
+            if (i == trig)
             {
-                addedTrigger = addedTrigger || i == trig;
+                addedTrigger = true;
             }
-        }
-
-        if (!addedTrigger)
-        {
-            _points.Add(new ObservablePoint(0.0, samples[trig]));
         }
 
         var last = samples.Length - 1;
         if (last % stride != 0)
         {
-            _points.Add(new ObservablePoint(SampleToMs(last, trig, sr), samples[last]));
+            times.Add(SampleToMs(last, trig, sr));
+            amps.Add(samples[last]);
         }
 
-        if (triggered)
+        if (!addedTrigger)
         {
-            _triggerTime.Add(new ObservablePoint(0.0, y0));
-            _triggerTime.Add(new ObservablePoint(0.0, y1));
-            _triggerLevel.Add(new ObservablePoint(t0, level));
-            _triggerLevel.Add(new ObservablePoint(t1, level));
-            Series[1].IsVisible = true;
-            Series[2].IsVisible = true;
+            var insertAt = times.Count;
+            for (var i = 0; i < times.Count; i++)
+            {
+                if (times[i] >= 0.0)
+                {
+                    insertAt = i;
+                    break;
+                }
+            }
+
+            times.Insert(insertAt, 0.0);
+            amps.Insert(insertAt, samples[trig]);
         }
-        else
-        {
-            Series[1].IsVisible = false;
-            Series[2].IsVisible = false;
-        }
+
+        _displayT = times.ToArray();
+        _displayY = amps.ToArray();
+        _triggered = triggered;
     }
 
     /// <summary>
@@ -339,9 +366,13 @@ public sealed class OscilloscopeChartModel
         _points.Clear();
         _triggerTime.Clear();
         _triggerLevel.Clear();
+        _displayT = [];
+        _displayY = [];
+        _triggered = false;
+        Series[0].IsVisible = false;
         Series[1].IsVisible = false;
         Series[2].IsVisible = false;
-        ApplyRanges(_amplitudeHalf, _timeSpanMs, _dpiScale);
+        ApplyRanges(_amplitudeHalf, _timeSpanMs);
     }
 
     /// <summary>

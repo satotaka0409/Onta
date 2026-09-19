@@ -13,6 +13,11 @@ internal sealed class PerformanceTxWorker : IDisposable
     private readonly CoreExecutionStatusBoard _vizStatus = new();
     private readonly double[] _pcmLeft = new double[PerformanceConstants.ScopeCaptureSamples];
     private readonly double[] _pcmRight = new double[PerformanceConstants.ScopeCaptureSamples];
+    private readonly Complex[] _iqScratch = new Complex[128];
+    private readonly byte[] _iqGroups = new byte[128];
+    private readonly double[] _iqPcmScratch = new double[PerformanceIqExtractor.CaptureSamples];
+    private readonly Complex[] _iqTimeScratch = new Complex[PerformanceIqExtractor.FftSize];
+    private readonly Complex[] _iqFftScratch = new Complex[PerformanceIqExtractor.FftSize];
     private Task? _worker;
     private CancellationTokenSource? _cts;
     private long _pcmWriteTotal;
@@ -463,6 +468,104 @@ internal sealed class PerformanceTxWorker : IDisposable
             OfdmGenerator.ComputeForwardSpectrumFromRealPcm(window, fftWork);
             _vizStatus.SetFftFrame(fftWork, isRightChannel: true, PerformanceSignalGenerator.SampleRate);
         }
+
+        // 変調送信時は I-Q も更新（トーン／スイープは OFDM キャリアが無いので省略）
+        if (settings.SignalMode == PerformanceSignalMode.Modulated)
+        {
+            PublishIqFromPcm(settings);
+        }
+    }
+
+    /// <summary>
+    /// 送信 PCM リングから等化 I-Q を抽出し可視化ボードへ載せます。
+    /// </summary>
+    private void PublishIqFromPcm(PerformanceTxSettings settings)
+    {
+        var sc = PerformanceSignalGenerator.ClampSubcarriers(settings.ActiveSubcarriers);
+        var mod = PerformanceSignalGenerator.ClampModulation(settings.ModulationScheme);
+
+        int leftPcmCount;
+        lock (_sync)
+        {
+            if (!TryCopyPcmTailUnlocked(_pcmLeft, _iqPcmScratch, out leftPcmCount)
+                || leftPcmCount < PerformanceIqExtractor.FftSize)
+            {
+                return;
+            }
+        }
+
+        var leftCount = PerformanceIqExtractor.ExtractEqualized(
+            _iqPcmScratch.AsSpan(0, leftPcmCount),
+            sc,
+            useRightCarriers: false,
+            _iqTimeScratch,
+            _iqFftScratch,
+            _iqScratch.AsSpan(),
+            _iqGroups.AsSpan());
+        var count = leftCount;
+
+        if (settings.ChannelMode == ChannelMode.Stereo)
+        {
+            int rightPcmCount;
+            lock (_sync)
+            {
+                if (!TryCopyPcmTailUnlocked(_pcmRight, _iqPcmScratch, out rightPcmCount)
+                    || rightPcmCount < PerformanceIqExtractor.FftSize)
+                {
+                    rightPcmCount = 0;
+                }
+            }
+
+            if (rightPcmCount >= PerformanceIqExtractor.FftSize)
+            {
+                var rightCount = PerformanceIqExtractor.ExtractEqualized(
+                    _iqPcmScratch.AsSpan(0, rightPcmCount),
+                    sc,
+                    useRightCarriers: true,
+                    _iqTimeScratch,
+                    _iqFftScratch,
+                    _iqScratch.AsSpan(leftCount),
+                    _iqGroups.AsSpan(leftCount));
+                count = leftCount + rightCount;
+            }
+        }
+
+        if (count <= 0)
+        {
+            return;
+        }
+
+        _vizStatus.BeginIqCapture(sc, mod);
+        _vizStatus.AppendIqFrame(_iqScratch.AsSpan(0, count), _iqGroups.AsSpan(0, count));
+        _vizStatus.SetIqLeftPointCount(leftCount);
+    }
+
+    /// <summary>
+    /// PCM リング末尾を線形バッファへコピーします（呼び出し元で _sync を保持）。
+    /// </summary>
+    private bool TryCopyPcmTailUnlocked(double[] ring, double[] dest, out int count)
+    {
+        count = 0;
+        var n = Math.Min(dest.Length, (int)Math.Min(_pcmWriteTotal, ring.Length));
+        if (n <= 0)
+        {
+            return false;
+        }
+
+        var start = _pcmWriteTotal - n;
+        for (var i = 0; i < n; i++)
+        {
+            var idx = (int)((start + i) % ring.Length);
+            if (idx < 0)
+            {
+                idx += ring.Length;
+            }
+
+            dest[i] = ring[idx];
+        }
+
+        count = n;
+        return true;
     }
 
     private static (Complex[] Left, Complex[] Right) Generate(PerformanceTxSettings settings)
