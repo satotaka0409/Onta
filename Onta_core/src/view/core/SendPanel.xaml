@@ -127,7 +127,7 @@
         </GroupBox>
 
         <GroupBox Grid.Column="4"
-                  Header="入出力"
+                  Header="出力"
                   Margin="4">
           <Grid Margin="2">
             <Grid.RowDefinitions>

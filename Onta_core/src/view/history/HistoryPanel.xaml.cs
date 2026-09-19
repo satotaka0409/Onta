@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Win32;
+using Onta.Core;
 using Onta.History;
 using Onta.View.Core;
 
@@ -364,7 +365,7 @@ public partial class HistoryPanel : UserControl
             return ("-", "-", "-");
         }
 
-        var sc = dataModulation[0] is 8 or 16 or 24 or 32 or 40 or 48
+        var sc = OfdmConfig.IsSupportedActiveSubcarriers(dataModulation[0])
             ? dataModulation[0].ToString()
             : "-";
         var modulation = dataModulation[1] switch

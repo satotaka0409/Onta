@@ -121,130 +121,277 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
+    private static readonly int[] BitReverse256 = CreateBitReverseTable(256);
+    private static readonly int[] BitReverse2048 = CreateBitReverseTable(2048);
+    private static readonly double[] Hann256 = CreateHannWindow(256);
+    private static readonly double[] Hann2048 = CreateHannWindow(2048);
+    private static readonly Vector256<double> FftSwapSign256 = Vector256.Create(-1.0, 1.0, -1.0, 1.0);
+    private static readonly Vector128<double> FftSwapSign128 = Vector128.Create(-1.0, 1.0);
+
+    /// <summary>
+    /// 実数 PCM に Hann 窓を掛けて FFT 入力へ置きます（虚部 0）。
+    /// </summary>
+    internal static void ApplyHannWindowFromRealPcm(ReadOnlySpan<Complex> timePcm, Complex[] destination)
+    {
+        var n = destination.Length;
+        var offset = timePcm.Length - n;
+        var hann = n switch
+        {
+            256 => Hann256,
+            2048 => Hann2048,
+            _ => CreateHannWindow(n)
+        };
+
+        var src = MemoryMarshal.Cast<Complex, double>(timePcm.Slice(offset, n));
+        var dst = MemoryMarshal.Cast<Complex, double>(destination.AsSpan(0, n));
+        var i = 0;
+        if (Avx.IsSupported && n >= 2)
+        {
+            for (; i + 2 <= n; i += 2)
+            {
+                var s = SimdMath.LoadAvx(src, i * 2);
+                var reals = Avx.Shuffle(s, s, 0b0000);
+                var h = Vector256.Create(hann[i], 0.0, hann[i + 1], 0.0);
+                SimdMath.StoreAvx(dst, i * 2, Avx.Multiply(reals, h));
+            }
+        }
+        else if (AdvSimd.Arm64.IsSupported)
+        {
+            for (; i < n; i++)
+            {
+                var s = SimdMath.LoadNeon(src, i * 2);
+                SimdMath.StoreNeon(
+                    dst,
+                    i * 2,
+                    AdvSimd.Arm64.Multiply(s, Vector128.Create(hann[i], 0.0)));
+            }
+
+            return;
+        }
+
+        for (; i < n; i++)
+        {
+            destination[i] = new Complex(timePcm[offset + i].Real * hann[i], 0.0);
+        }
+    }
+
+    /// <summary>
+    /// 実数 PCM を虚部 0 の FFT 入力へコピーします。
+    /// </summary>
+    internal static void CopyRealPcmToFftInput(ReadOnlySpan<Complex> timePcm, Span<Complex> destination)
+    {
+        var n = destination.Length;
+        var offset = timePcm.Length - n;
+        var src = MemoryMarshal.Cast<Complex, double>(timePcm.Slice(offset, n));
+        var dst = MemoryMarshal.Cast<Complex, double>(destination);
+        var i = 0;
+        if (Avx.IsSupported && n >= 2)
+        {
+            var mask = SimdMath.RealLaneMask256;
+            for (; i + 2 <= n; i += 2)
+            {
+                SimdMath.StoreAvx(dst, i * 2, Avx.Multiply(SimdMath.LoadAvx(src, i * 2), mask));
+            }
+        }
+        else if (AdvSimd.Arm64.IsSupported)
+        {
+            var mask = SimdMath.RealLaneMask128;
+            for (; i < n; i++)
+            {
+                SimdMath.StoreNeon(dst, i * 2, AdvSimd.Arm64.Multiply(SimdMath.LoadNeon(src, i * 2), mask));
+            }
+
+            return;
+        }
+
+        for (; i < n; i++)
+        {
+            destination[i] = new Complex(timePcm[offset + i].Real, 0.0);
+        }
+    }
+
     private static void FftInPlace(Complex[] output)
     {
         var n = output.Length;
+        if (n <= 1)
+        {
+            return;
+        }
 
-        var bits = (int)Math.Log2(n);
+        BitReversePermute(output);
+        var data = MemoryMarshal.Cast<Complex, double>(output.AsSpan());
+
+        for (var len = 2; len <= n; len <<= 1)
+        {
+            var half = len >> 1;
+            var angle = -2.0 * Math.PI / len;
+            var wLenRe = Math.Cos(angle);
+            var wLenIm = Math.Sin(angle);
+
+            if (Avx.IsSupported && half >= 2)
+            {
+                FftStageAvx(data, n, len, half, wLenRe, wLenIm);
+            }
+            else if (AdvSimd.Arm64.IsSupported)
+            {
+                FftStageNeon(data, n, len, half, wLenRe, wLenIm);
+            }
+            else
+            {
+                FftStageScalar(output, n, len, half, wLenRe, wLenIm);
+            }
+        }
+    }
+
+    /// <summary>
+    /// AVX で 2 バタフライずつ処理します（GetElement なし）。
+    /// </summary>
+    private static void FftStageAvx(
+        Span<double> data,
+        int n,
+        int len,
+        int half,
+        double wLenRe,
+        double wLenIm)
+    {
+        var swapSign = FftSwapSign256;
+        var useFma = Fma.IsSupported;
+        for (var i = 0; i < n; i += len)
+        {
+            var wr = 1.0;
+            var wi = 0.0;
+            for (var j = 0; j < half; j += 2)
+            {
+                var wr2 = (wr * wLenRe) - (wi * wLenIm);
+                var wi2 = (wr * wLenIm) + (wi * wLenRe);
+                var uIdx = (i + j) * 2;
+                var vIdx = (i + j + half) * 2;
+                var u = SimdMath.LoadAvx(data, uIdx);
+                var v = SimdMath.LoadAvx(data, vIdx);
+                var wRe = Vector256.Create(wr, wr, wr2, wr2);
+                var wIm = Vector256.Create(wi, wi, wi2, wi2);
+                var swapped = Avx.Shuffle(v, v, 0b0101);
+                var signed = Avx.Multiply(swapped, swapSign);
+                var twiddled = useFma
+                    ? Fma.MultiplyAdd(signed, wIm, Avx.Multiply(v, wRe))
+                    : Avx.Add(Avx.Multiply(v, wRe), Avx.Multiply(signed, wIm));
+                SimdMath.StoreAvx(data, uIdx, Avx.Add(u, twiddled));
+                SimdMath.StoreAvx(data, vIdx, Avx.Subtract(u, twiddled));
+                wr = (wr2 * wLenRe) - (wi2 * wLenIm);
+                wi = (wr2 * wLenIm) + (wi2 * wLenRe);
+            }
+        }
+    }
+
+    /// <summary>
+    /// AdvSimd で 1 複素バタフライを処理します。
+    /// </summary>
+    private static void FftStageNeon(
+        Span<double> data,
+        int n,
+        int len,
+        int half,
+        double wLenRe,
+        double wLenIm)
+    {
+        var swapSign = FftSwapSign128;
+        for (var i = 0; i < n; i += len)
+        {
+            var wr = 1.0;
+            var wi = 0.0;
+            for (var j = 0; j < half; j++)
+            {
+                var uIdx = (i + j) * 2;
+                var vIdx = (i + j + half) * 2;
+                var u = SimdMath.LoadNeon(data, uIdx);
+                var v = SimdMath.LoadNeon(data, vIdx);
+                var swapped = Vector128.Create(v.GetUpper(), v.GetLower());
+                var signed = AdvSimd.Arm64.Multiply(swapped, swapSign);
+                var twiddled = AdvSimd.Arm64.Add(
+                    AdvSimd.Arm64.Multiply(v, Vector128.Create(wr)),
+                    AdvSimd.Arm64.Multiply(signed, Vector128.Create(wi)));
+                SimdMath.StoreNeon(data, uIdx, AdvSimd.Arm64.Add(u, twiddled));
+                SimdMath.StoreNeon(data, vIdx, AdvSimd.Arm64.Subtract(u, twiddled));
+                var nextWr = (wr * wLenRe) - (wi * wLenIm);
+                wi = (wr * wLenIm) + (wi * wLenRe);
+                wr = nextWr;
+            }
+        }
+    }
+
+    /// <summary>
+    /// SIMD が使えない場合の基数 2 バタフライです。
+    /// </summary>
+    private static void FftStageScalar(
+        Complex[] output,
+        int n,
+        int len,
+        int half,
+        double wLenRe,
+        double wLenIm)
+    {
+        for (var i = 0; i < n; i += len)
+        {
+            var wr = 1.0;
+            var wi = 0.0;
+            for (var j = 0; j < half; j++)
+            {
+                var upper = output[i + j];
+                var lower = output[i + j + half];
+                var vr = (lower.Real * wr) - (lower.Imaginary * wi);
+                var vi = (lower.Real * wi) + (lower.Imaginary * wr);
+                output[i + j] = new Complex(upper.Real + vr, upper.Imaginary + vi);
+                output[i + j + half] = new Complex(upper.Real - vr, upper.Imaginary - vi);
+                var nextWr = (wr * wLenRe) - (wi * wLenIm);
+                wi = (wr * wLenIm) + (wi * wLenRe);
+                wr = nextWr;
+            }
+        }
+    }
+
+    private static void BitReversePermute(Complex[] output)
+    {
+        var n = output.Length;
+        var table = n switch
+        {
+            256 => BitReverse256,
+            2048 => BitReverse2048,
+            _ => CreateBitReverseTable(n)
+        };
 
         for (var i = 0; i < n; i++)
         {
-            var j = ReverseBits(i, bits);
+            var j = table[i];
             if (j > i)
             {
                 (output[i], output[j]) = (output[j], output[i]);
             }
         }
+    }
 
-        for (var len = 2; len <= n; len <<= 1)
+    private static int[] CreateBitReverseTable(int n)
+    {
+        var bits = (int)Math.Log2(n);
+        var table = new int[n];
+        for (var i = 0; i < n; i++)
         {
-            var angle = -2.0 * Math.PI / len;
-            var wLen = Complex.FromPolarCoordinates(1.0, angle);
-            var useAvx = Avx.IsSupported && len >= 4;
-            var useArm64Simd = AdvSimd.Arm64.IsSupported && len >= 4;
-
-            for (var i = 0; i < n; i += len)
-            {
-                var w = Complex.One;
-                var halfLen = len >> 1;
-                for (var j = 0; j < halfLen; j++)
-                {
-                    var upperIndex = i + j;
-                    var lowerIndex = upperIndex + halfLen;
-
-                    if (useAvx && (j + 1) < halfLen)
-                    {
-                        var upperIndex2 = upperIndex + 1;
-                        var lowerIndex2 = lowerIndex + 1;
-
-                        var lowerVec = Vector256.Create(
-                            output[lowerIndex].Real,
-                            output[lowerIndex].Imaginary,
-                            output[lowerIndex2].Real,
-                            output[lowerIndex2].Imaginary);
-
-                        var w2 = w * wLen;
-                        var wrVec = Vector256.Create(w.Real, w.Real, w2.Real, w2.Real);
-                        var wiVec = Vector256.Create(w.Imaginary, w.Imaginary, w2.Imaginary, w2.Imaginary);
-                        var swapped = Vector256.Create(
-                            lowerVec.GetElement(1),
-                            lowerVec.GetElement(0),
-                            lowerVec.GetElement(3),
-                            lowerVec.GetElement(2));
-                        var signedImag = Avx.Multiply(swapped, Vector256.Create(-1.0, 1.0, -1.0, 1.0));
-                        var twiddled = Avx.Add(Avx.Multiply(lowerVec, wrVec), Avx.Multiply(signedImag, wiVec));
-
-                        var upperVec = Vector256.Create(
-                            output[upperIndex].Real,
-                            output[upperIndex].Imaginary,
-                            output[upperIndex2].Real,
-                            output[upperIndex2].Imaginary);
-                        var sum = Avx.Add(upperVec, twiddled);
-                        var diff = Avx.Subtract(upperVec, twiddled);
-
-                        output[upperIndex] = new Complex(sum.GetElement(0), sum.GetElement(1));
-                        output[lowerIndex] = new Complex(diff.GetElement(0), diff.GetElement(1));
-                        output[upperIndex2] = new Complex(sum.GetElement(2), sum.GetElement(3));
-                        output[lowerIndex2] = new Complex(diff.GetElement(2), diff.GetElement(3));
-
-                        j++;
-                        w = w2;
-                    }
-                    else if (useArm64Simd && (j + 1) < halfLen)
-                    {
-                        var upperIndex2 = upperIndex + 1;
-                        var lowerIndex2 = lowerIndex + 1;
-
-                        var lower1 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[lowerIndex]));
-                        var lower2 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[lowerIndex2]));
-
-                        var w2 = w * wLen;
-                        var wr1 = Vector128.Create(w.Real);
-                        var wi1 = Vector128.Create(w.Imaginary);
-                        var wr2 = Vector128.Create(w2.Real);
-                        var wi2 = Vector128.Create(w2.Imaginary);
-
-                        var swappedSigned1 = Vector128.Create(-lower1.GetElement(1), lower1.GetElement(0));
-                        var swappedSigned2 = Vector128.Create(-lower2.GetElement(1), lower2.GetElement(0));
-                        var twiddled1 = AdvSimd.Arm64.Add(
-                            AdvSimd.Arm64.Multiply(lower1, wr1),
-                            AdvSimd.Arm64.Multiply(swappedSigned1, wi1));
-                        var twiddled2 = AdvSimd.Arm64.Add(
-                            AdvSimd.Arm64.Multiply(lower2, wr2),
-                            AdvSimd.Arm64.Multiply(swappedSigned2, wi2));
-
-                        var upper1 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[upperIndex]));
-                        var upper2 = Unsafe.ReadUnaligned<Vector128<double>>(
-                            ref Unsafe.As<Complex, byte>(ref output[upperIndex2]));
-
-                        var sum1 = AdvSimd.Arm64.Add(upper1, twiddled1);
-                        var diff1 = AdvSimd.Arm64.Subtract(upper1, twiddled1);
-                        var sum2 = AdvSimd.Arm64.Add(upper2, twiddled2);
-                        var diff2 = AdvSimd.Arm64.Subtract(upper2, twiddled2);
-
-                        output[upperIndex] = new Complex(sum1.GetElement(0), sum1.GetElement(1));
-                        output[lowerIndex] = new Complex(diff1.GetElement(0), diff1.GetElement(1));
-                        output[upperIndex2] = new Complex(sum2.GetElement(0), sum2.GetElement(1));
-                        output[lowerIndex2] = new Complex(diff2.GetElement(0), diff2.GetElement(1));
-
-                        j++;
-                        w = w2;
-                    }
-                    else
-                    {
-                        var u = output[upperIndex];
-                        var v = output[lowerIndex] * w;
-                        output[upperIndex] = u + v;
-                        output[lowerIndex] = u - v;
-                    }
-
-                    w *= wLen;
-                }
-            }
+            table[i] = ReverseBits(i, bits);
         }
+
+        return table;
+    }
+
+    private static double[] CreateHannWindow(int n)
+    {
+        var denom = Math.Max(1, n - 1);
+        var hann = new double[n];
+        var twoPi = 2.0 * Math.PI;
+        for (var i = 0; i < n; i++)
+        {
+            hann[i] = 1.0 - Math.Cos(twoPi * i / denom);
+        }
+
+        return hann;
     }
 
     private static int ReverseBits(int value, int bitCount)

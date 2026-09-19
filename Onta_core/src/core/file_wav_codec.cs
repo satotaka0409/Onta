@@ -3051,11 +3051,7 @@ public static class WavWriter
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
 
-        var peak = 0.0;
-        for (var i = 0; i < samples.Length; i++)
-        {
-            peak = Math.Max(peak, Math.Abs(samples[i].Real));
-        }
+        var peak = SimdMath.MaxAbsReals(samples);
 
         var scale = peak > 0.0 ? peakTarget / peak : 1.0;
         var dataBytes = samples.Length * sizeof(short);
@@ -3104,12 +3100,7 @@ public static class WavWriter
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
 
-        var peak = 0.0;
-        for (var i = 0; i < left.Length; i++)
-        {
-            peak = Math.Max(peak, Math.Abs(left[i].Real));
-            peak = Math.Max(peak, Math.Abs(right[i].Real));
-        }
+        var peak = Math.Max(SimdMath.MaxAbsReals(left), SimdMath.MaxAbsReals(right));
 
         var scale = peak > 0.0 ? peakTarget / peak : 1.0;
         var dataBytes = left.Length * sizeof(short) * 2;

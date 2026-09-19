@@ -79,7 +79,8 @@ public readonly record struct CoreIqSample(double I, double Q, byte Group = 0);
 public readonly record struct CoreIqGraphInfo(
     IReadOnlyList<CoreIqSample> Points,
     int ActiveSubcarrierCount,
-    ModulationScheme ModulationScheme)
+    ModulationScheme ModulationScheme,
+    int LeftPointCount = 0)
 {
     /// <summary>
     /// 空状態のIQグラフ情報です。
@@ -189,6 +190,7 @@ public sealed class CoreExecutionStatusBoard
     private int _iqWrite;
     private ModulationScheme _iqModulationScheme = ModulationScheme.Bpsk;
     private int _iqActiveSubcarrierCount;
+    private int _iqLeftPointCount;
     private CoreFftSample[] _fftLeftBins;
     private CoreFftSample[] _fftRightBins;
     private int _fftLeftCount;
@@ -239,6 +241,7 @@ public sealed class CoreExecutionStatusBoard
             _iqWrite = 0;
             _iqModulationScheme = ModulationScheme.Bpsk;
             _iqActiveSubcarrierCount = 0;
+            _iqLeftPointCount = 0;
             _fftLeftCount = 0;
             _fftRightCount = 0;
             _fftIsStereo = false;
@@ -262,6 +265,7 @@ public sealed class CoreExecutionStatusBoard
             _iqWrite = 0;
             _iqModulationScheme = ModulationScheme.Bpsk;
             _iqActiveSubcarrierCount = 0;
+            _iqLeftPointCount = 0;
             _fftLeftCount = 0;
             _fftRightCount = 0;
             _fftIsStereo = false;
@@ -495,7 +499,20 @@ public sealed class CoreExecutionStatusBoard
             _iqCount = 0;
             _iqWrite = 0;
             _iqActiveSubcarrierCount = Math.Max(0, activeSubcarriers);
+            _iqLeftPointCount = 0;
             _iqModulationScheme = modulationScheme;
+        }
+    }
+
+    /// <summary>
+    /// IQ リング先頭の左チャネル点数を記録します（性能測定の L/R 分割用）。
+    /// </summary>
+    /// <param name="leftPointCount">左チャネルとして並べた点数。</param>
+    public void SetIqLeftPointCount(int leftPointCount)
+    {
+        lock (_sync)
+        {
+            _iqLeftPointCount = Math.Max(0, leftPointCount);
         }
     }
 
@@ -696,7 +713,11 @@ public sealed class CoreExecutionStatusBoard
         {
             var samples = ConsumeErrorRateSamplesUnlocked();
             var iqCount = _iqActiveSubcarrierCount > 0 ? _iqActiveSubcarrierCount : _iqCount;
-            var iqGraph = new CoreIqGraphInfo(CopyIqPointsUnlocked(), iqCount, _iqModulationScheme);
+            var iqGraph = new CoreIqGraphInfo(
+                CopyIqPointsUnlocked(),
+                iqCount,
+                _iqModulationScheme,
+                _iqLeftPointCount);
             var fftGraph = new CoreFftGraphInfo(
                 CopyFftPointsUnlocked(false),
                 CopyFftPointsUnlocked(true),

@@ -138,6 +138,7 @@ public sealed partial class FileWavCodec
         };
         var mod = baseModulation switch
         {
+            ModulationScheme.Qam256 => ModulationScheme.Qam64,
             ModulationScheme.Qam64 => ModulationScheme.Qam16,
             ModulationScheme.Qam16 => ModulationScheme.Qpsk,
             ModulationScheme.Qpsk or ModulationScheme.Bpsk => ModulationScheme.Bpsk,
@@ -952,12 +953,9 @@ public sealed partial class FileWavCodec
 
         statusBoard.SetFftStereoMode(stereo);
         var start = endExclusive - ReceiveVizFftSize;
-        for (var i = 0; i < ReceiveVizFftSize; i++)
-        {
-            windowScratch[i] = new Complex(leftSamples[start + i].Real, 0.0);
-        }
-
-        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(windowScratch, fftScratch);
+        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(
+            leftSamples.AsSpan(start, ReceiveVizFftSize),
+            fftScratch);
         statusBoard.SetFftFrame(fftScratch, isRightChannel: false, sampleRate: sampleRate);
 
         if (!stereo)
@@ -970,12 +968,9 @@ public sealed partial class FileWavCodec
             return;
         }
 
-        for (var i = 0; i < ReceiveVizFftSize; i++)
-        {
-            windowScratch[i] = new Complex(rightSamples[start + i].Real, 0.0);
-        }
-
-        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(windowScratch, fftScratch);
+        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(
+            rightSamples.AsSpan(start, ReceiveVizFftSize),
+            fftScratch);
         statusBoard.SetFftFrame(fftScratch, isRightChannel: true, sampleRate: sampleRate);
     }
 
@@ -1352,6 +1347,8 @@ public sealed partial class FileWavCodec
             ModulationScheme.Qpsk => ConvolutionalCode.PunctureRate.Rate1_2,
             ModulationScheme.Qam16 => ConvolutionalCode.PunctureRate.Rate2_3,
             ModulationScheme.Qam64 => ConvolutionalCode.PunctureRate.Rate3_4,
+            // 256QAM は性能測定向け。ファイル符号化で使う場合は 64QAM と同様のパンクチャを適用する。
+            ModulationScheme.Qam256 => ConvolutionalCode.PunctureRate.Rate3_4,
             _ => throw new ArgumentOutOfRangeException(nameof(modulationScheme), modulationScheme, "Unsupported modulation scheme for puncture rate.")
         };
     }
@@ -1379,6 +1376,7 @@ public sealed partial class FileWavCodec
             2 => ModulationScheme.Qpsk,
             3 => ModulationScheme.Qam16,
             4 => ModulationScheme.Qam64,
+            5 => ModulationScheme.Qam256,
             _ => throw new InvalidDataException($"Invalid block header modulation mode: {blockHeader[9]}.")
         };
         return (subcarriers, modulation);

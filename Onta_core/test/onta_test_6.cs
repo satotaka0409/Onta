@@ -170,7 +170,9 @@ public sealed class OntaTest6
                  {
                      (16, OfdmCarrierGrid.Sc8Family),
                      (40, OfdmCarrierGrid.Sc24Family),
-                     (48, OfdmCarrierGrid.Sc24Family)
+                     (48, OfdmCarrierGrid.Sc24Family),
+                     (56, OfdmCarrierGrid.Sc24Family),
+                     (64, OfdmCarrierGrid.Sc24Family)
                  })
         {
             var config = new OfdmConfig(

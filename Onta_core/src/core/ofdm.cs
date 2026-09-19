@@ -31,7 +31,12 @@ public enum ModulationScheme : byte
     /// <summary>
     /// 64QAM（6 bit/symbol）。
     /// </summary>
-    Qam64 = 4
+    Qam64 = 4,
+
+    /// <summary>
+    /// 256QAM（8 bit/symbol）。性能測定時のみ使用。
+    /// </summary>
+    Qam256 = 5
 }
 
 /// <summary>
@@ -71,7 +76,7 @@ public sealed record OfdmConfig
     public int FftSize { get; }
 
     /// <summary>
-    /// 有効サブキャリア数（8/16/24/32/40/48）。
+    /// 有効サブキャリア数（8/16/24/32/40/48。性能測定のみ 56/64）。
     /// </summary>
     public int ActiveSubcarriers { get; }
 
@@ -172,10 +177,10 @@ public sealed record OfdmConfig
             throw new ArgumentException("FFT size must be a power of two and > 0.");
         }
 
-        if (ActiveSubcarriers is not (8 or 16 or 24 or 32 or 40 or 48))
+        if (!IsSupportedActiveSubcarriers(ActiveSubcarriers))
         {
             throw new ArgumentException(
-            "Active subcarriers must be 8, 16, 24, 32, 40, or 48 (modulation.mdc).",
+            "Active subcarriers must be 8, 16, 24, 32, 40, 48, 56, or 64 (56/64 are performance-measurement only).",
                 nameof(activeSubcarriers));
         }
 
@@ -199,9 +204,12 @@ public sealed record OfdmConfig
         if (modulationScheme is not ModulationScheme.Bpsk
             and not ModulationScheme.Qpsk
             and not ModulationScheme.Qam16
-            and not ModulationScheme.Qam64)
+            and not ModulationScheme.Qam64
+            and not ModulationScheme.Qam256)
         {
-            throw new ArgumentException("Modulation scheme must be BPSK, QPSK, 16QAM, or 64QAM.", nameof(modulationScheme));
+            throw new ArgumentException(
+                "Modulation scheme must be BPSK, QPSK, 16QAM, 64QAM, or 256QAM.",
+                nameof(modulationScheme));
         }
 
         if (channelMode is not ChannelMode.Mono and not ChannelMode.Stereo)
@@ -292,6 +300,18 @@ public sealed record OfdmConfig
     public static int[] ResolveGroupFLeftBins() => CopyBins(GroupFLeftBins);
 
     /// <summary>
+    /// Group G の左チャネルキャリア番号を返します（性能測定 SC-56/64）。
+    /// </summary>
+    /// <returns>Group G のキャリア番号配列。</returns>
+    public static int[] ResolveGroupGLeftBins() => CopyBins(GroupGLeftBins);
+
+    /// <summary>
+    /// Group H の左チャネルキャリア番号を返します（性能測定 SC-64）。
+    /// </summary>
+    /// <returns>Group H のキャリア番号配列。</returns>
+    public static int[] ResolveGroupHLeftBins() => CopyBins(GroupHLeftBins);
+
+    /// <summary>
     /// サブキャリア数に応じた概念左キャリア番号列を返します。
     /// </summary>
     /// <param name="activeSubcarriers">有効サブキャリア数。</param>
@@ -305,10 +325,12 @@ public sealed record OfdmConfig
             32 => CopyBins(ConceptualLeftBins32),
             40 => CopyBins(ConceptualLeftBins40),
             48 => CopyBins(ConceptualLeftBins48),
+            56 => CopyBins(ConceptualLeftBins56),
+            64 => CopyBins(ConceptualLeftBins64),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(activeSubcarriers),
                 activeSubcarriers,
-                "Active subcarriers must be 8, 16, 24, 32, 40, or 48.")
+                "Active subcarriers must be 8, 16, 24, 32, 40, 48, 56, or 64.")
         };
 
     private static readonly int[] GroupALeftBins = CreateRange(1, 8);
@@ -317,11 +339,15 @@ public sealed record OfdmConfig
     private static readonly int[] GroupDLeftBins = CreateRange(25, 8);
     private static readonly int[] GroupELeftBins = CreateRange(33, 8);
     private static readonly int[] GroupFLeftBins = CreateRange(41, 8);
+    private static readonly int[] GroupGLeftBins = CreateRange(49, 8);
+    private static readonly int[] GroupHLeftBins = CreateRange(57, 8);
     private static readonly int[] ConceptualLeftBins16 = ConcatBins(GroupALeftBins, GroupBLeftBins);
     private static readonly int[] ConceptualLeftBins24 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins);
     private static readonly int[] ConceptualLeftBins32 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins);
     private static readonly int[] ConceptualLeftBins40 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins);
     private static readonly int[] ConceptualLeftBins48 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins, GroupFLeftBins);
+    private static readonly int[] ConceptualLeftBins56 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins, GroupFLeftBins, GroupGLeftBins);
+    private static readonly int[] ConceptualLeftBins64 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins, GroupFLeftBins, GroupGLeftBins, GroupHLeftBins);
 
     private static int[] CreateRange(int start, int count)
     {
@@ -372,7 +398,7 @@ public sealed record OfdmConfig
     /// <summary>全 SC 共通の搬送波間隔（Hz）。</summary>
     public const double CarrierSpacingHz = 223.9;
 
-    /// <summary>SC-24/32/40/48 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
+    /// <summary>SC-24/32/40/48/56/64 系列のキャリア間隔（Hz）を返します（共通間隔）。</summary>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア間隔（Hz）。</returns>
     public static double DeltaF24(int sampleRate = 44100) => CarrierSpacingHz;
@@ -385,7 +411,7 @@ public sealed record OfdmConfig
     /// <summary>SC-8/16 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
     public const double Sc8StartHz = 650.0;
 
-    /// <summary>SC-24/32/40/48 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
+    /// <summary>SC-24/32/40/48/56/64 系列の下限周波数（GROUP A CH0 の L、Hz）。</summary>
     public const double Sc24StartHz = 550.0;
 
     /// <summary>SC-8/16 系列の左チャネルキャリア周波数を返します。</summary>
@@ -402,15 +428,15 @@ public sealed record OfdmConfig
     public static double RightCarrierHzSc8(int zeroBasedChannelIndex, int sampleRate = 44100) =>
         LeftCarrierHzSc8(zeroBasedChannelIndex, sampleRate) + (CarrierSpacingHz / 2.0);
 
-    /// <summary>SC-24/32/40/48 系列の左チャネルキャリア周波数を返します。</summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..48）。</param>
+    /// <summary>SC-24/32/40/48/56/64 系列の左チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..64）。</param>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
     public static double LeftCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
         Sc24StartHz + (conceptualLeftBin - 1) * CarrierSpacingHz;
 
-    /// <summary>SC-24/32/40/48 系列の右チャネルキャリア周波数を返します。</summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..48）。</param>
+    /// <summary>SC-24/32/40/48/56/64 系列の右チャネルキャリア周波数を返します。</summary>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..64）。</param>
     /// <param name="sampleRate">サンプルレート（Hz）。互換のため残置。未使用。</param>
     /// <returns>キャリア周波数（Hz）。</returns>
     public static double RightCarrierHzSc24(int conceptualLeftBin, int sampleRate = 44100) =>
@@ -428,6 +454,14 @@ public sealed record OfdmConfig
     }
 
     /// <summary>
+    /// ファイル送受信または性能測定で使えるサブキャリア数か判定します。
+    /// </summary>
+    /// <param name="activeSubcarriers">有効サブキャリア数。</param>
+    /// <returns>8/16/24/32/40/48/56/64 なら true。</returns>
+    public static bool IsSupportedActiveSubcarriers(int activeSubcarriers) =>
+        activeSubcarriers is 8 or 16 or 24 or 32 or 40 or 48 or 56 or 64;
+
+    /// <summary>
     /// サブキャリア数からキャリアグリッド種別を解決します。
     /// </summary>
     /// <param name="activeSubcarriers">有効サブキャリア数。</param>
@@ -436,9 +470,9 @@ public sealed record OfdmConfig
         activeSubcarriers is 8 or 16 ? OfdmCarrierGrid.Sc8Family : OfdmCarrierGrid.Sc24Family;
 
     /// <summary>
-    /// 概念左キャリア番号からサブキャリアグループ ID（0=A..5=F）を返します。
+    /// 概念左キャリア番号からサブキャリアグループ ID（0=A..7=H）を返します。
     /// </summary>
-    /// <param name="conceptualLeftBin">概念左キャリア番号（1..48）。</param>
+    /// <param name="conceptualLeftBin">概念左キャリア番号（1..64）。</param>
     /// <returns>グループ ID。</returns>
     public static byte ResolveSubcarrierGroupId(int conceptualLeftBin) =>
         conceptualLeftBin switch
@@ -449,10 +483,12 @@ public sealed record OfdmConfig
             >= 25 and <= 32 => 3,
             >= 33 and <= 40 => 4,
             >= 41 and <= 48 => 5,
+            >= 49 and <= 56 => 6,
+            >= 57 and <= 64 => 7,
             _ => throw new ArgumentOutOfRangeException(
                 nameof(conceptualLeftBin),
                 conceptualLeftBin,
-                "Conceptual left bin must be in range 1..48.")
+                "Conceptual left bin must be in range 1..64.")
         };
 
     /// <summary>
@@ -505,6 +541,7 @@ public sealed partial class OfdmGenerator
     private int _randomBitCount;
     private static readonly int[] Qam16Levels = [-3, -1, 1, 3];
     private static readonly int[] Qam64Levels = [-7, -5, -3, -1, 1, 3, 5, 7];
+    private static readonly int[] Qam256Levels = [-15, -13, -11, -9, -7, -5, -3, -1, 1, 3, 5, 7, 9, 11, 13, 15];
     private static readonly double[] Qam16PamByBinary = BuildPamByBinary(2, Qam16Levels);
     private static readonly double[] Qam64PamByBinary = BuildPamByBinary(3, Qam64Levels);
     private static readonly Complex PilotSymbol = Complex.One;
@@ -706,6 +743,7 @@ public sealed partial class OfdmGenerator
 
         return configuredScheme switch
         {
+            ModulationScheme.Qam256 => ModulationScheme.Qam64,
             ModulationScheme.Qam64 => ModulationScheme.Qam16,
             ModulationScheme.Qam16 => ModulationScheme.Qpsk,
             ModulationScheme.Qpsk => ModulationScheme.Bpsk,
@@ -721,6 +759,7 @@ public sealed partial class OfdmGenerator
         ModulationScheme.Qpsk => 2,
         ModulationScheme.Qam16 => 4,
         ModulationScheme.Qam64 => 6,
+        ModulationScheme.Qam256 => 8,
         _ => throw new InvalidOperationException("Unsupported modulation scheme.")
     };
 
@@ -834,11 +873,8 @@ public sealed partial class OfdmGenerator
         EnsureIfftScratch(freqBins.Length);
         InverseFftInto(freqBins, _ifftWorkScratch!);
         var time = new Complex[freqBins.Length];
-        for (var i = 0; i < time.Length; i++)
-        {
-            time[i] = new Complex(_ifftWorkScratch![i].Real, 0.0);
-        }
-
+        Array.Copy(_ifftWorkScratch!, time, time.Length);
+        SimdMath.ZeroImagInPlace(time);
         return time;
     }
 
@@ -848,11 +884,7 @@ public sealed partial class OfdmGenerator
         EnsureIfftScratch(freqBins.Length);
         InverseFftInto(freqBins, _ifftWorkScratch!);
         var time = _ifftWorkScratch!;
-        for (var i = 0; i < time.Length; i++)
-        {
-            time[i] = new Complex(time[i].Real, 0.0);
-        }
-
+        SimdMath.ZeroImagInPlace(time);
         CopyWithCyclicPrefix(time, _config.CyclicPrefixLength, destinationWithCp);
     }
 
@@ -865,6 +897,7 @@ public sealed partial class OfdmGenerator
         ModulationScheme.Qpsk => 2,
         ModulationScheme.Qam16 => 4,
         ModulationScheme.Qam64 => 6,
+        ModulationScheme.Qam256 => 8,
         _ => throw new InvalidOperationException("Unsupported modulation scheme.")
     };
 
@@ -1051,11 +1084,7 @@ public sealed partial class OfdmGenerator
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
         var idealReals = new double[analysisSampleCount];
-        for (var i = 0; i < analysisSampleCount; i++)
-        {
-            idealReals[i] = ideal[i].Real;
-        }
-
+        SimdMath.CopyComplexReals(ideal.AsSpan(0, analysisSampleCount), idealReals);
         var refCorr = BuildCorrelationReferenceReals(idealReals);
         var sumScratch = System.Buffers.ArrayPool<double>.Shared.Rent(analysisSampleCount);
         var countScratch = System.Buffers.ArrayPool<int>.Shared.Rent(analysisSampleCount);
@@ -1124,10 +1153,7 @@ public sealed partial class OfdmGenerator
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
         var idealReals = new double[analysisSampleCount];
-        for (var i = 0; i < analysisSampleCount; i++)
-        {
-            idealReals[i] = ideal[i].Real;
-        }
+        SimdMath.CopyComplexReals(ideal.AsSpan(0, analysisSampleCount), idealReals);
 
         var sampleRate = Math.Max(1, _config.SampleRate);
         var refCorr = BuildCorrelationReferenceReals(idealReals);
@@ -1630,10 +1656,7 @@ public sealed partial class OfdmGenerator
         var carrierBins = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var ideal = GenerateUnmodulatedChannel(analysisSampleCount, carrierBins);
         var idealReals = new double[analysisSampleCount];
-        for (var i = 0; i < analysisSampleCount; i++)
-        {
-            idealReals[i] = ideal[i].Real;
-        }
+        SimdMath.CopyComplexReals(ideal.AsSpan(0, analysisSampleCount), idealReals);
 
         var sampleRate = Math.Max(1, _config.SampleRate);
         var refCorr = BuildCorrelationReferenceReals(idealReals);
@@ -4363,6 +4386,10 @@ public sealed partial class OfdmGenerator
                 EmitPamAxisBits(symbol.Real * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, ref bitIndex, bits);
                 EmitPamAxisBits(symbol.Imaginary * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, ref bitIndex, bits);
                 break;
+            case ModulationScheme.Qam256:
+                EmitPamAxisBits(symbol.Real * Math.Sqrt(170.0), bitsPerAxis: 4, Qam256Levels, ref bitIndex, bits);
+                EmitPamAxisBits(symbol.Imaginary * Math.Sqrt(170.0), bitsPerAxis: 4, Qam256Levels, ref bitIndex, bits);
+                break;
             default:
                 throw new NotSupportedException("Demodulation for this scheme is not implemented yet.");
         }
@@ -4392,6 +4419,10 @@ public sealed partial class OfdmGenerator
             case ModulationScheme.Qam64:
                 EmitPamAxisSoftLlrsCore(symbol.Real * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, invVar, ref bitIndex, llrs);
                 EmitPamAxisSoftLlrsCore(symbol.Imaginary * Math.Sqrt(42.0), bitsPerAxis: 3, Qam64Levels, invVar, ref bitIndex, llrs);
+                break;
+            case ModulationScheme.Qam256:
+                EmitPamAxisSoftLlrsCore(symbol.Real * Math.Sqrt(170.0), bitsPerAxis: 4, Qam256Levels, invVar, ref bitIndex, llrs);
+                EmitPamAxisSoftLlrsCore(symbol.Imaginary * Math.Sqrt(170.0), bitsPerAxis: 4, Qam256Levels, invVar, ref bitIndex, llrs);
                 break;
             default:
                 throw new NotSupportedException("Soft demodulation for this scheme is not implemented yet.");
@@ -4776,16 +4807,31 @@ public sealed partial class OfdmGenerator
             throw new ArgumentException("PCM window is shorter than FFT size.", nameof(timePcm));
         }
 
-        var n = destination.Length;
-        var offset = timePcm.Length - n;
-        // Hann 窓（コヒーレントゲイン 0.5 を打ち消すため 2 倍）
-        var denom = Math.Max(1, n - 1);
-        for (var i = 0; i < n; i++)
+        // Hann 窓（1-cos = 標準 Hann の 2 倍。コヒーレントゲイン 0.5 を打ち消す）
+        ApplyHannWindowFromRealPcm(timePcm, destination);
+        FftInPlace(destination);
+    }
+
+    /// <summary>
+    /// 実数 PCM から矩形窓のフォワード FFT を計算します（I-Q コンスタレーション用）。
+    /// </summary>
+    /// <param name="timePcm">実数 PCM（Imag=0）。末尾 <paramref name="destination"/> 長を使います。</param>
+    /// <param name="destination">FFT 出力（破壊的）。</param>
+    public static void ComputeRectangularForwardFftFromRealPcm(
+        ReadOnlySpan<Complex> timePcm,
+        Complex[] destination)
+    {
+        if (destination.Length == 0)
         {
-            var hann = 1.0 - Math.Cos(2.0 * Math.PI * i / denom);
-            destination[i] = new Complex(timePcm[offset + i].Real * hann, 0.0);
+            throw new ArgumentException("Destination is empty.", nameof(destination));
         }
 
+        if (timePcm.Length < destination.Length)
+        {
+            throw new ArgumentException("PCM window is shorter than FFT size.", nameof(timePcm));
+        }
+
+        CopyRealPcmToFftInput(timePcm, destination);
         FftInPlace(destination);
     }
 
@@ -4833,6 +4879,7 @@ public sealed partial class OfdmGenerator
             ModulationScheme.Qpsk => ConsumeQpskSymbol(ref bitIndex, bits),
             ModulationScheme.Qam16 => ConsumeQam16Symbol(ref bitIndex, bits),
             ModulationScheme.Qam64 => ConsumeQam64Symbol(ref bitIndex, bits),
+            ModulationScheme.Qam256 => ConsumeQam256Symbol(ref bitIndex, bits),
             _ => throw new InvalidOperationException("Unsupported modulation scheme.")
         };
     }
@@ -4898,6 +4945,14 @@ public sealed partial class OfdmGenerator
         var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 3), bitsPerAxis: 3, Qam64Levels);
         var imag = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 3), bitsPerAxis: 3, Qam64Levels);
         return new Complex(real, imag) / Math.Sqrt(42.0);
+    }
+
+    /// <returns>処理結果。</returns>
+    private static Complex ConsumeQam256Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
+    {
+        var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 4), bitsPerAxis: 4, Qam256Levels);
+        var imag = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 4), bitsPerAxis: 4, Qam256Levels);
+        return new Complex(real, imag) / Math.Sqrt(170.0);
     }
 
     /// <returns>処理結果。</returns>
@@ -4978,6 +5033,7 @@ public sealed partial class OfdmGenerator
             ModulationScheme.Qpsk => GenerateQpskSymbol(),
             ModulationScheme.Qam16 => GenerateQam16Symbol(),
             ModulationScheme.Qam64 => GenerateQam64Symbol(),
+            ModulationScheme.Qam256 => GenerateQam256Symbol(),
             _ => throw new InvalidOperationException("Unsupported modulation scheme.")
         };
     }
@@ -5014,6 +5070,14 @@ public sealed partial class OfdmGenerator
         var real = GenerateGrayMappedPamLevel(bitsPerAxis: 3, Qam64Levels);
         var imag = GenerateGrayMappedPamLevel(bitsPerAxis: 3, Qam64Levels);
         return new Complex(real, imag) / Math.Sqrt(42.0);
+    }
+
+    /// <returns>処理結果。</returns>
+    private Complex GenerateQam256Symbol()
+    {
+        var real = GenerateGrayMappedPamLevel(bitsPerAxis: 4, Qam256Levels);
+        var imag = GenerateGrayMappedPamLevel(bitsPerAxis: 4, Qam256Levels);
+        return new Complex(real, imag) / Math.Sqrt(170.0);
     }
 
     /// <returns>処理結果。</returns>

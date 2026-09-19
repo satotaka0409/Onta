@@ -1,0 +1,547 @@
+using System.Numerics;
+using Onta.Core;
+using Onta.View.Core;
+
+namespace Onta.View.Performance;
+
+/// <summary>
+/// 性能測定の受信（キャプチャ / WAV → FFT / IQ / ワウ）を実行します。
+/// </summary>
+internal sealed class PerformanceRxWorker : IDisposable
+{
+    /// <summary>表示用解析 FFT 長（OFDM 合成 FFT=256 とは別）。</summary>
+    private const int FftSize = PerformanceConstants.VizFftSize;
+    private const int RingCapacity = PerformanceConstants.ScopeCaptureSamples;
+
+    private readonly object _sync = new();
+    private readonly CoreExecutionStatusBoard _status = new();
+    private readonly double[] _leftRing = new double[RingCapacity];
+    private readonly double[] _rightRing = new double[RingCapacity];
+    private readonly Complex[] _fftWork = new Complex[FftSize];
+    private readonly Complex[] _window = new Complex[FftSize];
+    private readonly Complex[] _iqScratch = new Complex[128];
+    private readonly byte[] _iqGroups = new byte[128];
+    private readonly double[] _iqPcmScratch = new double[PerformanceIqExtractor.CaptureSamples];
+    private readonly Complex[] _iqTimeScratch = new Complex[PerformanceIqExtractor.FftSize];
+    private readonly Complex[] _iqFftScratch = new Complex[PerformanceIqExtractor.FftSize];
+
+    private RealtimePcmCapture? _capture;
+    private CancellationTokenSource? _wavCts;
+    private Task? _wavTask;
+    private PerformanceRxSettings _settings;
+    private long _writeTotal;
+    private long _lastPublishMs = -1;
+    private double _wowLeftEma;
+    private double _wowRightEma;
+    private double _wowLeftRefHz;
+    private double _wowRightRefHz;
+    private bool _disposed;
+    private bool _running;
+
+    /// <summary>
+    /// 受信可視化の共有状態です。
+    /// </summary>
+    public CoreExecutionStatusBoard SharedStatus => _status;
+
+    /// <summary>
+    /// 受信中かどうかです。
+    /// </summary>
+    public bool IsBusy
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _running;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 受信を開始します。
+    /// </summary>
+    public bool TryStart(PerformanceRxSettings settings)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        lock (_sync)
+        {
+            if (_running)
+            {
+                return false;
+            }
+
+            StopLocked();
+            _settings = settings;
+            _writeTotal = 0;
+            _lastPublishMs = -1;
+            _wowLeftEma = 0;
+            _wowRightEma = 0;
+            _wowLeftRefHz = 0;
+            _wowRightRefHz = 0;
+            Array.Clear(_leftRing);
+            Array.Clear(_rightRing);
+            _status.BeginRun("性能測定受信");
+            _status.SetAnalyzing(false);
+            _status.SetWowFlutterPercent(0, 0);
+
+            if (settings.UseWavInput)
+            {
+                if (string.IsNullOrWhiteSpace(settings.WavPath) || !File.Exists(settings.WavPath))
+                {
+                    _status.Complete(faulted: true, "WAV ファイルを指定してください。");
+                    return false;
+                }
+
+                var cts = new CancellationTokenSource();
+                _wavCts = cts;
+                _running = true;
+                _wavTask = Task.Run(() => RunWavAnalysis(settings.WavPath, cts.Token));
+                return true;
+            }
+
+            var capture = new RealtimePcmCapture();
+            capture.SamplesAvailable += OnSamplesAvailable;
+            capture.CaptureFailed += OnCaptureFailed;
+            try
+            {
+                capture.Start(
+                    settings.InputDeviceNumber,
+                    settings.ChannelMode,
+                    PerformanceSignalGenerator.SampleRate,
+                    settings.InputGain);
+            }
+            catch (Exception ex)
+            {
+                capture.Dispose();
+                _status.Complete(faulted: true, ex.Message);
+                return false;
+            }
+
+            _capture = capture;
+            _running = true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 受信を停止します。
+    /// </summary>
+    public void RequestStop()
+    {
+        lock (_sync)
+        {
+            if (!_running)
+            {
+                return;
+            }
+
+            StopLocked();
+            _status.Complete(faulted: false);
+        }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        lock (_sync)
+        {
+            StopLocked();
+        }
+    }
+
+    private void StopLocked()
+    {
+        var capture = _capture;
+        _capture = null;
+        var cts = _wavCts;
+        _wavCts = null;
+        var wavTask = _wavTask;
+        _wavTask = null;
+        _running = false;
+
+        if (capture is not null)
+        {
+            capture.SamplesAvailable -= OnSamplesAvailable;
+            capture.CaptureFailed -= OnCaptureFailed;
+            capture.Dispose();
+        }
+
+        if (cts is not null)
+        {
+            try
+            {
+                cts.Cancel();
+            }
+            catch
+            {
+                // ignore
+            }
+
+            cts.Dispose();
+        }
+
+        // WAV タスクはロック外で待つ（デッドロック回避）
+        if (wavTask is not null)
+        {
+            Monitor.Exit(_sync);
+            try
+            {
+                wavTask.Wait(TimeSpan.FromSeconds(2));
+            }
+            catch
+            {
+                // ignore
+            }
+            finally
+            {
+                Monitor.Enter(_sync);
+            }
+        }
+    }
+
+    /// <summary>
+    /// WAV をチャンク読みして可視化へ流します（ほぼリアルタイム速度）。
+    /// </summary>
+    private void RunWavAnalysis(string wavPath, CancellationToken token)
+    {
+        try
+        {
+            using var reader = WavPcmStreamReader.Open(wavPath);
+            var chunkFrames = Math.Max(1, reader.SampleRate / 20); // 50ms
+            var gain = Math.Clamp(_settings.InputGain, 0.0, 1.0);
+
+            while (!token.IsCancellationRequested && reader.TryRead(chunkFrames, out var left, out var right))
+            {
+                if (gain is > 0.0 and < 1.0)
+                {
+                    ScaleInPlace(left, gain);
+                    if (right.Length > 0)
+                    {
+                        ScaleInPlace(right, gain);
+                    }
+                }
+
+                OnSamplesAvailable(left, right);
+                // 可視化が追従できるよう、チャンク長に近い待ちを入れる
+                var sleepMs = (int)Math.Round(1000.0 * left.Length / Math.Max(1, reader.SampleRate));
+                if (sleepMs > 0)
+                {
+                    token.WaitHandle.WaitOne(sleepMs);
+                }
+            }
+
+            lock (_sync)
+            {
+                if (_running && !token.IsCancellationRequested)
+                {
+                    // 自タスク待機を避けるため StopLocked は呼ばない
+                    _wavCts = null;
+                    _wavTask = null;
+                    _running = false;
+                    _status.Complete(faulted: false);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // stop
+        }
+        catch (Exception ex)
+        {
+            lock (_sync)
+            {
+                _wavCts = null;
+                _wavTask = null;
+                _running = false;
+                _status.Complete(faulted: true, ex.Message);
+            }
+        }
+    }
+
+    private static void ScaleInPlace(Complex[] samples, double gain)
+    {
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = new Complex(samples[i].Real * gain, 0.0);
+        }
+    }
+
+    private void OnCaptureFailed(string message)
+    {
+        lock (_sync)
+        {
+            StopLocked();
+            _status.Complete(faulted: true, message);
+        }
+    }
+
+    private void OnSamplesAvailable(Complex[] left, Complex[] right)
+    {
+        if (left.Length == 0)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (!_running)
+            {
+                return;
+            }
+
+            for (var i = 0; i < left.Length; i++)
+            {
+                var idx = (int)(_writeTotal % RingCapacity);
+                _leftRing[idx] = left[i].Real;
+                if (_settings.ChannelMode == ChannelMode.Stereo && right.Length > i)
+                {
+                    _rightRing[idx] = right[i].Real;
+                }
+                else
+                {
+                    _rightRing[idx] = left[i].Real;
+                }
+
+                _writeTotal++;
+            }
+
+            var now = Environment.TickCount64;
+            if (_lastPublishMs >= 0 && now - _lastPublishMs < 80)
+            {
+                return;
+            }
+
+            if (_writeTotal < FftSize)
+            {
+                return;
+            }
+
+            PublishAnalysisUnlocked();
+            _lastPublishMs = now;
+        }
+    }
+
+    private void PublishAnalysisUnlocked()
+    {
+        FillWindow(_leftRing, _window);
+        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_window, _fftWork);
+        _status.SetFftStereoMode(_settings.ChannelMode == ChannelMode.Stereo);
+        _status.SetFftFrame(_fftWork, isRightChannel: false, PerformanceSignalGenerator.SampleRate);
+
+        var leftPeakHz = FindPeakFrequencyHz(_fftWork, PerformanceSignalGenerator.SampleRate);
+        var leftCandidates = PerformanceWowReference.ResolveCandidates(
+            _settings.SignalMode,
+            _settings.ActiveSubcarriers,
+            useRightCarriers: false);
+        _wowLeftEma = UpdateWowEma(_wowLeftEma, leftPeakHz, leftCandidates, ref _wowLeftRefHz);
+
+        FillWindow(_rightRing, _window);
+        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_window, _fftWork);
+        if (_settings.ChannelMode == ChannelMode.Stereo)
+        {
+            _status.SetFftFrame(_fftWork, isRightChannel: true, PerformanceSignalGenerator.SampleRate);
+            var rightPeakHz = FindPeakFrequencyHz(_fftWork, PerformanceSignalGenerator.SampleRate);
+            var rightCandidates = PerformanceWowReference.ResolveCandidates(
+                _settings.SignalMode,
+                _settings.ActiveSubcarriers,
+                useRightCarriers: true);
+            _wowRightEma = UpdateWowEma(_wowRightEma, rightPeakHz, rightCandidates, ref _wowRightRefHz);
+        }
+        else
+        {
+            _wowRightEma = _wowLeftEma;
+            _wowRightRefHz = _wowLeftRefHz;
+        }
+
+        _status.SetWowFlutterPercent(_wowLeftEma, _wowRightEma);
+
+        if (_settings.CaptureConstellation)
+        {
+            PublishIqFromCarriersUnlocked();
+        }
+    }
+
+    private void PublishIqFromCarriersUnlocked()
+    {
+        var sc = PerformanceSignalGenerator.ClampSubcarriers(_settings.ActiveSubcarriers);
+        var mod = PerformanceSignalGenerator.ClampModulation(_settings.ModulationScheme);
+        if (!CopyRingTail(_leftRing, _iqPcmScratch, out var pcmCount) || pcmCount < PerformanceIqExtractor.FftSize)
+        {
+            return;
+        }
+
+        var leftCount = PerformanceIqExtractor.ExtractEqualized(
+            _iqPcmScratch.AsSpan(0, pcmCount),
+            sc,
+            useRightCarriers: false,
+            _iqTimeScratch,
+            _iqFftScratch,
+            _iqScratch.AsSpan(),
+            _iqGroups.AsSpan());
+        var count = leftCount;
+
+        if (_settings.ChannelMode == ChannelMode.Stereo
+            && CopyRingTail(_rightRing, _iqPcmScratch, out pcmCount)
+            && pcmCount >= PerformanceIqExtractor.FftSize)
+        {
+            var rightCount = PerformanceIqExtractor.ExtractEqualized(
+                _iqPcmScratch.AsSpan(0, pcmCount),
+                sc,
+                useRightCarriers: true,
+                _iqTimeScratch,
+                _iqFftScratch,
+                _iqScratch.AsSpan(leftCount),
+                _iqGroups.AsSpan(leftCount));
+            count = leftCount + rightCount;
+        }
+
+        if (count <= 0)
+        {
+            return;
+        }
+
+        _status.BeginIqCapture(sc, mod);
+        _status.AppendIqFrame(_iqScratch.AsSpan(0, count), _iqGroups.AsSpan(0, count));
+        _status.SetIqLeftPointCount(leftCount);
+    }
+
+    /// <summary>
+    /// リング末尾を線形バッファへコピーします。
+    /// </summary>
+    private bool CopyRingTail(double[] ring, double[] dest, out int count)
+    {
+        count = 0;
+        var n = Math.Min(dest.Length, (int)Math.Min(_writeTotal, ring.Length));
+        if (n <= 0)
+        {
+            return false;
+        }
+
+        var start = _writeTotal - n;
+        for (var i = 0; i < n; i++)
+        {
+            var idx = (int)((start + i) % ring.Length);
+            if (idx < 0)
+            {
+                idx += ring.Length;
+            }
+
+            dest[i] = ring[idx];
+        }
+
+        count = n;
+        return true;
+    }
+
+    private void FillWindow(double[] ring, Complex[] destination)
+    {
+        var start = _writeTotal - FftSize;
+        for (var i = 0; i < FftSize; i++)
+        {
+            var idx = (int)((start + i) % RingCapacity);
+            if (idx < 0)
+            {
+                idx += RingCapacity;
+            }
+
+            destination[i] = new Complex(ring[idx], 0.0);
+        }
+    }
+
+    /// <summary>
+    /// 直近の PCM 窓をオシロスコープ用にコピーします。
+    /// </summary>
+    /// <param name="left">左チャネル出力。</param>
+    /// <param name="right">右チャネル出力。</param>
+    /// <param name="count">有効サンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <returns>十分なサンプルがあれば true。</returns>
+    public bool TryCopyLatestPcm(double[] left, double[] right, out int count, out int sampleRate)
+    {
+        count = 0;
+        sampleRate = PerformanceSignalGenerator.SampleRate;
+        ArgumentNullException.ThrowIfNull(left);
+        ArgumentNullException.ThrowIfNull(right);
+
+        lock (_sync)
+        {
+            if (!_running || _writeTotal < OscilloscopeTrigger.MinDisplaySamples)
+            {
+                return false;
+            }
+
+            var n = Math.Min(RingCapacity, Math.Min(left.Length, right.Length));
+            n = (int)Math.Min(n, _writeTotal);
+            var start = _writeTotal - n;
+            for (var i = 0; i < n; i++)
+            {
+                var idx = (int)((start + i) % RingCapacity);
+                if (idx < 0)
+                {
+                    idx += RingCapacity;
+                }
+
+                left[i] = _leftRing[idx];
+                right[i] = _rightRing[idx];
+            }
+
+            count = n;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 振幅ピークビンを放物線補間して周波数（Hz）を返します。
+    /// </summary>
+    private static double FindPeakFrequencyHz(Complex[] bins, int sampleRate)
+    {
+        var half = bins.Length / 2;
+        var bestMag = -1.0;
+        var bestBin = 1;
+        var last = half - 1;
+        for (var bin = 1; bin < last; bin++)
+        {
+            var mag = bins[bin].Magnitude;
+            if (mag > bestMag)
+            {
+                bestMag = mag;
+                bestBin = bin;
+            }
+        }
+
+        if (bestMag < 1e-9)
+        {
+            return 0;
+        }
+
+        var leftMag = bins[bestBin - 1].Magnitude;
+        var rightMag = bins[bestBin + 1].Magnitude;
+        var delta = PerformanceWowReference.InterpolatePeakOffset(leftMag, bestMag, rightMag);
+        return (bestBin + delta) * (sampleRate / (double)bins.Length);
+    }
+
+    /// <summary>
+    /// 送信側周波数へロックしたワウ（%）を指数平均します。
+    /// </summary>
+    private static double UpdateWowEma(
+        double current,
+        double measuredHz,
+        ReadOnlySpan<double> candidates,
+        ref double lockedRefHz)
+    {
+        if (!PerformanceWowReference.TryLock(measuredHz, candidates, ref lockedRefHz))
+        {
+            return current;
+        }
+
+        var percent = PerformanceWowReference.ToWowPercent(measuredHz, lockedRefHz);
+        const double alpha = 0.25;
+        return (current * (1.0 - alpha)) + (percent * alpha);
+    }
+}

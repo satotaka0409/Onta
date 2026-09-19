@@ -1,0 +1,72 @@
+using Onta.Core;
+
+namespace Onta.View.Performance;
+
+/// <summary>
+/// 性能測定画面の定数です。OFDM 本体の FFT（256）とは分離します。
+/// </summary>
+internal static class PerformanceConstants
+{
+    /// <summary>
+    /// 性能測定の表示用解析 FFT 長です（メイン処理の <c>OfdmConfig.FixedFftSize=256</c> とは別）。
+    /// </summary>
+    public const int VizFftSize = 2048;
+
+    /// <summary>性能測定の PCM サンプリング周波数（Hz）。</summary>
+    public const int SampleRate = 44100;
+
+    /// <summary>
+    /// オシロスコープ用に保持する直近 PCM 長です（約 370 ms @ 44.1 kHz）。FFT 窓以上。
+    /// </summary>
+    public const int ScopeCaptureSamples = 16384;
+}
+
+/// <summary>
+/// 性能測定の信号モードです。
+/// </summary>
+internal enum PerformanceSignalMode : byte
+{
+    /// <summary>単一正弦波。</summary>
+    Tone = 0,
+
+    /// <summary>対数スイープ（20Hz〜20kHz、高域の進行は純対数の半分）。</summary>
+    Sweep = 1,
+
+    /// <summary>OFDM 連続変調（ペイロードは乱数。ファイルは使わない）。</summary>
+    Modulated = 2
+}
+
+/// <summary>
+/// 性能測定送信の設定スナップショットです。
+/// </summary>
+internal readonly record struct PerformanceTxSettings(
+    ChannelMode ChannelMode,
+    PerformanceSignalMode SignalMode,
+    double ToneHz,
+    int ActiveSubcarriers,
+    ModulationScheme ModulationScheme,
+    double DurationSeconds,
+    bool WriteWav,
+    string WavPath,
+    bool PlayAudio,
+    int AudioDeviceNumber,
+    /// <summary>PCM 正弦波／変調の振幅（0.1〜1.0）。再生デバイス音量とは別。</summary>
+    double SignalAmplitude,
+    /// <summary>音声出力デバイスの再生音量（0〜1）。</summary>
+    double OutputVolume);
+
+/// <summary>
+/// 性能測定受信の設定スナップショットです。
+/// </summary>
+internal readonly record struct PerformanceRxSettings(
+    ChannelMode ChannelMode,
+    bool UseWavInput,
+    string WavPath,
+    int InputDeviceNumber,
+    double InputGain,
+    int ActiveSubcarriers,
+    ModulationScheme ModulationScheme,
+    /// <summary>OFDM 受信時に I-Q コンスタレーションを出すか。</summary>
+    bool CaptureConstellation,
+    /// <summary>ワウ基準の選び方（トーン一覧 / スイープは無し / OFDM キャリア）。</summary>
+    PerformanceSignalMode SignalMode);

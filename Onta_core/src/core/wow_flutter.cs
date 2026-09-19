@@ -1145,18 +1145,10 @@ public static class WowFlutterWarp
     {
         ArgumentNullException.ThrowIfNull(source);
         var real = new double[source.Length];
-        for (var i = 0; i < source.Length; i++)
-        {
-            real[i] = source[i].Real;
-        }
-
+        SimdMath.CopyComplexReals(source, real);
         var warped = ApplyOversampledLinear(real, sampleRate, amount, wowPhase, flutterPhase, oversample);
         var dst = new Complex[source.Length];
-        for (var i = 0; i < source.Length; i++)
-        {
-            dst[i] = new Complex(warped[i], 0.0);
-        }
-
+        SimdMath.WriteComplexReals(warped, dst);
         return dst;
     }
 
@@ -1180,18 +1172,10 @@ public static class WowFlutterWarp
     {
         ArgumentNullException.ThrowIfNull(warped);
         var real = new double[warped.Length];
-        for (var i = 0; i < warped.Length; i++)
-        {
-            real[i] = warped[i].Real;
-        }
-
+        SimdMath.CopyComplexReals(warped, real);
         var corrected = CorrectOversampledLinear(real, sampleRate, amount, wowPhase, flutterPhase, oversample);
         var dst = new Complex[warped.Length];
-        for (var i = 0; i < warped.Length; i++)
-        {
-            dst[i] = new Complex(corrected[i], 0.0);
-        }
-
+        SimdMath.WriteComplexReals(corrected, dst);
         return dst;
     }
 

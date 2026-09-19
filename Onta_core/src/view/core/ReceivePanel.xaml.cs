@@ -55,7 +55,10 @@ public partial class ReceivePanel : UserControl
         InitializeComponent();
         BindChart(ErrorChart, _errorChart.Series, _errorChart.XAxes, _errorChart.YAxes);
         BindChart(FftChart, _fftChart.Series, _fftChart.XAxes, _fftChart.YAxes);
+        FftChart.DrawMargin = FftChartModel.CreateDrawMarginWithFrequencyLabels();
+        FftChart.ClipToBounds = false;
         BindChart(IqChart, _iqChart.Series, _iqChart.XAxes, _iqChart.YAxes);
+        IqChart.DrawMargin = new LiveChartsCore.Measure.Margin(10, 10, 10, 10);
         BindChart(WowFlutterChart, _wowChart.Series, _wowChart.XAxes, _wowChart.YAxes);
         BuildIqGroupLegend();
         ErrorRateTabRadio.Checked += OnReceiveGraphTabChanged;
@@ -126,12 +129,12 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// I-Q グラフ横のグループ凡例（色ドット + A〜F）を構築します。
+    /// I-Q グラフ横のグループ凡例（色ドット + A〜F）を構築します。G/H は性能測定側です。
     /// </summary>
     private void BuildIqGroupLegend()
     {
         IqGroupLegend.Children.Clear();
-        foreach (var item in IqChartModel.GroupLegendItems)
+        foreach (var item in IqChartModel.CoreGroupLegendItems)
         {
             var row = new StackPanel
             {

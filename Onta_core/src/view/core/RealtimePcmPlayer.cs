@@ -141,6 +141,33 @@ internal sealed class RealtimePcmPlayer : IDisposable
     }
 
     /// <summary>
+    /// 未再生のキューを破棄し、次の AddSamples から即反映できるようにします。
+    /// </summary>
+    public void ClearQueuedSamples()
+    {
+        lock (_sync)
+        {
+            if (_disposed || _buffer is null)
+            {
+                return;
+            }
+
+            _buffer.ClearBuffer();
+            if (_waveOut is not null && _waveOut.PlaybackState != PlaybackState.Playing)
+            {
+                try
+                {
+                    _waveOut.Play();
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// 指定時間内で再生バッファが空になるまで待機します。
     /// </summary>
     /// <param name="timeout">待機上限時間。</param>

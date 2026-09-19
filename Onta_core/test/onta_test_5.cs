@@ -105,11 +105,19 @@ public sealed class OntaTest5
         Assert.Equal(Enumerable.Range(1, 32), OfdmConfig.ResolveConceptualLeftBins(32));
         Assert.Equal(Enumerable.Range(1, 40), OfdmConfig.ResolveConceptualLeftBins(40));
         Assert.Equal(Enumerable.Range(1, 48), OfdmConfig.ResolveConceptualLeftBins(48));
+        Assert.Equal(Enumerable.Range(1, 56), OfdmConfig.ResolveConceptualLeftBins(56));
+        Assert.Equal(Enumerable.Range(1, 64), OfdmConfig.ResolveConceptualLeftBins(64));
         Assert.Equal((byte)3, OfdmConfig.ResolveSubcarrierGroupId(32));
         Assert.Equal((byte)4, OfdmConfig.ResolveSubcarrierGroupId(33));
         Assert.Equal((byte)4, OfdmConfig.ResolveSubcarrierGroupId(40));
         Assert.Equal((byte)5, OfdmConfig.ResolveSubcarrierGroupId(41));
         Assert.Equal((byte)5, OfdmConfig.ResolveSubcarrierGroupId(48));
+        Assert.Equal((byte)6, OfdmConfig.ResolveSubcarrierGroupId(49));
+        Assert.Equal((byte)6, OfdmConfig.ResolveSubcarrierGroupId(56));
+        Assert.Equal((byte)7, OfdmConfig.ResolveSubcarrierGroupId(57));
+        Assert.Equal((byte)7, OfdmConfig.ResolveSubcarrierGroupId(64));
+        Assert.Equal(Enumerable.Range(49, 8), OfdmConfig.ResolveGroupGLeftBins());
+        Assert.Equal(Enumerable.Range(57, 8), OfdmConfig.ResolveGroupHLeftBins());
     }
 
     [Fact]
@@ -121,6 +129,8 @@ public sealed class OntaTest5
         Assert.Equal(256, OfdmConfig.ResolveFftSize(32, ChannelMode.Stereo));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(40, ChannelMode.Stereo));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(48, ChannelMode.Stereo));
+        Assert.Equal(256, OfdmConfig.ResolveFftSize(56, ChannelMode.Mono));
+        Assert.Equal(256, OfdmConfig.ResolveFftSize(64, ChannelMode.Stereo));
         Assert.Equal(OfdmConfig.FixedFftSize, OfdmConfig.ResolveFftSize(8, ChannelMode.Mono));
     }
 
@@ -183,6 +193,35 @@ public sealed class OntaTest5
         Assert.Equal(9618.0, RoundHz(OfdmConfig.RightCarrierHzSc24(41)), 6);
         Assert.Equal(11073.3, RoundHz(OfdmConfig.LeftCarrierHzSc24(48)), 6);
         Assert.Equal(11185.3, RoundHz(OfdmConfig.RightCarrierHzSc24(48)), 6);
+        Assert.Equal(11297.2, RoundHz(OfdmConfig.LeftCarrierHzSc24(49)), 6);
+        Assert.Equal(11409.2, RoundHz(OfdmConfig.RightCarrierHzSc24(49)), 6);
+        Assert.Equal(12864.5, RoundHz(OfdmConfig.LeftCarrierHzSc24(56)), 6);
+        Assert.Equal(12976.5, RoundHz(OfdmConfig.RightCarrierHzSc24(56)), 6);
+        Assert.Equal(13088.4, RoundHz(OfdmConfig.LeftCarrierHzSc24(57)), 6);
+        Assert.Equal(13200.4, RoundHz(OfdmConfig.RightCarrierHzSc24(57)), 6);
+        Assert.Equal(14655.7, RoundHz(OfdmConfig.LeftCarrierHzSc24(64)), 6);
+        Assert.Equal(14767.7, RoundHz(OfdmConfig.RightCarrierHzSc24(64)), 6);
+    }
+
+    [Fact]
+    public void OfdmConfig_AcceptsPerformanceOnlySc56AndSc64()
+    {
+        foreach (var sc in new[] { 56, 64 })
+        {
+            var config = new OfdmConfig(
+                fftSize: OfdmConfig.ResolveFftSize(sc, ChannelMode.Mono),
+                activeSubcarriers: sc,
+                cyclicPrefixLength: 16,
+                ofdmSymbolCount: 1,
+                modulationScheme: ModulationScheme.Qpsk,
+                channelMode: ChannelMode.Mono);
+            var ofdm = new OfdmGenerator(config);
+            var frame = ofdm.GenerateFrame();
+            Assert.True(frame.Length > 0);
+            Assert.Equal(sc, config.ActiveSubcarriers);
+            Assert.Equal(OfdmCarrierGrid.Sc24Family, config.CarrierGrid);
+            Assert.Equal(Enumerable.Range(1, sc), config.ConceptualLeftBins);
+        }
     }
 
     [Fact]

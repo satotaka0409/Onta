@@ -206,7 +206,7 @@ internal static class HistoryService
         ModulationScheme modulationScheme,
         ChannelMode channelMode)
     {
-        var subcarriers = activeSubcarriers is 8 or 16 or 24 or 32 or 40 or 48
+        var subcarriers = OfdmConfig.IsSupportedActiveSubcarriers(activeSubcarriers)
             ? (byte)activeSubcarriers
             : (byte)0;
         var modulation = modulationScheme switch
@@ -215,6 +215,7 @@ internal static class HistoryService
             ModulationScheme.Qpsk => (byte)2,
             ModulationScheme.Qam16 => (byte)3,
             ModulationScheme.Qam64 => (byte)4,
+            ModulationScheme.Qam256 => (byte)5,
             _ => (byte)0
         };
         var channel = channelMode switch

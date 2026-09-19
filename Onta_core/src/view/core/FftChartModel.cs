@@ -1,6 +1,8 @@
 ﻿using System.Collections.ObjectModel;
 using LiveChartsCore;
 using LiveChartsCore.Defaults;
+using LiveChartsCore.Drawing;
+using LiveChartsCore.Measure;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
 using Onta.Core;
@@ -13,8 +15,8 @@ namespace Onta.View.Core;
 /// </summary>
 public sealed class FftChartModel
 {
-    /// <summary>FFT 横軸の表示上限（Hz）。SC-48 帯域を覆う。</summary>
-    private const double MaxDisplayHz = 14000;
+    /// <summary>FFT 横軸の表示上限（Hz）。</summary>
+    private const double MaxDisplayHz = 20000;
     private readonly ObservableCollection<ObservablePoint> _leftPoints = [];
     private readonly ObservableCollection<ObservablePoint> _rightPoints = [];
     private static readonly SKColor LeftColor = new(166, 221, 176);
@@ -58,14 +60,16 @@ public sealed class FftChartModel
             new Axis
             {
                 Name = "Frequency (Hz)",
-                MinLimit = 0,
-                MaxLimit = MaxDisplayHz,
-                MinStep = 1000,
-                TextSize = 8,
-                NameTextSize = 8,
-                // 軸名と目盛ラベルの間を詰める（既定 NamePadding=5 だと空きが大きい）
-                NamePadding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0),
-                Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 2),
+                MinLimit = XMinLimit,
+                MaxLimit = XMaxLimit,
+                MinStep = 2000,
+                ForceStepToMin = true,
+                CustomSeparators = [0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000, 20000],
+                Labeler = value => value >= 1000 ? $"{value / 1000:0}k" : $"{value:0}",
+                TextSize = 9,
+                NameTextSize = 9,
+                NamePadding = new LiveChartsCore.Drawing.Padding(0, 2, 0, 0),
+                Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0),
                 NamePaint = new SolidColorPaint(AxisColor),
                 LabelsPaint = new SolidColorPaint(AxisColor),
                 SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
@@ -79,17 +83,55 @@ public sealed class FftChartModel
                 Name = "Magnitude (dB)",
                 MinLimit = -100,
                 MaxLimit = 0,
+                MinStep = 20,
+                ForceStepToMin = true,
+                // 下限 -100 dB を必ず含め、短い高さでも見切れないよう 20 dB 刻み
+                CustomSeparators = [-100, -80, -60, -40, -20, 0],
                 Labeler = value => $"{value:0}",
-                TextSize = 8,
-                NameTextSize = 8,
+                LabelsAlignment = Align.Middle,
+                TextSize = 9,
+                NameTextSize = 9,
                 NamePadding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0),
-                Padding = new LiveChartsCore.Drawing.Padding(0, 0, 2, 0),
+                Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0),
                 NamePaint = new SolidColorPaint(AxisColor),
                 LabelsPaint = new SolidColorPaint(AxisColor),
-                SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 }
+                SeparatorsPaint = new SolidColorPaint(GridColor) { StrokeThickness = 1 },
+                TicksPaint = null,
+                SubticksPaint = null
             }
         ];
     }
+
+    /// <summary>横軸の表示下限（Hz）。</summary>
+    private const double XMinLimit = 0;
+
+    /// <summary>横軸の表示上限（Hz）。</summary>
+    private const double XMaxLimit = MaxDisplayHz;
+
+    /// <summary>
+    /// 性能測定 FFT 用の描画余白です。
+    /// 横軸数値はパネル側 Canvas（プロット全幅の等間隔）。LC 内ラベルは短い高さで消えるため使わない。
+    /// </summary>
+    public static Margin CreateDrawMargin() =>
+        new(DrawMarginLeft, DrawMarginTop, DrawMarginRight, DrawMarginBottom);
+
+    /// <summary>性能測定 FFT の DrawMargin 左。</summary>
+    public const float DrawMarginLeft = 0f;
+
+    /// <summary>性能測定 FFT の DrawMargin 上。</summary>
+    public const float DrawMarginTop = 0f;
+
+    /// <summary>性能測定 FFT の DrawMargin 右。</summary>
+    public const float DrawMarginRight = 0f;
+
+    /// <summary>性能測定 FFT の DrawMargin 下（0＝プロット全高。周波数ラベルは外部）。</summary>
+    public const float DrawMarginBottom = 0f;
+
+    /// <summary>
+    /// メイン画面向け：軸名・目盛り分の描画余白です。
+    /// </summary>
+    public static Margin CreateDrawMarginWithFrequencyLabels() =>
+        new(60, 14, 12, 40);
 
     public ISeries[] Series { get; }
 
@@ -139,8 +181,8 @@ public sealed class FftChartModel
             _rightSeries.IsVisible = false;
         }
 
-        XAxes[0].MinLimit = 0;
-        XAxes[0].MaxLimit = MaxDisplayHz;
+        XAxes[0].MinLimit = XMinLimit;
+        XAxes[0].MaxLimit = XMaxLimit;
 
         // 0 dB = フルスケール正弦波。ピーク追従で上限が縮むと縦軸が不自然になる。
         YAxes[0].MinLimit = -100;
@@ -153,8 +195,8 @@ public sealed class FftChartModel
         _rightPoints.Clear();
         _leftSeries.Stroke = new SolidColorPaint(LeftColor, 1.5f);
         _rightSeries.IsVisible = false;
-        XAxes[0].MinLimit = 0;
-        XAxes[0].MaxLimit = MaxDisplayHz;
+        XAxes[0].MinLimit = XMinLimit;
+        XAxes[0].MaxLimit = XMaxLimit;
         YAxes[0].MinLimit = -100;
         YAxes[0].MaxLimit = 0;
     }

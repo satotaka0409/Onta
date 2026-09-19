@@ -981,7 +981,7 @@ public partial class ReceiveDetailPanel : UserControl
             return ("-", "-", "-");
         }
 
-        var sc = dataModulation[0] is 8 or 16 or 24 or 32 or 40 or 48
+        var sc = OfdmConfig.IsSupportedActiveSubcarriers(dataModulation[0])
             ? dataModulation[0].ToString()
             : "-";
         var modulation = dataModulation[1] switch
@@ -990,6 +990,7 @@ public partial class ReceiveDetailPanel : UserControl
             2 => "QPSK",
             3 => "16QAM",
             4 => "64QAM",
+            5 => "256QAM",
             _ => "-"
         };
         var channel = dataModulation[2] switch
