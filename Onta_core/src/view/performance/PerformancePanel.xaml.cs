@@ -114,26 +114,38 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// FFT / オシロスコープ切替を反映します。
+    /// FFT / オシロスコープタブ切替を反映します。
     /// </summary>
-    private void OnWaveGraphTabChanged(object sender, RoutedEventArgs e)
+    private void OnWaveGraphTabSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (!IsLoaded || WaveGraphTabs is null)
+        {
+            return;
+        }
+
         UpdateWaveGraphTabUi();
     }
 
     /// <summary>
-    /// FFT とオシロスコープの表示切替（TabItem は使わず Opacity で重ねる）。
+    /// オシロスコープタブが選択中かどうかです。
+    /// </summary>
+    private bool IsScopeWaveTabSelected =>
+        ScopeWaveTabItem?.IsSelected == true
+        || (WaveGraphTabs is not null && WaveGraphTabs.SelectedIndex == 1);
+
+    /// <summary>
+    /// FFT とオシロスコープの表示切替（チャートは常時レイアウト、Opacity で重ねる）。
     /// </summary>
     private void UpdateWaveGraphTabUi()
     {
-        if (FftTabRadio is null || ScopeTabRadio is null
+        if (WaveGraphTabs is null
             || FftLeftHost is null || ScopeLeftHost is null
             || FftRightHost is null || ScopeRightHost is null)
         {
             return;
         }
 
-        var showScope = ScopeTabRadio.IsChecked == true;
+        var showScope = IsScopeWaveTabSelected;
         SetHostVisible(FftLeftHost, !showScope);
         SetHostVisible(FftRightHost, !showScope);
         SetHostVisible(ScopeLeftHost, showScope);
@@ -442,7 +454,7 @@ public partial class PerformancePanel : UserControl
         }
 
         UpdateScopeRangeLabels();
-        if (ScopeTabRadio?.IsChecked == true)
+        if (IsScopeWaveTabSelected)
         {
             ApplyScopeFromWorkers();
         }
@@ -514,7 +526,7 @@ public partial class PerformancePanel : UserControl
         }
 
         UpdateScopeRangeLabels();
-        if (ScopeTabRadio?.IsChecked == true)
+        if (IsScopeWaveTabSelected)
         {
             ApplyScopeFromWorkers();
         }
@@ -974,7 +986,7 @@ public partial class PerformancePanel : UserControl
     /// </summary>
     private void ApplyRxStatus(CoreExecutionStatus status)
     {
-        var showScope = ScopeTabRadio?.IsChecked == true;
+        var showScope = IsScopeWaveTabSelected;
         if (showScope)
         {
             ApplyScopeFromWorkers();
@@ -1034,7 +1046,7 @@ public partial class PerformancePanel : UserControl
     {
         if (status.FftGraph.FftSize <= 0)
         {
-            if (ScopeTabRadio?.IsChecked == true)
+            if (IsScopeWaveTabSelected)
             {
                 ApplyScopeFromWorkers();
             }
@@ -1042,7 +1054,7 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
-        if (ScopeTabRadio?.IsChecked == true)
+        if (IsScopeWaveTabSelected)
         {
             ApplyScopeFromWorkers();
             return;

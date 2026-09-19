@@ -315,9 +315,7 @@
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*" MinHeight="200"/>
-          <RowDefinition Height="*" MinHeight="200"/>
+          <RowDefinition Height="*" MinHeight="400"/>
         </Grid.RowDefinitions>
 
         <TextBlock Text="受信"
@@ -489,431 +487,466 @@
           </StackPanel>
         </Grid>
 
-        <!-- L/R 共通: FFT ⇔ オシロスコープ -->
-        <StackPanel Grid.Row="2"
-                    Orientation="Horizontal"
-                    Margin="0,0,0,4">
-          <RadioButton x:Name="FftTabRadio"
-                       Content="FFT"
-                       GroupName="PerfWaveGraphTab"
-                       IsChecked="True"
-                       Margin="0,0,12,0"
-                       VerticalAlignment="Center"
-                       Checked="OnWaveGraphTabChanged"/>
-          <RadioButton x:Name="ScopeTabRadio"
-                       Content="オシロスコープ"
-                       GroupName="PerfWaveGraphTab"
-                       VerticalAlignment="Center"
-                       Checked="OnWaveGraphTabChanged"/>
-          <CheckBox x:Name="ScopeLrSyncCheck"
-                    Content="L/R 同期"
-                    Margin="16,0,0,0"
-                    VerticalAlignment="Center"
-                    Visibility="Collapsed"
-                    Checked="OnScopeLrSyncChanged"
-                    Unchecked="OnScopeLrSyncChanged"/>
-        </StackPanel>
-
-        <!-- L -->
-        <Grid x:Name="LeftWaveRow"
-              Grid.Row="3"
-              Margin="0,0,0,8"
-              SizeChanged="OnWaveRowSizeChanged">
+        <!-- FFT / オシロはタブ（チャートは TabItem 外で Opacity 切替。I-Q はタブ外） -->
+        <Grid Grid.Row="2">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="8"/>
             <ColumnDefinition Width="Auto"/>
           </Grid.ColumnDefinitions>
-          <Border BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                  CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
-                  ClipToBounds="False"
-                  Grid.IsSharedSizeScope="True">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-              </Grid.RowDefinitions>
-              <TextBlock x:Name="LeftWaveTitle"
-                         Text="L FFT"
-                         Foreground="{StaticResource BrushTextMuted}"
-                         Margin="0,0,0,2"/>
-              <Grid Grid.Row="1" ClipToBounds="False">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYLeft"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Grid>
-                  <Grid x:Name="FftLeftDbLabels" Margin="0,0,4,0" ClipToBounds="False">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="32"/>
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Text="Magnitude (dB)"
-                             FontSize="9"
-                             Foreground="{StaticResource BrushTextMuted}"
-                             VerticalAlignment="Center"
-                             Margin="0,0,4,0">
-                    <TextBlock.LayoutTransform>
-                      <RotateTransform Angle="-90"/>
-                    </TextBlock.LayoutTransform>
-                  </TextBlock>
-                  <Grid x:Name="FftLeftDbTickLabels"
-                        Grid.Column="1"
-                        Margin="0,0,0,0"
-                        ClipToBounds="False">
-                    <Grid.RowDefinitions>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock Text="0" Grid.Row="0" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-20" Grid.Row="1" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-40" Grid.Row="2" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-60" Grid.Row="3" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-80" Grid.Row="4" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-100" Grid.Row="4" Height="14" Margin="0,0,0,-7"
-                               VerticalAlignment="Bottom" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                  </Grid>
-                </Grid>
-                  <Grid x:Name="ScopeLeftAmpHost"
-                        Visibility="Collapsed"
-                        Margin="0,0,4,0"
-                        MinWidth="28">
-                    <Grid.RowDefinitions>
-                      <RowDefinition Height="Auto"/>
-                      <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock x:Name="ScopeLeftAmpValue"
-                               Text="±1.0"
-                               FontSize="9"
-                               TextAlignment="Center"
-                               Foreground="{StaticResource BrushTextMuted}"
-                               Margin="0,0,0,4"/>
-                    <Slider x:Name="ScopeLeftAmpSlider"
-                            Grid.Row="1"
-                            Orientation="Vertical"
-                            Minimum="0"
-                            Maximum="3"
-                            TickFrequency="1"
-                            IsSnapToTickEnabled="True"
-                            IsMoveToPointEnabled="True"
-                            Value="3"
-                            VerticalAlignment="Stretch"
-                            HorizontalAlignment="Center"
-                            Width="18"
-                            ValueChanged="OnScopeRangeChanged"/>
-                  </Grid>
-                </Grid>
-                <Grid Grid.Column="1" ClipToBounds="False">
-                  <Border x:Name="FftLeftHost" ClipToBounds="False">
-                    <lvc:CartesianChart x:Name="FftLeftChart"
-                                        Background="{StaticResource BrushInput}"
-                                        ClipToBounds="False"
-                                        AnimationsSpeed="0"
-                                        TooltipPosition="Hidden"
-                                        LegendPosition="Hidden"/>
-                  </Border>
-                  <Border x:Name="ScopeLeftHost"
-                          Opacity="0"
-                          IsHitTestVisible="False"
-                          ClipToBounds="False">
-                    <lvc:CartesianChart x:Name="ScopeLeftChart"
-                                        Background="{StaticResource BrushInput}"
-                                        ClipToBounds="False"
-                                        AnimationsSpeed="0"
-                                        TooltipPosition="Hidden"
-                                        LegendPosition="Hidden"/>
-                  </Border>
-                </Grid>
-              </Grid>
-              <Grid Grid.Row="2" Margin="0,2,0,0" ClipToBounds="False">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYLeft"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Canvas x:Name="FftLeftFreqLabels"
-                        Grid.Column="1"
-                        Height="16"
-                        ClipToBounds="False"/>
-                <Grid x:Name="ScopeLeftTimeHost"
-                      Grid.Column="1"
-                      Visibility="Collapsed"
-                      Height="22">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                  </Grid.ColumnDefinitions>
-                  <Slider x:Name="ScopeLeftTimeSlider"
-                          Minimum="0"
-                          Maximum="6"
-                          TickFrequency="1"
-                          IsSnapToTickEnabled="True"
-                          IsMoveToPointEnabled="True"
-                          Value="4"
-                          VerticalAlignment="Center"
-                          ValueChanged="OnScopeRangeChanged"/>
-                  <TextBlock x:Name="ScopeLeftTimeValue"
-                             Grid.Column="1"
-                             Text="20 ms"
-                             Width="44"
-                             FontSize="9"
-                             Margin="6,0,0,0"
-                             VerticalAlignment="Center"
-                             TextAlignment="Right"
-                             Foreground="{StaticResource BrushTextMuted}"/>
-                </Grid>
-              </Grid>
-            </Grid>
-          </Border>
-          <Border x:Name="IqLeftHost"
-                  Grid.Column="2"
-                  BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                  CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
-                  Width="260">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-              </Grid.RowDefinitions>
-              <TextBlock x:Name="IqLeftTitle"
-                         Text="L I-Q"
-                         Foreground="{StaticResource BrushTextMuted}"
-                         Margin="0,0,0,2"/>
-              <Grid Grid.Row="1">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto"/>
-                  <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <lvc:CartesianChart x:Name="IqLeftChart"
-                                    Width="240" Height="240"
-                                    HorizontalAlignment="Left"
-                                    VerticalAlignment="Top"
-                                    Background="{StaticResource BrushInput}"
-                                    AnimationsSpeed="0"
-                                    TooltipPosition="Hidden"
-                                    LegendPosition="Hidden"/>
-                <StackPanel x:Name="IqLeftLegend"
-                            Grid.Column="1"
-                            Margin="8,0,0,0"
-                            VerticalAlignment="Center"/>
-              </Grid>
-            </Grid>
-          </Border>
-        </Grid>
 
-        <!-- R -->
-        <Grid x:Name="RightWaveRow"
-              Grid.Row="4"
-              Margin="0,0,0,0"
-              SizeChanged="OnWaveRowSizeChanged">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="8"/>
-            <ColumnDefinition Width="Auto"/>
-          </Grid.ColumnDefinitions>
-          <Border BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                  CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
-                  ClipToBounds="False"
-                  Grid.IsSharedSizeScope="True">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-              </Grid.RowDefinitions>
-              <TextBlock x:Name="RightWaveTitle"
-                         Text="R FFT"
-                         Foreground="{StaticResource BrushTextMuted}"
-                         Margin="0,0,0,2"/>
-              <Grid Grid.Row="1" ClipToBounds="False">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYRight"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Grid>
-                  <Grid x:Name="FftRightDbLabels" Margin="0,0,4,0" ClipToBounds="False">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="32"/>
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Text="Magnitude (dB)"
-                             FontSize="9"
-                             Foreground="{StaticResource BrushTextMuted}"
-                             VerticalAlignment="Center"
-                             Margin="0,0,4,0">
-                    <TextBlock.LayoutTransform>
-                      <RotateTransform Angle="-90"/>
-                    </TextBlock.LayoutTransform>
-                  </TextBlock>
-                  <Grid x:Name="FftRightDbTickLabels"
+          <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*" MinHeight="200"/>
+              <RowDefinition Height="*" MinHeight="200"/>
+            </Grid.RowDefinitions>
+
+            <Grid x:Name="WaveGraphTabHeaderRow" Margin="0,0,0,4">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <!-- TabItem 内に LiveCharts を置くと非選択時サイズ 0 になるため、ヘッダーのみの TabControl -->
+              <TabControl x:Name="WaveGraphTabs"
+                          Background="Transparent"
+                          BorderThickness="0"
+                          Padding="0"
+                          SelectionChanged="OnWaveGraphTabSelectionChanged">
+                <TabControl.Template>
+                  <ControlTemplate TargetType="TabControl">
+                    <DockPanel>
+                      <TabPanel x:Name="HeaderPanel"
+                                DockPanel.Dock="Top"
+                                IsItemsHost="True"
+                                Margin="0,0,0,0"
+                                Background="Transparent"/>
+                    </DockPanel>
+                  </ControlTemplate>
+                </TabControl.Template>
+                <TabItem x:Name="FftWaveTabItem"
+                         Header="FFT"
+                         IsSelected="True"/>
+                <TabItem x:Name="ScopeWaveTabItem"
+                         Header="オシロスコープ"/>
+              </TabControl>
+              <CheckBox x:Name="ScopeLrSyncCheck"
                         Grid.Column="1"
-                        Margin="0,0,0,0"
-                        ClipToBounds="False">
-                    <Grid.RowDefinitions>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                      <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock Text="0" Grid.Row="0" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-20" Grid.Row="1" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-40" Grid.Row="2" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-60" Grid.Row="3" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-80" Grid.Row="4" Height="14" Margin="0,-7,0,0"
-                               VerticalAlignment="Top" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                    <TextBlock Text="-100" Grid.Row="4" Height="14" Margin="0,0,0,-7"
-                               VerticalAlignment="Bottom" TextAlignment="Right"
-                               FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                  </Grid>
-                </Grid>
-                  <Grid x:Name="ScopeRightAmpHost"
+                        Content="L/R 同期"
+                        Margin="12,0,0,0"
+                        VerticalAlignment="Center"
                         Visibility="Collapsed"
-                        Margin="0,0,4,0"
-                        MinWidth="28">
-                    <Grid.RowDefinitions>
-                      <RowDefinition Height="Auto"/>
-                      <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock x:Name="ScopeRightAmpValue"
-                               Text="±1.0"
-                               FontSize="9"
-                               TextAlignment="Center"
-                               Foreground="{StaticResource BrushTextMuted}"
-                               Margin="0,0,0,4"/>
-                    <Slider x:Name="ScopeRightAmpSlider"
-                            Grid.Row="1"
-                            Orientation="Vertical"
-                            Minimum="0"
-                            Maximum="3"
-                            TickFrequency="1"
-                            IsSnapToTickEnabled="True"
-                            IsMoveToPointEnabled="True"
-                            Value="3"
-                            VerticalAlignment="Stretch"
-                            HorizontalAlignment="Center"
-                            Width="18"
-                            ValueChanged="OnScopeRangeChanged"/>
+                        Checked="OnScopeLrSyncChanged"
+                        Unchecked="OnScopeLrSyncChanged"/>
+            </Grid>
+
+            <!-- L 波形（FFT / オシロ） -->
+            <Grid x:Name="LeftWaveRow"
+                  Grid.Row="1"
+                  Margin="0,0,0,8"
+                  SizeChanged="OnWaveRowSizeChanged">
+              <Border BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
+                      CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+                      ClipToBounds="False"
+                      Grid.IsSharedSizeScope="True">
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <TextBlock x:Name="LeftWaveTitle"
+                             Text="L FFT"
+                             Foreground="{StaticResource BrushTextMuted}"
+                             Margin="0,0,0,2"/>
+                  <Grid Grid.Row="1" ClipToBounds="False">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYLeft"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid>
+                      <Grid x:Name="FftLeftDbLabels" Margin="0,0,4,0" ClipToBounds="False">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="Auto"/>
+                          <ColumnDefinition Width="32"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Magnitude (dB)"
+                                   FontSize="9"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,4,0">
+                          <TextBlock.LayoutTransform>
+                            <RotateTransform Angle="-90"/>
+                          </TextBlock.LayoutTransform>
+                        </TextBlock>
+                        <Grid x:Name="FftLeftDbTickLabels"
+                              Grid.Column="1"
+                              Margin="0,0,0,0"
+                              ClipToBounds="False">
+                          <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                          </Grid.RowDefinitions>
+                          <TextBlock Text="0" Grid.Row="0" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-20" Grid.Row="1" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-40" Grid.Row="2" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-60" Grid.Row="3" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-80" Grid.Row="4" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-100" Grid.Row="4" Height="14" Margin="0,0,0,-7"
+                                     VerticalAlignment="Bottom" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                        </Grid>
+                      </Grid>
+                      <Grid x:Name="ScopeLeftAmpHost"
+                            Visibility="Collapsed"
+                            Margin="0,0,4,0"
+                            MinWidth="28">
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto"/>
+                          <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="ScopeLeftAmpValue"
+                                   Text="±1.0"
+                                   FontSize="9"
+                                   TextAlignment="Center"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   Margin="0,0,0,4"/>
+                        <Slider x:Name="ScopeLeftAmpSlider"
+                                Grid.Row="1"
+                                Orientation="Vertical"
+                                Minimum="0"
+                                Maximum="3"
+                                TickFrequency="1"
+                                IsSnapToTickEnabled="True"
+                                IsMoveToPointEnabled="True"
+                                Value="3"
+                                VerticalAlignment="Stretch"
+                                HorizontalAlignment="Center"
+                                Width="18"
+                                ValueChanged="OnScopeRangeChanged"/>
+                      </Grid>
+                    </Grid>
+                    <Grid Grid.Column="1" ClipToBounds="False">
+                      <Border x:Name="FftLeftHost" ClipToBounds="False">
+                        <lvc:CartesianChart x:Name="FftLeftChart"
+                                            Background="{StaticResource BrushInput}"
+                                            ClipToBounds="False"
+                                            AnimationsSpeed="0"
+                                            TooltipPosition="Hidden"
+                                            LegendPosition="Hidden"/>
+                      </Border>
+                      <Border x:Name="ScopeLeftHost"
+                              Opacity="0"
+                              IsHitTestVisible="False"
+                              ClipToBounds="False">
+                        <lvc:CartesianChart x:Name="ScopeLeftChart"
+                                            Background="{StaticResource BrushInput}"
+                                            ClipToBounds="False"
+                                            AnimationsSpeed="0"
+                                            TooltipPosition="Hidden"
+                                            LegendPosition="Hidden"/>
+                      </Border>
+                    </Grid>
+                  </Grid>
+                  <Grid Grid.Row="2" Margin="0,2,0,0" ClipToBounds="False">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYLeft"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Canvas x:Name="FftLeftFreqLabels"
+                            Grid.Column="1"
+                            Height="16"
+                            ClipToBounds="False"/>
+                    <Grid x:Name="ScopeLeftTimeHost"
+                          Grid.Column="1"
+                          Visibility="Collapsed"
+                          Height="22">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                      </Grid.ColumnDefinitions>
+                      <Slider x:Name="ScopeLeftTimeSlider"
+                              Minimum="0"
+                              Maximum="6"
+                              TickFrequency="1"
+                              IsSnapToTickEnabled="True"
+                              IsMoveToPointEnabled="True"
+                              Value="4"
+                              VerticalAlignment="Center"
+                              ValueChanged="OnScopeRangeChanged"/>
+                      <TextBlock x:Name="ScopeLeftTimeValue"
+                                 Grid.Column="1"
+                                 Text="20 ms"
+                                 Width="44"
+                                 FontSize="9"
+                                 Margin="6,0,0,0"
+                                 VerticalAlignment="Center"
+                                 TextAlignment="Right"
+                                 Foreground="{StaticResource BrushTextMuted}"/>
+                    </Grid>
                   </Grid>
                 </Grid>
-                <Grid Grid.Column="1" ClipToBounds="False">
-                  <Border x:Name="FftRightHost" ClipToBounds="False">
-                    <lvc:CartesianChart x:Name="FftRightChart"
-                                        Background="{StaticResource BrushInput}"
-                                        ClipToBounds="False"
-                                        AnimationsSpeed="0"
-                                        TooltipPosition="Hidden"
-                                        LegendPosition="Hidden"/>
-                  </Border>
-                  <Border x:Name="ScopeRightHost"
-                          Opacity="0"
-                          IsHitTestVisible="False"
-                          ClipToBounds="False">
-                    <lvc:CartesianChart x:Name="ScopeRightChart"
-                                        Background="{StaticResource BrushInput}"
-                                        ClipToBounds="False"
-                                        AnimationsSpeed="0"
-                                        TooltipPosition="Hidden"
-                                        LegendPosition="Hidden"/>
-                  </Border>
+              </Border>
+            </Grid>
+
+            <!-- R 波形（FFT / オシロ） -->
+            <Grid x:Name="RightWaveRow"
+                  Grid.Row="2"
+                  Margin="0,0,0,0"
+                  SizeChanged="OnWaveRowSizeChanged">
+              <Border BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
+                      CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+                      ClipToBounds="False"
+                      Grid.IsSharedSizeScope="True">
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <TextBlock x:Name="RightWaveTitle"
+                             Text="R FFT"
+                             Foreground="{StaticResource BrushTextMuted}"
+                             Margin="0,0,0,2"/>
+                  <Grid Grid.Row="1" ClipToBounds="False">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYRight"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid>
+                      <Grid x:Name="FftRightDbLabels" Margin="0,0,4,0" ClipToBounds="False">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="Auto"/>
+                          <ColumnDefinition Width="32"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Magnitude (dB)"
+                                   FontSize="9"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,4,0">
+                          <TextBlock.LayoutTransform>
+                            <RotateTransform Angle="-90"/>
+                          </TextBlock.LayoutTransform>
+                        </TextBlock>
+                        <Grid x:Name="FftRightDbTickLabels"
+                              Grid.Column="1"
+                              Margin="0,0,0,0"
+                              ClipToBounds="False">
+                          <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                          </Grid.RowDefinitions>
+                          <TextBlock Text="0" Grid.Row="0" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-20" Grid.Row="1" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-40" Grid.Row="2" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-60" Grid.Row="3" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-80" Grid.Row="4" Height="14" Margin="0,-7,0,0"
+                                     VerticalAlignment="Top" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-100" Grid.Row="4" Height="14" Margin="0,0,0,-7"
+                                     VerticalAlignment="Bottom" TextAlignment="Right"
+                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                        </Grid>
+                      </Grid>
+                      <Grid x:Name="ScopeRightAmpHost"
+                            Visibility="Collapsed"
+                            Margin="0,0,4,0"
+                            MinWidth="28">
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto"/>
+                          <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="ScopeRightAmpValue"
+                                   Text="±1.0"
+                                   FontSize="9"
+                                   TextAlignment="Center"
+                                   Foreground="{StaticResource BrushTextMuted}"
+                                   Margin="0,0,0,4"/>
+                        <Slider x:Name="ScopeRightAmpSlider"
+                                Grid.Row="1"
+                                Orientation="Vertical"
+                                Minimum="0"
+                                Maximum="3"
+                                TickFrequency="1"
+                                IsSnapToTickEnabled="True"
+                                IsMoveToPointEnabled="True"
+                                Value="3"
+                                VerticalAlignment="Stretch"
+                                HorizontalAlignment="Center"
+                                Width="18"
+                                ValueChanged="OnScopeRangeChanged"/>
+                      </Grid>
+                    </Grid>
+                    <Grid Grid.Column="1" ClipToBounds="False">
+                      <Border x:Name="FftRightHost" ClipToBounds="False">
+                        <lvc:CartesianChart x:Name="FftRightChart"
+                                            Background="{StaticResource BrushInput}"
+                                            ClipToBounds="False"
+                                            AnimationsSpeed="0"
+                                            TooltipPosition="Hidden"
+                                            LegendPosition="Hidden"/>
+                      </Border>
+                      <Border x:Name="ScopeRightHost"
+                              Opacity="0"
+                              IsHitTestVisible="False"
+                              ClipToBounds="False">
+                        <lvc:CartesianChart x:Name="ScopeRightChart"
+                                            Background="{StaticResource BrushInput}"
+                                            ClipToBounds="False"
+                                            AnimationsSpeed="0"
+                                            TooltipPosition="Hidden"
+                                            LegendPosition="Hidden"/>
+                      </Border>
+                    </Grid>
+                  </Grid>
+                  <Grid Grid.Row="2" Margin="0,2,0,0" ClipToBounds="False">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYRight"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Canvas x:Name="FftRightFreqLabels"
+                            Grid.Column="1"
+                            Height="16"
+                            ClipToBounds="False"/>
+                    <Grid x:Name="ScopeRightTimeHost"
+                          Grid.Column="1"
+                          Visibility="Collapsed"
+                          Height="22">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                      </Grid.ColumnDefinitions>
+                      <Slider x:Name="ScopeRightTimeSlider"
+                              Minimum="0"
+                              Maximum="6"
+                              TickFrequency="1"
+                              IsSnapToTickEnabled="True"
+                              IsMoveToPointEnabled="True"
+                              Value="4"
+                              VerticalAlignment="Center"
+                              ValueChanged="OnScopeRangeChanged"/>
+                      <TextBlock x:Name="ScopeRightTimeValue"
+                                 Grid.Column="1"
+                                 Text="20 ms"
+                                 Width="44"
+                                 FontSize="9"
+                                 Margin="6,0,0,0"
+                                 VerticalAlignment="Center"
+                                 TextAlignment="Right"
+                                 Foreground="{StaticResource BrushTextMuted}"/>
+                    </Grid>
+                  </Grid>
                 </Grid>
-              </Grid>
-              <Grid Grid.Row="2" Margin="0,2,0,0" ClipToBounds="False">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYRight"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Canvas x:Name="FftRightFreqLabels"
-                        Grid.Column="1"
-                        Height="16"
-                        ClipToBounds="False"/>
-                <Grid x:Name="ScopeRightTimeHost"
-                      Grid.Column="1"
-                      Visibility="Collapsed"
-                      Height="22">
+              </Border>
+            </Grid>
+          </Grid>
+
+          <!-- I-Q はタブの外（L/R を波形行に合わせて縦並び） -->
+          <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*" MinHeight="200"/>
+              <RowDefinition Height="*" MinHeight="200"/>
+            </Grid.RowDefinitions>
+            <Border Height="{Binding ActualHeight, ElementName=WaveGraphTabHeaderRow}"
+                    Margin="0,0,0,4"
+                    Visibility="Hidden"/>
+            <Border x:Name="IqLeftHost"
+                    Grid.Row="1"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
+                    CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+                    Width="260"
+                    Margin="0,0,0,8"
+                    VerticalAlignment="Stretch">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="IqLeftTitle"
+                           Text="L I-Q"
+                           Foreground="{StaticResource BrushTextMuted}"
+                           Margin="0,0,0,2"/>
+                <Grid Grid.Row="1">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
-                  <Slider x:Name="ScopeRightTimeSlider"
-                          Minimum="0"
-                          Maximum="6"
-                          TickFrequency="1"
-                          IsSnapToTickEnabled="True"
-                          IsMoveToPointEnabled="True"
-                          Value="4"
-                          VerticalAlignment="Center"
-                          ValueChanged="OnScopeRangeChanged"/>
-                  <TextBlock x:Name="ScopeRightTimeValue"
-                             Grid.Column="1"
-                             Text="20 ms"
-                             Width="44"
-                             FontSize="9"
-                             Margin="6,0,0,0"
-                             VerticalAlignment="Center"
-                             TextAlignment="Right"
-                             Foreground="{StaticResource BrushTextMuted}"/>
+                  <lvc:CartesianChart x:Name="IqLeftChart"
+                                      Width="240" Height="240"
+                                      HorizontalAlignment="Left"
+                                      VerticalAlignment="Top"
+                                      Background="{StaticResource BrushInput}"
+                                      AnimationsSpeed="0"
+                                      TooltipPosition="Hidden"
+                                      LegendPosition="Hidden"/>
+                  <StackPanel x:Name="IqLeftLegend"
+                              Grid.Column="1"
+                              Margin="8,0,0,0"
+                              VerticalAlignment="Center"/>
                 </Grid>
               </Grid>
-            </Grid>
-          </Border>
-          <Border x:Name="IqRightHost"
-                  Grid.Column="2"
-                  BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                  CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
-                  Width="260">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-              </Grid.RowDefinitions>
-              <TextBlock x:Name="IqRightTitle"
-                         Text="R I-Q"
-                         Foreground="{StaticResource BrushTextMuted}"
-                         Margin="0,0,0,2"/>
-              <Grid Grid.Row="1">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto"/>
-                  <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <lvc:CartesianChart x:Name="IqRightChart"
-                                    Width="240" Height="240"
-                                    HorizontalAlignment="Left"
-                                    VerticalAlignment="Top"
-                                    Background="{StaticResource BrushInput}"
-                                    AnimationsSpeed="0"
-                                    TooltipPosition="Hidden"
-                                    LegendPosition="Hidden"/>
-                <StackPanel x:Name="IqRightLegend"
-                            Grid.Column="1"
-                            Margin="8,0,0,0"
-                            VerticalAlignment="Center"/>
+            </Border>
+            <Border x:Name="IqRightHost"
+                    Grid.Row="2"
+                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
+                    CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+                    Width="260"
+                    VerticalAlignment="Stretch">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="IqRightTitle"
+                           Text="R I-Q"
+                           Foreground="{StaticResource BrushTextMuted}"
+                           Margin="0,0,0,2"/>
+                <Grid Grid.Row="1">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <lvc:CartesianChart x:Name="IqRightChart"
+                                      Width="240" Height="240"
+                                      HorizontalAlignment="Left"
+                                      VerticalAlignment="Top"
+                                      Background="{StaticResource BrushInput}"
+                                      AnimationsSpeed="0"
+                                      TooltipPosition="Hidden"
+                                      LegendPosition="Hidden"/>
+                  <StackPanel x:Name="IqRightLegend"
+                              Grid.Column="1"
+                              Margin="8,0,0,0"
+                              VerticalAlignment="Center"/>
+                </Grid>
               </Grid>
-            </Grid>
-          </Border>
+            </Border>
+          </Grid>
         </Grid>
       </Grid>
     </Border>
