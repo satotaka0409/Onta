@@ -5,7 +5,7 @@ using Onta.View.Core;
 namespace Onta.View.Performance;
 
 /// <summary>
-/// 性能測定の送信（トーン／スイープ／OFDM）をバックグラウンドで実行します。
+/// 性能測定の送信（トーン／スイープ／ホワイトノイズ／OFDM）をバックグラウンドで実行します。
 /// </summary>
 internal sealed class PerformanceTxWorker : IDisposable
 {
@@ -18,6 +18,7 @@ internal sealed class PerformanceTxWorker : IDisposable
     private readonly double[] _iqPcmScratch = new double[PerformanceIqExtractor.CaptureSamples];
     private readonly Complex[] _iqTimeScratch = new Complex[PerformanceIqExtractor.FftSize];
     private readonly Complex[] _iqFftScratch = new Complex[PerformanceIqExtractor.FftSize];
+    private readonly Random _noiseRng = new();
     private Task? _worker;
     private CancellationTokenSource? _cts;
     private long _pcmWriteTotal;
@@ -26,9 +27,11 @@ internal sealed class PerformanceTxWorker : IDisposable
 
     private PerformanceSignalMode _liveMode;
     private double _liveToneHz = 315.0;
-    private double _liveAmplitude = 0.7;
+    private double _liveAmplitude = 0.8;
     private bool _flushPlayback;
     private RealtimePcmPlayer? _activePlayer;
+    private WhiteNoiseBandFilter _noiseFilterLeft = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
+    private WhiteNoiseBandFilter _noiseFilterRight = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
 
     /// <summary>
     /// 送信中の FFT 可視化用共有状態です。
@@ -100,6 +103,8 @@ internal sealed class PerformanceTxWorker : IDisposable
             _liveToneHz = settings.ToneHz > 0 ? settings.ToneHz : 315.0;
             _liveAmplitude = Math.Clamp(settings.SignalAmplitude, 0.10, 1.0);
             _flushPlayback = false;
+            _noiseFilterLeft = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
+            _noiseFilterRight = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
             Array.Clear(_pcmLeft);
             Array.Clear(_pcmRight);
             _vizStatus.BeginRun("性能測定送信");
@@ -143,6 +148,8 @@ internal sealed class PerformanceTxWorker : IDisposable
                 Array.Clear(_pcmLeft);
                 Array.Clear(_pcmRight);
                 _pcmWriteTotal = 0;
+                _noiseFilterLeft = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
+                _noiseFilterRight = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
                 playerToFlush = _activePlayer;
             }
         }
@@ -294,7 +301,7 @@ internal sealed class PerformanceTxWorker : IDisposable
     }
 
     /// <summary>
-    /// トーン／スイープをチャンク生成しながら再生します（周波数・レベルをライブ反映）。
+    /// トーン／スイープ／ホワイトノイズをチャンク生成しながら再生します（周波数・レベルをライブ反映）。
     /// </summary>
     private void PlayLiveReference(
         PerformanceTxSettings settings,
@@ -339,16 +346,31 @@ internal sealed class PerformanceTxWorker : IDisposable
                     sampleIndex,
                     amp,
                     ref phase);
+                if (settings.ChannelMode == ChannelMode.Stereo)
+                {
+                    dest.CopyTo(rightChunk.AsSpan(0, len));
+                }
+            }
+            else if (mode == PerformanceSignalMode.WhiteNoise)
+            {
+                PerformanceSignalGenerator.FillWhiteNoiseChunk(dest, amp, _noiseRng, ref _noiseFilterLeft);
+                if (settings.ChannelMode == ChannelMode.Stereo)
+                {
+                    PerformanceSignalGenerator.FillWhiteNoiseChunk(
+                        rightChunk.AsSpan(0, len),
+                        amp,
+                        _noiseRng,
+                        ref _noiseFilterRight);
+                }
             }
             else
             {
                 // 変調ラジオは送信中ロック。トーン扱いに落とす。
                 PerformanceSignalGenerator.FillToneChunk(dest, toneHz, amp, ref phase);
-            }
-
-            if (settings.ChannelMode == ChannelMode.Stereo)
-            {
-                dest.CopyTo(rightChunk.AsSpan(0, len));
+                if (settings.ChannelMode == ChannelMode.Stereo)
+                {
+                    dest.CopyTo(rightChunk.AsSpan(0, len));
+                }
             }
 
             var leftSlice = leftChunk.AsSpan(0, len);
@@ -582,6 +604,10 @@ internal sealed class PerformanceTxWorker : IDisposable
             PerformanceSignalMode.Sweep => PerformanceSignalGenerator.GenerateLogSweep(
                 20.0,
                 20000.0,
+                samples,
+                settings.ChannelMode,
+                amp),
+            PerformanceSignalMode.WhiteNoise => PerformanceSignalGenerator.GenerateWhiteNoise(
                 samples,
                 settings.ChannelMode,
                 amp),

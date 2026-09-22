@@ -59,6 +59,7 @@ public partial class MainWindow : Window
 
             SendPanel.ApplySnapshot(settings.Send);
             ReceivePanel.ApplySettings(settings.Receive);
+            PerformancePanel.ApplySettings(settings.Performance);
         }
         catch
         {
@@ -72,7 +73,8 @@ public partial class MainWindow : Window
         {
             var settings = new MainWindowSettings(
                 Send: SendPanel.CreateSnapshot(),
-                Receive: ReceivePanel.CaptureSettings());
+                Receive: ReceivePanel.CaptureSettings(),
+                Performance: PerformancePanel.CaptureSettings());
             MainWindowSettingsStore.Save(AppPaths.MainSettingsFilePath, settings);
         }
         catch

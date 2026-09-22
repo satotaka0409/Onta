@@ -28,19 +28,6 @@
                      FontSize="14"
                      FontWeight="SemiBold"
                      Margin="0,6,0,8"/>
-          <GroupBox Header="チャンネル"
-                    Margin="0,0,0,0">
-            <StackPanel Margin="2">
-              <RadioButton x:Name="MonoRadio"
-                           Content="モノラル"
-                           GroupName="PerfChannel"
-                           IsChecked="True"
-                           Margin="0,0,0,8"/>
-              <RadioButton x:Name="StereoRadio"
-                           Content="ステレオ"
-                           GroupName="PerfChannel"/>
-            </StackPanel>
-          </GroupBox>
         </StackPanel>
 
         <Grid Grid.Column="1"
@@ -129,22 +116,42 @@
                                  VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
+                    <RadioButton x:Name="WhiteNoiseRadio"
+                                 GroupName="PerfTone"
+                                 Content="ホワイトノイズ(20Hz～20KHz)"
+                                 Tag="whitenoise"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
+                                 Margin="0,0,12,4"
+                                 Checked="OnToneSelectionChanged"/>
                   </UniformGrid>
                   <StackPanel Grid.Column="1"
                               Margin="4,4,6,4"
                               VerticalAlignment="Top"
-                              MinWidth="28">
+                              MinWidth="36"
+                              HorizontalAlignment="Center">
+                    <TextBlock Text="音量"
+                               FontSize="11"
+                               HorizontalAlignment="Center"
+                               Margin="0,0,0,2"/>
                     <Slider x:Name="SignalLevelSlider"
                             Orientation="Vertical"
                             Minimum="0.10"
                             Maximum="1.00"
-                            Value="0.70"
+                            Value="0.80"
                             TickFrequency="0.05"
                             IsSnapToTickEnabled="False"
                             IsMoveToPointEnabled="True"
                             Height="88"
                             HorizontalAlignment="Center"
                             ValueChanged="OnSignalLevelChanged"/>
+                    <TextBlock x:Name="SignalLevelValueText"
+                               Text="80%"
+                               FontSize="11"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               Margin="0,2,0,0"
+                               MinWidth="36"/>
                   </StackPanel>
                 </Grid>
               </Border>
@@ -225,7 +232,7 @@
                                VerticalAlignment="Center"
                                Checked="OnOutputModeChanged"/>
                 </StackPanel>
-                <Grid Grid.Row="1">
+                <Grid Grid.Row="2">
                   <StackPanel x:Name="WavOutputPanel"
                               Orientation="Horizontal"
                               VerticalAlignment="Center">
@@ -233,7 +240,7 @@
                                VerticalAlignment="Center"
                                Margin="0,0,8,0"/>
                     <TextBox x:Name="WavPathTextBox"
-                             MinWidth="350"
+                             MinWidth="400"
                              IsReadOnly="True"
                              VerticalAlignment="Center"/>
                     <Button x:Name="BrowseWavButton"
@@ -243,14 +250,12 @@
                             Click="OnBrowseWavClick"/>
                   </StackPanel>
                   <StackPanel x:Name="AudioOutputPanel"
-                              Orientation="Horizontal"
+                              Orientation="Vertical"
                               VerticalAlignment="Center"
                               Visibility="Collapsed">
-                    <TextBlock Text="出力デバイス"
-                               VerticalAlignment="Center"
-                               Margin="0,0,8,0"/>
                     <ComboBox x:Name="OutputDeviceCombo"
-                              Width="230"
+                              Width="400"
+                              HorizontalAlignment="Left"
                               Foreground="#FF1E2024"
                               VerticalAlignment="Center">
                       <ComboBox.ItemTemplate>
@@ -265,17 +270,28 @@
                         </Style>
                       </ComboBox.ItemContainerStyle>
                     </ComboBox>
-                    <TextBlock Text="音量"
-                               VerticalAlignment="Center"
-                               Margin="12,0,6,0"/>
-                    <Slider x:Name="OutputVolumeSlider"
-                            Width="120"
-                            Minimum="0"
-                            Maximum="100"
-                            Value="80"
-                            TickFrequency="5"
-                            IsSnapToTickEnabled="False"
-                            VerticalAlignment="Center"/>
+                    <StackPanel Orientation="Horizontal"
+                                Margin="0,6,0,0"
+                                HorizontalAlignment="Left">
+                      <TextBlock Text="音量"
+                                 VerticalAlignment="Center"
+                                 Margin="0,0,6,0"/>
+                      <Slider x:Name="OutputVolumeSlider"
+                              Width="120"
+                              Minimum="0"
+                              Maximum="100"
+                              Value="80"
+                              TickFrequency="5"
+                              IsSnapToTickEnabled="False"
+                              VerticalAlignment="Center"
+                              ValueChanged="OnOutputVolumeChanged"/>
+                      <TextBlock x:Name="OutputVolumeValueText"
+                                 Text="80%"
+                                 Width="36"
+                                 Margin="6,0,0,0"
+                                 VerticalAlignment="Center"
+                                 TextAlignment="Right"/>
+                    </StackPanel>
                   </StackPanel>
                 </Grid>
               </Grid>
@@ -314,7 +330,7 @@
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*" MinHeight="400"/>
+          <RowDefinition Height="*" MinHeight="360"/>
         </Grid.RowDefinitions>
 
         <!-- 受信ラベル | 入力 | スタート/ストップ -->
@@ -335,12 +351,12 @@
           <GroupBox Grid.Column="1"
                     Header="入力"
                     Margin="4,0,4,0"
-                    VerticalAlignment="Stretch">
-            <Grid Margin="4,2">
+                    VerticalAlignment="Top">
+            <Grid Margin="4,2,4,0">
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
               </Grid.RowDefinitions>
               <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                 <RadioButton x:Name="RxWavInputRadio"
@@ -428,8 +444,9 @@
               </Grid>
               <TextBlock x:Name="RxStatusText"
                          Grid.Row="2"
-                         Margin="0,8,0,0"
-                         VerticalAlignment="Bottom"
+                         Margin="0,0,0,0"
+                         MinHeight="0"
+                         VerticalAlignment="Top"
                          Foreground="{StaticResource BrushTextMuted}"
                          Text=""/>
             </Grid>
@@ -610,12 +627,19 @@
                     </Grid>
                     <Grid Grid.Column="1" ClipToBounds="False">
                       <Border x:Name="FftLeftHost" ClipToBounds="False">
-                        <lvc:CartesianChart x:Name="FftLeftChart"
-                                            Background="{StaticResource BrushInput}"
-                                            ClipToBounds="False"
-                                            AnimationsSpeed="0"
-                                            TooltipPosition="Hidden"
-                                            LegendPosition="Hidden"/>
+                        <Grid ClipToBounds="False">
+                          <lvc:CartesianChart x:Name="FftLeftChart"
+                                              Background="{StaticResource BrushInput}"
+                                              ClipToBounds="False"
+                                              AnimationsSpeed="0"
+                                              TooltipPosition="Hidden"
+                                              LegendPosition="Hidden"/>
+                          <!-- 横軸縦線は外部目盛り（0〜20k・2k刻み）に合わせる -->
+                          <Canvas x:Name="FftLeftGridLines"
+                                  IsHitTestVisible="False"
+                                  ClipToBounds="False"
+                                  SizeChanged="OnFftGridLinesSizeChanged"/>
+                        </Grid>
                       </Border>
                       <Border x:Name="ScopeLeftHost"
                               Opacity="0"
@@ -828,12 +852,18 @@
                     </Grid>
                     <Grid Grid.Column="1" ClipToBounds="False">
                       <Border x:Name="FftRightHost" ClipToBounds="False">
-                        <lvc:CartesianChart x:Name="FftRightChart"
-                                            Background="{StaticResource BrushInput}"
-                                            ClipToBounds="False"
-                                            AnimationsSpeed="0"
-                                            TooltipPosition="Hidden"
-                                            LegendPosition="Hidden"/>
+                        <Grid ClipToBounds="False">
+                          <lvc:CartesianChart x:Name="FftRightChart"
+                                              Background="{StaticResource BrushInput}"
+                                              ClipToBounds="False"
+                                              AnimationsSpeed="0"
+                                              TooltipPosition="Hidden"
+                                              LegendPosition="Hidden"/>
+                          <Canvas x:Name="FftRightGridLines"
+                                  IsHitTestVisible="False"
+                                  ClipToBounds="False"
+                                  SizeChanged="OnFftGridLinesSizeChanged"/>
+                        </Grid>
                       </Border>
                       <Border x:Name="ScopeRightHost"
                               Opacity="0"

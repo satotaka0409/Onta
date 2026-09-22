@@ -33,7 +33,10 @@ internal enum PerformanceSignalMode : byte
     Sweep = 1,
 
     /// <summary>OFDM 連続変調（ペイロードは乱数。ファイルは使わない）。</summary>
-    Modulated = 2
+    Modulated = 2,
+
+    /// <summary>帯域制限ホワイトノイズ（約 20Hz〜20kHz）。</summary>
+    WhiteNoise = 3
 }
 
 /// <summary>
@@ -70,3 +73,46 @@ internal readonly record struct PerformanceRxSettings(
     bool CaptureConstellation,
     /// <summary>ワウ基準の選び方（トーン一覧 / スイープは無し / OFDM キャリア）。</summary>
     PerformanceSignalMode SignalMode);
+
+/// <summary>
+/// 性能測定画面の永続化用 UI 設定です（Onta_setting.bin）。
+/// </summary>
+internal readonly record struct PerformanceUiSettingsSnapshot(
+    PerformanceSignalMode SignalMode,
+    double ToneHz,
+    int ActiveSubcarriers,
+    ModulationScheme ModulationScheme,
+    double DurationSeconds,
+    bool WriteWav,
+    string WavPath,
+    int OutputDeviceNumber,
+    /// <summary>信号振幅（0.1〜1.0）。</summary>
+    double SignalAmplitude,
+    /// <summary>出力デバイス音量（0〜1）。</summary>
+    double OutputVolume,
+    bool RxUseWavInput,
+    string RxWavPath,
+    int InputDeviceNumber,
+    /// <summary>入力ゲイン（0〜1）。</summary>
+    double InputGain)
+{
+    /// <summary>
+    /// ファイル未作成時の既定値（音量 80%、その他は画面左上の既定選択）を返します。
+    /// </summary>
+    public static PerformanceUiSettingsSnapshot CreateDefault() =>
+        new(
+            SignalMode: PerformanceSignalMode.Tone,
+            ToneHz: 315.0,
+            ActiveSubcarriers: 8,
+            ModulationScheme: ModulationScheme.Bpsk,
+            DurationSeconds: 30.0,
+            WriteWav: true,
+            WavPath: string.Empty,
+            OutputDeviceNumber: -1,
+            SignalAmplitude: 0.80,
+            OutputVolume: 0.80,
+            RxUseWavInput: true,
+            RxWavPath: string.Empty,
+            InputDeviceNumber: -1,
+            InputGain: 0.80);
+}

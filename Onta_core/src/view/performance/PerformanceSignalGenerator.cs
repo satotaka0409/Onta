@@ -4,7 +4,7 @@ using Onta.Core;
 namespace Onta.View.Performance;
 
 /// <summary>
-/// 性能測定用の PCM（トーン／スイープ／OFDM）を生成します。
+/// 性能測定用の PCM（トーン／スイープ／ホワイトノイズ／OFDM）を生成します。
 /// </summary>
 internal static class PerformanceSignalGenerator
 {
@@ -68,6 +68,36 @@ internal static class PerformanceSignalGenerator
             destination[i] = new Complex(amp * Math.Sin(phase), 0.0);
         }
     }
+
+    /// <summary>
+    /// 約 20Hz〜20kHz に帯域制限したホワイトノイズ・チャンクを生成します。
+    /// </summary>
+    /// <param name="destination">書き込み先（実部のみ）。</param>
+    /// <param name="amplitude">ピーク振幅（0〜1）。</param>
+    /// <param name="rng">乱数源。</param>
+    /// <param name="filter">連続チャンク用の帯域制限フィルタ状態。</param>
+    public static void FillWhiteNoiseChunk(
+        Span<Complex> destination,
+        double amplitude,
+        Random rng,
+        ref WhiteNoiseBandFilter filter)
+    {
+        ArgumentNullException.ThrowIfNull(rng);
+        var amp = Math.Clamp(amplitude, 0.0, 1.0);
+        for (var i = 0; i < destination.Length; i++)
+        {
+            // 一様乱数を帯域制限し、ピークが amplitude 付近になるようスケールする。
+            var raw = (2.0 * rng.NextDouble()) - 1.0;
+            var filtered = filter.Process(raw);
+            var sample = Math.Clamp(filtered * WhiteNoisePeakScale, -1.0, 1.0) * amp;
+            destination[i] = new Complex(sample, 0.0);
+        }
+    }
+
+    /// <summary>
+    /// フィルタ通過後のピーク補正係数（経験値。±1 入力で概ね ±1 出力）。
+    /// </summary>
+    private const double WhiteNoisePeakScale = 1.35;
 
     /// <summary>
     /// 正弦波トーンを生成します。
@@ -134,6 +164,36 @@ internal static class PerformanceSignalGenerator
 
         var right = new Complex[sampleCount];
         Array.Copy(left, right, sampleCount);
+        return (left, right);
+    }
+
+    /// <summary>
+    /// 約 20Hz〜20kHz の帯域制限ホワイトノイズを生成します。
+    /// </summary>
+    /// <param name="sampleCount">サンプル数。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="amplitude">ピーク振幅。</param>
+    /// <returns>L/R PCM。</returns>
+    public static (Complex[] Left, Complex[] Right) GenerateWhiteNoise(
+        int sampleCount,
+        ChannelMode channelMode,
+        double amplitude = 0.7)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleCount);
+        var rng = new Random();
+        var filter = WhiteNoiseBandFilter.Create(SampleRate);
+        var left = new Complex[sampleCount];
+        FillWhiteNoiseChunk(left, amplitude, rng, ref filter);
+
+        if (channelMode == ChannelMode.Mono)
+        {
+            return (left, Array.Empty<Complex>());
+        }
+
+        // ステレオは L/R 独立ノイズ（相関なし）。
+        var rightFilter = WhiteNoiseBandFilter.Create(SampleRate);
+        var right = new Complex[sampleCount];
+        FillWhiteNoiseChunk(right, amplitude, rng, ref rightFilter);
         return (left, right);
     }
 
@@ -317,5 +377,91 @@ internal static class PerformanceSignalGenerator
         {
             samples[i] = new Complex(samples[i].Real * scale, 0.0);
         }
+    }
+}
+
+/// <summary>
+/// ホワイトノイズ用の 20Hz HPF + 20kHz LPF（RBJ biquad）状態です。
+/// </summary>
+internal struct WhiteNoiseBandFilter
+{
+    private double _hpB0, _hpB1, _hpB2, _hpA1, _hpA2;
+    private double _hpZ1, _hpZ2;
+    private double _lpB0, _lpB1, _lpB2, _lpA1, _lpA2;
+    private double _lpZ1, _lpZ2;
+
+    /// <summary>
+    /// サンプリング周波数から 20Hz〜20kHz 帯域制限フィルタを構築します。
+    /// </summary>
+    /// <param name="sampleRate">PCM サンプリング周波数。</param>
+    /// <returns>初期化済みフィルタ。</returns>
+    public static WhiteNoiseBandFilter Create(int sampleRate)
+    {
+        var fs = Math.Max(1, sampleRate);
+        var filter = new WhiteNoiseBandFilter();
+        // Nyquist 付近の 20kHz LPF は効果が薄いが、仕様の帯域表記に合わせて入れる。
+        filter.SetHighPass(20.0, fs);
+        filter.SetLowPass(Math.Min(20000.0, fs * 0.45), fs);
+        return filter;
+    }
+
+    /// <summary>
+    /// 1 サンプルを帯域制限して返します。
+    /// </summary>
+    /// <param name="input">入力（概ね ±1）。</param>
+    /// <returns>フィルタ出力。</returns>
+    public double Process(double input)
+    {
+        var hp = (_hpB0 * input) + _hpZ1;
+        _hpZ1 = (_hpB1 * input) - (_hpA1 * hp) + _hpZ2;
+        _hpZ2 = (_hpB2 * input) - (_hpA2 * hp);
+
+        var lp = (_lpB0 * hp) + _lpZ1;
+        _lpZ1 = (_lpB1 * hp) - (_lpA1 * lp) + _lpZ2;
+        _lpZ2 = (_lpB2 * hp) - (_lpA2 * lp);
+        return lp;
+    }
+
+    private void SetHighPass(double cutoffHz, int sampleRate)
+    {
+        // RBJ Audio EQ Cookbook — highpass, Q=1/√2
+        var w0 = 2.0 * Math.PI * cutoffHz / sampleRate;
+        var cos = Math.Cos(w0);
+        var sin = Math.Sin(w0);
+        var alpha = sin / Math.Sqrt(2.0);
+        var b0 = (1.0 + cos) * 0.5;
+        var b1 = -(1.0 + cos);
+        var b2 = (1.0 + cos) * 0.5;
+        var a0 = 1.0 + alpha;
+        var a1 = -2.0 * cos;
+        var a2 = 1.0 - alpha;
+        _hpB0 = b0 / a0;
+        _hpB1 = b1 / a0;
+        _hpB2 = b2 / a0;
+        _hpA1 = a1 / a0;
+        _hpA2 = a2 / a0;
+        _hpZ1 = 0;
+        _hpZ2 = 0;
+    }
+
+    private void SetLowPass(double cutoffHz, int sampleRate)
+    {
+        var w0 = 2.0 * Math.PI * cutoffHz / sampleRate;
+        var cos = Math.Cos(w0);
+        var sin = Math.Sin(w0);
+        var alpha = sin / Math.Sqrt(2.0);
+        var b0 = (1.0 - cos) * 0.5;
+        var b1 = 1.0 - cos;
+        var b2 = (1.0 - cos) * 0.5;
+        var a0 = 1.0 + alpha;
+        var a1 = -2.0 * cos;
+        var a2 = 1.0 - alpha;
+        _lpB0 = b0 / a0;
+        _lpB1 = b1 / a0;
+        _lpB2 = b2 / a0;
+        _lpA1 = a1 / a0;
+        _lpA2 = a2 / a0;
+        _lpZ1 = 0;
+        _lpZ2 = 0;
     }
 }

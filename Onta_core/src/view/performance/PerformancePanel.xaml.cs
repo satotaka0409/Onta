@@ -29,10 +29,10 @@ public partial class PerformancePanel : UserControl
     private readonly PerformanceTxWorker _txWorker = new();
     private readonly PerformanceRxWorker _rxWorker = new();
     private readonly DispatcherTimer _pollTimer;
-    private readonly FftChartModel _fftLeft = new();
-    private readonly FftChartModel _fftRight = new();
-    private readonly OscilloscopeChartModel _scopeLeft = new();
-    private readonly OscilloscopeChartModel _scopeRight = new();
+    private readonly FftChartModel _fftLeft = new(FftChartModel.ChannelLeftColor);
+    private readonly FftChartModel _fftRight = new(FftChartModel.ChannelRightColor);
+    private readonly OscilloscopeChartModel _scopeLeft = new(FftChartModel.ChannelLeftColor);
+    private readonly OscilloscopeChartModel _scopeRight = new(FftChartModel.ChannelRightColor);
     private readonly IqChartModel _iqLeft = new();
     private readonly IqChartModel _iqRight = new();
     private readonly WowFlutterChartModel _wowChart = new();
@@ -56,8 +56,224 @@ public partial class PerformancePanel : UserControl
         };
         _pollTimer.Tick += OnPollTick;
 
+        InitializeOutputDevices();
+        InitializeInputDevices();
+        EnsureDefaultWavPath();
+        UpdateOutputModePanels();
+        UpdateRxInputModePanels();
+        UpdateSignalModeUi();
+        UpdateSignalLevelText();
+        UpdateOutputVolumeText();
+        UpdateRxInputVolumeText();
+
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+    }
+
+    /// <summary>
+    /// 現在の UI 設定を永続化用スナップショットへまとめます。
+    /// </summary>
+    /// <returns>性能測定 UI 設定。</returns>
+    internal PerformanceUiSettingsSnapshot CaptureSettings()
+    {
+        var (mode, toneHz) = ReadSignalMode();
+        var writeWav = WriteWavRadio.IsChecked == true;
+        var outputDevice = OutputDeviceCombo.SelectedItem is AudioDeviceItem outItem
+            ? outItem.DeviceNumber
+            : DefaultAudioDeviceNumber;
+        var inputDevice = InputDeviceCombo.SelectedItem is AudioDeviceItem inItem
+            ? inItem.DeviceNumber
+            : DefaultAudioDeviceNumber;
+        var amplitude = SignalLevelSlider is null
+            ? 0.80
+            : Math.Clamp(SignalLevelSlider.Value, 0.10, 1.0);
+        var outputVolume = OutputVolumeSlider is null
+            ? 0.80
+            : Math.Clamp(OutputVolumeSlider.Value / 100.0, 0.0, 1.0);
+        var inputGain = InputGainSlider is null
+            ? 0.80
+            : Math.Clamp(InputGainSlider.Value / 100.0, 0.0, 1.0);
+
+        return new PerformanceUiSettingsSnapshot(
+            SignalMode: mode,
+            ToneHz: toneHz,
+            ActiveSubcarriers: ReadSubcarriers(),
+            ModulationScheme: ReadModulation(),
+            DurationSeconds: ReadSelectedDurationSeconds(),
+            WriteWav: writeWav,
+            WavPath: WavPathTextBox.Text?.Trim() ?? string.Empty,
+            OutputDeviceNumber: outputDevice,
+            SignalAmplitude: amplitude,
+            OutputVolume: outputVolume,
+            RxUseWavInput: RxWavInputRadio.IsChecked == true,
+            RxWavPath: RxWavPathBox.Text?.Trim() ?? string.Empty,
+            InputDeviceNumber: inputDevice,
+            InputGain: inputGain);
+    }
+
+    /// <summary>
+    /// 保存済み設定を UI へ反映します。
+    /// </summary>
+    /// <param name="snapshot">性能測定 UI 設定。</param>
+    internal void ApplySettings(PerformanceUiSettingsSnapshot snapshot)
+    {
+        switch (snapshot.SignalMode)
+        {
+            case PerformanceSignalMode.Modulated:
+                ModulatedSignalRadio.IsChecked = true;
+                break;
+            default:
+                ReferenceSignalRadio.IsChecked = true;
+                break;
+        }
+
+        ApplyToneSelection(snapshot.SignalMode, snapshot.ToneHz);
+        SetCheckedRadio("PerfSubcarrier", snapshot.ActiveSubcarriers.ToString(), "8");
+        SetCheckedRadio("PerfModulation", snapshot.ModulationScheme switch
+        {
+            ModulationScheme.Qpsk => "Qpsk",
+            ModulationScheme.Qam16 => "Qam16",
+            ModulationScheme.Qam64 => "Qam64",
+            ModulationScheme.Qam256 => "Qam256",
+            _ => "Bpsk"
+        }, "Bpsk");
+        SetCheckedRadio("PerfDuration", ((int)Math.Round(snapshot.DurationSeconds)).ToString(), "30");
+
+        WriteWavRadio.IsChecked = snapshot.WriteWav;
+        PlayAudioRadio.IsChecked = !snapshot.WriteWav;
+        if (!string.IsNullOrWhiteSpace(snapshot.WavPath))
+        {
+            WavPathTextBox.Text = snapshot.WavPath;
+        }
+
+        SelectComboDevice(OutputDeviceCombo, snapshot.OutputDeviceNumber);
+        if (SignalLevelSlider is not null)
+        {
+            SignalLevelSlider.Value = Math.Clamp(snapshot.SignalAmplitude, 0.10, 1.0);
+        }
+
+        if (OutputVolumeSlider is not null)
+        {
+            OutputVolumeSlider.Value = Math.Clamp(snapshot.OutputVolume * 100.0, 0.0, 100.0);
+        }
+
+        if (snapshot.RxUseWavInput)
+        {
+            RxWavInputRadio.IsChecked = true;
+        }
+        else
+        {
+            RxAudioInputRadio.IsChecked = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.RxWavPath))
+        {
+            RxWavPathBox.Text = snapshot.RxWavPath;
+        }
+
+        SelectComboDevice(InputDeviceCombo, snapshot.InputDeviceNumber);
+        if (InputGainSlider is not null)
+        {
+            InputGainSlider.Value = Math.Clamp(snapshot.InputGain * 100.0, 0.0, 100.0);
+        }
+
+        UpdateSignalModeUi();
+        UpdateOutputModePanels();
+        UpdateRxInputModePanels();
+        UpdateSignalLevelText();
+        UpdateOutputVolumeText();
+        UpdateRxInputVolumeText();
+    }
+
+    /// <summary>
+    /// 基準信号のトーン／スイープ／ホワイトノイズ選択を反映します。
+    /// </summary>
+    private void ApplyToneSelection(PerformanceSignalMode mode, double toneHz)
+    {
+        if (mode == PerformanceSignalMode.Sweep)
+        {
+            SweepRadio.IsChecked = true;
+            return;
+        }
+
+        if (mode == PerformanceSignalMode.WhiteNoise)
+        {
+            WhiteNoiseRadio.IsChecked = true;
+            return;
+        }
+
+        if (mode == PerformanceSignalMode.Modulated)
+        {
+            return;
+        }
+
+        var tag = toneHz switch
+        {
+            400 => "400",
+            1000 => "1000",
+            3000 => "3000",
+            8000 => "8000",
+            10000 => "10000",
+            12500 => "12500",
+            15000 => "15000",
+            20000 => "20000",
+            _ => "315"
+        };
+        SetCheckedRadio("PerfTone", tag, "315");
+    }
+
+    /// <summary>
+    /// 指定 GroupName のラジオを Tag で選択します。
+    /// </summary>
+    private void SetCheckedRadio(string groupName, string tag, string fallbackTag)
+    {
+        RadioButton? fallback = null;
+        foreach (var radio in FindRadios(this))
+        {
+            if (!string.Equals(radio.GroupName, groupName, StringComparison.Ordinal)
+                || radio.Tag is not string radioTag)
+            {
+                continue;
+            }
+
+            if (string.Equals(radioTag, tag, StringComparison.OrdinalIgnoreCase))
+            {
+                radio.IsChecked = true;
+                return;
+            }
+
+            if (string.Equals(radioTag, fallbackTag, StringComparison.OrdinalIgnoreCase))
+            {
+                fallback = radio;
+            }
+        }
+
+        if (fallback is not null)
+        {
+            fallback.IsChecked = true;
+        }
+    }
+
+    /// <summary>
+    /// コンボのデバイス番号を選択します（無ければ既定）。
+    /// </summary>
+    private static void SelectComboDevice(ComboBox combo, int deviceNumber)
+    {
+        if (combo is null || combo.Items.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var item in combo.Items)
+        {
+            if (item is AudioDeviceItem device && device.DeviceNumber == deviceNumber)
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+
+        combo.SelectedIndex = 0;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -75,11 +291,13 @@ public partial class PerformancePanel : UserControl
         {
             ApplyFftChartLayout(FftLeftChart);
             LayoutFftFreqLabels(FftLeftFreqLabels);
+            LayoutFftFreqGridLines(FftLeftGridLines);
         };
         FftRightChart.SizeChanged += (_, _) =>
         {
             ApplyFftChartLayout(FftRightChart);
             LayoutFftFreqLabels(FftRightFreqLabels);
+            LayoutFftFreqGridLines(FftRightGridLines);
         };
         FftLeftFreqLabels.SizeChanged += (_, _) => LayoutFftFreqLabels(FftLeftFreqLabels);
         FftRightFreqLabels.SizeChanged += (_, _) => LayoutFftFreqLabels(FftRightFreqLabels);
@@ -112,6 +330,8 @@ public partial class PerformancePanel : UserControl
                 ApplyFftChartLayout(FftRightChart);
                 LayoutFftFreqLabels(FftLeftFreqLabels);
                 LayoutFftFreqLabels(FftRightFreqLabels);
+                LayoutFftFreqGridLines(FftLeftGridLines);
+                LayoutFftFreqGridLines(FftRightGridLines);
                 ApplyScopeChartLayout(ScopeLeftChart);
                 ApplyScopeChartLayout(ScopeRightChart);
                 ApplyScopeAxisRanges();
@@ -121,12 +341,13 @@ public partial class PerformancePanel : UserControl
             },
             DispatcherPriority.Loaded);
 
-        InitializeOutputDevices();
-        InitializeInputDevices();
         EnsureDefaultWavPath();
         UpdateOutputModePanels();
         UpdateRxInputModePanels();
         UpdateSignalModeUi();
+        // コンストラクタで反映済みの表示を、レイアウト確定後にも再同期する。
+        UpdateSignalLevelText();
+        UpdateOutputVolumeText();
         UpdateRxInputVolumeText();
     }
 
@@ -442,9 +663,7 @@ public partial class PerformancePanel : UserControl
 
     /// <summary>
     /// FFT チャートの描画余白と横軸範囲を調整します。
-    /// LiveCharts は Skia を物理ピクセル幅で描くため、125% DPI では
-    /// MaxLimit=20000 だと 8 kHz が 10k に見える。MaxLimit=20000×DPI にして
-    /// 0–20k の目盛りがコントロール全幅に乗る。
+    /// 横軸 MaxLimit は外部目盛り／縦線と同じ 0–20000 Hz（DPI 倍しない）。
     /// </summary>
     private void ApplyFftChartLayout(CartesianChart chart)
     {
@@ -459,10 +678,12 @@ public partial class PerformancePanel : UserControl
         xAxis.TextSize = 0;
         xAxis.NameTextSize = 0;
         xAxis.MinLimit = 0;
-        xAxis.MaxLimit = GetPerfFftXMaxHz();
+        xAxis.MaxLimit = PerfFftXMaxHz;
         xAxis.MinStep = 2000;
         xAxis.ForceStepToMin = true;
-        xAxis.CustomSeparators = [0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000, 20000];
+        // 縦線は外部 Canvas（目盛りと同じ 0〜20k・2k 刻み）。
+        xAxis.CustomSeparators = null;
+        xAxis.SeparatorsPaint = null;
         xAxis.SeparatorsAtCenter = false;
         xAxis.TicksAtCenter = false;
         xAxis.Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0);
@@ -481,30 +702,18 @@ public partial class PerformancePanel : UserControl
         yAxis.Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0);
     }
 
-    /// <summary>
-    /// 性能測定 FFT の横軸 MaxLimit（Hz）。物理ピクセル描画の DPI 分だけ広げる。
-    /// </summary>
-    private double GetPerfFftXMaxHz()
-    {
-        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
-        if (dpi < 0.5)
-        {
-            dpi = 1.0;
-        }
-
-        return 20000.0 * dpi;
-    }
+    /// <summary>性能測定 FFT の横軸上限（Hz）。外部 0〜20k 目盛りと一致させる。</summary>
+    private const double PerfFftXMaxHz = 20000.0;
 
     /// <summary>
-    /// ReplacePoints が MaxLimit を 20000 に戻すので、DPI 補正を掛け直します。
+    /// ReplacePoints 後も横軸を 0–20000 Hz に固定します。
     /// </summary>
     private void RestorePerfFftXMax()
     {
-        var max = GetPerfFftXMaxHz();
         _fftLeft.XAxes[0].MinLimit = 0;
-        _fftLeft.XAxes[0].MaxLimit = max;
+        _fftLeft.XAxes[0].MaxLimit = PerfFftXMaxHz;
         _fftRight.XAxes[0].MinLimit = 0;
-        _fftRight.XAxes[0].MaxLimit = max;
+        _fftRight.XAxes[0].MaxLimit = PerfFftXMaxHz;
     }
 
     /// <summary>
@@ -878,7 +1087,7 @@ public partial class PerformancePanel : UserControl
     ];
 
     /// <summary>
-    /// 0–20 kHz を Canvas 全幅に等間隔配置します（MaxLimit の DPI 補正と対）。
+    /// 0–20 kHz を Canvas 全幅に等間隔配置します（チャート MaxLimit=20000 と一致）。
     /// </summary>
     private static void LayoutFftFreqLabels(Canvas canvas)
     {
@@ -910,6 +1119,64 @@ public partial class PerformancePanel : UserControl
             Canvas.SetLeft(label, x);
             Canvas.SetTop(label, 0);
             canvas.Children.Add(label);
+        }
+    }
+
+    /// <summary>
+    /// FFT 縦線 Canvas のサイズ変化で 2 kHz 間隔の縦線を引き直します。
+    /// </summary>
+    private void OnFftGridLinesSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is Canvas canvas)
+        {
+            LayoutFftFreqGridLines(canvas);
+        }
+    }
+
+    /// <summary>
+    /// 外部周波数目盛りと同じ位置（0〜20 kHz・2 kHz 刻み）に縦線を配置します。
+    /// </summary>
+    private static void LayoutFftFreqGridLines(Canvas? canvas)
+    {
+        if (canvas is null)
+        {
+            return;
+        }
+
+        var width = canvas.ActualWidth;
+        var height = canvas.ActualHeight;
+        if (width <= 1 || height <= 1)
+        {
+            return;
+        }
+
+        canvas.Children.Clear();
+        var brush = new SolidColorBrush(Color.FromRgb(92, 97, 108));
+        brush.Freeze();
+        const double maxHz = 20000;
+        foreach (var (hz, _) in FftFreqTicks)
+        {
+            var x = width * hz / maxHz;
+            // 端は枠線と重なるのでわずかに内側へ
+            if (hz <= 0)
+            {
+                x = 0.5;
+            }
+            else if (hz >= maxHz)
+            {
+                x = width - 0.5;
+            }
+
+            canvas.Children.Add(new ShapeLine
+            {
+                X1 = x,
+                X2 = x,
+                Y1 = 0,
+                Y2 = height,
+                Stroke = brush,
+                StrokeThickness = 1,
+                Opacity = 0.85
+            });
         }
     }
 
@@ -1702,11 +1969,17 @@ public partial class PerformancePanel : UserControl
         DrawScopeWaveOnCanvas(
             ScopeLeftWaveCanvas,
             _scopeLeft,
-            new SolidColorBrush(Color.FromRgb(166, 221, 176)));
+            new SolidColorBrush(Color.FromRgb(
+                FftChartModel.ChannelLeftColor.Red,
+                FftChartModel.ChannelLeftColor.Green,
+                FftChartModel.ChannelLeftColor.Blue)));
         DrawScopeWaveOnCanvas(
             ScopeRightWaveCanvas,
             _scopeRight,
-            new SolidColorBrush(Color.FromRgb(166, 221, 176)));
+            new SolidColorBrush(Color.FromRgb(
+                FftChartModel.ChannelRightColor.Red,
+                FftChartModel.ChannelRightColor.Green,
+                FftChartModel.ChannelRightColor.Blue)));
     }
 
     /// <summary>
@@ -1789,10 +2062,10 @@ public partial class PerformancePanel : UserControl
 
     private void SetTxRunning(bool running)
     {
-        TxStartButton.IsEnabled = !running;
+        TxStartButton.IsEnabled = !running && !_rxWorker.IsBusy;
         TxStopButton.IsEnabled = running;
-        StereoRadio.IsEnabled = !running;
-        MonoRadio.IsEnabled = !running;
+        // 送信中は受信スタート不可。
+        RxStartButton.IsEnabled = !running && !_rxWorker.IsBusy;
         ReferenceSignalRadio.IsEnabled = !running;
         ModulatedSignalRadio.IsEnabled = !running;
         WriteWavRadio.IsEnabled = !running;
@@ -1850,17 +2123,53 @@ public partial class PerformancePanel : UserControl
 
         var (mode, toneHz) = ReadSignalMode();
         var amplitude = SignalLevelSlider is null
-            ? 0.7
+            ? 0.80
             : Math.Clamp(SignalLevelSlider.Value, 0.10, 1.0);
         _txWorker.UpdateLiveSignal(mode, toneHz, amplitude);
     }
 
     /// <summary>
-    /// 信号レベル変更をライブ反映します。
+    /// 信号レベル変更をライブ反映し、% 表示を更新します。
     /// </summary>
     private void OnSignalLevelChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        UpdateSignalLevelText();
         PushLiveTxSignal();
+    }
+
+    /// <summary>
+    /// 送信信号レベルの % 表示を更新します（0.10〜1.00 → 10%〜100%）。
+    /// </summary>
+    private void UpdateSignalLevelText()
+    {
+        if (SignalLevelValueText is null || SignalLevelSlider is null)
+        {
+            return;
+        }
+
+        var pct = (int)Math.Round(Math.Clamp(SignalLevelSlider.Value, 0.10, 1.00) * 100.0);
+        SignalLevelValueText.Text = $"{pct}%";
+    }
+
+    /// <summary>
+    /// 出力音量スライダーの % 表示を更新します。
+    /// </summary>
+    private void OnOutputVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        UpdateOutputVolumeText();
+    }
+
+    /// <summary>
+    /// 出力音量ラベルを更新します。
+    /// </summary>
+    private void UpdateOutputVolumeText()
+    {
+        if (OutputVolumeValueText is null || OutputVolumeSlider is null)
+        {
+            return;
+        }
+
+        OutputVolumeValueText.Text = $"{(int)Math.Round(OutputVolumeSlider.Value)}%";
     }
 
     /// <summary>
@@ -1876,8 +2185,10 @@ public partial class PerformancePanel : UserControl
 
     private void SetRxRunning(bool running)
     {
-        RxStartButton.IsEnabled = !running;
+        RxStartButton.IsEnabled = !running && !_txWorker.IsBusy;
         RxStopButton.IsEnabled = running;
+        // 受信中は送信スタート不可。
+        TxStartButton.IsEnabled = !running && !_txWorker.IsBusy;
         RxWavInputRadio.IsEnabled = !running;
         RxAudioInputRadio.IsEnabled = !running;
         RxBrowseWavButton.IsEnabled = !running;
@@ -1891,7 +2202,7 @@ public partial class PerformancePanel : UserControl
 
     private PerformanceTxSettings ReadTxSettings()
     {
-        var channel = StereoRadio.IsChecked == true ? ChannelMode.Stereo : ChannelMode.Mono;
+        // 性能測定の送信は常にステレオ。
         var duration = ReadSelectedDurationSeconds();
         var (mode, toneHz) = ReadSignalMode();
         var sc = ReadSubcarriers();
@@ -1903,11 +2214,11 @@ public partial class PerformancePanel : UserControl
         var writeWav = WriteWavRadio.IsChecked == true;
         var volume = Math.Clamp(OutputVolumeSlider.Value / 100.0, 0.0, 1.0);
         var amplitude = SignalLevelSlider is null
-            ? 0.7
+            ? 0.80
             : Math.Clamp(SignalLevelSlider.Value, 0.10, 1.0);
 
         return new PerformanceTxSettings(
-            ChannelMode: channel,
+            ChannelMode: ChannelMode.Stereo,
             SignalMode: mode,
             ToneHz: toneHz,
             ActiveSubcarriers: sc,
@@ -1923,7 +2234,7 @@ public partial class PerformancePanel : UserControl
 
     private PerformanceRxSettings ReadRxSettings()
     {
-        var channel = StereoRadio.IsChecked == true ? ChannelMode.Stereo : ChannelMode.Mono;
+        // 送信が常時ステレオのため、受信解析もステレオ前提。
         var useWav = RxWavInputRadio.IsChecked == true;
         var device = InputDeviceCombo.SelectedItem is AudioDeviceItem item
             ? item.DeviceNumber
@@ -1932,7 +2243,7 @@ public partial class PerformancePanel : UserControl
         var gain = Math.Clamp(InputGainSlider.Value / 100.0, 0.0, 1.0);
 
         return new PerformanceRxSettings(
-            ChannelMode: channel,
+            ChannelMode: ChannelMode.Stereo,
             UseWavInput: useWav,
             WavPath: RxWavPathBox.Text?.Trim() ?? string.Empty,
             InputDeviceNumber: device,
@@ -1958,11 +2269,21 @@ public partial class PerformancePanel : UserControl
             return (PerformanceSignalMode.Sweep, 0);
         }
 
+        if (WhiteNoiseRadio.IsChecked == true)
+        {
+            return (PerformanceSignalMode.WhiteNoise, 0);
+        }
+
         foreach (var radio in FindRadios(this))
         {
             if (radio.GroupName != "PerfTone" || radio.IsChecked != true || radio.Tag is not string tag)
             {
                 continue;
+            }
+
+            if (string.Equals(tag, "whitenoise", StringComparison.OrdinalIgnoreCase))
+            {
+                return (PerformanceSignalMode.WhiteNoise, 0);
             }
 
             if (double.TryParse(tag, out var hz))

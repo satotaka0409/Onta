@@ -19,21 +19,37 @@ public sealed class FftChartModel
     private const double MaxDisplayHz = 20000;
     private readonly ObservableCollection<ObservablePoint> _leftPoints = [];
     private readonly ObservableCollection<ObservablePoint> _rightPoints = [];
-    private static readonly SKColor LeftColor = new(166, 221, 176);
-    private static readonly SKColor RightColor = new(255, 182, 120);
+    /// <summary>L チャンネル（緑系）。</summary>
+    public static readonly SKColor ChannelLeftColor = new(166, 221, 176);
+    /// <summary>R チャンネル（オレンジ系。ワウ／目盛りと同じ）。</summary>
+    public static readonly SKColor ChannelRightColor = new(255, 182, 120);
     private static readonly SKColor AxisColor = new(176, 181, 191);
     private static readonly SKColor GridColor = new(92, 97, 108);
+    private readonly SKColor _primaryColor;
     private readonly LineSeries<ObservablePoint> _leftSeries;
     private readonly LineSeries<ObservablePoint> _rightSeries;
 
+    /// <summary>
+    /// L 色で FFT チャートを初期化します。
+    /// </summary>
     public FftChartModel()
+        : this(ChannelLeftColor)
     {
+    }
+
+    /// <summary>
+    /// 単一系列表示色を指定して FFT チャートを初期化します（性能測定の L/R 分離表示用）。
+    /// </summary>
+    /// <param name="primaryStroke">モノラル表示時の系列色。</param>
+    public FftChartModel(SKColor primaryStroke)
+    {
+        _primaryColor = primaryStroke;
         _leftSeries = new LineSeries<ObservablePoint>
         {
             Values = _leftPoints,
             Name = "L",
             Fill = null,
-            Stroke = new SolidColorPaint(LeftColor, 1.5f),
+            Stroke = new SolidColorPaint(_primaryColor, 1.5f),
             GeometrySize = 0,
             LineSmoothness = 0
         };
@@ -43,7 +59,7 @@ public sealed class FftChartModel
             Values = _rightPoints,
             Name = "R",
             Fill = null,
-            Stroke = new SolidColorPaint(RightColor, 1.5f),
+            Stroke = new SolidColorPaint(ChannelRightColor, 1.5f),
             GeometrySize = 0,
             LineSmoothness = 0,
             IsVisible = false
@@ -171,13 +187,13 @@ public sealed class FftChartModel
                 _rightPoints.Add(new ObservablePoint(s.FrequencyHz, s.MagnitudeDb));
             }
 
-            _leftSeries.Stroke = new SolidColorPaint(LeftColor, 1.5f);
+            _leftSeries.Stroke = new SolidColorPaint(ChannelLeftColor, 1.5f);
             _rightSeries.IsVisible = true;
         }
         else
         {
-            // ヘッダー／モノラルは L のみ（L 色）。R 系列は出さない。
-            _leftSeries.Stroke = new SolidColorPaint(LeftColor, 1.5f);
+            // 単系列（性能測定 L/R 分離やヘッダー）は primary 色。
+            _leftSeries.Stroke = new SolidColorPaint(_primaryColor, 1.5f);
             _rightSeries.IsVisible = false;
         }
 
@@ -193,7 +209,7 @@ public sealed class FftChartModel
     {
         _leftPoints.Clear();
         _rightPoints.Clear();
-        _leftSeries.Stroke = new SolidColorPaint(LeftColor, 1.5f);
+        _leftSeries.Stroke = new SolidColorPaint(_primaryColor, 1.5f);
         _rightSeries.IsVisible = false;
         XAxes[0].MinLimit = XMinLimit;
         XAxes[0].MaxLimit = XMaxLimit;
