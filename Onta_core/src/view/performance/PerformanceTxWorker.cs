@@ -19,15 +19,19 @@ internal sealed class PerformanceTxWorker : IDisposable
     private readonly Complex[] _iqTimeScratch = new Complex[PerformanceIqExtractor.FftSize];
     private readonly Complex[] _iqFftScratch = new Complex[PerformanceIqExtractor.FftSize];
     private readonly Random _noiseRng = new();
+    private Complex[]? _fftExact;
     private Task? _worker;
     private CancellationTokenSource? _cts;
     private long _pcmWriteTotal;
+    private long _lastFftPublishMs = -1;
     private bool _pcmStereo;
     private bool _disposed;
 
     private PerformanceSignalMode _liveMode;
     private double _liveToneHz = 315.0;
     private double _liveAmplitude = 0.8;
+    private int _fftSize = PerformanceFftAnalyzer.DefaultSize;
+    private PerformanceFftWindowKind _fftWindowKind = PerformanceFftWindowKind.Hanning;
     private bool _flushPlayback;
     private RealtimePcmPlayer? _activePlayer;
     private WhiteNoiseBandFilter _noiseFilterLeft = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
@@ -98,6 +102,7 @@ internal sealed class PerformanceTxWorker : IDisposable
             var token = _cts.Token;
             _completion = null;
             _pcmWriteTotal = 0;
+            _lastFftPublishMs = -1;
             _pcmStereo = settings.ChannelMode == ChannelMode.Stereo;
             _liveMode = settings.SignalMode;
             _liveToneHz = settings.ToneHz > 0 ? settings.ToneHz : 315.0;
@@ -114,6 +119,20 @@ internal sealed class PerformanceTxWorker : IDisposable
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// 再生中の FFT 解析サイズ／窓関数を更新します。
+    /// </summary>
+    /// <param name="fftSize">FFT 長（1024/2048/4096）。</param>
+    /// <param name="windowKind">窓関数。</param>
+    public void UpdateFftAnalysis(int fftSize, PerformanceFftWindowKind windowKind)
+    {
+        lock (_sync)
+        {
+            _fftSize = PerformanceFftAnalyzer.ClampSize(fftSize);
+            _fftWindowKind = PerformanceFftAnalyzer.ClampWindow(windowKind);
         }
     }
 
@@ -148,6 +167,7 @@ internal sealed class PerformanceTxWorker : IDisposable
                 Array.Clear(_pcmLeft);
                 Array.Clear(_pcmRight);
                 _pcmWriteTotal = 0;
+                _lastFftPublishMs = -1;
                 _noiseFilterLeft = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
                 _noiseFilterRight = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
                 playerToFlush = _activePlayer;
@@ -310,10 +330,7 @@ internal sealed class PerformanceTxWorker : IDisposable
     {
         const int chunk = 4096;
         var total = Math.Max(1, (int)Math.Round(settings.DurationSeconds * PerformanceSignalGenerator.SampleRate));
-        var fftSize = PerformanceConstants.VizFftSize;
         var pcmCap = PerformanceConstants.ScopeCaptureSamples;
-        var fftWork = new Complex[fftSize];
-        var window = new Complex[fftSize];
         var leftChunk = new Complex[chunk];
         var rightChunk = settings.ChannelMode == ChannelMode.Stereo ? new Complex[chunk] : Array.Empty<Complex>();
         var phase = 0.0;
@@ -378,7 +395,7 @@ internal sealed class PerformanceTxWorker : IDisposable
                 ? rightChunk.AsSpan(0, len)
                 : ReadOnlySpan<Complex>.Empty;
             player.AddSamples(leftSlice, rightSlice);
-            PublishPcmAndFft(settings, leftSlice, rightSlice, fftWork, window, fftSize, pcmCap);
+            PublishPcmAndFft(settings, leftSlice, rightSlice, pcmCap);
             sampleIndex += len;
         }
     }
@@ -394,10 +411,7 @@ internal sealed class PerformanceTxWorker : IDisposable
         CancellationToken token)
     {
         const int chunk = 4096;
-        var fftSize = PerformanceConstants.VizFftSize;
         var pcmCap = PerformanceConstants.ScopeCaptureSamples;
-        var fftWork = new Complex[fftSize];
-        var window = new Complex[fftSize];
         var scaleBuf = new Complex[chunk];
         var scaleRight = settings.ChannelMode == ChannelMode.Stereo ? new Complex[chunk] : Array.Empty<Complex>();
         var baseAmp = Math.Max(1e-6, Math.Clamp(settings.SignalAmplitude, 0.05, 1.0));
@@ -436,7 +450,7 @@ internal sealed class PerformanceTxWorker : IDisposable
 
             var leftSlice = scaleBuf.AsSpan(0, len);
             player.AddSamples(leftSlice, rightSlice);
-            PublishPcmAndFft(settings, leftSlice, rightSlice, fftWork, window, fftSize, pcmCap);
+            PublishPcmAndFft(settings, leftSlice, rightSlice, pcmCap);
         }
     }
 
@@ -447,11 +461,19 @@ internal sealed class PerformanceTxWorker : IDisposable
         PerformanceTxSettings settings,
         ReadOnlySpan<Complex> leftSlice,
         ReadOnlySpan<Complex> rightSlice,
-        Complex[] fftWork,
-        Complex[] window,
-        int fftSize,
         int pcmCap)
     {
+        int fftSize;
+        PerformanceFftWindowKind windowKind;
+        lock (_sync)
+        {
+            fftSize = _fftSize;
+            windowKind = _fftWindowKind;
+        }
+
+        EnsureFftExactBuffer(fftSize);
+        var exact = _fftExact!;
+
         var len = leftSlice.Length;
         lock (_sync)
         {
@@ -465,30 +487,34 @@ internal sealed class PerformanceTxWorker : IDisposable
                 _pcmWriteTotal++;
             }
 
-            if (_pcmWriteTotal >= fftSize)
+            if (_pcmWriteTotal < fftSize)
             {
-                FillPcmWindow(_pcmLeft, window, fftSize, pcmCap);
+                return;
             }
-        }
 
-        if (_pcmWriteTotal < fftSize)
-        {
-            return;
+            var now = Environment.TickCount64;
+            if (_lastFftPublishMs >= 0 && now - _lastFftPublishMs < 80)
+            {
+                return;
+            }
+
+            FillPcmWindow(_pcmLeft, exact, fftSize, pcmCap);
+            _lastFftPublishMs = now;
         }
 
         _vizStatus.SetFftStereoMode(settings.ChannelMode == ChannelMode.Stereo);
-        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(window, fftWork);
-        _vizStatus.SetFftFrame(fftWork, isRightChannel: false, PerformanceSignalGenerator.SampleRate);
+        PerformanceFftAnalyzer.ComputeSpectrumInPlace(exact, windowKind);
+        _vizStatus.SetFftFrame(exact, isRightChannel: false, PerformanceSignalGenerator.SampleRate);
 
         if (settings.ChannelMode == ChannelMode.Stereo)
         {
             lock (_sync)
             {
-                FillPcmWindow(_pcmRight, window, fftSize, pcmCap);
+                FillPcmWindow(_pcmRight, exact, fftSize, pcmCap);
             }
 
-            OfdmGenerator.ComputeForwardSpectrumFromRealPcm(window, fftWork);
-            _vizStatus.SetFftFrame(fftWork, isRightChannel: true, PerformanceSignalGenerator.SampleRate);
+            PerformanceFftAnalyzer.ComputeSpectrumInPlace(exact, windowKind);
+            _vizStatus.SetFftFrame(exact, isRightChannel: true, PerformanceSignalGenerator.SampleRate);
         }
 
         // 変調送信時は I-Q も更新（トーン／スイープは OFDM キャリアが無いので省略）
@@ -496,6 +522,19 @@ internal sealed class PerformanceTxWorker : IDisposable
         {
             PublishIqFromPcm(settings);
         }
+    }
+
+    /// <summary>
+    /// 現在の FFT 長に一致する作業バッファを確保します。
+    /// </summary>
+    private void EnsureFftExactBuffer(int fftSize)
+    {
+        if (_fftExact is not null && _fftExact.Length == fftSize)
+        {
+            return;
+        }
+
+        _fftExact = new Complex[fftSize];
     }
 
     /// <summary>
@@ -574,18 +613,7 @@ internal sealed class PerformanceTxWorker : IDisposable
             return false;
         }
 
-        var start = _pcmWriteTotal - n;
-        for (var i = 0; i < n; i++)
-        {
-            var idx = (int)((start + i) % ring.Length);
-            if (idx < 0)
-            {
-                idx += ring.Length;
-            }
-
-            dest[i] = ring[idx];
-        }
-
+        PerformanceRingCopy.CopyTail(ring, _pcmWriteTotal, dest.AsSpan(0, n), n);
         count = n;
         return true;
     }
@@ -640,19 +668,14 @@ internal sealed class PerformanceTxWorker : IDisposable
             var cap = _pcmLeft.Length;
             var n = Math.Min(cap, Math.Min(left.Length, right.Length));
             n = (int)Math.Min(n, _pcmWriteTotal);
-            var start = _pcmWriteTotal - n;
-            for (var i = 0; i < n; i++)
-            {
-                var idx = (int)((start + i) % cap);
-                if (idx < 0)
-                {
-                    idx += cap;
-                }
-
-                left[i] = _pcmLeft[idx];
-                right[i] = _pcmStereo ? _pcmRight[idx] : _pcmLeft[idx];
-            }
-
+            PerformanceRingCopy.CopyStereoTail(
+                _pcmLeft,
+                _pcmRight,
+                _pcmWriteTotal,
+                left.AsSpan(0, n),
+                right.AsSpan(0, n),
+                n,
+                copyRightFromLeft: !_pcmStereo);
             count = n;
             return true;
         }
@@ -663,16 +686,7 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// </summary>
     private void FillPcmWindow(double[] ring, Complex[] destination, int fftSize, int capacity)
     {
-        var start = _pcmWriteTotal - fftSize;
-        for (var i = 0; i < fftSize; i++)
-        {
-            var idx = (int)((start + i) % capacity);
-            if (idx < 0)
-            {
-                idx += capacity;
-            }
-
-            destination[i] = new Complex(ring[idx], 0.0);
-        }
+        _ = capacity;
+        PerformanceRingCopy.FillComplexWindow(ring, _pcmWriteTotal, destination, fftSize);
     }
 }

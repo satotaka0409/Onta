@@ -764,13 +764,11 @@ public sealed partial class OfdmGenerator
     };
 
     /// <summary>
-    /// ResolveDataCarrierOrder を解決します。
+    /// ResolveDataCarrierOrder を解決します（割当なし・キャッシュ済みリスト）。
     /// </summary>
-    /// <returns>処理結果。</returns>
-    private int[] ResolveDataCarrierOrder(bool useRightChannel)
-    {
-        return useRightChannel ? _rightDataCarrierBase.ToArray() : _leftDataCarrierBase.ToArray();
-    }
+    /// <returns>データキャリアビン順。</returns>
+    private List<int> ResolveDataCarrierOrder(bool useRightChannel) =>
+        useRightChannel ? _rightDataCarrierBase : _leftDataCarrierBase;
 
     /// <summary>
     /// GetPositiveCarrierBins を取得します。
@@ -860,9 +858,11 @@ public sealed partial class OfdmGenerator
             bins[n / 2] = new Complex(bins[n / 2].Real, 0.0);
         }
 
-        for (var k = 1; k < n / 2; k++)
+        var half = n / 2;
+        for (var k = 1; k < half; k++)
         {
-            bins[n - k] = Complex.Conjugate(bins[k]);
+            var c = bins[k];
+            bins[n - k] = new Complex(c.Real, -c.Imaginary);
         }
     }
 
@@ -3958,8 +3958,8 @@ public sealed partial class OfdmGenerator
             ? _rightDataCarrierGroupByBin
             : _leftDataCarrierGroupByBin;
         Span<double> softLlrScratch = stackalloc double[6];
-        Complex[]? frameSnapshot = onEqualizedDataSymbolFrame is null ? null : new Complex[dataOrder.Length];
-        byte[]? groupSnapshot = onEqualizedDataSymbolFrame is null ? null : new byte[dataOrder.Length];
+        Complex[]? frameSnapshot = onEqualizedDataSymbolFrame is null ? null : new Complex[dataOrder.Count];
+        byte[]? groupSnapshot = onEqualizedDataSymbolFrame is null ? null : new byte[dataOrder.Count];
         var frameCount = 0;
         foreach (var dataBin in dataOrder)
         {
@@ -4847,10 +4847,10 @@ public sealed partial class OfdmGenerator
     private Complex[] BuildFrequencyDomainSymbol(CarrierChannel channel)
     {
         var bins = new Complex[_config.FftSize];
-        var carrierBins = GetActiveCarrierBins(channel);
-        var pilotBins = SelectPilotBins(carrierBins, _config.PilotSpacing);
-        var dataBins = carrierBins.Where(bin => !pilotBins.Contains(bin)).ToList();
-        var dataModulationByBin = channel == CarrierChannel.Right
+        var useRight = channel == CarrierChannel.Right;
+        var pilotBins = useRight ? _rightPilotBins : _leftPilotBins;
+        var dataBins = useRight ? _rightDataCarrierBase : _leftDataCarrierBase;
+        var dataModulationByBin = useRight
             ? _rightDataCarrierModulationByBin
             : _leftDataCarrierModulationByBin;
 
@@ -4960,15 +4960,6 @@ public sealed partial class OfdmGenerator
     {
         var grayIndex = (binaryIndex ^ (binaryIndex >> 1)) & ((1 << bitsPerAxis) - 1);
         return levels[grayIndex];
-    }
-
-    /// <summary>
-    /// GetActiveCarrierBins を取得します。
-    /// </summary>
-    /// <returns>処理結果。</returns>
-    private List<int> GetActiveCarrierBins(CarrierChannel channel)
-    {
-        return GetPositiveCarrierBins(channel);
     }
 
     /// <returns>処理結果。</returns>

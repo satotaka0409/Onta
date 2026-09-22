@@ -8,9 +8,10 @@ namespace Onta.View.Performance;
 internal static class PerformanceConstants
 {
     /// <summary>
-    /// 性能測定の表示用解析 FFT 長です（メイン処理の <c>OfdmConfig.FixedFftSize=256</c> とは別）。
+    /// 性能測定の表示用解析 FFT 長の既定値です（メイン処理の <c>OfdmConfig.FixedFftSize=256</c> とは別）。
+    /// UI で 1024/2048/4096 を選択可能。
     /// </summary>
-    public const int VizFftSize = 2048;
+    public const int VizFftSize = PerformanceFftAnalyzer.DefaultSize;
 
     /// <summary>性能測定の PCM サンプリング周波数（Hz）。</summary>
     public const int SampleRate = 44100;
@@ -94,7 +95,11 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
     string RxWavPath,
     int InputDeviceNumber,
     /// <summary>入力ゲイン（0〜1）。</summary>
-    double InputGain)
+    double InputGain,
+    /// <summary>表示 FFT 長（1024/2048/4096）。</summary>
+    int FftSize,
+    /// <summary>表示 FFT 窓関数。</summary>
+    PerformanceFftWindowKind FftWindowKind)
 {
     /// <summary>
     /// ファイル未作成時の既定値（音量 80%、その他は画面左上の既定選択）を返します。
@@ -114,5 +119,7 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
             RxUseWavInput: true,
             RxWavPath: string.Empty,
             InputDeviceNumber: -1,
-            InputGain: 0.80);
+            InputGain: 0.80,
+            FftSize: PerformanceFftAnalyzer.DefaultSize,
+            FftWindowKind: PerformanceFftWindowKind.Hanning);
 }

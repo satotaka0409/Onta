@@ -43,6 +43,7 @@ public sealed partial class OfdmGenerator
         var equalizers = new Complex[fftSize];
         var followRadius = Math.Max(searchRadius, 2);
         var position = cursor;
+        var dataOrder = ResolveDataCarrierOrder(useRightChannel);
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
@@ -61,7 +62,6 @@ public sealed partial class OfdmGenerator
                 timeNoCp,
                 freqBins,
                 equalizers);
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel);
 
             foreach (var dataBin in dataOrder)
             {
@@ -233,11 +233,11 @@ public sealed partial class OfdmGenerator
         var timeNoCp = new Complex[fftSize];
         var freqBins = new Complex[fftSize];
         var equalizers = new Complex[fftSize];
+        var dataOrder = ResolveDataCarrierOrder(useRightChannel);
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
             _ = absoluteSampleOffset;
-            var dataOrder = ResolveDataCarrierOrder(useRightChannel);
 
             var symbol = samples.Slice(s * symbolLength, symbolLength);
             PrepareSymbolFrequency(

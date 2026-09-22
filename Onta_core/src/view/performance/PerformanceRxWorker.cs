@@ -9,16 +9,13 @@ namespace Onta.View.Performance;
 /// </summary>
 internal sealed class PerformanceRxWorker : IDisposable
 {
-    /// <summary>表示用解析 FFT 長（OFDM 合成 FFT=256 とは別）。</summary>
-    private const int FftSize = PerformanceConstants.VizFftSize;
     private const int RingCapacity = PerformanceConstants.ScopeCaptureSamples;
 
     private readonly object _sync = new();
     private readonly CoreExecutionStatusBoard _status = new();
     private readonly double[] _leftRing = new double[RingCapacity];
     private readonly double[] _rightRing = new double[RingCapacity];
-    private readonly Complex[] _fftWork = new Complex[FftSize];
-    private readonly Complex[] _window = new Complex[FftSize];
+    private Complex[] _fftExact = new Complex[PerformanceFftAnalyzer.DefaultSize];
     private readonly Complex[] _iqScratch = new Complex[128];
     private readonly byte[] _iqGroups = new byte[128];
     private readonly double[] _iqPcmScratch = new double[PerformanceIqExtractor.CaptureSamples];
@@ -35,6 +32,8 @@ internal sealed class PerformanceRxWorker : IDisposable
     private double _wowRightEma;
     private double _wowLeftRefHz;
     private double _wowRightRefHz;
+    private int _fftSize = PerformanceFftAnalyzer.DefaultSize;
+    private PerformanceFftWindowKind _fftWindowKind = PerformanceFftWindowKind.Hanning;
     private bool _disposed;
     private bool _running;
 
@@ -53,6 +52,24 @@ internal sealed class PerformanceRxWorker : IDisposable
             lock (_sync)
             {
                 return _running;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 受信中の FFT 解析サイズ／窓関数を更新します。
+    /// </summary>
+    /// <param name="fftSize">FFT 長（1024/2048/4096）。</param>
+    /// <param name="windowKind">窓関数。</param>
+    public void UpdateFftAnalysis(int fftSize, PerformanceFftWindowKind windowKind)
+    {
+        lock (_sync)
+        {
+            _fftSize = PerformanceFftAnalyzer.ClampSize(fftSize);
+            _fftWindowKind = PerformanceFftAnalyzer.ClampWindow(windowKind);
+            if (_fftExact.Length != _fftSize)
+            {
+                _fftExact = new Complex[_fftSize];
             }
         }
     }
@@ -317,7 +334,7 @@ internal sealed class PerformanceRxWorker : IDisposable
                 return;
             }
 
-            if (_writeTotal < FftSize)
+            if (_writeTotal < _fftSize)
             {
                 return;
             }
@@ -329,24 +346,31 @@ internal sealed class PerformanceRxWorker : IDisposable
 
     private void PublishAnalysisUnlocked()
     {
-        FillWindow(_leftRing, _window);
-        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_window, _fftWork);
-        _status.SetFftStereoMode(_settings.ChannelMode == ChannelMode.Stereo);
-        _status.SetFftFrame(_fftWork, isRightChannel: false, PerformanceSignalGenerator.SampleRate);
+        var fftSize = _fftSize;
+        var windowKind = _fftWindowKind;
+        if (_fftExact.Length != fftSize)
+        {
+            _fftExact = new Complex[fftSize];
+        }
 
-        var leftPeakHz = FindPeakFrequencyHz(_fftWork, PerformanceSignalGenerator.SampleRate);
+        FillWindow(_leftRing, _fftExact, fftSize);
+        PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftExact, windowKind);
+        _status.SetFftStereoMode(_settings.ChannelMode == ChannelMode.Stereo);
+        _status.SetFftFrame(_fftExact, isRightChannel: false, PerformanceSignalGenerator.SampleRate);
+
+        var leftPeakHz = FindPeakFrequencyHz(_fftExact, PerformanceSignalGenerator.SampleRate);
         var leftCandidates = PerformanceWowReference.ResolveCandidates(
             _settings.SignalMode,
             _settings.ActiveSubcarriers,
             useRightCarriers: false);
         _wowLeftEma = UpdateWowEma(_wowLeftEma, leftPeakHz, leftCandidates, ref _wowLeftRefHz);
 
-        FillWindow(_rightRing, _window);
-        OfdmGenerator.ComputeForwardSpectrumFromRealPcm(_window, _fftWork);
+        FillWindow(_rightRing, _fftExact, fftSize);
+        PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftExact, windowKind);
         if (_settings.ChannelMode == ChannelMode.Stereo)
         {
-            _status.SetFftFrame(_fftWork, isRightChannel: true, PerformanceSignalGenerator.SampleRate);
-            var rightPeakHz = FindPeakFrequencyHz(_fftWork, PerformanceSignalGenerator.SampleRate);
+            _status.SetFftFrame(_fftExact, isRightChannel: true, PerformanceSignalGenerator.SampleRate);
+            var rightPeakHz = FindPeakFrequencyHz(_fftExact, PerformanceSignalGenerator.SampleRate);
             var rightCandidates = PerformanceWowReference.ResolveCandidates(
                 _settings.SignalMode,
                 _settings.ActiveSubcarriers,
@@ -423,35 +447,14 @@ internal sealed class PerformanceRxWorker : IDisposable
             return false;
         }
 
-        var start = _writeTotal - n;
-        for (var i = 0; i < n; i++)
-        {
-            var idx = (int)((start + i) % ring.Length);
-            if (idx < 0)
-            {
-                idx += ring.Length;
-            }
-
-            dest[i] = ring[idx];
-        }
-
+        PerformanceRingCopy.CopyTail(ring, _writeTotal, dest.AsSpan(0, n), n);
         count = n;
         return true;
     }
 
-    private void FillWindow(double[] ring, Complex[] destination)
+    private void FillWindow(double[] ring, Complex[] destination, int fftSize)
     {
-        var start = _writeTotal - FftSize;
-        for (var i = 0; i < FftSize; i++)
-        {
-            var idx = (int)((start + i) % RingCapacity);
-            if (idx < 0)
-            {
-                idx += RingCapacity;
-            }
-
-            destination[i] = new Complex(ring[idx], 0.0);
-        }
+        PerformanceRingCopy.FillComplexWindow(ring, _writeTotal, destination, fftSize);
     }
 
     /// <summary>
@@ -478,19 +481,14 @@ internal sealed class PerformanceRxWorker : IDisposable
 
             var n = Math.Min(RingCapacity, Math.Min(left.Length, right.Length));
             n = (int)Math.Min(n, _writeTotal);
-            var start = _writeTotal - n;
-            for (var i = 0; i < n; i++)
-            {
-                var idx = (int)((start + i) % RingCapacity);
-                if (idx < 0)
-                {
-                    idx += RingCapacity;
-                }
-
-                left[i] = _leftRing[idx];
-                right[i] = _rightRing[idx];
-            }
-
+            PerformanceRingCopy.CopyStereoTail(
+                _leftRing,
+                _rightRing,
+                _writeTotal,
+                left.AsSpan(0, n),
+                right.AsSpan(0, n),
+                n,
+                copyRightFromLeft: false);
             count = n;
             return true;
         }
@@ -502,27 +500,30 @@ internal sealed class PerformanceRxWorker : IDisposable
     private static double FindPeakFrequencyHz(Complex[] bins, int sampleRate)
     {
         var half = bins.Length / 2;
-        var bestMag = -1.0;
+        var bestMagSq = -1.0;
         var bestBin = 1;
         var last = half - 1;
         for (var bin = 1; bin < last; bin++)
         {
-            var mag = bins[bin].Magnitude;
-            if (mag > bestMag)
+            var re = bins[bin].Real;
+            var im = bins[bin].Imaginary;
+            var magSq = (re * re) + (im * im);
+            if (magSq > bestMagSq)
             {
-                bestMag = mag;
+                bestMagSq = magSq;
                 bestBin = bin;
             }
         }
 
-        if (bestMag < 1e-9)
+        if (bestMagSq < 1e-18)
         {
             return 0;
         }
 
         var leftMag = bins[bestBin - 1].Magnitude;
+        var peakMag = bins[bestBin].Magnitude;
         var rightMag = bins[bestBin + 1].Magnitude;
-        var delta = PerformanceWowReference.InterpolatePeakOffset(leftMag, bestMag, rightMag);
+        var delta = PerformanceWowReference.InterpolatePeakOffset(leftMag, peakMag, rightMag);
         return (bestBin + delta) * (sampleRate / (double)bins.Length);
     }
 

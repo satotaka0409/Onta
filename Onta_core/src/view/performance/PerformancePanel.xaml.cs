@@ -108,7 +108,9 @@ public partial class PerformancePanel : UserControl
             RxUseWavInput: RxWavInputRadio.IsChecked == true,
             RxWavPath: RxWavPathBox.Text?.Trim() ?? string.Empty,
             InputDeviceNumber: inputDevice,
-            InputGain: inputGain);
+            InputGain: inputGain,
+            FftSize: ReadFftSize(),
+            FftWindowKind: ReadFftWindowKind());
     }
 
     /// <summary>
@@ -176,6 +178,10 @@ public partial class PerformancePanel : UserControl
         {
             InputGainSlider.Value = Math.Clamp(snapshot.InputGain * 100.0, 0.0, 100.0);
         }
+
+        SetCheckedRadio("PerfFftSize", PerformanceFftAnalyzer.ClampSize(snapshot.FftSize).ToString(), "2048");
+        SelectFftWindow(snapshot.FftWindowKind);
+        PushFftAnalysisSettings();
 
         UpdateSignalModeUi();
         UpdateOutputModePanels();
@@ -500,6 +506,11 @@ public partial class PerformancePanel : UserControl
         if (ScopeLrSyncCheck is not null)
         {
             ScopeLrSyncCheck.Visibility = scopeChrome;
+        }
+
+        if (FftOptionsPanel is not null)
+        {
+            FftOptionsPanel.Visibility = fftChrome;
         }
 
         if (LeftWaveTitle is not null)
@@ -1379,6 +1390,7 @@ public partial class PerformancePanel : UserControl
 
         EnsureDefaultWavPath();
         var settings = ReadTxSettings();
+        PushFftAnalysisSettings();
         if (!_txWorker.TryStart(settings))
         {
             MessageBox.Show(
@@ -1420,6 +1432,7 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
+        PushFftAnalysisSettings();
         if (!_rxWorker.TryStart(settings))
         {
             MessageBox.Show(
@@ -2348,6 +2361,114 @@ public partial class PerformancePanel : UserControl
         }
 
         return ModulationScheme.Bpsk;
+    }
+
+    /// <summary>
+    /// FFT サイズ／窓の変更を解析へ反映します。
+    /// </summary>
+    private void OnFftAnalysisSettingsChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { IsChecked: true })
+        {
+            PushFftAnalysisSettings();
+        }
+    }
+
+    /// <summary>
+    /// FFT 窓コンボの変更を解析へ反映します。
+    /// </summary>
+    private void OnFftWindowSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+        PushFftAnalysisSettings();
+    }
+
+    /// <summary>
+    /// 現在の FFT 解析設定を送受信ワーカーへ渡します。
+    /// </summary>
+    private void PushFftAnalysisSettings()
+    {
+        var size = ReadFftSize();
+        var window = ReadFftWindowKind();
+        _txWorker.UpdateFftAnalysis(size, window);
+        _rxWorker.UpdateFftAnalysis(size, window);
+    }
+
+    /// <summary>
+    /// 選択中の FFT 長を返します。
+    /// </summary>
+    private int ReadFftSize()
+    {
+        foreach (var radio in FindRadios(this))
+        {
+            if (radio.GroupName == "PerfFftSize"
+                && radio.IsChecked == true
+                && radio.Tag is string tag
+                && int.TryParse(tag, out var size))
+            {
+                return PerformanceFftAnalyzer.ClampSize(size);
+            }
+        }
+
+        return PerformanceFftAnalyzer.DefaultSize;
+    }
+
+    /// <summary>
+    /// 選択中の FFT 窓関数を返します。
+    /// </summary>
+    private PerformanceFftWindowKind ReadFftWindowKind()
+    {
+        if (FftWindowCombo?.SelectedItem is ComboBoxItem { Tag: string tag })
+        {
+            return tag switch
+            {
+                "Hamming" => PerformanceFftWindowKind.Hamming,
+                "Blackman" => PerformanceFftWindowKind.Blackman,
+                "FlatTop" => PerformanceFftWindowKind.FlatTop,
+                "Rectangular" => PerformanceFftWindowKind.Rectangular,
+                _ => PerformanceFftWindowKind.Hanning
+            };
+        }
+
+        return PerformanceFftWindowKind.Hanning;
+    }
+
+    /// <summary>
+    /// FFT 窓コンボを選択します。
+    /// </summary>
+    private void SelectFftWindow(PerformanceFftWindowKind kind)
+    {
+        if (FftWindowCombo is null)
+        {
+            return;
+        }
+
+        var tag = kind switch
+        {
+            PerformanceFftWindowKind.Hamming => "Hamming",
+            PerformanceFftWindowKind.Blackman => "Blackman",
+            PerformanceFftWindowKind.FlatTop => "FlatTop",
+            PerformanceFftWindowKind.Rectangular => "Rectangular",
+            _ => "Hanning"
+        };
+
+        foreach (var item in FftWindowCombo.Items)
+        {
+            if (item is ComboBoxItem combo && string.Equals(combo.Tag as string, tag, StringComparison.Ordinal))
+            {
+                FftWindowCombo.SelectedItem = combo;
+                return;
+            }
+        }
+
+        if (FftWindowCombo.Items.Count > 0)
+        {
+            FftWindowCombo.SelectedIndex = 0;
+        }
     }
 
     /// <summary>

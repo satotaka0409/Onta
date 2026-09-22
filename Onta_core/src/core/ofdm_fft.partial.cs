@@ -35,15 +35,6 @@ public sealed partial class OfdmGenerator
         ConjugateAndScaleInPlace(destination, 1.0 / frequency.Length);
     }
 
-    private Complex[] InverseFft(Complex[] frequency)
-    {
-        EnsureIfftScratch(frequency.Length);
-        InverseFftInto(frequency, _ifftWorkScratch!);
-        var result = new Complex[frequency.Length];
-        Array.Copy(_ifftWorkScratch!, result, frequency.Length);
-        return result;
-    }
-
     private static Vector<double> CreateConjugateSignMask()
     {
         var values = new double[Vector<double>.Count];
@@ -113,20 +104,20 @@ public sealed partial class OfdmGenerator
         Unsafe.WriteUnaligned(ref Unsafe.As<double, byte>(ref at), value);
     }
 
-    private static Complex[] Fft(Complex[] input)
-    {
-        var output = new Complex[input.Length];
-        Array.Copy(input, output, input.Length);
-        FftInPlace(output);
-        return output;
-    }
-
     private static readonly int[] BitReverse256 = CreateBitReverseTable(256);
+    private static readonly int[] BitReverse1024 = CreateBitReverseTable(1024);
     private static readonly int[] BitReverse2048 = CreateBitReverseTable(2048);
+    private static readonly int[] BitReverse4096 = CreateBitReverseTable(4096);
     private static readonly double[] Hann256 = CreateHannWindow(256);
+    private static readonly double[] Hann1024 = CreateHannWindow(1024);
     private static readonly double[] Hann2048 = CreateHannWindow(2048);
+    private static readonly double[] Hann4096 = CreateHannWindow(4096);
     private static readonly Vector256<double> FftSwapSign256 = Vector256.Create(-1.0, 1.0, -1.0, 1.0);
     private static readonly Vector128<double> FftSwapSign128 = Vector128.Create(-1.0, 1.0);
+    private static readonly object BitReverseCacheLock = new();
+    private static readonly Dictionary<int, int[]> BitReverseExtra = new();
+    private static readonly object HannCacheLock = new();
+    private static readonly Dictionary<int, double[]> HannExtra = new();
 
     /// <summary>
     /// 実数 PCM に Hann 窓を掛けて FFT 入力へ置きます（虚部 0）。
@@ -135,12 +126,7 @@ public sealed partial class OfdmGenerator
     {
         var n = destination.Length;
         var offset = timePcm.Length - n;
-        var hann = n switch
-        {
-            256 => Hann256,
-            2048 => Hann2048,
-            _ => CreateHannWindow(n)
-        };
+        var hann = ResolveHannWindow(n);
 
         var src = MemoryMarshal.Cast<Complex, double>(timePcm.Slice(offset, n));
         var dst = MemoryMarshal.Cast<Complex, double>(destination.AsSpan(0, n));
@@ -352,12 +338,7 @@ public sealed partial class OfdmGenerator
     private static void BitReversePermute(Complex[] output)
     {
         var n = output.Length;
-        var table = n switch
-        {
-            256 => BitReverse256,
-            2048 => BitReverse2048,
-            _ => CreateBitReverseTable(n)
-        };
+        var table = ResolveBitReverseTable(n);
 
         for (var i = 0; i < n; i++)
         {
@@ -366,6 +347,68 @@ public sealed partial class OfdmGenerator
             {
                 (output[i], output[j]) = (output[j], output[i]);
             }
+        }
+    }
+
+    /// <summary>
+    /// FFT 長に対応するビット逆順テーブルを返します（常用長は静的、他はキャッシュ）。
+    /// </summary>
+    private static int[] ResolveBitReverseTable(int n) =>
+        n switch
+        {
+            256 => BitReverse256,
+            1024 => BitReverse1024,
+            2048 => BitReverse2048,
+            4096 => BitReverse4096,
+            _ => GetOrCreateBitReverseExtra(n)
+        };
+
+    /// <summary>
+    /// FFT 長に対応する Hann 窓を返します（常用長は静的、他はキャッシュ）。
+    /// </summary>
+    private static double[] ResolveHannWindow(int n) =>
+        n switch
+        {
+            256 => Hann256,
+            1024 => Hann1024,
+            2048 => Hann2048,
+            4096 => Hann4096,
+            _ => GetOrCreateHannExtra(n)
+        };
+
+    /// <summary>
+    /// 非標準 FFT 長のビット逆順テーブルを取得／生成します。
+    /// </summary>
+    private static int[] GetOrCreateBitReverseExtra(int n)
+    {
+        lock (BitReverseCacheLock)
+        {
+            if (BitReverseExtra.TryGetValue(n, out var existing))
+            {
+                return existing;
+            }
+
+            var created = CreateBitReverseTable(n);
+            BitReverseExtra[n] = created;
+            return created;
+        }
+    }
+
+    /// <summary>
+    /// 非標準 FFT 長の Hann 窓を取得／生成します。
+    /// </summary>
+    private static double[] GetOrCreateHannExtra(int n)
+    {
+        lock (HannCacheLock)
+        {
+            if (HannExtra.TryGetValue(n, out var existing))
+            {
+                return existing;
+            }
+
+            var created = CreateHannWindow(n);
+            HannExtra[n] = created;
+            return created;
         }
     }
 

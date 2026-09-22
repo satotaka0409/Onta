@@ -20,6 +20,13 @@ internal static class PerformanceIqExtractor
     /// <summary>CP 同期に使う直近サンプル数。</summary>
     public const int CaptureSamples = SymbolLength * 3;
 
+    /// <summary>正周波数ビンの最大値（1..127）。</summary>
+    private const int MaxPositiveBin = (FftSize / 2) - 1;
+
+    private static readonly object BinCacheLock = new();
+    private static readonly int[]?[] LeftBinCache = new int[9][];
+    private static readonly int[]?[] RightBinCache = new int[9][];
+
     /// <summary>
     /// 直近 PCM から等化後データキャリアを取り出します。パイロットは含めません。
     /// </summary>
@@ -61,22 +68,10 @@ internal static class PerformanceIqExtractor
             timeScratch.AsSpan(0, FftSize),
             fftScratch);
 
-        var hz = useRightCarriers
-            ? PerformanceSignalGenerator.ResolveRightCarrierHz(sc)
-            : PerformanceSignalGenerator.ResolveLeftCarrierHz(sc);
-        var bins = new int[hz.Length];
-        var used = new HashSet<int>();
-        var maxBin = (FftSize / 2) - 1;
-        for (var i = 0; i < hz.Length; i++)
-        {
-            bins[i] = AllocateUniqueBin(
-                OfdmConfig.HzToPositiveBin(hz[i], FftSize, PerformanceSignalGenerator.SampleRate),
-                used,
-                maxBin);
-        }
-
+        var bins = GetOrCreateCarrierBins(sc, useRightCarriers);
         var written = 0;
         var destLen = Math.Min(dest.Length, groups.Length);
+        const double pilotMagSqMin = 1e-18;
         for (var start = 0; start + 7 < bins.Length && written < destLen; start += 8)
         {
             var p2 = fftScratch[bins[start + 2]];
@@ -90,7 +85,7 @@ internal static class PerformanceIqExtractor
                 }
 
                 var pilot = ch < 4 ? p2 : p6;
-                if (pilot.Magnitude < 1e-9)
+                if (MagnitudeSquared(pilot) < pilotMagSqMin)
                 {
                     continue;
                 }
@@ -145,18 +140,57 @@ internal static class PerformanceIqExtractor
     }
 
     /// <summary>
+    /// SC / L-R ごとの正周波数ビン割当をキャッシュから返します。
+    /// </summary>
+    private static int[] GetOrCreateCarrierBins(int activeSubcarriers, bool useRightCarriers)
+    {
+        var sc = PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers);
+        var slot = sc / 8;
+        var cache = useRightCarriers ? RightBinCache : LeftBinCache;
+        var existing = Volatile.Read(ref cache[slot]);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        lock (BinCacheLock)
+        {
+            existing = cache[slot];
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            var hz = useRightCarriers
+                ? PerformanceSignalGenerator.ResolveRightCarrierHz(sc)
+                : PerformanceSignalGenerator.ResolveLeftCarrierHz(sc);
+            var bins = new int[hz.Length];
+            Span<bool> used = stackalloc bool[MaxPositiveBin + 1];
+            for (var i = 0; i < hz.Length; i++)
+            {
+                bins[i] = AllocateUniqueBin(
+                    OfdmConfig.HzToPositiveBin(hz[i], FftSize, PerformanceSignalGenerator.SampleRate),
+                    used);
+            }
+
+            Volatile.Write(ref cache[slot], bins);
+            return bins;
+        }
+    }
+
+    /// <summary>
     /// 正周波数ビンを重複なく割り当てます。
     /// </summary>
-    private static int AllocateUniqueBin(int preferred, HashSet<int> used, int maxBin)
+    private static int AllocateUniqueBin(int preferred, Span<bool> used)
     {
-        var bin = Math.Clamp(preferred, 1, maxBin);
-        while (used.Contains(bin))
+        var bin = Math.Clamp(preferred, 1, MaxPositiveBin);
+        while (used[bin])
         {
             bin++;
-            if (bin > maxBin)
+            if (bin > MaxPositiveBin)
             {
                 bin = preferred - 1;
-                while (bin >= 1 && used.Contains(bin))
+                while (bin >= 1 && used[bin])
                 {
                     bin--;
                 }
@@ -171,7 +205,13 @@ internal static class PerformanceIqExtractor
             }
         }
 
-        used.Add(bin);
+        used[bin] = true;
         return bin;
     }
+
+    /// <summary>
+    /// |z|^2 を返します（sqrt なし）。
+    /// </summary>
+    private static double MagnitudeSquared(Complex value) =>
+        (value.Real * value.Real) + (value.Imaginary * value.Imaginary);
 }

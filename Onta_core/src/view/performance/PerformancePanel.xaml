@@ -108,6 +108,7 @@
                                  VerticalAlignment="Center" VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
+                    <FrameworkElement Margin="0,0,12,4"/>
                     <RadioButton x:Name="SweepRadio"
                                  GroupName="PerfTone"
                                  Content="スイープ(20Hz～20KHz)"
@@ -345,7 +346,7 @@
                      Text="受信"
                      FontSize="14"
                      FontWeight="SemiBold"
-                     Margin="4,6,12,0"
+                     Margin="0,0,6,0"
                      VerticalAlignment="Top"/>
 
           <GroupBox Grid.Column="1"
@@ -516,6 +517,69 @@
                 <TabItem x:Name="LissajousWaveTabItem"
                          Header="リサージュ・ワウ・Fカウンタ"/>
               </TabControl>
+              <StackPanel x:Name="FftOptionsPanel"
+                          Grid.Column="1"
+                          Orientation="Horizontal"
+                          VerticalAlignment="Center"
+                          Margin="12,0,0,0">
+                <TextBlock Text="FFT"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0"
+                           Foreground="{StaticResource BrushTextMuted}"/>
+                <RadioButton x:Name="FftSize1024Radio"
+                             GroupName="PerfFftSize"
+                             Content="1024"
+                             Tag="1024"
+                             VerticalAlignment="Center"
+                             Margin="0,0,8,0"
+                             Checked="OnFftAnalysisSettingsChanged"/>
+                <RadioButton x:Name="FftSize2048Radio"
+                             GroupName="PerfFftSize"
+                             Content="2048"
+                             Tag="2048"
+                             IsChecked="True"
+                             VerticalAlignment="Center"
+                             Margin="0,0,8,0"
+                             Checked="OnFftAnalysisSettingsChanged"/>
+                <RadioButton x:Name="FftSize4096Radio"
+                             GroupName="PerfFftSize"
+                             Content="4096"
+                             Tag="4096"
+                             VerticalAlignment="Center"
+                             Margin="0,0,12,0"
+                             Checked="OnFftAnalysisSettingsChanged"/>
+                <TextBlock Text="窓"
+                           VerticalAlignment="Center"
+                           Margin="0,0,6,0"
+                           Foreground="{StaticResource BrushTextMuted}"/>
+                <ComboBox x:Name="FftWindowCombo"
+                          Width="120"
+                          VerticalAlignment="Center"
+                          Foreground="#FF1E2024"
+                          SelectionChanged="OnFftWindowSelectionChanged">
+                  <ComboBox.ItemContainerStyle>
+                    <Style TargetType="ComboBoxItem">
+                      <Setter Property="Foreground" Value="#FF1E2024"/>
+                      <Setter Property="Background" Value="White"/>
+                    </Style>
+                  </ComboBox.ItemContainerStyle>
+                  <ComboBoxItem Tag="Hanning" IsSelected="True">
+                    <TextBlock Text="Hanning" Foreground="#FF1E2024"/>
+                  </ComboBoxItem>
+                  <ComboBoxItem Tag="Hamming">
+                    <TextBlock Text="Hamming" Foreground="#FF1E2024"/>
+                  </ComboBoxItem>
+                  <ComboBoxItem Tag="Blackman">
+                    <TextBlock Text="Blackman" Foreground="#FF1E2024"/>
+                  </ComboBoxItem>
+                  <ComboBoxItem Tag="FlatTop">
+                    <TextBlock Text="Flat Top" Foreground="#FF1E2024"/>
+                  </ComboBoxItem>
+                  <ComboBoxItem Tag="Rectangular">
+                    <TextBlock Text="Rectangular" Foreground="#FF1E2024"/>
+                  </ComboBoxItem>
+                </ComboBox>
+              </StackPanel>
               <CheckBox x:Name="ScopeLrSyncCheck"
                         Grid.Column="1"
                         Content="L/R 同期"

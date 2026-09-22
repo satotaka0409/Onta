@@ -68,7 +68,6 @@ internal static class LissajousMeterAnalyzer
     /// </summary>
     private static double EstimateFrequencyHz(ReadOnlySpan<double> pcm, int sampleRate)
     {
-        // DC 除去
         double sum = 0;
         for (var i = 0; i < pcm.Length; i++)
         {
@@ -77,41 +76,32 @@ internal static class LissajousMeterAnalyzer
 
         var mean = sum / pcm.Length;
         var prev = pcm[0] - mean;
-        var periods = new List<double>(64);
+        var havePrevCross = false;
+        var prevCross = 0.0;
+        double periodSum = 0;
+        var periodCount = 0;
         for (var i = 1; i < pcm.Length; i++)
         {
             var cur = pcm[i] - mean;
-            // 上昇ゼロクロス
             if (prev < 0.0 && cur >= 0.0)
             {
-                var frac = prev / (prev - cur); // 0..1（サンプル間位置）
+                var frac = prev / (prev - cur);
                 var cross = (i - 1) + frac;
-                if (periods.Count > 0)
+                if (havePrevCross)
                 {
-                    // periods にはクロス時刻を貯め、差分が周期
+                    var period = cross - prevCross;
+                    if (period > 2 && period < sampleRate)
+                    {
+                        periodSum += period;
+                        periodCount++;
+                    }
                 }
 
-                periods.Add(cross);
+                prevCross = cross;
+                havePrevCross = true;
             }
 
             prev = cur;
-        }
-
-        if (periods.Count < 3)
-        {
-            return 0;
-        }
-
-        double periodSum = 0;
-        var periodCount = 0;
-        for (var i = 1; i < periods.Count; i++)
-        {
-            var p = periods[i] - periods[i - 1];
-            if (p > 2 && p < sampleRate) // 1 Hz〜 Nyquist 付近
-            {
-                periodSum += p;
-                periodCount++;
-            }
         }
 
         if (periodCount == 0)
@@ -119,8 +109,7 @@ internal static class LissajousMeterAnalyzer
             return 0;
         }
 
-        var meanPeriod = periodSum / periodCount;
-        return sampleRate / meanPeriod;
+        return sampleRate / (periodSum / periodCount);
     }
 
     /// <summary>
@@ -130,10 +119,15 @@ internal static class LissajousMeterAnalyzer
     {
         var n = destination.Length;
         var offset = Math.Max(0, pcm.Length - n);
-        for (var i = 0; i < n; i++)
+        var copy = Math.Min(n, pcm.Length - offset);
+        for (var i = 0; i < copy; i++)
         {
-            var src = offset + i < pcm.Length ? pcm[offset + i] : 0.0;
-            destination[i] = new Complex(src, 0);
+            destination[i] = new Complex(pcm[offset + i], 0);
+        }
+
+        for (var i = copy; i < n; i++)
+        {
+            destination[i] = Complex.Zero;
         }
     }
 
@@ -143,27 +137,28 @@ internal static class LissajousMeterAnalyzer
     private static double FindPeakFrequencyHz(Complex[] bins, int sampleRate)
     {
         var half = bins.Length / 2;
-        var bestMag = -1.0;
+        var bestMagSq = -1.0;
         var bestBin = 1;
         var last = half - 1;
         for (var bin = 1; bin < last; bin++)
         {
-            var mag = bins[bin].Magnitude;
-            if (mag > bestMag)
+            var magSq = MagnitudeSquared(bins[bin]);
+            if (magSq > bestMagSq)
             {
-                bestMag = mag;
+                bestMagSq = magSq;
                 bestBin = bin;
             }
         }
 
-        if (bestMag < 1e-9)
+        if (bestMagSq < 1e-18)
         {
             return 0;
         }
 
         var leftMag = bins[bestBin - 1].Magnitude;
+        var peakMag = bins[bestBin].Magnitude;
         var rightMag = bins[bestBin + 1].Magnitude;
-        var delta = PerformanceWowReference.InterpolatePeakOffset(leftMag, bestMag, rightMag);
+        var delta = PerformanceWowReference.InterpolatePeakOffset(leftMag, peakMag, rightMag);
         return (bestBin + delta) * (sampleRate / (double)bins.Length);
     }
 
@@ -217,4 +212,10 @@ internal static class LissajousMeterAnalyzer
         var m1 = bins[i0 + 1].Magnitude;
         return (m0 * (1.0 - frac)) + (m1 * frac);
     }
+
+    /// <summary>
+    /// |z|^2 を返します。
+    /// </summary>
+    private static double MagnitudeSquared(Complex value) =>
+        (value.Real * value.Real) + (value.Imaginary * value.Imaginary);
 }

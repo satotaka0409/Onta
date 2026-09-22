@@ -13,17 +13,15 @@ internal readonly record struct MainWindowSettings(
     PerformanceUiSettingsSnapshot Performance);
 
 /// <summary>
-/// <c>Onta_setting.bin</c> の読み書きです。
+/// <c>Onta_setting.bin</c> の読み書きです（現行フォーマットのみ）。
 /// </summary>
 internal static class MainWindowSettingsStore
 {
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("ONTASET1");
-    private const ushort Version = 2;
-    private const ushort MinSupportedVersion = 1;
+    private const ushort Version = 3;
 
     /// <summary>
-    /// 設定ファイルを読み込みます。無い・破損・未対応 Version のときは false です。
-    /// Version 1 は性能測定欄を既定値で補います。
+    /// 設定ファイルを読み込みます。無い・破損・Version 不一致のときは false です。
     /// </summary>
     /// <param name="filePath">設定ファイルパス。</param>
     /// <param name="settings">読み込んだ設定。</param>
@@ -44,8 +42,7 @@ internal static class MainWindowSettingsStore
             return false;
         }
 
-        var version = reader.ReadUInt16();
-        if (version < MinSupportedVersion || version > Version)
+        if (reader.ReadUInt16() != Version)
         {
             return false;
         }
@@ -66,10 +63,6 @@ internal static class MainWindowSettingsStore
         var receiveAudioDeviceNumber = reader.ReadInt32();
         var receiveAudioVolume = reader.ReadDouble();
 
-        var performance = version >= 2
-            ? ReadPerformance(reader)
-            : PerformanceUiSettingsSnapshot.CreateDefault();
-
         settings = new MainWindowSettings(
             Send: new SendSettingsSnapshot(
                 ChannelMode: Enum.IsDefined(typeof(ChannelMode), sendChannel) ? sendChannel : ChannelMode.Mono,
@@ -89,12 +82,12 @@ internal static class MainWindowSettingsStore
                 OutputDirectory: receiveOutputDir,
                 AudioDeviceNumber: receiveAudioDeviceNumber,
                 AudioVolume: receiveAudioVolume),
-            Performance: performance);
+            Performance: ReadPerformance(reader));
         return true;
     }
 
     /// <summary>
-    /// 設定ファイルへ書き込みます（現行 Version=2）。
+    /// 設定ファイルへ書き込みます。
     /// </summary>
     /// <param name="filePath">設定ファイルパス。</param>
     /// <param name="settings">保存する設定。</param>
@@ -158,6 +151,12 @@ internal static class MainWindowSettingsStore
         var rxWavPath = reader.ReadString();
         var inputDevice = reader.ReadInt32();
         var inputGain = reader.ReadDouble();
+        var fftSize = PerformanceFftAnalyzer.ClampSize(reader.ReadInt32());
+        var windowByte = reader.ReadByte();
+        var fftWindow = PerformanceFftAnalyzer.ClampWindow(
+            Enum.IsDefined(typeof(PerformanceFftWindowKind), windowByte)
+                ? (PerformanceFftWindowKind)windowByte
+                : defaults.FftWindowKind);
 
         return new PerformanceUiSettingsSnapshot(
             SignalMode: mode,
@@ -173,7 +172,9 @@ internal static class MainWindowSettingsStore
             RxUseWavInput: rxUseWav,
             RxWavPath: rxWavPath ?? string.Empty,
             InputDeviceNumber: inputDevice,
-            InputGain: Math.Clamp(inputGain, 0.0, 1.0));
+            InputGain: Math.Clamp(inputGain, 0.0, 1.0),
+            FftSize: fftSize,
+            FftWindowKind: fftWindow);
     }
 
     /// <summary>
@@ -195,5 +196,7 @@ internal static class MainWindowSettingsStore
         writer.Write(settings.RxWavPath ?? string.Empty);
         writer.Write(settings.InputDeviceNumber);
         writer.Write(settings.InputGain);
+        writer.Write(PerformanceFftAnalyzer.ClampSize(settings.FftSize));
+        writer.Write((byte)PerformanceFftAnalyzer.ClampWindow(settings.FftWindowKind));
     }
 }

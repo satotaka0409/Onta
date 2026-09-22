@@ -11,6 +11,12 @@ internal static class PerformanceSignalGenerator
     /// <summary>PCM サンプリング周波数（Hz）。</summary>
     public const int SampleRate = PerformanceConstants.SampleRate;
 
+    /// <summary>SC=8..64 用キャリア Hz キャッシュ（slot = sc/8）。</summary>
+    private static readonly double[]?[] LeftCarrierHzCache = new double[9][];
+
+    private static readonly double[]?[] RightCarrierHzCache = new double[9][];
+    private static readonly object CarrierHzLock = new();
+
     /// <summary>
     /// 位相連続の正弦波チャンクを生成します（ライブ周波数／振幅変更用）。
     /// </summary>
@@ -276,17 +282,25 @@ internal static class PerformanceSignalGenerator
     public static double[] ResolveLeftCarrierHz(int activeSubcarriers)
     {
         var sc = ClampSubcarriers(activeSubcarriers);
-        var bins = OfdmConfig.ResolveConceptualLeftBins(sc);
-        var grid = OfdmConfig.ResolveCarrierGrid(sc);
-        var hz = new double[bins.Length];
-        for (var i = 0; i < bins.Length; i++)
+        var slot = sc / 8;
+        var existing = Volatile.Read(ref LeftCarrierHzCache[slot]);
+        if (existing is not null)
         {
-            hz[i] = grid == OfdmCarrierGrid.Sc8Family
-                ? OfdmConfig.LeftCarrierHzSc8(bins[i] - 1)
-                : OfdmConfig.LeftCarrierHzSc24(bins[i]);
+            return existing;
         }
 
-        return hz;
+        lock (CarrierHzLock)
+        {
+            existing = LeftCarrierHzCache[slot];
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            existing = BuildCarrierHz(sc, useRight: false);
+            Volatile.Write(ref LeftCarrierHzCache[slot], existing);
+            return existing;
+        }
     }
 
     /// <summary>
@@ -295,14 +309,44 @@ internal static class PerformanceSignalGenerator
     public static double[] ResolveRightCarrierHz(int activeSubcarriers)
     {
         var sc = ClampSubcarriers(activeSubcarriers);
-        var bins = OfdmConfig.ResolveConceptualLeftBins(sc);
-        var grid = OfdmConfig.ResolveCarrierGrid(sc);
+        var slot = sc / 8;
+        var existing = Volatile.Read(ref RightCarrierHzCache[slot]);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        lock (CarrierHzLock)
+        {
+            existing = RightCarrierHzCache[slot];
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            existing = BuildCarrierHz(sc, useRight: true);
+            Volatile.Write(ref RightCarrierHzCache[slot], existing);
+            return existing;
+        }
+    }
+
+    /// <summary>
+    /// SC に対応する L/R キャリア周波数表を構築します。
+    /// </summary>
+    private static double[] BuildCarrierHz(int activeSubcarriers, bool useRight)
+    {
+        var bins = OfdmConfig.ResolveConceptualLeftBins(activeSubcarriers);
+        var grid = OfdmConfig.ResolveCarrierGrid(activeSubcarriers);
         var hz = new double[bins.Length];
         for (var i = 0; i < bins.Length; i++)
         {
             hz[i] = grid == OfdmCarrierGrid.Sc8Family
-                ? OfdmConfig.RightCarrierHzSc8(bins[i] - 1)
-                : OfdmConfig.RightCarrierHzSc24(bins[i]);
+                ? (useRight
+                    ? OfdmConfig.RightCarrierHzSc8(bins[i] - 1)
+                    : OfdmConfig.LeftCarrierHzSc8(bins[i] - 1))
+                : (useRight
+                    ? OfdmConfig.RightCarrierHzSc24(bins[i])
+                    : OfdmConfig.LeftCarrierHzSc24(bins[i]));
         }
 
         return hz;
