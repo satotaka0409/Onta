@@ -10,6 +10,11 @@ internal static class ReceiveHistoryStore
     private const int MaxEntryCount = 10000;
     private static readonly string HistoryLoadLogPath = Path.Combine(AppContext.BaseDirectory, "Onta_history_load.log");
 
+    /// <summary>
+    /// 履歴ファイルから最新の受信エントリを返します。
+    /// </summary>
+    /// <param name="filePath">履歴ファイルパス。</param>
+    /// <returns>末尾側で見つかった受信エントリ。無い場合は null。</returns>
     public static ReceiveHistoryEntry? TryLoadLatestReceive(string filePath)
     {
         var all = LoadAll(filePath);
@@ -24,11 +29,21 @@ internal static class ReceiveHistoryStore
         return null;
     }
 
+    /// <summary>
+    /// 履歴ファイルの全エントリを読み込みます。
+    /// </summary>
+    /// <param name="filePath">履歴ファイルパス。</param>
+    /// <returns>エントリ一覧。破損・未存在時は空。</returns>
     public static IReadOnlyList<ReceiveHistoryEntry> LoadEntries(string filePath)
     {
         return LoadAll(filePath);
     }
 
+    /// <summary>
+    /// 履歴ファイルを指定エントリ一覧で丸ごと置き換えます。
+    /// </summary>
+    /// <param name="filePath">履歴ファイルパス。</param>
+    /// <param name="entries">書き込むエントリ一覧。</param>
     public static void ReplaceAll(string filePath, IReadOnlyList<ReceiveHistoryEntry> entries)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
@@ -36,6 +51,11 @@ internal static class ReceiveHistoryStore
         WriteAll(filePath, entries);
     }
 
+    /// <summary>
+    /// エントリを追記します。同一 Identity があればマージしてから書き戻します。
+    /// </summary>
+    /// <param name="filePath">履歴ファイルパス。</param>
+    /// <param name="entry">追記またはマージするエントリ。</param>
     public static void Append(string filePath, ReceiveHistoryEntry entry)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
@@ -63,6 +83,12 @@ internal static class ReceiveHistoryStore
         WriteAll(filePath, all);
     }
 
+    /// <summary>
+    /// 指定 EntryId のエントリを削除して書き戻します。
+    /// </summary>
+    /// <param name="filePath">履歴ファイルパス。</param>
+    /// <param name="entryId">削除対象のエントリ ID。</param>
+    /// <returns>1 件以上削除できた場合は true。</returns>
     public static bool DeleteEntry(string filePath, string entryId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
@@ -80,6 +106,11 @@ internal static class ReceiveHistoryStore
         return true;
     }
 
+    /// <summary>
+    /// 履歴バイナリを読み込み、エントリ一覧を返します。
+    /// </summary>
+    /// <param name="filePath">履歴ファイルパス。</param>
+    /// <returns>エントリ一覧。Magic 不一致・例外時は空（ログ追記）。</returns>
     private static List<ReceiveHistoryEntry> LoadAll(string filePath)
     {
         if (!File.Exists(filePath))
@@ -107,6 +138,11 @@ internal static class ReceiveHistoryStore
         }
     }
 
+    /// <summary>
+    /// Magic・Version・件数ヘッダ付きで全エントリをバイナリ書き込みします。
+    /// </summary>
+    /// <param name="filePath">履歴ファイルパス。</param>
+    /// <param name="entries">書き込むエントリ一覧。</param>
     private static void WriteAll(string filePath, IReadOnlyList<ReceiveHistoryEntry> entries)
     {
         var directory = Path.GetDirectoryName(filePath);
@@ -131,6 +167,10 @@ internal static class ReceiveHistoryStore
         }
     }
 
+    /// <summary>
+    /// 履歴読込失敗などの診断ログを Onta_history_load.log へ追記します。
+    /// </summary>
+    /// <param name="message">ログ本文。</param>
     private static void AppendLoadLog(string message)
     {
         try
@@ -152,6 +192,12 @@ internal static class ReceiveHistoryStore
         }
     }
 
+    /// <summary>
+    /// Version=1 形式の件数ヘッダとエントリ本体を読み取ります。
+    /// </summary>
+    /// <param name="reader">Magic 直後からの BinaryReader。</param>
+    /// <returns>読み取ったエントリ一覧。</returns>
+    /// <exception cref="InvalidDataException">Version 不一致または件数異常。</exception>
     private static List<ReceiveHistoryEntry> ReadCurrentFormatEntries(BinaryReader reader)
     {
         var version = reader.ReadUInt16();
@@ -185,6 +231,11 @@ internal static class ReceiveHistoryStore
         return entries;
     }
 
+    /// <summary>
+    /// 1 エントリ（メタ・ブロック・オーファン）をバイナリへ書き出します。
+    /// </summary>
+    /// <param name="writer">出力先 BinaryWriter。</param>
+    /// <param name="entry">書き出す履歴エントリ。</param>
     private static void WriteEntry(BinaryWriter writer, ReceiveHistoryEntry entry)
     {
         writer.Write(entry.EntryId ?? Guid.NewGuid().ToString("N"));
@@ -240,6 +291,11 @@ internal static class ReceiveHistoryStore
         }
     }
 
+    /// <summary>
+    /// 1 エントリをバイナリから読み取ります。
+    /// </summary>
+    /// <param name="reader">エントリ先頭位置の BinaryReader。</param>
+    /// <returns>復元した履歴エントリ。</returns>
     private static ReceiveHistoryEntry ReadEntry(BinaryReader reader)
     {
         var entryId = reader.ReadString();
@@ -333,6 +389,12 @@ internal static class ReceiveHistoryStore
             Orphans: orphans);
     }
 
+    /// <summary>
+    /// Version=1 形式の受信ブロック列を読み取ります。
+    /// </summary>
+    /// <param name="reader">ブロック列先頭の BinaryReader。</param>
+    /// <param name="blockItemCount">読み取るブロック件数。</param>
+    /// <returns>受信ブロック一覧。</returns>
     private static List<ReceiveBlockHistory> ReadCurrentBlocks(BinaryReader reader, int blockItemCount)
     {
         var blocks = new List<ReceiveBlockHistory>(blockItemCount);
@@ -386,6 +448,11 @@ internal static class ReceiveHistoryStore
         return blocks;
     }
 
+    /// <summary>
+    /// DataModulation を長さ 4 に正規化します（不足は 0 埋め）。
+    /// </summary>
+    /// <param name="source">元バイト列。null 可。</param>
+    /// <returns>長さ 4 のバイト列。</returns>
     private static byte[] NormalizeDataModulation(byte[]? source)
     {
         var normalized = new byte[4];
@@ -397,6 +464,11 @@ internal static class ReceiveHistoryStore
         return normalized;
     }
 
+    /// <summary>
+    /// ブロック ContentHash を長さ 32 に正規化します（不足は 0 埋め）。
+    /// </summary>
+    /// <param name="source">元ハッシュ。null 可。</param>
+    /// <returns>長さ 32 のバイト列。</returns>
     private static byte[] NormalizeHash32(byte[]? source)
     {
         var normalized = new byte[32];
@@ -408,6 +480,12 @@ internal static class ReceiveHistoryStore
         return normalized;
     }
 
+    /// <summary>
+    /// 既存エントリと新規エントリが同一 Identity か判定します（ハッシュ優先、受信はパス＋ファイル名）。
+    /// </summary>
+    /// <param name="existing">既存エントリ。</param>
+    /// <param name="incoming">新規エントリ。</param>
+    /// <returns>同一とみなす場合は true。</returns>
     private static bool IsSameIdentity(ReceiveHistoryEntry existing, ReceiveHistoryEntry incoming)
     {
         if (existing.Kind != incoming.Kind)
@@ -431,6 +509,12 @@ internal static class ReceiveHistoryStore
         return false;
     }
 
+    /// <summary>
+    /// 同一 Identity の既存エントリへ新規内容をマージします（日時・ブロック・オーファン含む）。
+    /// </summary>
+    /// <param name="existing">既存エントリ。</param>
+    /// <param name="incoming">マージ元の新規エントリ。</param>
+    /// <returns>マージ後のエントリ。</returns>
     private static ReceiveHistoryEntry MergeEntry(ReceiveHistoryEntry existing, ReceiveHistoryEntry incoming)
     {
         var latest = incoming.ReceivedAtUtc >= existing.ReceivedAtUtc ? incoming.ReceivedAtUtc : existing.ReceivedAtUtc;
@@ -458,6 +542,12 @@ internal static class ReceiveHistoryStore
         };
     }
 
+    /// <summary>
+    /// ブロックを BlockIndex キーで統合します。完了ブロックは未完了を上書きしません。
+    /// </summary>
+    /// <param name="existing">既存ブロック一覧。</param>
+    /// <param name="incoming">新規ブロック一覧。</param>
+    /// <returns>統合後のブロック一覧（Index 昇順）。</returns>
     private static IReadOnlyList<ReceiveBlockHistory> MergeBlocks(
         IReadOnlyList<ReceiveBlockHistory> existing,
         IReadOnlyList<ReceiveBlockHistory> incoming)
@@ -522,6 +612,9 @@ internal static class ReceiveHistoryStore
     /// <summary>
     /// Orphan の DataModulation を Detail 先頭に埋め込みます（履歴 Version=1 互換）。
     /// </summary>
+    /// <param name="detail">表示用 Detail 文字列。</param>
+    /// <param name="dataModulation">埋め込む変調 4 バイト。不足時は Detail のみ返す。</param>
+    /// <returns>#OM#&lt;hex&gt;#&lt;detail&gt; 形式、または元 Detail。</returns>
     private static string EncodeOrphanDetail(string? detail, byte[]? dataModulation)
     {
         var text = detail ?? string.Empty;
@@ -537,6 +630,9 @@ internal static class ReceiveHistoryStore
     /// <summary>
     /// Detail 先頭の DataModulation メタを分離します。
     /// </summary>
+    /// <param name="storedDetail">履歴に保存された Detail（#OM# 付き可）。</param>
+    /// <param name="detail">メタ除去後の Detail。</param>
+    /// <param name="dataModulation">復元した変調バイト。無い場合は空配列。</param>
     private static void DecodeOrphanDetail(string? storedDetail, out string detail, out byte[] dataModulation)
     {
         detail = storedDetail ?? string.Empty;
@@ -569,4 +665,3 @@ internal static class ReceiveHistoryStore
         }
     }
 }
-

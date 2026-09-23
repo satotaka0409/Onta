@@ -4,21 +4,43 @@ namespace Onta.History;
 
 internal static class HistoryService
 {
+    /// <summary>
+    /// 履歴ファイルから最新の受信エントリを取得します。
+    /// </summary>
+    /// <param name="historyFilePath">履歴ファイルパス（Onta_history.bin）。</param>
+    /// <returns>最新の受信エントリ。無い場合は null。</returns>
     public static ReceiveHistoryEntry? TryLoadLatestReceive(string historyFilePath)
     {
         return ReceiveHistoryStore.TryLoadLatestReceive(historyFilePath);
     }
 
+    /// <summary>
+    /// 履歴ファイルの全エントリ（受信・送信）を読み込みます。
+    /// </summary>
+    /// <param name="historyFilePath">履歴ファイルパス。</param>
+    /// <returns>エントリ一覧。破損・未存在時は空。</returns>
     public static IReadOnlyList<ReceiveHistoryEntry> LoadEntries(string historyFilePath)
     {
         return ReceiveHistoryStore.LoadEntries(historyFilePath);
     }
 
+    /// <summary>
+    /// 指定 EntryId の履歴を削除してファイルへ書き戻します。
+    /// </summary>
+    /// <param name="historyFilePath">履歴ファイルパス。</param>
+    /// <param name="entryId">削除対象のエントリ ID。</param>
+    /// <returns>削除できた場合は true。</returns>
     public static bool DeleteEntry(string historyFilePath, string entryId)
     {
         return ReceiveHistoryStore.DeleteEntry(historyFilePath, entryId);
     }
 
+    /// <summary>
+    /// 受信履歴の完了ブロックからペイロードを再構築し、ファイルへ書き出します。
+    /// </summary>
+    /// <param name="entry">書き出し元の受信履歴エントリ。</param>
+    /// <param name="targetPath">出力先ファイルパス。</param>
+    /// <returns>書き出し成功時は true。未完了・ハッシュ不一致などは false。</returns>
     public static bool ExportPayloadToFile(ReceiveHistoryEntry entry, string targetPath)
     {
         ArgumentNullException.ThrowIfNull(entry);
@@ -38,12 +60,23 @@ internal static class HistoryService
         return true;
     }
 
+    /// <summary>
+    /// 受信履歴からペイロードを再構築できるか判定します。
+    /// </summary>
+    /// <param name="entry">判定対象の受信履歴エントリ。</param>
+    /// <returns>再構築可能なら true。</returns>
     public static bool CanExportPayload(ReceiveHistoryEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
         return TryBuildPayloadFromHistory(entry, out _);
     }
 
+    /// <summary>
+    /// 完了ブロックを BlockIndex 順に結合し、必要ならハッシュ検証したペイロードを構築します。
+    /// </summary>
+    /// <param name="entry">受信履歴エントリ。</param>
+    /// <param name="payload">構築したバイト列。失敗時は空配列。</param>
+    /// <returns>構築成功時は true。</returns>
     private static bool TryBuildPayloadFromHistory(ReceiveHistoryEntry entry, out byte[] payload)
     {
         payload = Array.Empty<byte>();
@@ -135,11 +168,23 @@ internal static class HistoryService
         return true;
     }
 
+    /// <summary>
+    /// 受信エントリを履歴へ追記（同一 Identity ならマージ）します。
+    /// </summary>
+    /// <param name="historyFilePath">履歴ファイルパス。</param>
+    /// <param name="entry">保存する受信エントリ。</param>
     public static void SaveReceive(string historyFilePath, ReceiveHistoryEntry entry)
     {
         ReceiveHistoryStore.Append(historyFilePath, entry);
     }
 
+    /// <summary>
+    /// 送信完了を履歴へ記録します（既定: SC-8 / BPSK / モノラル）。
+    /// </summary>
+    /// <param name="historyFilePath">履歴ファイルパス。</param>
+    /// <param name="inputPath">送信元ファイルパス。</param>
+    /// <param name="outputWavPath">WAV 出力パス（音声出力時は空可）。</param>
+    /// <param name="completionMessage">完了メッセージ。</param>
     public static void SaveSend(
         string historyFilePath,
         string inputPath,
@@ -156,6 +201,16 @@ internal static class HistoryService
             completionMessage);
     }
 
+    /// <summary>
+    /// 送信完了を履歴へ記録します（変調パラメータ付き）。
+    /// </summary>
+    /// <param name="historyFilePath">履歴ファイルパス。</param>
+    /// <param name="inputPath">送信元ファイルパス。</param>
+    /// <param name="outputWavPath">WAV 出力パス（音声出力時は空可）。</param>
+    /// <param name="activeSubcarriers">データ部サブキャリア数。</param>
+    /// <param name="modulationScheme">データ部変調方式。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="completionMessage">完了メッセージ。</param>
     public static void SaveSend(
         string historyFilePath,
         string inputPath,
@@ -201,6 +256,13 @@ internal static class HistoryService
         ReceiveHistoryStore.Append(historyFilePath, entry);
     }
 
+    /// <summary>
+    /// データ部変調方式 4 バイト（SC / 変調 / チャネル / 予備）を組み立てます。
+    /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。非対応時は 0。</param>
+    /// <param name="modulationScheme">変調方式（1:BPSK … 5:256QAM）。</param>
+    /// <param name="channelMode">0:モノラル / 1:ステレオ。</param>
+    /// <returns>長さ 4 の DataModulation バイト列。</returns>
     private static byte[] BuildDataModulation(
         int activeSubcarriers,
         ModulationScheme modulationScheme,
@@ -228,4 +290,3 @@ internal static class HistoryService
         return [subcarriers, modulation, channel, 0];
     }
 }
-
