@@ -128,6 +128,8 @@ internal static class MainWindowSettingsStore
     /// <summary>
     /// 性能測定設定を読み込みます。
     /// </summary>
+    /// <param name="reader">設定バイナリの読み取り位置。</param>
+    /// <returns>妥当性チェック済みの性能測定 UI 設定。</returns>
     private static PerformanceUiSettingsSnapshot ReadPerformance(BinaryReader reader)
     {
         var defaults = PerformanceUiSettingsSnapshot.CreateDefault();
@@ -180,6 +182,8 @@ internal static class MainWindowSettingsStore
     /// <summary>
     /// 性能測定設定を書き込みます。
     /// </summary>
+    /// <param name="writer">設定バイナリの書き込み先。</param>
+    /// <param name="settings">保存する性能測定 UI 設定。</param>
     private static void WritePerformance(BinaryWriter writer, PerformanceUiSettingsSnapshot settings)
     {
         writer.Write((byte)settings.SignalMode);

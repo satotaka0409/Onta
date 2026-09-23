@@ -2,13 +2,13 @@ using Onta.Core;
 using System.Numerics;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
-/// ステレオ 24SC / QPSK の耐性テストです。
+/// ステレオ 40SC / 16QAM の耐性テストです。
 /// wow/flutter + 7kHz LPF近似 + クロストーク + ノイズ付与後の復元を検証します。
 /// </summary>
-public sealed class OntaTest9
+public sealed class OntaTest10
 {
     private const double WhiteNoiseLevel = 0.007;
     private const double WowFlutterAmount = 0.005;
@@ -17,17 +17,16 @@ public sealed class OntaTest9
     private const int ImpairmentSeed = 20260911;
 
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 24,
-        ModulationScheme: ModulationScheme.Qpsk,
+        ActiveSubcarriers: 40,
+        ModulationScheme: ModulationScheme.Qam16,
         ChannelMode: ChannelMode.Stereo);
 
     [Fact]
-    public void Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise()
+    public void Decode_ReturnsUserVisibleError_Stereo40Sc16Qam_WithWowLpfAndNoise()
     {
-        const string testTitle = "test9:" + nameof(Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise);
+        const string testTitle = "test10:" + nameof(Decode_ReturnsUserVisibleError_Stereo40Sc16Qam_WithWowLpfAndNoise);
         var inputPath = TestPaths.ResolveInputPng();
-        var wavPath = TestPaths.ResolveOutputPath("Sample1_test9_rx_st27_qpsk_lpf.wav");
-        var restoredPath = TestPaths.ResolveOutputPath("Sample1_test9_rx_st27_qpsk_lpf.png");
+        var wavPath = TestPaths.ResolveOutputPath("Sample1_test10_rx_st40_16qam_lpf.wav");
 
         var original = File.ReadAllBytes(inputPath);
         var codec = new FileWavCodec(Profile);
@@ -62,16 +61,15 @@ public sealed class OntaTest9
             ToComplex(rightF),
             Profile.SamplePeak);
 
-        // UI 受信と同じく、答えの位相は渡さず適応ワウで復元する。
-        var decoded = codec.DecodeWavToFileBytes(
-            wavPath,
-            correctWow: true,
-            wowParams: null);
-        File.WriteAllBytes(restoredPath, decoded);
+        // 利用者視点: 強い劣化条件では復号不能エラーを返すことを確認する。
+        var ex = Assert.Throws<InvalidDataException>(() =>
+            codec.DecodeWavToFileBytes(
+                wavPath,
+                correctWow: true,
+                wowParams: null));
+        Console.WriteLine($"[EXPECTED-ERROR] test={testTitle} message={ex.Message}");
 
-        PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);
-        PrintBlockBitErrorRates(original, decoded, 8192, testTitle);
-        Assert.Equal(original, decoded);
+        Assert.Contains("Missing decoded block", ex.Message);
         HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, wavPath);
     }
 

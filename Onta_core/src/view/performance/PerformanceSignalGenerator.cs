@@ -108,6 +108,11 @@ internal static class PerformanceSignalGenerator
     /// <summary>
     /// 正弦波トーンを生成します。
     /// </summary>
+    /// <param name="frequencyHz">周波数（Hz）。</param>
+    /// <param name="sampleCount">サンプル数。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="amplitude">振幅（0〜1）。</param>
+    /// <returns>L/R PCM（モノラル時 Right は空）。</returns>
     public static (Complex[] Left, Complex[] Right) GenerateTone(
         double frequencyHz,
         int sampleCount,
@@ -137,6 +142,12 @@ internal static class PerformanceSignalGenerator
     /// 対数周波数スイープ（startHz → endHz）を生成します。
     /// 終端の対数進行速度は純対数スイープの半分（v=1.5u−0.5u²）にし、高域のピーク移動を緩やかにします。
     /// </summary>
+    /// <param name="startHz">開始周波数（Hz）。</param>
+    /// <param name="endHz">終了周波数（Hz）。</param>
+    /// <param name="sampleCount">サンプル数。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="amplitude">振幅（0〜1）。</param>
+    /// <returns>L/R PCM（モノラル時 Right は空）。</returns>
     public static (Complex[] Left, Complex[] Right) GenerateLogSweep(
         double startHz,
         double endHz,
@@ -206,6 +217,11 @@ internal static class PerformanceSignalGenerator
     /// <summary>
     /// 測定用 OFDM ジェネレータを構築します。
     /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="modulation">変調方式。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="ofdmSymbolCount">1 フレームの OFDM シンボル数。</param>
+    /// <returns>設定済み OfdmGenerator。</returns>
     public static OfdmGenerator CreateOfdmGenerator(
         int activeSubcarriers,
         ModulationScheme modulation,
@@ -235,6 +251,12 @@ internal static class PerformanceSignalGenerator
     /// OFDM フレームを指定秒数ぶん連結して生成します。
     /// データキャリアのペイロードは乱数です（ファイルや固定パターンは使いません）。
     /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="modulation">変調方式。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="durationSeconds">生成秒数。</param>
+    /// <param name="amplitude">ピーク振幅（0〜1）。</param>
+    /// <returns>L/R PCM（モノラル時 Right は空）。</returns>
     public static (Complex[] Left, Complex[] Right) GenerateModulated(
         int activeSubcarriers,
         ModulationScheme modulation,
@@ -279,6 +301,8 @@ internal static class PerformanceSignalGenerator
     /// <summary>
     /// キャリア周波数一覧（L）を返します。
     /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <returns>L キャリア周波数（Hz）。</returns>
     public static double[] ResolveLeftCarrierHz(int activeSubcarriers)
     {
         var sc = ClampSubcarriers(activeSubcarriers);
@@ -306,6 +330,8 @@ internal static class PerformanceSignalGenerator
     /// <summary>
     /// キャリア周波数一覧（R）を返します。
     /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <returns>R キャリア周波数（Hz）。</returns>
     public static double[] ResolveRightCarrierHz(int activeSubcarriers)
     {
         var sc = ClampSubcarriers(activeSubcarriers);
@@ -333,6 +359,9 @@ internal static class PerformanceSignalGenerator
     /// <summary>
     /// SC に対応する L/R キャリア周波数表を構築します。
     /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="useRight">R 側周波数を使うか。</param>
+    /// <returns>キャリア周波数（Hz）。</returns>
     private static double[] BuildCarrierHz(int activeSubcarriers, bool useRight)
     {
         var bins = OfdmConfig.ResolveConceptualLeftBins(activeSubcarriers);
@@ -355,6 +384,8 @@ internal static class PerformanceSignalGenerator
     /// <summary>
     /// UI の SC 値をコア対応範囲へ丸めます（性能測定は 56/64 可）。
     /// </summary>
+    /// <param name="value">希望サブキャリア数。</param>
+    /// <returns>8〜64 の対応値。</returns>
     public static int ClampSubcarriers(int value) =>
         value switch
         {
@@ -371,6 +402,8 @@ internal static class PerformanceSignalGenerator
     /// <summary>
     /// UI の変調をコア対応範囲へ丸めます。
     /// </summary>
+    /// <param name="value">希望変調。</param>
+    /// <returns>有効な変調方式。</returns>
     public static ModulationScheme ClampModulation(ModulationScheme value) =>
         value is ModulationScheme.Bpsk
             or ModulationScheme.Qpsk
@@ -380,6 +413,12 @@ internal static class PerformanceSignalGenerator
             ? value
             : ModulationScheme.Qam64;
 
+    /// <summary>
+    /// チャンク列を連結し sampleCount に切り詰めます。
+    /// </summary>
+    /// <param name="chunks">PCM チャンク。</param>
+    /// <param name="sampleCount">出力サンプル数。</param>
+    /// <returns>連結結果。</returns>
     private static Complex[] ConcatAndTrim(List<Complex[]> chunks, int sampleCount)
     {
         var result = new Complex[sampleCount];
@@ -403,6 +442,11 @@ internal static class PerformanceSignalGenerator
         return result;
     }
 
+    /// <summary>
+    /// ピーク正規化して振幅を合わせます。
+    /// </summary>
+    /// <param name="samples">PCM（破壊的）。</param>
+    /// <param name="amplitude">目標ピーク振幅。</param>
     private static void ScaleInPlace(Complex[] samples, double amplitude)
     {
         var peak = 0.0;
@@ -466,6 +510,11 @@ internal struct WhiteNoiseBandFilter
         return lp;
     }
 
+    /// <summary>
+    /// ハイパス係数を設定します（RBJ、Q=1/√2）。
+    /// </summary>
+    /// <param name="cutoffHz">遮断周波数（Hz）。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
     private void SetHighPass(double cutoffHz, int sampleRate)
     {
         // RBJ Audio EQ Cookbook — highpass, Q=1/√2
@@ -488,6 +537,11 @@ internal struct WhiteNoiseBandFilter
         _hpZ2 = 0;
     }
 
+    /// <summary>
+    /// ローパス係数を設定します（RBJ、Q=1/√2）。
+    /// </summary>
+    /// <param name="cutoffHz">遮断周波数（Hz）。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
     private void SetLowPass(double cutoffHz, int sampleRate)
     {
         var w0 = 2.0 * Math.PI * cutoffHz / sampleRate;

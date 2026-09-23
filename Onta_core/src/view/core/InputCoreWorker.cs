@@ -57,6 +57,10 @@ internal sealed class InputCoreWorker : IDisposable
     /// WAVデコード処理を開始します（バックグラウンドで一括復号。UI は SharedStatus を定期読み取り）。
     /// 逐次ストリーミングは音声入力専用（ファイル WAV では不安定だったため）。
     /// </summary>
+    /// <param name="wavPath">入力 WAV ファイルパス。</param>
+    /// <param name="profile">復号用コーデックプロファイル。</param>
+    /// <param name="outputDirectory">未使用の出力先（履歴保存のみ。省略時は AppPaths.OutputDir）。</param>
+    /// <returns>開始できた場合 true。既に実行中なら false。</returns>
     public bool TryStartWavDecode(string wavPath, FileWavCodecProfile profile, string? outputDirectory = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(wavPath);
@@ -107,6 +111,11 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// 音声入力デバイスからリアルタイム受信を開始します。
     /// </summary>
+    /// <param name="deviceNumber">入力デバイス番号。</param>
+    /// <param name="profile">復号用コーデックプロファイル。</param>
+    /// <param name="outputDirectory">未使用の出力先（履歴保存のみ。省略時は AppPaths.OutputDir）。</param>
+    /// <param name="inputGain">キャプチャ入力ゲイン（既定 0.8）。</param>
+    /// <returns>開始できた場合 true。既に実行中、またはキャプチャ開始失敗時は false。</returns>
     public bool TryStartAudioDecode(
         int deviceNumber,
         FileWavCodecProfile profile,
@@ -235,16 +244,22 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// 共有状態メモリを読み取ります（コアへの問い合わせではありません）。
     /// </summary>
+    /// <returns>現在の実行状態スナップショット。</returns>
     public CoreExecutionStatus ReadExecutionStatus() => _sharedStatus.Read();
 
     /// <summary>
     /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
     /// </summary>
+    /// <returns>現在の実行状態スナップショット。</returns>
     public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 
     /// <summary>
     /// 完了結果を1回だけ取り出します。
     /// </summary>
+    /// <param name="success">復号成功なら true。</param>
+    /// <param name="message">成功／失敗メッセージ。</param>
+    /// <param name="outputPath">出力パス（現状は常に null。履歴へ保持）。</param>
+    /// <returns>完了が保留中で取り出せた場合 true。未完了なら false。</returns>
     public bool TryConsumeCompletion(out bool success, out string message, out string? outputPath)
     {
         lock (_sync)
@@ -270,6 +285,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// 収集済み orphan 情報をスナップショットとして返します。
     /// </summary>
+    /// <returns>ペイロード付き不明ブロックの配列。状態が無ければ空配列。</returns>
     public ReceiveOrphanHistory[] CaptureOrphans()
     {
         lock (_sync)
@@ -305,6 +321,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// FH/BH から得たファイル全体ハッシュ（SHA-512 16進）を返します。
     /// </summary>
+    /// <returns>ファイルハッシュの 16 進文字列。未受信時は空文字。</returns>
     public string CaptureFileHashHex()
     {
         lock (_sync)
@@ -316,6 +333,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// 復元済みペイロードのコピーを返します。
     /// </summary>
+    /// <returns>復号バイト列のコピー。未完了／失敗時は null。</returns>
     public byte[]? CaptureDecodedPayload()
     {
         lock (_sync)
@@ -327,6 +345,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// 受信済みブロックの履歴保存用スナップショットを返します。
     /// </summary>
+    /// <returns>ブロック番号 → 変調・ハッシュ・ペイロード。未受信スロットは含めない。</returns>
     public IReadOnlyDictionary<int, ReceiveCapturedBlockInfo> CaptureReceivedBlocks()
     {
         lock (_sync)
@@ -371,6 +390,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// BH 受信済みブロックのメタ（変調・宣言サイズ）を返します。BD 未受信でも含みます。
     /// </summary>
+    /// <returns>ブロック番号 → 変調・ハッシュ・宣言サイズ。</returns>
     public IReadOnlyDictionary<int, ReceiveCapturedBlockHeaderInfo> CaptureReceivedBlockHeaders()
     {
         lock (_sync)
@@ -406,6 +426,7 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// BD 処理済みブロックの成否（true=OK / false=NG）を返します。
     /// </summary>
+    /// <returns>ブロック番号 → BD 成否。</returns>
     public IReadOnlyDictionary<int, bool> CaptureBlockBdOutcomes()
     {
         lock (_sync)
@@ -419,6 +440,11 @@ internal sealed class InputCoreWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// データ部変調方式バイト列を長さ 4 に正規化します。
+    /// </summary>
+    /// <param name="source">元の変調方式バイト列。</param>
+    /// <returns>先頭最大 4 バイトをコピーした長さ 4 の配列。不足分は 0。</returns>
     private static byte[] NormalizeDataModulation(byte[] source)
     {
         var normalized = new byte[4];
@@ -430,6 +456,11 @@ internal sealed class InputCoreWorker : IDisposable
         return normalized;
     }
 
+    /// <summary>
+    /// ブロックハッシュを長さ 32 に正規化します。
+    /// </summary>
+    /// <param name="source">元のハッシュバイト列。</param>
+    /// <returns>先頭最大 32 バイトをコピーした長さ 32 の配列。不足分は 0。</returns>
     private static byte[] NormalizeHash32(byte[] source)
     {
         var normalized = new byte[32];
@@ -441,7 +472,9 @@ internal sealed class InputCoreWorker : IDisposable
         return normalized;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// ライブ受信（キャプチャ／セッション）を停止しリソースを解放します。
+    /// </summary>
     public void Dispose()
     {
         lock (_sync)
@@ -450,6 +483,11 @@ internal sealed class InputCoreWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// 共有 StatusBoard 付きの ProgressiveDecodeState を生成し、開始進捗と FH 通知を設定します。
+    /// </summary>
+    /// <param name="runLabel">実行ラベル（StatusBoard.BeginRun 用）。</param>
+    /// <returns>初期化済みの復号状態。</returns>
     private ProgressiveDecodeState CreateState(string runLabel)
     {
         var state = new ProgressiveDecodeState(_sharedStatus);
@@ -468,6 +506,10 @@ internal sealed class InputCoreWorker : IDisposable
         return state;
     }
 
+    /// <summary>
+    /// ロック保持中に、ライブ受信またはバッチワーカーが稼働中かを判定します。
+    /// </summary>
+    /// <returns>新規開始を拒否すべき場合 true。</returns>
     private bool IsBusyLocked()
     {
         if (_liveMode && _liveSession is not null && !_completionPending)
@@ -478,6 +520,9 @@ internal sealed class InputCoreWorker : IDisposable
         return _worker is { IsCompleted: false };
     }
 
+    /// <summary>
+    /// ロック保持中にキャプチャとライブセッションを停止・破棄します。
+    /// </summary>
     private void StopLiveLocked()
     {
         try
@@ -504,6 +549,12 @@ internal sealed class InputCoreWorker : IDisposable
         _liveSession = null;
     }
 
+    /// <summary>
+    /// ライブ復号の完了／失敗を監視し、成功または失敗処理へ分岐します。
+    /// </summary>
+    /// <param name="session">監視対象のリアルタイム復号セッション。</param>
+    /// <param name="outputDirectory">完了処理へ渡す出力ディレクトリ（現状未使用）。</param>
+    /// <param name="runGeneration">この監視が属する実行世代。</param>
     private void WatchLiveCompletion(RealtimeDecodeSession session, string outputDirectory, int runGeneration)
     {
         while (true)
@@ -572,6 +623,12 @@ internal sealed class InputCoreWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// ライブ／バッチ復号成功時にペイロードを保持し、完了フラグを立ててライブ資源を解放します。
+    /// </summary>
+    /// <param name="decoded">復元済みペイロード。</param>
+    /// <param name="outputDirectory">未使用（履歴へ保持するため out_files へは書かない）。</param>
+    /// <param name="runGeneration">この完了が属する実行世代。</param>
     private void CompleteLiveSuccess(byte[] decoded, string outputDirectory, int runGeneration)
     {
         lock (_sync)
@@ -608,6 +665,12 @@ internal sealed class InputCoreWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// ライブ／バッチ復号失敗を記録し、完了フラグを立ててライブ資源を解放します。
+    /// </summary>
+    /// <param name="message">失敗メッセージ。</param>
+    /// <param name="outputDirectory">未使用（完了経路のシグネチャ合わせ）。</param>
+    /// <param name="runGeneration">実行世代。負値なら世代チェックを省略。</param>
     private void FailLive(string message, string outputDirectory, int runGeneration = -1)
     {
         lock (_sync)
@@ -635,6 +698,11 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// WAV を一括読み込みして復号します（テストと同じ経路。進捗は StatusBoard）。
     /// </summary>
+    /// <param name="wavPath">入力 WAV パス。</param>
+    /// <param name="profile">復号用コーデックプロファイル。</param>
+    /// <param name="state">進捗・orphan 等を保持する復号状態。</param>
+    /// <param name="outputDirectory">完了処理へ渡す出力ディレクトリ（現状未使用）。</param>
+    /// <param name="runGeneration">このバッチが属する実行世代。</param>
     private void RunBatchWavDecode(
         string wavPath,
         FileWavCodecProfile profile,
@@ -697,6 +765,10 @@ internal sealed class InputCoreWorker : IDisposable
     /// <summary>
     /// WAV をチャンク逐次読みし、RealtimeDecodeSession へ供給します。
     /// </summary>
+    /// <param name="wavPath">入力 WAV パス。</param>
+    /// <param name="profile">復号用コーデックプロファイル（サンプルレート／チャネル照合用）。</param>
+    /// <param name="session">PCM を受け取るリアルタイム復号セッション。</param>
+    /// <param name="outputDirectory">失敗／完了処理へ渡す出力ディレクトリ（現状未使用）。</param>
     private void RunStreamingWavDecode(
         string wavPath,
         FileWavCodecProfile profile,

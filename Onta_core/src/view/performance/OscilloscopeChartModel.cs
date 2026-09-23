@@ -153,29 +153,38 @@ public sealed class OscilloscopeChartModel
     /// <summary>
     /// オシロ用の描画余白です（左=外部振幅ラベル分。上下右は最小）。
     /// </summary>
+    /// <returns>LiveCharts 用 Margin（左 40、上下右 8）。</returns>
     public static Margin CreateDrawMargin() => new(40, 8, 8, 8);
 
     /// <summary>
     /// スライダーインデックスから片振幅レンジを返します。
     /// </summary>
+    /// <param name="index">スライダー位置。</param>
+    /// <returns>片振幅（±この値）。</returns>
     public static double AmplitudeHalfFromIndex(int index) =>
         AmplitudeRangeHalf[Math.Clamp(index, 0, AmplitudeRangeHalf.Length - 1)];
 
     /// <summary>
     /// スライダーインデックスから横軸幅（ms）を返します。
     /// </summary>
+    /// <param name="index">スライダー位置。</param>
+    /// <returns>表示幅（ms）。</returns>
     public static double TimeSpanMsFromIndex(int index) =>
         TimeSpanMsSteps[Math.Clamp(index, 0, TimeSpanMsSteps.Length - 1)];
 
     /// <summary>
     /// 振幅レンジの表示文言です。
     /// </summary>
+    /// <param name="half">片振幅。</param>
+    /// <returns>「±0.5」形式の文字列。</returns>
     public static string FormatAmplitudeRange(double half) =>
         half >= 1.0 ? "±1.0" : $"±{half:0.0}";
 
     /// <summary>
     /// 時間レンジの表示文言です。
     /// </summary>
+    /// <param name="ms">表示幅（ms）。</param>
+    /// <returns>「N ms」形式の文字列。</returns>
     public static string FormatTimeSpan(double ms) => $"{ms:0} ms";
 
     /// <summary>
@@ -217,6 +226,8 @@ public sealed class OscilloscopeChartModel
     /// <summary>
     /// 外部縦軸ラベル用の文言（上→下：+amp … 0 … −amp）です。
     /// </summary>
+    /// <param name="amplitudeHalf">片振幅。</param>
+    /// <returns>5 本分のラベル文字列。</returns>
     public static string[] FormatAmplitudeTickLabels(double amplitudeHalf)
     {
         var amp = Math.Max(0.05, amplitudeHalf);
@@ -234,6 +245,8 @@ public sealed class OscilloscopeChartModel
     /// <summary>
     /// 表示幅に対して読みやすい時間ステップ（ms）を選びます。
     /// </summary>
+    /// <param name="spanMs">表示幅（ms）。</param>
+    /// <returns>目盛り間隔（ms）。</returns>
     private static double NiceTimeStep(double spanMs)
     {
         double[] candidates = [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50];
@@ -252,6 +265,10 @@ public sealed class OscilloscopeChartModel
     /// <summary>
     /// t0〜t1 を step 刻みで並べた横軸目盛りです（端点を含む）。
     /// </summary>
+    /// <param name="t0">開始時刻（ms）。</param>
+    /// <param name="t1">終了時刻（ms）。</param>
+    /// <param name="step">刻み（ms）。</param>
+    /// <returns>目盛り位置配列。</returns>
     private static double[] BuildTimeSeparators(double t0, double t1, double step = 0.2)
     {
         if (step <= 0 || t1 <= t0)
@@ -378,12 +395,18 @@ public sealed class OscilloscopeChartModel
     /// <summary>
     /// サンプル番号をトリガー相対のミリ秒にします。
     /// </summary>
+    /// <param name="index">サンプル番号。</param>
+    /// <param name="triggerOffset">トリガー位置（サンプル）。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <returns>トリガー相対時刻（ms）。</returns>
     private static double SampleToMs(int index, int triggerOffset, int sampleRate) =>
         1000.0 * (index - triggerOffset) / sampleRate;
 
     /// <summary>
     /// 時間軸ラベルを整形します。
     /// </summary>
+    /// <param name="value">時刻（ms）。</param>
+    /// <returns>表示用文字列。</returns>
     private static string FormatTimeLabel(double value)
     {
         var abs = Math.Abs(value);

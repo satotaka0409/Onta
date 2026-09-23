@@ -1,24 +1,24 @@
 using Onta.Core;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
-/// ステレオ 32SC / 64QAM の往復テストです。
+/// ステレオ 8SC / QPSK の往復テストです。
 /// </summary>
-public sealed class OntaTest2
+public sealed class OntaTest1
 {
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 32,
-        ModulationScheme: ModulationScheme.Qam64);
+        ActiveSubcarriers: 8,
+        ModulationScheme: ModulationScheme.Qpsk);
 
     [Fact]
-    public void EncodeDecode_QrPng_MatchesOriginal_Stereo36Sc64Qam()
+    public void EncodeDecode_QrPng_MatchesOriginal_Stereo9ScQpsk()
     {
-        const string testTitle = "test2:" + nameof(EncodeDecode_QrPng_MatchesOriginal_Stereo36Sc64Qam);
+        const string testTitle = "test1:" + nameof(EncodeDecode_QrPng_MatchesOriginal_Stereo9ScQpsk);
         var inputPath = TestPaths.ResolveInputPng();
-        var wavPath = TestPaths.ResolveOutputPath("Sample1_test2.wav");
-        var restoredPath = TestPaths.ResolveOutputPath("Sample1_test2.png");
+        var wavPath = TestPaths.ResolveOutputPath("Sample1_test1.wav");
+        var restoredPath = TestPaths.ResolveOutputPath("Sample1_test1.png");
 
         var original = File.ReadAllBytes(inputPath);
         var codec = new FileWavCodec(Profile);

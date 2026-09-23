@@ -104,6 +104,7 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
     /// <summary>
     /// ファイル未作成時の既定値（音量 80%、その他は画面左上の既定選択）を返します。
     /// </summary>
+    /// <returns>既定の UI 設定スナップショット。</returns>
     public static PerformanceUiSettingsSnapshot CreateDefault() =>
         new(
             SignalMode: PerformanceSignalMode.Tone,

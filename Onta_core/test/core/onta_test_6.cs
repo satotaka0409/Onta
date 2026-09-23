@@ -3,7 +3,7 @@ using System.Reflection;
 using Onta.Core;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
 /// ブロックヘッダー起点の復号パラメータ選択を検証するテストです。

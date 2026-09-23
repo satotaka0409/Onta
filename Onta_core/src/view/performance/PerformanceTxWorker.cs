@@ -57,8 +57,11 @@ internal sealed class PerformanceTxWorker : IDisposable
     }
 
     /// <summary>
-    /// 完了結果待ちです。
+    /// 完了結果を取り出します（1 回だけ）。
     /// </summary>
+    /// <param name="success">成功なら true。</param>
+    /// <param name="message">完了／エラーメッセージ。</param>
+    /// <returns>結果があれば true。</returns>
     public bool TryConsumeCompletion(out bool success, out string message)
     {
         lock (_sync)
@@ -81,6 +84,8 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// 送信を開始します。
     /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <returns>開始できたとき true。</returns>
     public bool TryStart(PerformanceTxSettings settings)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -181,6 +186,8 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// パラメータ変更フラグを消費します（可視化リングは UpdateLiveSignal 側で消去済み）。
     /// </summary>
+    /// <param name="player">再生プレイヤー。</param>
+    /// <returns>フラッシュを実行したら true。</returns>
     private bool ConsumeFlushRequest(RealtimePcmPlayer player)
     {
         lock (_sync)
@@ -230,6 +237,11 @@ internal sealed class PerformanceTxWorker : IDisposable
         _cts?.Dispose();
     }
 
+    /// <summary>
+    /// 送信ワーカー本体（WAV 出力／音声再生）です。
+    /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <param name="token">取消トークン。</param>
     private void Run(PerformanceTxSettings settings, CancellationToken token)
     {
         RealtimePcmPlayer? player = null;
@@ -323,6 +335,9 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// トーン／スイープ／ホワイトノイズをチャンク生成しながら再生します（周波数・レベルをライブ反映）。
     /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <param name="player">再生プレイヤー。</param>
+    /// <param name="token">取消トークン。</param>
     private void PlayLiveReference(
         PerformanceTxSettings settings,
         RealtimePcmPlayer player,
@@ -403,6 +418,11 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// 事前生成バッファをチャンク再生します（変調）。
     /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="player">再生プレイヤー。</param>
+    /// <param name="token">取消トークン。</param>
     private void PlayBuffered(
         PerformanceTxSettings settings,
         Complex[] left,
@@ -457,6 +477,10 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// 再生チャンクをリング／FFT 可視化へ載せます。
     /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <param name="leftSlice">L チャンク。</param>
+    /// <param name="rightSlice">R チャンク。</param>
+    /// <param name="pcmCap">PCM リング容量。</param>
     private void PublishPcmAndFft(
         PerformanceTxSettings settings,
         ReadOnlySpan<Complex> leftSlice,
@@ -527,6 +551,7 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// 現在の FFT 長に一致する作業バッファを確保します。
     /// </summary>
+    /// <param name="fftSize">必要 FFT 長。</param>
     private void EnsureFftExactBuffer(int fftSize)
     {
         if (_fftExact is not null && _fftExact.Length == fftSize)
@@ -540,6 +565,7 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// 送信 PCM リングから等化 I-Q を抽出し可視化ボードへ載せます。
     /// </summary>
+    /// <param name="settings">送信設定。</param>
     private void PublishIqFromPcm(PerformanceTxSettings settings)
     {
         var sc = PerformanceSignalGenerator.ClampSubcarriers(settings.ActiveSubcarriers);
@@ -604,6 +630,10 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// PCM リング末尾を線形バッファへコピーします（呼び出し元で _sync を保持）。
     /// </summary>
+    /// <param name="ring">リング。</param>
+    /// <param name="dest">出力。</param>
+    /// <param name="count">コピーしたサンプル数。</param>
+    /// <returns>コピーできたとき true。</returns>
     private bool TryCopyPcmTailUnlocked(double[] ring, double[] dest, out int count)
     {
         count = 0;
@@ -618,6 +648,11 @@ internal sealed class PerformanceTxWorker : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// 設定に応じた PCM（トーン／スイープ／ノイズ／変調）を生成します。
+    /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <returns>L/R PCM。</returns>
     private static (Complex[] Left, Complex[] Right) Generate(PerformanceTxSettings settings)
     {
         var samples = Math.Max(1, (int)Math.Round(settings.DurationSeconds * PerformanceSignalGenerator.SampleRate));
@@ -651,6 +686,11 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// 直近の PCM 窓をオシロスコープ用にコピーします。
     /// </summary>
+    /// <param name="left">左チャネル出力。</param>
+    /// <param name="right">右チャネル出力。</param>
+    /// <param name="count">有効サンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <returns>十分なサンプルがあれば true。</returns>
     public bool TryCopyLatestPcm(double[] left, double[] right, out int count, out int sampleRate)
     {
         count = 0;
@@ -684,6 +724,10 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// リング末尾から FFT 窓を埋めます。
     /// </summary>
+    /// <param name="ring">PCM リング。</param>
+    /// <param name="destination">FFT 入力。</param>
+    /// <param name="fftSize">窓長。</param>
+    /// <param name="capacity">リング容量（互換用・未使用）。</param>
     private void FillPcmWindow(double[] ring, Complex[] destination, int fftSize, int capacity)
     {
         _ = capacity;

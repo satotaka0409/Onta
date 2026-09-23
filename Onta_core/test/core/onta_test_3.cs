@@ -2,7 +2,7 @@ using Onta.Core;
 using System.Numerics;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
 /// ステレオ 16SC / 16QAM の劣化耐性往復テストです。

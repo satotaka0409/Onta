@@ -231,6 +231,13 @@ internal sealed class RealtimePcmPlayer : IDisposable
         StopInternal();
     }
 
+    /// <summary>
+    /// 再生バッファに必要な空きができるまで待機し、停止中なら再生を再開します。
+    /// </summary>
+    /// <param name="buffer">書き込み先バッファ。</param>
+    /// <param name="waveOut">再生デバイス。</param>
+    /// <param name="requiredBytes">必要な空きバイト数。</param>
+    /// <param name="onBufferWait">待ち中の心拍コールバック。</param>
     private void WaitForBufferSpace(
         BufferedWaveProvider buffer,
         WaveOutEvent waveOut,
@@ -255,6 +262,9 @@ internal sealed class RealtimePcmPlayer : IDisposable
         }
     }
 
+    /// <summary>
+    /// WaveOut を停止・破棄し、バッファ参照をクリアします。
+    /// </summary>
     private void StopInternal()
     {
         lock (_sync)
@@ -278,6 +288,10 @@ internal sealed class RealtimePcmPlayer : IDisposable
         }
     }
 
+    /// <summary>
+    /// PCM 変換用スクラッチバッファを必要サイズまで確保します。
+    /// </summary>
+    /// <param name="byteCount">必要なバイト数。</param>
     private void EnsureScratch(int byteCount)
     {
         if (_convertScratch is null || _convertScratch.Length < byteCount)
@@ -286,6 +300,13 @@ internal sealed class RealtimePcmPlayer : IDisposable
         }
     }
 
+    /// <summary>
+    /// 正規化サンプルを 16bit little-endian PCM として書き込みます。
+    /// </summary>
+    /// <param name="dest">書き込み先バッファ。</param>
+    /// <param name="offset">書き込み位置（書き込み後に進む）。</param>
+    /// <param name="value">正規化振幅（±1 想定）。</param>
+    /// <param name="scale">出力スケール。</param>
     private static void WritePcm16(byte[] dest, ref int offset, double value, double scale)
     {
         var sample = (short)Math.Round(Math.Clamp(value * scale, -1.0, 1.0) * short.MaxValue);

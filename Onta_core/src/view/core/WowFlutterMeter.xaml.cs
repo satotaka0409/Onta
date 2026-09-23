@@ -77,6 +77,7 @@ public partial class WowFlutterMeter : UserControl
     /// <summary>
     /// 速度比を % 偏差へ変換して表示します。
     /// </summary>
+    /// <param name="speedRatio">再生速度比（1.0 = 基準）。</param>
     public void SetFromSpeedRatio(double speedRatio)
     {
         if (!_isActive)
@@ -90,6 +91,7 @@ public partial class WowFlutterMeter : UserControl
     /// <summary>
     /// 直接 % 値を設定して表示を更新します。
     /// </summary>
+    /// <param name="valuePercent">偏差 %（中央 0）。</param>
     public void AddSample(double valuePercent)
     {
         if (!_isActive)
@@ -118,11 +120,19 @@ public partial class WowFlutterMeter : UserControl
         UpdateVisual();
     }
 
+    /// <summary>
+    /// トラック幅が変わったとき、フィルとノブ位置を再計算します。
+    /// </summary>
+    /// <param name="sender">サイズ変更元。</param>
+    /// <param name="e">サイズ変更イベント引数。</param>
     private void OnTrackSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateVisual();
     }
 
+    /// <summary>
+    /// 現在値に合わせて左右フィル幅・ノブ位置・数値テキストを更新します。
+    /// </summary>
     private void UpdateVisual()
     {
         if (TrackGrid is null || FillNeg is null || FillPos is null || KnobTranslate is null || ValueText is null)

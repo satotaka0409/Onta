@@ -86,7 +86,9 @@ internal sealed class RealtimePcmCapture : IDisposable
         waveIn.Dispose();
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// キャプチャを停止し、リソースを解放します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -98,6 +100,11 @@ internal sealed class RealtimePcmCapture : IDisposable
         _disposed = true;
     }
 
+    /// <summary>
+    /// WaveIn バッファを 16bit PCM から複素サンプルへ変換し、SamplesAvailable を発火します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">録音バッファとバイト数。</param>
     private void OnDataAvailable(object? sender, WaveInEventArgs e)
     {
         if (e.BytesRecorded <= 0 || _waveIn is null)
@@ -146,6 +153,11 @@ internal sealed class RealtimePcmCapture : IDisposable
         }
     }
 
+    /// <summary>
+    /// 録音停止時に例外があれば CaptureFailed へ通知します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">停止理由（例外を含む場合あり）。</param>
     private void OnRecordingStopped(object? sender, StoppedEventArgs e)
     {
         if (e.Exception is not null)

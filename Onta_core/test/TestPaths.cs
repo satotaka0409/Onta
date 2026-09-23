@@ -23,6 +23,23 @@ internal static class TestPaths
     }
 
     /// <summary>
+    /// test/in_files 配下の入力テキスト（Sample*.txt など）を解決します。
+    /// </summary>
+    /// <param name="fileName">ファイル名（例: Sample1.txt）。</param>
+    /// <returns>絶対パス。</returns>
+    public static string ResolveInputTxt(string fileName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        var path = Path.Combine(TestProjectDir, "in_files", fileName);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"入力ファイルが見つかりません: {path}");
+        }
+
+        return path;
+    }
+
+    /// <summary>
     /// 出力ディレクトリ（test/out_files）を解決し、なければ作成します。
     /// </summary>
     public static string ResolveOutputDir()

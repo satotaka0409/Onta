@@ -2,7 +2,7 @@ using System.Numerics;
 using Onta.Core;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
 /// OFDM FFT（AVX / AdvSimd 共通経路）の健全性です。

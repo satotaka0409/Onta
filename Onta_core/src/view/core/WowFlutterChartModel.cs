@@ -166,6 +166,10 @@ public sealed class WowFlutterChartModel
         YAxes[0].MaxLimit = YLimitPercent;
     }
 
+    /// <summary>
+    /// 古い点を捨て、横軸を現在時刻基準のウィンドウ・縦軸を ±1% に合わせます。
+    /// </summary>
+    /// <param name="t">現在の経過秒。</param>
     private void RefreshAxisAndTrim(double t)
     {
         var windowStart = t - WindowSeconds;
@@ -177,9 +181,21 @@ public sealed class WowFlutterChartModel
         YAxes[0].MaxLimit = YLimitPercent;
     }
 
+    /// <summary>
+    /// 偏差 % を表示レンジ（±1%）へ収めます。
+    /// </summary>
+    /// <param name="percent">入力偏差 %。</param>
+    /// <returns>クランプ後の偏差 %。</returns>
     private static double ClampY(double percent) =>
         Math.Clamp(percent, -YLimitPercent, YLimitPercent);
 
+    /// <summary>
+    /// ホールド点があれば実サンプルで置き換え、なければ点を追加します。
+    /// </summary>
+    /// <param name="series">対象系列。</param>
+    /// <param name="hasHold">末尾がホールド点かどうか。</param>
+    /// <param name="t">サンプル時刻（秒）。</param>
+    /// <param name="value">偏差 %。</param>
     private static void AppendOrReplace(
         ObservableCollection<ObservablePoint> series,
         ref bool hasHold,
@@ -196,6 +212,12 @@ public sealed class WowFlutterChartModel
         series.Add(new ObservablePoint(t, value));
     }
 
+    /// <summary>
+    /// 実サンプルの Y を現在時刻まで水平延長するホールド点を更新または追加します。
+    /// </summary>
+    /// <param name="series">対象系列。</param>
+    /// <param name="hasHold">末尾がホールド点かどうか。</param>
+    /// <param name="t">現在の経過秒。</param>
     private static void UpdateHoldPoint(
         ObservableCollection<ObservablePoint> series,
         ref bool hasHold,
@@ -228,6 +250,12 @@ public sealed class WowFlutterChartModel
         }
     }
 
+    /// <summary>
+    /// ウィンドウ開始より前の点を削除し、ホールド状態を整合させます。
+    /// </summary>
+    /// <param name="series">対象系列。</param>
+    /// <param name="windowStart">表示ウィンドウ開始時刻（秒）。</param>
+    /// <param name="hasHold">末尾がホールド点かどうか。</param>
     private static void TrimOldPoints(
         ObservableCollection<ObservablePoint> series,
         double windowStart,

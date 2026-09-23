@@ -77,6 +77,8 @@ internal sealed class PerformanceRxWorker : IDisposable
     /// <summary>
     /// 受信を開始します。
     /// </summary>
+    /// <param name="settings">受信設定。</param>
+    /// <returns>開始できたとき true。</returns>
     public bool TryStart(PerformanceRxSettings settings)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -172,6 +174,9 @@ internal sealed class PerformanceRxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// キャプチャ／WAV 解析を停止します（呼び出し元が _sync を保持）。
+    /// </summary>
     private void StopLocked()
     {
         var capture = _capture;
@@ -225,6 +230,8 @@ internal sealed class PerformanceRxWorker : IDisposable
     /// <summary>
     /// WAV をチャンク読みして可視化へ流します（ほぼリアルタイム速度）。
     /// </summary>
+    /// <param name="wavPath">入力 WAV パス。</param>
+    /// <param name="token">取消トークン。</param>
     private void RunWavAnalysis(string wavPath, CancellationToken token)
     {
         try
@@ -281,6 +288,11 @@ internal sealed class PerformanceRxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// PCM 実部にゲインを掛けます。
+    /// </summary>
+    /// <param name="samples">PCM（破壊的）。</param>
+    /// <param name="gain">ゲイン（0〜1）。</param>
     private static void ScaleInPlace(Complex[] samples, double gain)
     {
         for (var i = 0; i < samples.Length; i++)
@@ -289,6 +301,10 @@ internal sealed class PerformanceRxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// キャプチャ失敗時に停止し状態を完了します。
+    /// </summary>
+    /// <param name="message">エラーメッセージ。</param>
     private void OnCaptureFailed(string message)
     {
         lock (_sync)
@@ -298,6 +314,11 @@ internal sealed class PerformanceRxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// 入力 PCM をリングへ書き、間引いて FFT／ワウ／I-Q を更新します。
+    /// </summary>
+    /// <param name="left">L チャンク。</param>
+    /// <param name="right">R チャンク。</param>
     private void OnSamplesAvailable(Complex[] left, Complex[] right)
     {
         if (left.Length == 0)
@@ -344,6 +365,9 @@ internal sealed class PerformanceRxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// FFT／ワウ／I-Q を共有ボードへ載せます（呼び出し元が _sync を保持）。
+    /// </summary>
     private void PublishAnalysisUnlocked()
     {
         var fftSize = _fftSize;
@@ -391,6 +415,9 @@ internal sealed class PerformanceRxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// リング末尾から等化 I-Q を抽出し共有ボードへ載せます。
+    /// </summary>
     private void PublishIqFromCarriersUnlocked()
     {
         var sc = PerformanceSignalGenerator.ClampSubcarriers(_settings.ActiveSubcarriers);
@@ -438,6 +465,10 @@ internal sealed class PerformanceRxWorker : IDisposable
     /// <summary>
     /// リング末尾を線形バッファへコピーします。
     /// </summary>
+    /// <param name="ring">リング。</param>
+    /// <param name="dest">出力。</param>
+    /// <param name="count">コピーしたサンプル数。</param>
+    /// <returns>コピーできたとき true。</returns>
     private bool CopyRingTail(double[] ring, double[] dest, out int count)
     {
         count = 0;
@@ -452,6 +483,12 @@ internal sealed class PerformanceRxWorker : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// リング末尾から FFT 窓を埋めます。
+    /// </summary>
+    /// <param name="ring">PCM リング。</param>
+    /// <param name="destination">FFT 入力。</param>
+    /// <param name="fftSize">窓長。</param>
     private void FillWindow(double[] ring, Complex[] destination, int fftSize)
     {
         PerformanceRingCopy.FillComplexWindow(ring, _writeTotal, destination, fftSize);
@@ -497,6 +534,9 @@ internal sealed class PerformanceRxWorker : IDisposable
     /// <summary>
     /// 振幅ピークビンを放物線補間して周波数（Hz）を返します。
     /// </summary>
+    /// <param name="bins">片側スペクトル。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <returns>ピーク周波数（Hz）。無効時は 0。</returns>
     private static double FindPeakFrequencyHz(Complex[] bins, int sampleRate)
     {
         var half = bins.Length / 2;
@@ -530,6 +570,11 @@ internal sealed class PerformanceRxWorker : IDisposable
     /// <summary>
     /// 送信側周波数へロックしたワウ（%）を指数平均します。
     /// </summary>
+    /// <param name="current">現在の EMA 値（%）。</param>
+    /// <param name="measuredHz">測定ピーク（Hz）。</param>
+    /// <param name="candidates">送信側周波数候補。</param>
+    /// <param name="lockedRefHz">ロック中の基準周波数（未ロックは 0）。</param>
+    /// <returns>更新後のワウ EMA（%）。</returns>
     private static double UpdateWowEma(
         double current,
         double measuredHz,

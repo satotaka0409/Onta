@@ -206,6 +206,8 @@ public sealed class IqChartModel
     /// <summary>
     /// 単位エネルギー想定の理想コンスタレーション外接半径＋余白です。
     /// </summary>
+    /// <param name="modulation">軸スケールを決める変調方式。</param>
+    /// <returns>X/Y 軸の ± 上限。</returns>
     private static double IdealAxisLimit(ModulationScheme modulation) =>
         modulation switch
         {
@@ -217,12 +219,20 @@ public sealed class IqChartModel
             _ => DefaultAxisLimit
         };
 
+    /// <summary>
+    /// 1 サンプルをグループ別系列へ追加します。
+    /// </summary>
+    /// <param name="s">追加する IQ サンプル。</param>
     private void AddSample(CoreIqSample s)
     {
         var group = s.Group < GroupCount ? s.Group : (byte)0;
         _groupPoints[group].Add(new ObservablePoint(s.I, s.Q));
     }
 
+    /// <summary>
+    /// X/Y 軸の上下限と等間隔目盛を対称に設定します。
+    /// </summary>
+    /// <param name="limit">原点からの軸上限。</param>
     private void ApplyAxisLimits(double limit)
     {
         var separators = CreateSymmetricSeparators(limit);
@@ -237,6 +247,8 @@ public sealed class IqChartModel
     /// <summary>
     /// 原点を中央に置く等間隔目盛を作ります。
     /// </summary>
+    /// <param name="limit">原点からの軸上限。</param>
+    /// <returns>0.5 刻みの対称目盛配列。</returns>
     private static double[] CreateSymmetricSeparators(double limit)
     {
         const double step = 0.5;

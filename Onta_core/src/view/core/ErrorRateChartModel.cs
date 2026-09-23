@@ -171,6 +171,10 @@ public sealed class ErrorRateChartModel
         RefreshAxisAndTrim(t);
     }
 
+    /// <summary>
+    /// 横軸を現在時刻基準のウィンドウへ合わせ、古い点を捨てて Y 軸上限を更新します。
+    /// </summary>
+    /// <param name="t">現在の経過秒。</param>
     private void RefreshAxisAndTrim(double t)
     {
         var windowStart = t - WindowSeconds;
@@ -187,6 +191,12 @@ public sealed class ErrorRateChartModel
         XAxes[0].MaxLimit = t;
     }
 
+    /// <summary>
+    /// 実サンプルの Y を現在時刻まで水平延長するホールド点を更新または追加します。
+    /// </summary>
+    /// <param name="series">対象系列。</param>
+    /// <param name="hasHold">末尾がホールド点かどうか。</param>
+    /// <param name="t">現在の経過秒。</param>
     private static void UpdateHoldPoint(
         ObservableCollection<ObservablePoint> series,
         ref bool hasHold,
@@ -220,9 +230,21 @@ public sealed class ErrorRateChartModel
         }
     }
 
+    /// <summary>
+    /// RS / ターボ段かどうかを判定します。
+    /// </summary>
+    /// <param name="kind">訂正段。</param>
+    /// <returns>外側復号段のとき true。</returns>
     private static bool IsOuterDecoder(CoreEccDecoderKind kind) =>
         kind is CoreEccDecoderKind.Turbo or CoreEccDecoderKind.ReedSolomon;
 
+    /// <summary>
+    /// ホールド点があれば実サンプルで置き換え、なければ点を追加します。
+    /// </summary>
+    /// <param name="series">対象系列。</param>
+    /// <param name="hasHold">末尾がホールド点かどうか。</param>
+    /// <param name="t">サンプル時刻（秒）。</param>
+    /// <param name="value">訂正率（%）。</param>
     private static void AppendOrReplace(
         ObservableCollection<ObservablePoint> series,
         ref bool hasHold,
@@ -241,6 +263,9 @@ public sealed class ErrorRateChartModel
         }
     }
 
+    /// <summary>
+    /// 表示中の両系列からピーク訂正率を再計算します。
+    /// </summary>
     private void RefreshPeakFromVisible()
     {
         _peakPercent = 0;
@@ -248,6 +273,10 @@ public sealed class ErrorRateChartModel
         AccumulatePeak(_outerValues);
     }
 
+    /// <summary>
+    /// 系列内の最大 Y をピークへ反映します。
+    /// </summary>
+    /// <param name="series">走査対象の系列。</param>
     private void AccumulatePeak(ObservableCollection<ObservablePoint> series)
     {
         foreach (var p in series)
@@ -259,6 +288,12 @@ public sealed class ErrorRateChartModel
         }
     }
 
+    /// <summary>
+    /// ウィンドウ開始より前の点を削除し、ホールド状態を整合させます。
+    /// </summary>
+    /// <param name="series">対象系列。</param>
+    /// <param name="windowStart">表示ウィンドウ開始時刻（秒）。</param>
+    /// <param name="hasHold">末尾がホールド点かどうか。</param>
     private static void TrimOldPoints(
         ObservableCollection<ObservablePoint> series,
         double windowStart,
@@ -283,6 +318,11 @@ public sealed class ErrorRateChartModel
         }
     }
 
+    /// <summary>
+    /// 横軸目盛を相対秒ラベル（例: -10s）へ変換します。
+    /// </summary>
+    /// <param name="value">絶対経過秒。</param>
+    /// <returns>相対秒の表示文字列。</returns>
     private string LabelForTime(double value)
     {
         var age = _windowEndSeconds - value;

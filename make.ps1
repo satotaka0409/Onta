@@ -3,15 +3,18 @@
 #   .\make.ps1
 #   .\make.ps1 build
 #   .\make.ps1 clean
-#   .\make.ps1 test
+#   .\make.ps1 test              # all tests
+#   .\make.ps1 core              # test/core
+#   .\make.ps1 history           # test/history
+#   .\make.ps1 performance       # test/performance
 #   .\make.ps1 testdebug
 #   .\make.ps1 rebuild -Config Debug
 #   .\make.ps1 build -Dotnet "C:\Program Files\dotnet\dotnet.exe"
-#   .\make.cmd build
+#   .\make.cmd history
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("all", "build", "clean", "rebuild", "test", "testdebug")]
+    [ValidateSet("all", "build", "clean", "rebuild", "test", "testdebug", "core", "history", "performance")]
     [string]$Target = "build",
 
     [string]$Config = "Release",
@@ -30,6 +33,13 @@ $testProjects = @(
 
 if ($testProjects.Count -eq 0) {
     throw "No test projects (*.Tests.csproj) were found under Onta_core."
+}
+
+# Folder -> namespace filter for: dotnet test --filter
+$TestFilters = @{
+    core        = "FullyQualifiedName~Onta.Core.Tests.Core."
+    history     = "FullyQualifiedName~Onta.Core.Tests.History."
+    performance = "FullyQualifiedName~Onta.Core.Tests.Performance."
 }
 
 function Resolve-Dotnet {
@@ -82,9 +92,20 @@ function Invoke-Clean {
 }
 
 function Invoke-Test {
+    param(
+        [string]$Filter = ""
+    )
+
     Invoke-Build
     foreach ($tp in $testProjects) {
-        & $dotnetExe test $tp -c $Config --no-build --nologo
+        if ([string]::IsNullOrWhiteSpace($Filter)) {
+            Write-Host "=== test (all): $tp ==="
+            & $dotnetExe test $tp -c $Config --no-build --nologo
+        }
+        else {
+            Write-Host "=== test ($Filter): $tp ==="
+            & $dotnetExe test $tp -c $Config --no-build --nologo --filter $Filter
+        }
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 }
@@ -114,4 +135,7 @@ switch ($Target) {
     }
     "test" { Invoke-Test }
     "testdebug" { Invoke-TestDebug }
+    "core" { Invoke-Test -Filter $TestFilters.core }
+    "history" { Invoke-Test -Filter $TestFilters.history }
+    "performance" { Invoke-Test -Filter $TestFilters.performance }
 }

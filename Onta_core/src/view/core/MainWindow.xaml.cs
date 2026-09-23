@@ -48,6 +48,9 @@ public partial class MainWindow : Window
         RefreshEstimate();
     }
 
+    /// <summary>
+    /// メイン設定ファイルを読み込み、送信・受信・性能測定パネルへ反映します。
+    /// </summary>
     private void LoadMainSettings()
     {
         try
@@ -67,6 +70,9 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 各パネルの現在設定をメイン設定ファイルへ保存します。
+    /// </summary>
     private void SaveMainSettings()
     {
         try
@@ -185,6 +191,8 @@ public partial class MainWindow : Window
     /// <summary>
     /// 受信停止要求を Input ワーカーへ伝搬します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnReceiveStopRequested(object? sender, EventArgs e)
     {
         _ = _inputCoreWorker.RequestStop();
@@ -197,6 +205,8 @@ public partial class MainWindow : Window
     /// <param name="fileName">受信ファイル名。</param>
     /// <param name="fileSizeText">表示用ファイルサイズ。</param>
     /// <param name="blockCount">総ブロック数。</param>
+    /// <param name="createdAtUtc">ファイル作成日時（UTC）。不明時は null。</param>
+    /// <param name="updatedAtUtc">ファイル更新日時（UTC）。不明時は null。</param>
     private void OnReceiveFileHeaderReady(
         string fileName,
         string fileSizeText,
@@ -325,6 +335,7 @@ public partial class MainWindow : Window
     /// <summary>
     /// 選択デバイスからのリアルタイム音声受信を開始します。
     /// </summary>
+    /// <param name="outputDir">受信ファイルの出力フォルダー。</param>
     private void StartAudioReceive(string outputDir)
     {
         // 音声入力はステレオ 44.1kHz 前提（ヘッダーは内部でモノラル扱い）
@@ -510,8 +521,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 現在の受信結果を履歴ファイルへ保存します。
+    /// 現在の受信結果を履歴ファイルへ保存します。スナップショットが前回と同じ場合は省略します。
     /// </summary>
+    /// <param name="force">true のときスナップショット比較をせず必ず保存する。</param>
     private void SaveReceiveHistoryIfChanged(bool force)
     {
         try
@@ -594,6 +606,10 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 送信完了結果を処理し、履歴保存・WAV 再生・完了/エラーダイアログを行います。
+    /// </summary>
+    /// <param name="completion">送信完了結果。</param>
     private void HandleSendCompletion(CoreCompletionResult completion)
     {
         if (completion.WasCancelled)
@@ -635,6 +651,11 @@ public partial class MainWindow : Window
         MessageBox.Show(this, $"送信中にエラーが発生しました。\n{completion.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
+    /// <summary>
+    /// WAV 出力パスを解決します。未指定時は保存ダイアログを表示します。
+    /// </summary>
+    /// <param name="snap">送信設定スナップショット。</param>
+    /// <returns>絶対パス。WAV 出力無効またはダイアログ取消時は null。</returns>
     private string? ResolveOutputWavPath(SendSettingsSnapshot snap)
     {
         if (!snap.WriteWav)
@@ -666,6 +687,11 @@ public partial class MainWindow : Window
         return Path.GetFullPath(dlg.FileName);
     }
 
+    /// <summary>
+    /// 送信 WAV の既定出力パスを組み立てます。
+    /// </summary>
+    /// <param name="snap">送信設定スナップショット。</param>
+    /// <returns>既定の絶対パス（入力名_out.wav または指定パス）。</returns>
     private static string BuildDefaultOutputPath(SendSettingsSnapshot snap)
     {
         if (!string.IsNullOrWhiteSpace(snap.WavOutputPath))
@@ -677,6 +703,11 @@ public partial class MainWindow : Window
         return Path.Combine(AppPaths.OutputDir, $"{inputName}_out.wav");
     }
 
+    /// <summary>
+    /// 指定 WAV を選択デバイスで再生します。既存再生があれば停止してから開始します。
+    /// </summary>
+    /// <param name="wavPath">再生する WAV ファイルパス。</param>
+    /// <param name="deviceNumber">NAudio 出力デバイス番号。</param>
     private void StartAudioPlayback(string wavPath, int deviceNumber)
     {
         StopAudioPlayback();
@@ -691,11 +722,19 @@ public partial class MainWindow : Window
         _activeWaveOut.Play();
     }
 
+    /// <summary>
+    /// 再生停止イベントで再生リソースを解放します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">停止イベント引数。</param>
     private void OnPlaybackStopped(object? sender, StoppedEventArgs e)
     {
         StopAudioPlayback();
     }
 
+    /// <summary>
+    /// アクティブな WaveOut / AudioFileReader を破棄して再生を停止します。
+    /// </summary>
     private void StopAudioPlayback()
     {
         if (_activeWaveOut is not null)

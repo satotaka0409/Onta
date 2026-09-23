@@ -2,7 +2,7 @@ using Onta.Core;
 using System.Numerics;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
 /// モノラル 24SC / QPSK の劣化耐性往復テストです。

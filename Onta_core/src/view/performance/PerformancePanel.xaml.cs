@@ -194,6 +194,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 基準信号のトーン／スイープ／ホワイトノイズ選択を反映します。
     /// </summary>
+    /// <param name="mode">信号モード。</param>
+    /// <param name="toneHz">トーン周波数（Hz）。</param>
     private void ApplyToneSelection(PerformanceSignalMode mode, double toneHz)
     {
         if (mode == PerformanceSignalMode.Sweep)
@@ -231,6 +233,9 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 指定 GroupName のラジオを Tag で選択します。
     /// </summary>
+    /// <param name="groupName">ラジオボタングループ名。</param>
+    /// <param name="tag">選択する Tag。</param>
+    /// <param name="fallbackTag">見つからないときの代替 Tag。</param>
     private void SetCheckedRadio(string groupName, string tag, string fallbackTag)
     {
         RadioButton? fallback = null;
@@ -263,6 +268,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// コンボのデバイス番号を選択します（無ければ既定）。
     /// </summary>
+    /// <param name="combo">デバイス選択コンボ。</param>
+    /// <param name="deviceNumber">オーディオデバイス番号。</param>
     private static void SelectComboDevice(ComboBox combo, int deviceNumber)
     {
         if (combo is null || combo.Items.Count == 0)
@@ -282,6 +289,11 @@ public partial class PerformancePanel : UserControl
         combo.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// パネル Loaded 時の初期化を行います。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         WowLeftMeter.ChannelLabel = "L";
@@ -360,6 +372,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// FFT / オシロスコープタブ切替を反映します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnWaveGraphTabSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded || WaveGraphTabs is null)
@@ -534,6 +548,11 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// ホストの Visibility／ヒットテストを切り替えます。
+    /// </summary>
+    /// <param name="host">ホスト要素。</param>
+    /// <param name="visible">表示するなら true。</param>
     private static void SetHostVisible(UIElement host, bool visible)
     {
         host.Opacity = visible ? 1 : 0;
@@ -541,6 +560,11 @@ public partial class PerformancePanel : UserControl
         host.Visibility = Visibility.Visible;
     }
 
+    /// <summary>
+    /// パネル Unloaded 時にワーカー／タイマを解放します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _pollTimer.Stop();
@@ -551,6 +575,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// L/R 波形行の高さに合わせて I-Q を正方形にします。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnWaveRowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateIqHostSquares();
@@ -568,6 +594,11 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// I-Q プロットを正方形に固定し、凡例分だけホスト幅を広げます。
     /// </summary>
+    /// <param name="row">行 Grid。</param>
+    /// <param name="host">ホスト要素。</param>
+    /// <param name="title">タイトル TextBlock。</param>
+    /// <param name="legend">凡例パネル。</param>
+    /// <param name="chart">LiveCharts チャート。</param>
     private static void UpdateIqHostSquare(
         Grid row,
         FrameworkElement host,
@@ -620,6 +651,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// I-Q グラフ横のグループ凡例（A〜H。G/H は性能測定のみ）を構築します。
     /// </summary>
+    /// <param name="host">ホスト要素。</param>
     private void BuildIqGroupLegend(Panel host)
     {
         host.Children.Clear();
@@ -652,6 +684,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// I-Q プロットの余白を四辺均等にして、点が正方形に載るようにします。
     /// </summary>
+    /// <param name="chart">LiveCharts チャート。</param>
     private static void ApplyIqChartLayout(CartesianChart chart)
     {
         chart.DrawMargin = new LiveChartsCore.Measure.Margin(10, 10, 10, 10);
@@ -661,6 +694,10 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// LiveCharts へ系列と軸をバインドします。
     /// </summary>
+    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="series">系列コレクション。</param>
+    /// <param name="xAxes">X 軸。</param>
+    /// <param name="yAxes">Y 軸。</param>
     private static void BindChart(
         CartesianChart chart,
         ISeries[] series,
@@ -673,9 +710,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// FFT チャートの描画余白と横軸範囲を調整します。
-    /// 横軸 MaxLimit は外部目盛り／縦線と同じ 0–20000 Hz（DPI 倍しない）。
+    /// FFT チャートの描画余白と横軸範囲を調整します。 横軸 MaxLimit は外部目盛り／縦線と同じ 0–20000 Hz（DPI 倍しない）。
     /// </summary>
+    /// <param name="chart">LiveCharts チャート。</param>
     private void ApplyFftChartLayout(CartesianChart chart)
     {
         chart.DrawMargin = FftChartModel.CreateDrawMargin();
@@ -730,6 +767,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// オシロチャートの Loaded で Skia DPI 設定と軸を再適用します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnScopeChartLoaded(object sender, RoutedEventArgs e)
     {
         if (sender is CartesianChart chart)
@@ -744,6 +783,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// オシロチャートのサイズ変化で軸・外部目盛り位置を更新します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnScopeChartSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (e.NewSize.Height <= 1 || e.NewSize.Width <= 1)
@@ -766,6 +807,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// オシロスコープの軸ラベル用余白を設定します。
     /// </summary>
+    /// <param name="chart">LiveCharts チャート。</param>
     private static void ApplyScopeChartLayout(CartesianChart chart)
     {
         chart.DrawMargin = OscilloscopeChartModel.CreateDrawMargin();
@@ -778,6 +820,9 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// LiveCharts の実プロット矩形へ外部 Y 目盛りを同期します。
     /// </summary>
+    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="overlay">オーバーレイ Canvas。</param>
+    /// <param name="labelCol">外部 Y ラベル列。</param>
     private void HookScopeOverlaySync(
         CartesianChart chart,
         FrameworkElement? overlay,
@@ -800,6 +845,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 左右どちら側のオーバーレイを同期するか振り分けます。
     /// </summary>
+    /// <param name="chart">LiveCharts チャート。</param>
     private void SyncScopeOverlayFor(CartesianChart chart)
     {
         if (ReferenceEquals(chart, ScopeLeftChart))
@@ -813,9 +859,11 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// CoreChart の DrawMargin 実座標に合わせて目盛りオーバーレイを置きます。
-    /// これにより波形 y=0 と「0.0」／黄ゼロ線が一致します。
+    /// CoreChart の DrawMargin 実座標に合わせて目盛りオーバーレイを置きます。 これにより波形 y=0 と「0.0」／黄ゼロ線が一致します。
     /// </summary>
+    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="overlay">オーバーレイ Canvas。</param>
+    /// <param name="labelCol">外部 Y ラベル列。</param>
     private static void SyncScopeYOverlay(
         CartesianChart chart,
         FrameworkElement? overlay,
@@ -866,6 +914,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// SkiaSharp 要素の IgnorePixelScaling を有効化します（DIP＝描画座標にする）。
     /// </summary>
+    /// <param name="root">探索ルート。</param>
     private static void TrySetIgnorePixelScaling(DependencyObject root)
     {
         if (root is null)
@@ -890,6 +939,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// L/R の振幅・時間レンジスライダー変更です。同期中は相手側へ同じ値を載せます。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnScopeRangeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (ScopeLeftAmpSlider is null || ScopeRightAmpSlider is null
@@ -925,6 +976,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// L/R 同期チェックの変更です。ON 時は L のレンジを R へコピーします。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnScopeLrSyncChanged(object sender, RoutedEventArgs e)
     {
         if (ScopeLrSyncCheck is null)
@@ -941,6 +994,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 同期中、動かしたスライダーの軸だけ相手チャネルへ合わせます。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
     private void SyncScopeRangePeer(object sender)
     {
         if (ReferenceEquals(sender, ScopeLeftAmpSlider))
@@ -1041,6 +1095,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// オシロ縦軸の外部ラベル（中央=0）を更新します。
     /// </summary>
+    /// <param name="ampLeft">L 振幅ハーフ。</param>
+    /// <param name="ampRight">R 振幅ハーフ。</param>
     private void ApplyScopeExternalYLabels(double ampLeft, double ampRight)
     {
         var left = OscilloscopeChartModel.FormatAmplitudeTickLabels(ampLeft);
@@ -1056,6 +1112,12 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 外部縦目盛り TextBlock へ文言を割り当てます。
     /// </summary>
+    /// <param name="t0">上端ラベル。</param>
+    /// <param name="t1">上中ラベル。</param>
+    /// <param name="t2">中央ラベル。</param>
+    /// <param name="t3">下中ラベル。</param>
+    /// <param name="t4">下端ラベル。</param>
+    /// <param name="labels">ラベル TextBlock 列。</param>
     private static void SetScopeYLabelTexts(
         TextBlock? t0, TextBlock? t1, TextBlock? t2, TextBlock? t3, TextBlock? t4,
         string[] labels)
@@ -1075,18 +1137,25 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 縦軸スライダーから片振幅レンジを読みます。
     /// </summary>
+    /// <param name="slider">スライダー。</param>
+    /// <returns>片振幅。</returns>
     private static double ReadScopeAmp(Slider slider) =>
         OscilloscopeChartModel.AmplitudeHalfFromIndex((int)Math.Round(slider.Value));
 
     /// <summary>
     /// 横軸スライダーから表示幅（ms）を読みます。
     /// </summary>
+    /// <param name="slider">スライダー。</param>
+    /// <returns>表示幅（ms）。</returns>
     private static double ReadScopeTimeMs(Slider slider) =>
         OscilloscopeChartModel.TimeSpanMsFromIndex((int)Math.Round(slider.Value));
 
     /// <summary>
     /// 時間レンジをサンプル数へ変換します。
     /// </summary>
+    /// <param name="timeSpanMs">表示幅（ms）。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <returns>表示サンプル数。</returns>
     private static int ScopeDisplaySamples(double timeSpanMs, int sampleRate) =>
         Math.Max(16, (int)Math.Round(timeSpanMs * Math.Max(1, sampleRate) / 1000.0));
 
@@ -1100,6 +1169,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 0–20 kHz を Canvas 全幅に等間隔配置します（チャート MaxLimit=20000 と一致）。
     /// </summary>
+    /// <param name="canvas">描画 Canvas。</param>
     private static void LayoutFftFreqLabels(Canvas canvas)
     {
         if (canvas is null)
@@ -1136,6 +1206,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// FFT 縦線 Canvas のサイズ変化で 2 kHz 間隔の縦線を引き直します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnFftGridLinesSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (sender is Canvas canvas)
@@ -1147,6 +1219,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 外部周波数目盛りと同じ位置（0〜20 kHz・2 kHz 刻み）に縦線を配置します。
     /// </summary>
+    /// <param name="canvas">描画 Canvas。</param>
     private static void LayoutFftFreqGridLines(Canvas? canvas)
     {
         if (canvas is null)
@@ -1191,6 +1264,9 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 出力デバイス一覧をコンボへ載せます。
+    /// </summary>
     private void InitializeOutputDevices()
     {
         OutputDeviceCombo.Items.Clear();
@@ -1211,6 +1287,9 @@ public partial class PerformancePanel : UserControl
         OutputDeviceCombo.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// 入力デバイス一覧をコンボへ載せます。
+    /// </summary>
     private void InitializeInputDevices()
     {
         InputDeviceCombo.Items.Clear();
@@ -1234,6 +1313,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// WAV入力 / 音声入力のパネル表示を切り替えます。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnRxInputModeChanged(object sender, RoutedEventArgs e)
     {
         UpdateRxInputModePanels();
@@ -1257,6 +1338,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 受信音量スライダーの表示を更新します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnRxInputVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateRxInputVolumeText();
@@ -1278,6 +1361,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 受信側 WAV 入力ファイルを選択します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnBrowseRxWavClick(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
@@ -1305,6 +1390,9 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 既定 WAV 出力パスを確保します。
+    /// </summary>
     private void EnsureDefaultWavPath()
     {
         if (!string.IsNullOrWhiteSpace(WavPathTextBox.Text))
@@ -1320,6 +1408,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 基準信号 / 変調のラジオ切替を反映します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnSignalModeChanged(object sender, RoutedEventArgs e)
     {
         UpdateSignalModeUi();
@@ -1341,6 +1431,11 @@ public partial class PerformancePanel : UserControl
         SetHostVisible(ModulatedSignalHost, modulated);
     }
 
+    /// <summary>
+    /// 送信 WAV パス選択ダイアログを開きます。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnBrowseWavClick(object sender, RoutedEventArgs e)
     {
         var dlg = new SaveFileDialog
@@ -1361,6 +1456,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// WAV出力 / 音声出力のパネル表示を切り替えます。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnOutputModeChanged(object sender, RoutedEventArgs e)
     {
         UpdateOutputModePanels();
@@ -1381,6 +1478,11 @@ public partial class PerformancePanel : UserControl
         AudioOutputPanel.Visibility = writeWav ? Visibility.Collapsed : Visibility.Visible;
     }
 
+    /// <summary>
+    /// 送信を開始します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnTxStartClick(object sender, RoutedEventArgs e)
     {
         if (_txWorker.IsBusy)
@@ -1407,12 +1509,22 @@ public partial class PerformancePanel : UserControl
         EnsurePollRunning();
     }
 
+    /// <summary>
+    /// 送信を停止します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnTxStopClick(object sender, RoutedEventArgs e)
     {
         _txWorker.RequestStop();
         TxStatusText.Text = "停止要求…";
     }
 
+    /// <summary>
+    /// 受信を開始します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnRxStartClick(object sender, RoutedEventArgs e)
     {
         if (_rxWorker.IsBusy)
@@ -1460,6 +1572,11 @@ public partial class PerformancePanel : UserControl
         EnsurePollRunning();
     }
 
+    /// <summary>
+    /// 受信を停止します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnRxStopClick(object sender, RoutedEventArgs e)
     {
         _rxWorker.RequestStop();
@@ -1468,6 +1585,9 @@ public partial class PerformancePanel : UserControl
         MaybeStopPoll();
     }
 
+    /// <summary>
+    /// 共有メモリポーリングタイマを開始します。
+    /// </summary>
     private void EnsurePollRunning()
     {
         if (!_pollTimer.IsEnabled)
@@ -1476,6 +1596,9 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 送受信が止まっていればポーリングを止めます。
+    /// </summary>
     private void MaybeStopPoll()
     {
         if (!_txWorker.IsBusy && !_rxWorker.IsBusy)
@@ -1484,6 +1607,11 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 共有メモリを読み UI へ反映します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnPollTick(object? sender, EventArgs e)
     {
         if (_rxWorker.IsBusy)
@@ -1533,6 +1661,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 受信共有状態をグラフへ反映します。
     /// </summary>
+    /// <param name="status">共有ボードの状態。</param>
     private void ApplyRxStatus(CoreExecutionStatus status)
     {
         var mode = CurrentWaveGraphMode;
@@ -1585,6 +1714,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 送信中の FFT / I-Q 可視化を反映します。
     /// </summary>
+    /// <param name="status">共有ボードの状態。</param>
     private void ApplyTxViz(CoreExecutionStatus status)
     {
         ApplyIqFromStatus(status);
@@ -1631,6 +1761,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 共有状態の I-Q 点を L/R チャートへ載せます。
     /// </summary>
+    /// <param name="status">共有ボードの状態。</param>
     private void ApplyIqFromStatus(CoreExecutionStatus status)
     {
         var iq = status.IqGraph.Points;
@@ -1753,6 +1884,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 周波数カウンタ・歪み率の表示文言を更新します。
     /// </summary>
+    /// <param name="left">左チャネル PCM／計測。</param>
+    /// <param name="right">右チャネル PCM／計測。</param>
     private void UpdateLissajousMeterTexts(
         LissajousMeterAnalyzer.ChannelMeters left,
         LissajousMeterAnalyzer.ChannelMeters right)
@@ -1781,6 +1914,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// リサージュホストのサイズ変化で正方形を合わせます。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnLissajousHostSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (!IsLissajousTabSelected)
@@ -1794,6 +1929,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// リサージュ描画領域のサイズ変化です。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnLissajousPlotSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateLissajousIdealDiagonal();
@@ -1848,6 +1985,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// L=X / R=Y の点列を Canvas に描きます（±1.0 レンジ、中央 0）。
     /// </summary>
+    /// <param name="left">左チャネル PCM／計測。</param>
+    /// <param name="right">右チャネル PCM／計測。</param>
     private void DrawLissajous(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
     {
         if (LissajousCanvas is null || LissajousPlotHost is null)
@@ -1920,6 +2059,9 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// L/R の正規化相関で位相同期の目安を返します（1=同位相、0=直交、-1=逆相）。
     /// </summary>
+    /// <param name="left">左チャネル PCM／計測。</param>
+    /// <param name="right">右チャネル PCM／計測。</param>
+    /// <returns>相関の目安（-1〜1）。</returns>
     private static double EstimatePhaseCorrelation(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
     {
         var n = Math.Min(left.Length, right.Length);
@@ -1964,6 +2106,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// オシロ波形 Canvas のサイズ変化で再描画します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnScopeWaveCanvasSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (e.NewSize.Width <= 1 || e.NewSize.Height <= 1)
@@ -1996,9 +2140,11 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 1 チャネル分の波形とトリガー縦線を Canvas に描きます。
-    /// Y: +amp=上端、0=中央、−amp=下端（外部目盛りと同じ）。
+    /// 1 チャネル分の波形とトリガー縦線を Canvas に描きます。 Y: +amp=上端、0=中央、−amp=下端（外部目盛りと同じ）。
     /// </summary>
+    /// <param name="canvas">描画 Canvas。</param>
+    /// <param name="model">オシロチャートモデル。</param>
+    /// <param name="stroke">線色ブラシ。</param>
     private static void DrawScopeWaveOnCanvas(
         Canvas? canvas,
         OscilloscopeChartModel model,
@@ -2073,6 +2219,10 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 送信 UI の実行中状態を切り替えます。
+    /// </summary>
+    /// <param name="running">実行中なら true。</param>
     private void SetTxRunning(bool running)
     {
         TxStartButton.IsEnabled = !running && !_rxWorker.IsBusy;
@@ -2144,6 +2294,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 信号レベル変更をライブ反映し、% 表示を更新します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnSignalLevelChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateSignalLevelText();
@@ -2167,6 +2319,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 出力音量スライダーの % 表示を更新します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnOutputVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateOutputVolumeText();
@@ -2188,6 +2342,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// トーン周波数／スイープ切替をライブ反映します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnToneSelectionChanged(object sender, RoutedEventArgs e)
     {
         if (sender is RadioButton { IsChecked: true })
@@ -2196,6 +2352,10 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 受信 UI の実行中状態を切り替えます。
+    /// </summary>
+    /// <param name="running">実行中なら true。</param>
     private void SetRxRunning(bool running)
     {
         RxStartButton.IsEnabled = !running && !_txWorker.IsBusy;
@@ -2213,6 +2373,10 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 画面から送信設定を読み取ります。
+    /// </summary>
+    /// <returns>送信設定スナップショット。</returns>
     private PerformanceTxSettings ReadTxSettings()
     {
         // 性能測定の送信は常にステレオ。
@@ -2245,6 +2409,10 @@ public partial class PerformancePanel : UserControl
             OutputVolume: volume);
     }
 
+    /// <summary>
+    /// 画面から受信設定を読み取ります。
+    /// </summary>
+    /// <returns>受信設定スナップショット。</returns>
     private PerformanceRxSettings ReadRxSettings()
     {
         // 送信が常時ステレオのため、受信解析もステレオ前提。
@@ -2270,6 +2438,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 選択中タブとトーン設定から信号モードを解決します。
     /// </summary>
+    /// <returns>信号モードとトーン周波数（Hz）。</returns>
     private (PerformanceSignalMode Mode, double ToneHz) ReadSignalMode()
     {
         if (ModulatedSignalRadio.IsChecked == true)
@@ -2308,6 +2477,10 @@ public partial class PerformancePanel : UserControl
         return (PerformanceSignalMode.Tone, 315.0);
     }
 
+    /// <summary>
+    /// 選択中の送信秒数を返します。
+    /// </summary>
+    /// <returns>秒数。</returns>
     private double ReadSelectedDurationSeconds()
     {
         foreach (var radio in FindRadios(this))
@@ -2324,6 +2497,10 @@ public partial class PerformancePanel : UserControl
         return 30.0;
     }
 
+    /// <summary>
+    /// 選択中のサブキャリア数を返します。
+    /// </summary>
+    /// <returns>サブキャリア数。</returns>
     private int ReadSubcarriers()
     {
         foreach (var radio in FindRadios(this))
@@ -2340,6 +2517,10 @@ public partial class PerformancePanel : UserControl
         return 8;
     }
 
+    /// <summary>
+    /// 選択中の変調方式を返します。
+    /// </summary>
+    /// <returns>変調方式。</returns>
     private ModulationScheme ReadModulation()
     {
         foreach (var radio in FindRadios(this))
@@ -2366,6 +2547,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// FFT サイズ／窓の変更を解析へ反映します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnFftAnalysisSettingsChanged(object sender, RoutedEventArgs e)
     {
         if (sender is RadioButton { IsChecked: true })
@@ -2377,6 +2560,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// FFT 窓コンボの変更を解析へ反映します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
     private void OnFftWindowSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded)
@@ -2401,6 +2586,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 選択中の FFT 長を返します。
     /// </summary>
+    /// <returns>FFT 長。</returns>
     private int ReadFftSize()
     {
         foreach (var radio in FindRadios(this))
@@ -2420,6 +2606,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 選択中の FFT 窓関数を返します。
     /// </summary>
+    /// <returns>窓種。</returns>
     private PerformanceFftWindowKind ReadFftWindowKind()
     {
         if (FftWindowCombo?.SelectedItem is ComboBoxItem { Tag: string tag })
@@ -2440,6 +2627,7 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// FFT 窓コンボを選択します。
     /// </summary>
+    /// <param name="kind">FFT 窓種。</param>
     private void SelectFftWindow(PerformanceFftWindowKind kind)
     {
         if (FftWindowCombo is null)
@@ -2474,6 +2662,8 @@ public partial class PerformancePanel : UserControl
     /// <summary>
     /// 配下の RadioButton を列挙します。
     /// </summary>
+    /// <param name="root">探索ルート。</param>
+    /// <returns>配下の RadioButton。</returns>
     private static IEnumerable<RadioButton> FindRadios(DependencyObject root)
     {
         foreach (var child in LogicalTreeHelper.GetChildren(root))
@@ -2497,6 +2687,10 @@ public partial class PerformancePanel : UserControl
     {
         public int DeviceNumber { get; } = deviceNumber;
         public string Name { get; } = name;
+        /// <summary>
+        /// 表示用デバイス名を返します。
+        /// </summary>
+        /// <returns>表示文字列。</returns>
         public override string ToString() => Name;
     }
 }

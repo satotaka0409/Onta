@@ -40,6 +40,14 @@ public partial class ReceivePanel : UserControl
     private long _wowSampleIndexAtSync;
     private long _wowSyncTimestamp;
 
+    /// <summary>
+    /// 受信パネルの永続化用設定スナップショットです。
+    /// </summary>
+    /// <param name="UseWavInput">true なら WAV 入力、false なら音声入力。</param>
+    /// <param name="WavInputPath">WAV 入力パス。</param>
+    /// <param name="OutputDirectory">受信ファイルの出力フォルダー。</param>
+    /// <param name="AudioDeviceNumber">音声入力デバイス番号。</param>
+    /// <param name="AudioVolume">音量（0〜1）。</param>
     public readonly record struct ReceiveSettingsSnapshot(
         bool UseWavInput,
         string WavInputPath,
@@ -85,6 +93,13 @@ public partial class ReceivePanel : UserControl
         };
     }
 
+    /// <summary>
+    /// LiveCharts CartesianChart に系列と軸を束縛します。
+    /// </summary>
+    /// <param name="chart">対象チャート。</param>
+    /// <param name="series">表示系列。</param>
+    /// <param name="xAxes">X 軸配列。</param>
+    /// <param name="yAxes">Y 軸配列。</param>
     private static void BindChart(
         LiveChartsCore.SkiaSharpView.WPF.CartesianChart chart,
         LiveChartsCore.ISeries[] series,
@@ -96,11 +111,19 @@ public partial class ReceivePanel : UserControl
         chart.YAxes = yAxes;
     }
 
+    /// <summary>
+    /// エラーレート／FFT タブラジオ変更時に表示切替を適用します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnReceiveGraphTabChanged(object sender, RoutedEventArgs e)
     {
         UpdateReceiveGraphTabVisibility();
     }
 
+    /// <summary>
+    /// エラーレートと FFT ホストの Opacity／ヒットテストと凡例表示を切り替えます。
+    /// </summary>
     private void UpdateReceiveGraphTabVisibility()
     {
         // InitializeComponent 中に Checked が発火するため、未生成要素を参照しない
@@ -163,6 +186,8 @@ public partial class ReceivePanel : UserControl
     /// <summary>
     /// グラフ行のリサイズに合わせて I-Q を正方形に保ちます。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">サイズ変更イベント引数。</param>
     private void OnReceiveGraphsRowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateIqSquareSize();
@@ -246,8 +271,9 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// 現在の受信設定を取得します。
+    /// 現在の受信設定をスナップショットとして取得します。
     /// </summary>
+    /// <returns>WAV/音声入力・出力先・デバイス・音量のスナップショット。</returns>
     public ReceiveSettingsSnapshot CaptureSettings()
     {
         return new ReceiveSettingsSnapshot(
@@ -261,6 +287,7 @@ public partial class ReceivePanel : UserControl
     /// <summary>
     /// 保存済み受信設定を UI へ反映します。
     /// </summary>
+    /// <param name="snapshot">反映する受信設定スナップショット。</param>
     public void ApplySettings(ReceiveSettingsSnapshot snapshot)
     {
         if (snapshot.UseWavInput)
@@ -467,6 +494,7 @@ public partial class ReceivePanel : UserControl
     /// <summary>
     /// 送信中の FFT を受信パネルのグラフへ反映します。
     /// </summary>
+    /// <param name="fft">送信側共有メモリの FFT 情報。</param>
     public void ApplySendFft(CoreFftGraphInfo fft)
     {
         if (fft.FftSize <= 0)
@@ -578,6 +606,7 @@ public partial class ReceivePanel : UserControl
     /// <summary>
     /// コア状態のワウモデルから瞬間速度偏差を評価してメーターへ反映します。
     /// </summary>
+    /// <param name="status">Core 実行状態（ワウロック・位相情報を含む）。</param>
     private void ApplyWowFlutterFromStatus(CoreExecutionStatus status)
     {
         if (!status.WowTrackingActive || status.IsAnalyzing)
@@ -609,6 +638,9 @@ public partial class ReceivePanel : UserControl
         SetWowFlutterPercent(percent, percent);
     }
 
+    /// <summary>
+    /// ワウ補間用の内部トラッキング状態をクリアします。
+    /// </summary>
     private void ClearWowTracking()
     {
         _wowTrackingActive = false;
@@ -622,6 +654,8 @@ public partial class ReceivePanel : UserControl
     /// <summary>
     /// ワウメーターのみを更新します（時系列グラフは更新しない）。
     /// </summary>
+    /// <param name="leftPercent">左チャネル速度偏差（%）。</param>
+    /// <param name="rightPercent">右チャネル速度偏差（%）。</param>
     private void UpdateWowMeters(double leftPercent, double rightPercent)
     {
         WowLeft.AddSample(leftPercent * WowFlutterDisplayGain);
@@ -657,6 +691,11 @@ public partial class ReceivePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// WAV／音声入力ラジオ切替時にパネル表示とファイル情報表示を更新します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnInputModeChanged(object sender, RoutedEventArgs e)
     {
         if (sender is RadioButton { IsChecked: false })
@@ -678,6 +717,9 @@ public partial class ReceivePanel : UserControl
         ProgressBox.Text = "-";
     }
 
+    /// <summary>
+    /// WAV 入力／音声入力ラジオに応じて対応パネルの表示を切り替えます。
+    /// </summary>
     private void UpdateInputModePanels()
     {
         if (WavInputRadio is null || WavInputPanel is null || AudioInputPanel is null)
@@ -690,6 +732,9 @@ public partial class ReceivePanel : UserControl
         AudioInputPanel.Visibility = useWav ? Visibility.Collapsed : Visibility.Visible;
     }
 
+    /// <summary>
+    /// NAudio 入力デバイスを列挙し、コンボボックスへ既定デバイス込みで登録します。
+    /// </summary>
     private void InitializeAudioDevices()
     {
         AudioDeviceComboBox.Items.Clear();
@@ -711,6 +756,10 @@ public partial class ReceivePanel : UserControl
         AudioDeviceComboBox.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// コンボボックスで指定デバイス番号を選択します。見つからなければ先頭（既定）を選びます。
+    /// </summary>
+    /// <param name="deviceNumber">選択する NAudio デバイス番号。</param>
     private void SelectAudioDevice(int deviceNumber)
     {
         for (var i = 0; i < AudioDeviceComboBox.Items.Count; i++)
@@ -725,6 +774,11 @@ public partial class ReceivePanel : UserControl
         AudioDeviceComboBox.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// 音声入力デバイス選択変更時、音声入力モードならファイル情報表示を更新します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">選択変更イベント引数。</param>
     private void OnAudioDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (AudioInputRadio?.IsChecked == true)
@@ -733,6 +787,11 @@ public partial class ReceivePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 音量スライダー変更時に表示パーセントを更新します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">新しいスライダー値を含む変更引数。</param>
     private void OnAudioVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (AudioVolumeValueText is not null)
@@ -741,6 +800,11 @@ public partial class ReceivePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 受信 WAV 選択ダイアログを開き、パスとファイル情報表示を更新します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnBrowseWavInput(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
@@ -772,6 +836,11 @@ public partial class ReceivePanel : UserControl
         ProgressBox.Text = "待機中";
     }
 
+    /// <summary>
+    /// 受信ファイル出力フォルダー選択ダイアログを開き、パスを反映します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnBrowseOutputDir(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFolderDialog
@@ -788,16 +857,31 @@ public partial class ReceivePanel : UserControl
         OutputDirBox.Text = _outputDir;
     }
 
+    /// <summary>
+    /// 受信スタート押下で ReceiveStartRequested を発火します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnReceiveStartClick(object sender, RoutedEventArgs e)
     {
         ReceiveStartRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// 受信ストップ押下で ReceiveStopRequested を発火します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnReceiveStopClick(object sender, RoutedEventArgs e)
     {
         ReceiveStopRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// 音声入力デバイスのコンボ項目（番号と表示名）です。
+    /// </summary>
+    /// <param name="DeviceNumber">NAudio デバイス番号。</param>
+    /// <param name="Name">表示名。</param>
     private sealed record AudioDeviceItem(int DeviceNumber, string Name);
 }
 

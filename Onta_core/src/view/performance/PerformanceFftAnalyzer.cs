@@ -98,6 +98,8 @@ internal static class PerformanceFftAnalyzer
     /// <summary>
     /// キャッシュ済み窓（ゲイン補正込み）を 1 パスで掛けます。
     /// </summary>
+    /// <param name="buffer">実部に PCM が入ったバッファ（破壊的）。</param>
+    /// <param name="windowKind">窓種。</param>
     private static void ApplyCachedWindowInPlace(Complex[] buffer, PerformanceFftWindowKind windowKind)
     {
         var n = buffer.Length;
@@ -111,6 +113,9 @@ internal static class PerformanceFftAnalyzer
     /// <summary>
     /// 窓テーブルを取得（なければ生成）します。
     /// </summary>
+    /// <param name="n">FFT 長。</param>
+    /// <param name="windowKind">窓種。</param>
+    /// <returns>コヒーレントゲイン補正済み窓係数。</returns>
     private static double[] GetOrCreateWindowTable(int n, PerformanceFftWindowKind windowKind)
     {
         var slot = ((int)windowKind * SizeCount) + SizeToIndex(n);
@@ -137,6 +142,8 @@ internal static class PerformanceFftAnalyzer
     /// <summary>
     /// FFT 長をキャッシュ列インデックスへ変換します。
     /// </summary>
+    /// <param name="n">FFT 長（1024/2048/4096）。</param>
+    /// <returns>0..2 のスロット。</returns>
     private static int SizeToIndex(int n) =>
         n switch
         {
@@ -148,6 +155,9 @@ internal static class PerformanceFftAnalyzer
     /// <summary>
     /// コヒーレントゲイン補正済みの窓係数を生成します。
     /// </summary>
+    /// <param name="n">FFT 長。</param>
+    /// <param name="windowKind">窓種。</param>
+    /// <returns>長さ n の窓係数。</returns>
     private static double[] BuildWindowTable(int n, PerformanceFftWindowKind windowKind)
     {
         var table = new double[n];
@@ -177,6 +187,11 @@ internal static class PerformanceFftAnalyzer
     /// <summary>
     /// 1 サンプル分の窓係数を返します。
     /// </summary>
+    /// <param name="kind">窓種。</param>
+    /// <param name="i">サンプル番号。</param>
+    /// <param name="denom">正規化分母（通常 n-1）。</param>
+    /// <param name="twoPi">2π。</param>
+    /// <returns>窓係数。</returns>
     private static double WindowSample(
         PerformanceFftWindowKind kind,
         int i,

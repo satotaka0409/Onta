@@ -3,7 +3,7 @@ using System.Reflection;
 using Onta.Core;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.History;
 
 /// <summary>
 /// ブロックのみWAVを読み込んだ際に、親未解決ブロック(orphan)として保持されることを確認します。

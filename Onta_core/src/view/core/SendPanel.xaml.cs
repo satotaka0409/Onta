@@ -57,6 +57,7 @@ public partial class SendPanel : UserControl
     /// <summary>
     /// 保存済み設定を UI へ反映します。
     /// </summary>
+    /// <param name="snapshot">反映する送信設定スナップショット。</param>
     public void ApplySnapshot(SendSettingsSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -88,8 +89,9 @@ public partial class SendPanel : UserControl
     }
 
     /// <summary>
-    /// 音量スライダー値（0〜1）を返します。
+    /// 音量スライダー値を 0〜1 に正規化して返します。未初期化時は 0.8。
     /// </summary>
+    /// <returns>0〜1 の音量。</returns>
     private double ReadAudioVolume()
     {
         if (AudioVolumeSlider is null)
@@ -109,6 +111,11 @@ public partial class SendPanel : UserControl
         return Math.Clamp(ReadSelectedInt("Interleave", 1), 1, 2);
     }
 
+    /// <summary>
+    /// チャネル／出力モード等のラジオ変更時にパネル表示を更新し、SettingsChanged を発火します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnSettingsChanged(object sender, RoutedEventArgs e)
     {
         if (sender is RadioButton { IsChecked: false })
@@ -121,12 +128,22 @@ public partial class SendPanel : UserControl
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// スタート押下で現在設定のスナップショットを OutputRequested / StartRequested へ通知します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnStartClick(object sender, RoutedEventArgs e)
     {
         OutputRequested?.Invoke(this, CreateSnapshot());
         StartRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// ストップ押下で StopRequested を発火します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnStopClick(object sender, RoutedEventArgs e)
     {
         StopRequested?.Invoke(this, EventArgs.Empty);
@@ -169,11 +186,21 @@ public partial class SendPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 音声出力デバイス選択変更時に SettingsChanged を発火します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">選択変更イベント引数。</param>
     private void OnAudioDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// 音量スライダー変更時に表示パーセントを更新し、SettingsChanged を発火します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">新しいスライダー値を含む変更引数。</param>
     private void OnAudioVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (AudioVolumeValueText is not null)
@@ -184,6 +211,11 @@ public partial class SendPanel : UserControl
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// 入力ファイル選択ダイアログを開き、未設定なら WAV 出力パスも既定名で埋めます。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnBrowseInput(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
@@ -206,6 +238,9 @@ public partial class SendPanel : UserControl
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// NAudio 出力デバイスを列挙し、コンボボックスへ既定デバイス込みで登録します。
+    /// </summary>
     private void InitializeAudioDevices()
     {
         AudioDeviceComboBox.Items.Clear();
@@ -227,6 +262,9 @@ public partial class SendPanel : UserControl
         AudioDeviceComboBox.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// WAV 出力／音声出力ラジオに応じて対応パネルの表示を切り替えます。
+    /// </summary>
     private void UpdateOutputModePanels()
     {
         // 初期化順の都合で未生成コントロールなら何もしない。
@@ -245,6 +283,10 @@ public partial class SendPanel : UserControl
         AudioOutputPanel.Visibility = writeWav ? Visibility.Collapsed : Visibility.Visible;
     }
 
+    /// <summary>
+    /// 選択中の音声出力デバイス番号を返します。未選択時は既定デバイス番号。
+    /// </summary>
+    /// <returns>NAudio デバイス番号（既定は -1）。</returns>
     private int ReadSelectedAudioDeviceNumber()
     {
         return AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
@@ -252,6 +294,10 @@ public partial class SendPanel : UserControl
             : DefaultAudioDeviceNumber;
     }
 
+    /// <summary>
+    /// 選択中の音声出力デバイス表示名を返します。
+    /// </summary>
+    /// <returns>デバイス名。未選択時は「既定デバイス」。</returns>
     private string ReadSelectedAudioDeviceName()
     {
         return AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
@@ -259,6 +305,11 @@ public partial class SendPanel : UserControl
             : "既定デバイス";
     }
 
+    /// <summary>
+    /// WAV 出力先の保存ダイアログを開き、選択パスをテキストボックスへ反映します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnBrowseWav(object sender, RoutedEventArgs e)
     {
         var dlg = new SaveFileDialog
@@ -277,6 +328,12 @@ public partial class SendPanel : UserControl
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// 指定ラジオグループでチェック中の Tag を整数として読み取ります。
+    /// </summary>
+    /// <param name="groupName">ラジオの GroupName。</param>
+    /// <param name="fallback">該当なし／解析失敗時の既定値。</param>
+    /// <returns>選択値。なければ fallback。</returns>
     private int ReadSelectedInt(string groupName, int fallback)
     {
         foreach (var radio in FindRadios(this))
@@ -290,6 +347,10 @@ public partial class SendPanel : UserControl
         return fallback;
     }
 
+    /// <summary>
+    /// 変調ラジオの選択 Tag を ModulationScheme へ変換します。
+    /// </summary>
+    /// <returns>選択中の変調方式。未選択時は Bpsk。</returns>
     private ModulationScheme ReadSelectedModulation()
     {
         foreach (var radio in FindRadios(this))
@@ -312,6 +373,12 @@ public partial class SendPanel : UserControl
         return ModulationScheme.Bpsk;
     }
 
+    /// <summary>
+    /// 指定グループ内で Tag が一致するラジオをチェックします。見つからなければ fallbackTag を選択します。
+    /// </summary>
+    /// <param name="groupName">ラジオの GroupName。</param>
+    /// <param name="tag">選択したい Tag。null ならフォールバックのみ。</param>
+    /// <param name="fallbackTag">一致なし時に選ぶ Tag。</param>
     private void SetCheckedRadio(string groupName, string? tag, string fallbackTag)
     {
         RadioButton? fallback = null;
@@ -337,6 +404,10 @@ public partial class SendPanel : UserControl
         fallback?.SetCurrentValue(ToggleButton.IsCheckedProperty, true);
     }
 
+    /// <summary>
+    /// コンボボックスで指定デバイス番号を選択します。見つからなければ先頭（既定）を選びます。
+    /// </summary>
+    /// <param name="deviceNumber">選択する NAudio デバイス番号。</param>
     private void SelectAudioDevice(int deviceNumber)
     {
         for (var i = 0; i < AudioDeviceComboBox.Items.Count; i++)
@@ -351,6 +422,11 @@ public partial class SendPanel : UserControl
         AudioDeviceComboBox.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// 論理ツリーを再帰走査し、配下の RadioButton を列挙します。
+    /// </summary>
+    /// <param name="root">走査起点。</param>
+    /// <returns>見つかったラジオボタン列。</returns>
     private static IEnumerable<RadioButton> FindRadios(DependencyObject root)
     {
         foreach (var child in LogicalTreeHelper.GetChildren(root))
@@ -370,6 +446,11 @@ public partial class SendPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 音声出力デバイスのコンボ項目（番号と表示名）です。
+    /// </summary>
+    /// <param name="DeviceNumber">NAudio デバイス番号。</param>
+    /// <param name="Name">表示名。</param>
     private sealed record AudioDeviceItem(int DeviceNumber, string Name);
 }
 

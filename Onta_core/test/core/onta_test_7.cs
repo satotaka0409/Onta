@@ -2,31 +2,32 @@ using Onta.Core;
 using System.Numerics;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
-/// ステレオ 40SC / 16QAM の耐性テストです。
-/// wow/flutter + 7kHz LPF近似 + クロストーク + ノイズ付与後の復元を検証します。
+/// ステレオ 16SC / QPSK の耐性テストです。
+/// 周期的無音欠落 + wow/flutter + ノイズ付与後の復元を検証します。
 /// </summary>
-public sealed class OntaTest10
+public sealed class OntaTest7
 {
     private const double WhiteNoiseLevel = 0.007;
     private const double WowFlutterAmount = 0.005;
-    private const double CrosstalkLevel = 0.01;
-    private const double LpfCutoffHz = 7000.0;
-    private const int ImpairmentSeed = 20260911;
+    private const int SilenceIntervalSeconds = 10;
+    private const int SilenceDurationMilliseconds = 1;
+    private const int ImpairmentSeed = 20260910;
 
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 40,
-        ModulationScheme: ModulationScheme.Qam16,
+        ActiveSubcarriers: 16,
+        ModulationScheme: ModulationScheme.Qpsk,
         ChannelMode: ChannelMode.Stereo);
 
     [Fact]
-    public void Decode_ReturnsUserVisibleError_Stereo40Sc16Qam_WithWowLpfAndNoise()
+    public void Decode_MatchesOriginal_Stereo27ScQpsk_WithPeriodicRandomSilenceWowAndNoise()
     {
-        const string testTitle = "test10:" + nameof(Decode_ReturnsUserVisibleError_Stereo40Sc16Qam_WithWowLpfAndNoise);
+        const string testTitle = "test7:" + nameof(Decode_MatchesOriginal_Stereo27ScQpsk_WithPeriodicRandomSilenceWowAndNoise);
         var inputPath = TestPaths.ResolveInputPng();
-        var wavPath = TestPaths.ResolveOutputPath("Sample1_test10_rx_st40_16qam_lpf.wav");
+        var wavPath = TestPaths.ResolveOutputPath("Sample1_test7_rx_st27_qpsk.wav");
+        var restoredPath = TestPaths.ResolveOutputPath("Sample1_test7_rx_st27_qpsk.png");
 
         var original = File.ReadAllBytes(inputPath);
         var codec = new FileWavCodec(Profile);
@@ -34,22 +35,32 @@ public sealed class OntaTest10
 
         var (leftSamples, rightSamples) = codec.EncodeFileToSamples(original, fileInfo);
 
+        // 送信サンプルへ順に「周期無音 -> wow/flutter -> ノイズ」を適用する。
         var leftRef = ToFloat(leftSamples);
         var rightRef = ToFloat(rightSamples.Length == 0 ? leftSamples : rightSamples);
+        var leftF = (float[])leftRef.Clone();
+        var rightF = (float[])rightRef.Clone();
+
+        ApplyPeriodicRandomSilence(
+            leftF,
+            rightF,
+            Profile.SampleRate,
+            SilenceIntervalSeconds,
+            SilenceDurationMilliseconds,
+            ImpairmentSeed);
+
+        var silencedLeft = ToComplex(leftF);
+        var silencedRight = ToComplex(rightF);
 
         var (warpedLeft, warpedRight, _, _) = NoisePlus.ApplyWowFlutterInMemory(
-            leftSamples,
-            rightSamples,
+            silencedLeft,
+            silencedRight,
             Profile.SampleRate,
             WowFlutterAmount,
             ImpairmentSeed);
 
-        var leftF = ToFloat(warpedLeft);
-        var rightF = ToFloat(warpedRight.Length == 0 ? warpedLeft : warpedRight);
-
-        ApplyLowPass7kHzApprox10dBPerOct(leftF, rightF, Profile.SampleRate);
-        ApplySymmetricCrosstalk(leftF, rightF, CrosstalkLevel);
-
+        leftF = ToFloat(warpedLeft);
+        rightF = ToFloat(warpedRight.Length == 0 ? warpedLeft : warpedRight);
         NormalizeToPeak(leftF, rightF, (float)Profile.SamplePeak);
         NoisePlus.AddWhiteNoiseInMemory(leftF, rightF, WhiteNoiseLevel, ImpairmentSeed);
         PrintChannelImpairmentRate(leftRef, rightRef, leftF, rightF, testTitle);
@@ -61,72 +72,17 @@ public sealed class OntaTest10
             ToComplex(rightF),
             Profile.SamplePeak);
 
-        // 利用者視点: 強い劣化条件では復号不能エラーを返すことを確認する。
-        var ex = Assert.Throws<InvalidDataException>(() =>
-            codec.DecodeWavToFileBytes(
-                wavPath,
-                correctWow: true,
-                wowParams: null));
-        Console.WriteLine($"[EXPECTED-ERROR] test={testTitle} message={ex.Message}");
+        // UI 受信と同じく、答えの位相は渡さず適応ワウで復元する。
+        var decoded = codec.DecodeWavToFileBytes(
+            wavPath,
+            correctWow: true,
+            wowParams: null);
+        File.WriteAllBytes(restoredPath, decoded);
 
-        Assert.Contains("Missing decoded block", ex.Message);
+        PrintDecodeStageMetrics(codec.LastDecodeStageMetrics, testTitle);
+        PrintBlockBitErrorRates(original, decoded, 8192, testTitle);
+        Assert.Equal(original, decoded);
         HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, wavPath);
-    }
-
-    private static void ApplyLowPass7kHzApprox10dBPerOct(float[] left, float[] right, int sampleRate)
-    {
-        if (left.Length == 0 || right.Length == 0)
-        {
-            return;
-        }
-
-        if (left.Length != right.Length)
-        {
-            throw new ArgumentException("Left/right length mismatch.");
-        }
-
-        // 1次LPFを2段直列 + dry/wet 合成で約 -10dB/oct 相当を近似する。
-        var dt = 1.0 / sampleRate;
-        var rc = 1.0 / (2.0 * Math.PI * LpfCutoffHz);
-        var alpha = dt / (rc + dt);
-        const double wetMix = 0.85;
-        const double dryMix = 1.0 - wetMix;
-
-        static void FilterInPlace(float[] x, double alphaValue, double wet, double dry)
-        {
-            var y1 = (double)x[0];
-            var y2 = (double)x[0];
-            for (var i = 0; i < x.Length; i++)
-            {
-                y1 += alphaValue * (x[i] - y1);
-                y2 += alphaValue * (y1 - y2);
-                x[i] = (float)((dry * x[i]) + (wet * y2));
-            }
-        }
-
-        FilterInPlace(left, alpha, wetMix, dryMix);
-        FilterInPlace(right, alpha, wetMix, dryMix);
-    }
-
-    private static void ApplySymmetricCrosstalk(float[] left, float[] right, double crosstalkLevel)
-    {
-        if (left.Length != right.Length)
-        {
-            throw new ArgumentException("Left/right length mismatch.");
-        }
-
-        if (crosstalkLevel <= 0.0)
-        {
-            return;
-        }
-
-        for (var i = 0; i < left.Length; i++)
-        {
-            var l = left[i];
-            var r = right[i];
-            left[i] = (float)(l + (r * crosstalkLevel));
-            right[i] = (float)(r + (l * crosstalkLevel));
-        }
     }
 
     private static void PrintChannelImpairmentRate(
@@ -225,6 +181,43 @@ public sealed class OntaTest10
         }
 
         return count;
+    }
+
+    private static void ApplyPeriodicRandomSilence(
+        Span<float> left,
+        Span<float> right,
+        int sampleRate,
+        int intervalSeconds,
+        int durationMilliseconds,
+        int seed)
+    {
+        if (left.Length == 0)
+        {
+            return;
+        }
+
+        if (left.Length != right.Length)
+        {
+            throw new ArgumentException("Left/right length mismatch.");
+        }
+
+        var intervalSamples = Math.Max(1, sampleRate * Math.Max(1, intervalSeconds));
+        var silenceSamples = Math.Max(1, (sampleRate * Math.Max(1, durationMilliseconds)) / 1000);
+        var random = new Random(seed);
+
+        for (var windowStart = 0; windowStart < left.Length; windowStart += intervalSamples)
+        {
+            var windowEnd = Math.Min(windowStart + intervalSamples, left.Length);
+            var latestStart = Math.Max(windowStart, windowEnd - silenceSamples);
+            var span = Math.Max(1, latestStart - windowStart + 1);
+            var start = windowStart + random.Next(span);
+            var end = Math.Min(start + silenceSamples, windowEnd);
+            for (var i = start; i < end; i++)
+            {
+                left[i] = 0f;
+                right[i] = 0f;
+            }
+        }
     }
 
     private static void NormalizeToPeak(float[] left, float[] right, float peakTarget)

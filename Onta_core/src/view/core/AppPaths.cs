@@ -17,6 +17,10 @@ internal static class AppPaths
     /// <summary>メイン画面設定ファイルの保存先です。</summary>
     public static string MainSettingsFilePath => Path.Combine(ResolveRootDir(), "Onta_setting.bin");
 
+    /// <summary>
+    /// アプリルート（Onta リポジトリ直下など）を候補パスから解決します。
+    /// </summary>
+    /// <returns>存在する候補の最初のパス。見つからなければ BaseDirectory。</returns>
     private static string ResolveRootDir()
     {
         var candidates = new[]
@@ -39,6 +43,11 @@ internal static class AppPaths
         return AppContext.BaseDirectory;
     }
 
+    /// <summary>
+    /// ルート直下の兄弟フォルダーを解決し、無ければ作成します。
+    /// </summary>
+    /// <param name="name">フォルダー名（例: in_files / out_files）。</param>
+    /// <returns>解決した絶対パス。</returns>
     private static string ResolveSiblingDir(string name)
     {
         var root = ResolveRootDir();

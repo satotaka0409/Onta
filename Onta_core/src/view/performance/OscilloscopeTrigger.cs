@@ -8,6 +8,11 @@ public readonly struct OscilloscopeCapture
     /// <summary>
     /// 表示窓を初期化します。
     /// </summary>
+    /// <param name="start">入力バッファ上の開始インデックス。</param>
+    /// <param name="length">表示サンプル数。</param>
+    /// <param name="triggerOffset">表示窓内のトリガー位置。</param>
+    /// <param name="triggered">起立エッジを検出できたか。</param>
+    /// <param name="level">自動トリガーレベル。</param>
     public OscilloscopeCapture(int start, int length, int triggerOffset, bool triggered, double level)
     {
         Start = start;
@@ -120,6 +125,9 @@ public static class OscilloscopeTrigger
     /// <summary>
     /// 振幅の最小・最大を取ります。
     /// </summary>
+    /// <param name="samples">PCM 振幅列。</param>
+    /// <param name="min">最小値。</param>
+    /// <param name="max">最大値。</param>
     private static void Measure(ReadOnlySpan<double> samples, out double min, out double max)
     {
         min = double.PositiveInfinity;
@@ -142,6 +150,10 @@ public static class OscilloscopeTrigger
     /// <summary>
     /// 直近の起立間隔の中央値から周期を推定します。ばらつきが大きいと 0 です。
     /// </summary>
+    /// <param name="samples">PCM 振幅列。</param>
+    /// <param name="level">トリガーレベル。</param>
+    /// <param name="hyst">ヒステリシス幅。</param>
+    /// <returns>推定周期（サンプル）。信頼できなければ 0。</returns>
     private static int EstimatePeriodSamples(ReadOnlySpan<double> samples, double level, double hyst)
     {
         Span<int> last = stackalloc int[8];
@@ -210,6 +222,12 @@ public static class OscilloscopeTrigger
     /// <summary>
     /// プリ／ポストを確保できる範囲で、最も新しい起立エッジを探します。
     /// </summary>
+    /// <param name="samples">PCM 振幅列。</param>
+    /// <param name="level">トリガーレベル。</param>
+    /// <param name="hyst">ヒステリシス幅。</param>
+    /// <param name="minIndex">許容する最小インデックス。</param>
+    /// <param name="maxIndexInclusive">許容する最大インデックス（含む）。</param>
+    /// <returns>起立エッジのインデックス。無ければ -1。</returns>
     private static int FindLatestRising(
         ReadOnlySpan<double> samples,
         double level,
@@ -252,6 +270,7 @@ public static class OscilloscopeTrigger
     /// <summary>
     /// 小さな整数列を昇順にします。
     /// </summary>
+    /// <param name="values">並び替える値。</param>
     private static void InsertionSort(Span<int> values)
     {
         for (var i = 1; i < values.Length; i++)

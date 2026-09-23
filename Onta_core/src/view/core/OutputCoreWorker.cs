@@ -496,6 +496,9 @@ internal sealed class OutputCoreWorker
     /// <summary>
     /// 再生キュー残量を差し引いた実再生サンプル位置を返します。
     /// </summary>
+    /// <param name="emittedSamples">再生側へ投入済みの総サンプル数。</param>
+    /// <param name="player">再生プレイヤー。</param>
+    /// <returns>実再生済みサンプル数（破棄済みプレイヤー時は emittedSamples）。</returns>
     private static long ResolvePlayedSamples(long emittedSamples, RealtimePcmPlayer player)
     {
         if (player.IsDisposed)
@@ -510,9 +513,9 @@ internal sealed class OutputCoreWorker
     /// 再生キュー残量を考慮して経過秒を推定します。
     /// </summary>
     /// <param name="emittedSamples">投入済みサンプル数。</param>
-    /// <param name="player">再生プレイヤー。</param>
+    /// <param name="player">再生プレイヤー。null／破棄済みなら投入位置をそのまま使う。</param>
     /// <param name="sampleRate">サンプルレート。</param>
-    /// <param name="totalSamples">総サンプル数。</param>
+    /// <param name="totalSamples">総サンプル数（上限クリップ用）。</param>
     /// <returns>推定経過秒。</returns>
     private static double ResolveElapsedSeconds(
         long emittedSamples,
@@ -535,6 +538,13 @@ internal sealed class OutputCoreWorker
     /// 送信詳細メーター用の経過秒を返します。
     /// 再生ヘッドが止まっても壁時計で進むようにします。
     /// </summary>
+    /// <param name="emittedSamples">投入済みサンプル数。</param>
+    /// <param name="player">再生プレイヤー。</param>
+    /// <param name="sampleRate">サンプルレート。</param>
+    /// <param name="totalSamples">総サンプル数。</param>
+    /// <param name="totalAudioSeconds">総音声秒数（上限クリップ用）。</param>
+    /// <param name="audioAnchorUtc">音声出力開始時刻（壁時計起点）。</param>
+    /// <returns>再生ヘッドと壁時計の大きい方を総秒でクリップした経過秒。</returns>
     private static double ResolveMeterElapsedSeconds(
         long emittedSamples,
         RealtimePcmPlayer? player,
@@ -654,6 +664,9 @@ internal sealed class OutputCoreWorker
         /// <summary>
         /// 再生ヘッド同期 FFT パブリッシャを初期化します。
         /// </summary>
+        /// <param name="board">FFT を書き込む共有状態ボード。</param>
+        /// <param name="sampleRate">PCM サンプルレート。</param>
+        /// <param name="stereo">ステレオ出力なら true。</param>
         public TxPcmSpectrumPublisher(CoreExecutionStatusBoard board, int sampleRate, bool stereo)
         {
             _board = board;
@@ -668,6 +681,8 @@ internal sealed class OutputCoreWorker
         /// <summary>
         /// エンコード済み PCM をリングへ追記します（FFT は PublishPlayhead で行う）。
         /// </summary>
+        /// <param name="left">L チャネル複素サンプル（実部を使用）。</param>
+        /// <param name="right">R チャネル複素サンプル（ステレオ時のみ参照）。</param>
         public void Push(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
         {
             if (left.Length == 0)
@@ -761,6 +776,9 @@ internal sealed class OutputCoreWorker
         /// <summary>
         /// L/R 窓が実質同一か判定します（ヘッダー／無音のモノラル扱い用）。
         /// </summary>
+        /// <param name="left">L 窓サンプル。</param>
+        /// <param name="right">R 窓サンプル。</param>
+        /// <returns>相対二乗誤差が閾値以下、または双方ほぼ無音なら true。</returns>
         private static bool AreWindowsNearlyIdentical(Complex[] left, Complex[] right)
         {
             double sumSqDiff = 0.0;

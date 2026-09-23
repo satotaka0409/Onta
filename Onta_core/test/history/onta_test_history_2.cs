@@ -3,7 +3,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.History;
 
 /// <summary>
 /// 1.ファイルを送信して履歴に登録されることを確認

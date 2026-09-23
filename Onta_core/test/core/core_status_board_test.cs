@@ -1,7 +1,7 @@
 using Onta.Core;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 public sealed class CoreStatusBoardTests
 {

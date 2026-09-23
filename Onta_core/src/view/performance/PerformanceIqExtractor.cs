@@ -102,6 +102,8 @@ internal static class PerformanceIqExtractor
     /// <summary>
     /// CP 相関が最大になる OFDM データ開始位置を探します。
     /// </summary>
+    /// <param name="pcm">振幅 PCM。</param>
+    /// <returns>データ部開始サンプル位置（CP 直後）。</returns>
     public static int FindOfdmDataStart(ReadOnlySpan<double> pcm)
     {
         if (pcm.Length < SymbolLength)
@@ -142,6 +144,9 @@ internal static class PerformanceIqExtractor
     /// <summary>
     /// SC / L-R ごとの正周波数ビン割当をキャッシュから返します。
     /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="useRightCarriers">R 搬送波を使うか。</param>
+    /// <returns>キャリアごとの正周波数ビン番号。</returns>
     private static int[] GetOrCreateCarrierBins(int activeSubcarriers, bool useRightCarriers)
     {
         var sc = PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers);
@@ -181,6 +186,9 @@ internal static class PerformanceIqExtractor
     /// <summary>
     /// 正周波数ビンを重複なく割り当てます。
     /// </summary>
+    /// <param name="preferred">希望ビン。</param>
+    /// <param name="used">使用済みフラグ（インデックス=ビン）。</param>
+    /// <returns>割り当てたビン番号。</returns>
     private static int AllocateUniqueBin(int preferred, Span<bool> used)
     {
         var bin = Math.Clamp(preferred, 1, MaxPositiveBin);
@@ -212,6 +220,8 @@ internal static class PerformanceIqExtractor
     /// <summary>
     /// |z|^2 を返します（sqrt なし）。
     /// </summary>
+    /// <param name="value">複素数。</param>
+    /// <returns>二乗振幅。</returns>
     private static double MagnitudeSquared(Complex value) =>
         (value.Real * value.Real) + (value.Imaginary * value.Imaginary);
 }

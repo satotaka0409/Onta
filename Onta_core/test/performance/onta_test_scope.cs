@@ -1,7 +1,7 @@
 using Onta.View.Performance;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Performance;
 
 /// <summary>
 /// 性能測定オシロの AUTO 起立トリガーです。

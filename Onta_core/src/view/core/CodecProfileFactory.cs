@@ -43,6 +43,11 @@ internal static class CodecProfileFactory
         return ForReceive(channelMode);
     }
 
+    /// <summary>
+    /// 受信開始用の安全側既定プロファイル（BPSK / SC=8 / Interleave=1）を生成します。
+    /// </summary>
+    /// <param name="channelMode">チャネル構成（モノラル／ステレオ）。</param>
+    /// <returns>受信用コーデックプロファイル。</returns>
     private static FileWavCodecProfile ForReceive(ChannelMode channelMode)
     {
         // 受信は安全側の既定値（BPSK / SC=8 / Interleave=1）で開始する。
@@ -53,6 +58,14 @@ internal static class CodecProfileFactory
             blockInterleaveFactor: 1);
     }
 
+    /// <summary>
+    /// 指定パラメータから FileWavCodecProfile を組み立てます（FFT サイズは SC/チャネルから決定）。
+    /// </summary>
+    /// <param name="activeSubcarriers">データ部アクティブサブキャリア数。</param>
+    /// <param name="modulationScheme">データ部変調方式。</param>
+    /// <param name="channelMode">チャネル構成。</param>
+    /// <param name="blockInterleaveFactor">ブロック時系列インターリーブ倍率（1〜2）。</param>
+    /// <returns>送受信用コーデックプロファイル。</returns>
     private static FileWavCodecProfile Create(
         int activeSubcarriers,
         ModulationScheme modulationScheme,

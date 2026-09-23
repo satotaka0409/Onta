@@ -2,31 +2,32 @@ using Onta.Core;
 using System.Numerics;
 using Xunit;
 
-namespace Onta.Core.Tests;
+namespace Onta.Core.Tests.Core;
 
 /// <summary>
-/// ステレオ 16SC / QPSK の耐性テストです。
-/// wow/flutter + 7kHz 低域通過近似 + ノイズ付与後の復元を検証します。
+/// ステレオ 24SC / QPSK の耐性テストです。
+/// wow/flutter + 7kHz LPF近似 + クロストーク + ノイズ付与後の復元を検証します。
 /// </summary>
-public sealed class OntaTest8
+public sealed class OntaTest9
 {
     private const double WhiteNoiseLevel = 0.007;
     private const double WowFlutterAmount = 0.005;
+    private const double CrosstalkLevel = 0.01;
     private const double LpfCutoffHz = 7000.0;
     private const int ImpairmentSeed = 20260911;
 
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 16,
+        ActiveSubcarriers: 24,
         ModulationScheme: ModulationScheme.Qpsk,
         ChannelMode: ChannelMode.Stereo);
 
     [Fact]
-    public void Decode_MatchesOriginal_Stereo18ScQpsk_WithWowLpfAndNoise()
+    public void Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise()
     {
-        const string testTitle = "test8:" + nameof(Decode_MatchesOriginal_Stereo18ScQpsk_WithWowLpfAndNoise);
+        const string testTitle = "test9:" + nameof(Decode_MatchesOriginal_Stereo27ScQpsk_WithWowLpfAndNoise);
         var inputPath = TestPaths.ResolveInputPng();
-        var wavPath = TestPaths.ResolveOutputPath("Sample1_test8_rx_st18_qpsk_lpf.wav");
-        var restoredPath = TestPaths.ResolveOutputPath("Sample1_test8_rx_st18_qpsk_lpf.png");
+        var wavPath = TestPaths.ResolveOutputPath("Sample1_test9_rx_st27_qpsk_lpf.wav");
+        var restoredPath = TestPaths.ResolveOutputPath("Sample1_test9_rx_st27_qpsk_lpf.png");
 
         var original = File.ReadAllBytes(inputPath);
         var codec = new FileWavCodec(Profile);
@@ -48,6 +49,7 @@ public sealed class OntaTest8
         var rightF = ToFloat(warpedRight.Length == 0 ? warpedLeft : warpedRight);
 
         ApplyLowPass7kHzApprox10dBPerOct(leftF, rightF, Profile.SampleRate);
+        ApplySymmetricCrosstalk(leftF, rightF, CrosstalkLevel);
 
         NormalizeToPeak(leftF, rightF, (float)Profile.SamplePeak);
         NoisePlus.AddWhiteNoiseInMemory(leftF, rightF, WhiteNoiseLevel, ImpairmentSeed);
@@ -106,6 +108,27 @@ public sealed class OntaTest8
 
         FilterInPlace(left, alpha, wetMix, dryMix);
         FilterInPlace(right, alpha, wetMix, dryMix);
+    }
+
+    private static void ApplySymmetricCrosstalk(float[] left, float[] right, double crosstalkLevel)
+    {
+        if (left.Length != right.Length)
+        {
+            throw new ArgumentException("Left/right length mismatch.");
+        }
+
+        if (crosstalkLevel <= 0.0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < left.Length; i++)
+        {
+            var l = left[i];
+            var r = right[i];
+            left[i] = (float)(l + (r * crosstalkLevel));
+            right[i] = (float)(r + (l * crosstalkLevel));
+        }
     }
 
     private static void PrintChannelImpairmentRate(

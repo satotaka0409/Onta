@@ -23,8 +23,9 @@ internal static class LissajousMeterAnalyzer
     /// </summary>
     /// <param name="pcm">実数 PCM（-1..1）。</param>
     /// <param name="sampleRate">サンプリング周波数。</param>
-    /// <param name="timeScratch">長さ <see cref="FftSize"/> 以上の作業用（実部に PCM）。</param>
-    /// <param name="fftScratch">長さ <see cref="FftSize"/> の FFT 作業用。</param>
+    /// <param name="timeScratch">長さ FftSize 以上の作業用（実部に PCM）。</param>
+    /// <param name="fftScratch">長さ FftSize の FFT 作業用。</param>
+    /// <returns>周波数（Hz）と THD（%）。無効時は FrequencyHz=-1。</returns>
     public static ChannelMeters Analyze(
         ReadOnlySpan<double> pcm,
         int sampleRate,
@@ -66,6 +67,9 @@ internal static class LissajousMeterAnalyzer
     /// <summary>
     /// ゼロクロス間隔から周波数を推定します（正弦波カウンタ向け）。
     /// </summary>
+    /// <param name="pcm">実数 PCM。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <returns>推定周波数（Hz）。取れなければ 0。</returns>
     private static double EstimateFrequencyHz(ReadOnlySpan<double> pcm, int sampleRate)
     {
         double sum = 0;
@@ -115,6 +119,8 @@ internal static class LissajousMeterAnalyzer
     /// <summary>
     /// 末尾 FFT 窓を Complex（Imag=0）へ詰めます。
     /// </summary>
+    /// <param name="pcm">実数 PCM。</param>
+    /// <param name="destination">書き込み先（長さ = FFT 窓）。</param>
     private static void FillTimeWindow(ReadOnlySpan<double> pcm, Span<Complex> destination)
     {
         var n = destination.Length;
@@ -134,6 +140,9 @@ internal static class LissajousMeterAnalyzer
     /// <summary>
     /// FFT ピークビン（放物線補間）から周波数を求めます。
     /// </summary>
+    /// <param name="bins">片側スペクトル（正周波数）。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <returns>ピーク周波数（Hz）。無効時は 0。</returns>
     private static double FindPeakFrequencyHz(Complex[] bins, int sampleRate)
     {
         var half = bins.Length / 2;
@@ -165,6 +174,10 @@ internal static class LissajousMeterAnalyzer
     /// <summary>
     /// THD(%) = sqrt(Σ|H_k|^2) / |H1| × 100（2〜10 次、Nyquist 未満）。
     /// </summary>
+    /// <param name="bins">片側スペクトル。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <param name="fundamentalHz">基本波周波数（Hz）。</param>
+    /// <returns>歪み率 THD（%）。</returns>
     private static double ComputeThdPercent(Complex[] bins, int sampleRate, double fundamentalHz)
     {
         if (fundamentalHz < 1.0)
@@ -197,6 +210,10 @@ internal static class LissajousMeterAnalyzer
     /// <summary>
     /// 任意周波数の振幅を隣接ビン線形補間で求めます。
     /// </summary>
+    /// <param name="bins">片側スペクトル。</param>
+    /// <param name="sampleRate">サンプリング周波数。</param>
+    /// <param name="hz">対象周波数（Hz）。</param>
+    /// <returns>補間振幅。</returns>
     private static double InterpolatedMagnitude(Complex[] bins, int sampleRate, double hz)
     {
         var binExact = hz * bins.Length / sampleRate;
@@ -216,6 +233,8 @@ internal static class LissajousMeterAnalyzer
     /// <summary>
     /// |z|^2 を返します。
     /// </summary>
+    /// <param name="value">複素数。</param>
+    /// <returns>二乗振幅。</returns>
     private static double MagnitudeSquared(Complex value) =>
         (value.Real * value.Real) + (value.Imaginary * value.Imaginary);
 }

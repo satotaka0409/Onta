@@ -128,6 +128,7 @@ public sealed class FftChartModel
     /// 性能測定 FFT 用の描画余白です。
     /// 横軸数値はパネル側 Canvas（プロット全幅の等間隔）。LC 内ラベルは短い高さで消えるため使わない。
     /// </summary>
+    /// <returns>上下左右 0 の描画余白。</returns>
     public static Margin CreateDrawMargin() =>
         new(DrawMarginLeft, DrawMarginTop, DrawMarginRight, DrawMarginBottom);
 
@@ -146,6 +147,7 @@ public sealed class FftChartModel
     /// <summary>
     /// メイン画面向け：軸名・目盛り分の描画余白です。
     /// </summary>
+    /// <returns>軸ラベル分を確保した描画余白。</returns>
     public static Margin CreateDrawMarginWithFrequencyLabels() =>
         new(60, 14, 12, 40);
 
@@ -155,6 +157,12 @@ public sealed class FftChartModel
 
     public Axis[] YAxes { get; }
 
+    /// <summary>
+    /// L/R FFT サンプルで点群を差し替え、ステレオ時は R 系列を表示します。
+    /// </summary>
+    /// <param name="leftSamples">L チャネルの周波数ビン。</param>
+    /// <param name="rightSamples">R チャネルの周波数ビン。</param>
+    /// <param name="isStereo">true のとき R も描画し L を緑系色にします。</param>
     public void ReplacePoints(
         IReadOnlyList<CoreFftSample> leftSamples,
         IReadOnlyList<CoreFftSample> rightSamples,
@@ -205,6 +213,9 @@ public sealed class FftChartModel
         YAxes[0].MaxLimit = 0;
     }
 
+    /// <summary>
+    /// 点群を消し、単系列表示と軸範囲を初期状態へ戻します。
+    /// </summary>
     public void Clear()
     {
         _leftPoints.Clear();

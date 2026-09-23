@@ -139,6 +139,12 @@ public static class PerformanceWowReference
         return Math.Clamp(0.5 * (leftMag - rightMag) / denom, -0.5, 0.5);
     }
 
+    /// <summary>
+    /// 相対誤差 |measured/reference − 1| を返します。
+    /// </summary>
+    /// <param name="measuredHz">測定周波数（Hz）。</param>
+    /// <param name="referenceHz">基準周波数（Hz）。</param>
+    /// <returns>相対誤差（無次元）。</returns>
     private static double RelativeError(double measuredHz, double referenceHz) =>
         Math.Abs(measuredHz / referenceHz - 1.0);
 }

@@ -139,6 +139,8 @@ public partial class ReceiveDetailPanel : UserControl
     /// <param name="fileName">受信ファイル名。</param>
     /// <param name="fileSizeText">表示用ファイルサイズ。</param>
     /// <param name="blockCount">ブロック数。</param>
+    /// <param name="createdAtUtc">ファイル作成日時（UTC）。不明時は null。</param>
+    /// <param name="updatedAtUtc">ファイル更新日時（UTC）。不明時は null。</param>
     public void ApplyFileHeader(
         string fileName,
         string fileSizeText,
@@ -364,8 +366,13 @@ public partial class ReceiveDetailPanel : UserControl
     }
 
     /// <summary>
-    /// 現在の受信詳細から履歴エントリを生成します。
+    /// 現在の受信詳細から履歴エントリを生成します。実ペイロードがあるブロックのみ完了扱いとします。
     /// </summary>
+    /// <param name="orphans">親未確定の孤立ブロック一覧。null 可。</param>
+    /// <param name="capturedBlocks">受信済みブロック（ペイロード付き）。null 可。</param>
+    /// <param name="fileHashHex">ファイル全体ハッシュ（SHA-512 16進）。null 可。</param>
+    /// <param name="capturedHeaders">BH 由来のブロックメタ。null 可。</param>
+    /// <returns>履歴保存用の受信エントリ。</returns>
     internal ReceiveHistoryEntry CaptureHistoryEntry(
         IReadOnlyList<ReceiveOrphanHistory>? orphans = null,
         IReadOnlyDictionary<int, ReceiveCapturedBlockInfo>? capturedBlocks = null,
@@ -490,8 +497,11 @@ public partial class ReceiveDetailPanel : UserControl
     }
 
     /// <summary>
-    /// 履歴用のファイルハッシュ（SHA-512 16進）を解決します。
+    /// 履歴用のファイルハッシュ（SHA-512 16進）を解決します。コア値が無ければ孤立キーから拾います。
     /// </summary>
+    /// <param name="fileHashHex">コアが保持するファイルハッシュ。null／空可。</param>
+    /// <param name="orphans">孤立ブロック一覧。ファイルハッシュ抽出のフォールバック。</param>
+    /// <returns>大文字16進ハッシュ。解決できなければ空文字。</returns>
     private static string ResolveReceiveHash(
         string? fileHashHex,
         IReadOnlyList<ReceiveOrphanHistory>? orphans)
@@ -520,6 +530,11 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// 孤立キー `index:fileHash:blockHash` を分解します。
     /// </summary>
+    /// <param name="identity">コロン区切りの孤立識別子。</param>
+    /// <param name="blockIndexText">分解後のブロック番号文字列。</param>
+    /// <param name="fileHashHex">分解後のファイルハッシュ。</param>
+    /// <param name="blockHashHex">分解後のブロックハッシュ。</param>
+    /// <returns>形式とハッシュ長が妥当なら true。</returns>
     internal static bool TrySplitOrphanIdentity(
         string? identity,
         out string blockIndexText,
@@ -547,8 +562,10 @@ public partial class ReceiveDetailPanel : UserControl
     }
 
     /// <summary>
-    /// 16進ハッシュ文字列かどうかを判定します。
+    /// 16進ハッシュ文字列かどうかを判定します（長さ 64 または 128）。
     /// </summary>
+    /// <param name="value">判定対象文字列。</param>
+    /// <returns>SHA-256/SHA-512 相当の16進なら true。</returns>
     private static bool LooksLikeHexHash(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -579,6 +596,7 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// 受信履歴エントリを詳細グリッドへ反映します。
     /// </summary>
+    /// <param name="history">反映する受信履歴エントリ。</param>
     internal void ApplyHistory(ReceiveHistoryEntry history)
     {
         ArgumentNullException.ThrowIfNull(history);
@@ -667,6 +685,10 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// FH / ファイルサイズ / ブロック数 / BLK / Total の行構成を整えます。
     /// </summary>
+    /// <param name="fileName">表示用ファイル名。</param>
+    /// <param name="fileSize">表示用ファイルサイズ。</param>
+    /// <param name="blockCountText">ブロック数の表示テキスト（totalBlocks が 0 のとき使用）。</param>
+    /// <param name="totalBlocks">構築する BLK 行数。</param>
     private void EnsureRows(string fileName, string fileSize, string blockCountText, int totalBlocks)
     {
         _fileName = fileName;
@@ -718,6 +740,8 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// FH行の既定メタ（mono / 8 / BPSK / 880）と結果を設定します。
     /// </summary>
+    /// <param name="fhRow">ファイルヘッダ行。</param>
+    /// <param name="ready">true なら結果 OK・メーター 100%、false なら結果「-」。</param>
     private static void ApplyFileHeaderDefaults(DetailRow fhRow, bool ready)
     {
         fhRow.SetSize(FileHeaderBytes.ToString("N0"));
@@ -748,6 +772,7 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// ステータス文字列から孤立ブロック行を更新します。
     /// </summary>
+    /// <param name="statusError">ORPHAN / ORPHAN-RESOLVED を含む LastError 文字列。</param>
     private void UpdateOrphanRowsFromStatus(string statusError)
     {
         var hash = ExtractHash(statusError);
@@ -765,6 +790,8 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// 孤立ブロック情報行を追加または更新します。
     /// </summary>
+    /// <param name="hash">孤立キー（または UNKNOWN）。</param>
+    /// <param name="detail">結果列に表示する詳細文言。</param>
     private void AddOrUpdateOrphanRow(string hash, string detail)
     {
         var key = string.IsNullOrWhiteSpace(hash) ? "UNKNOWN" : hash;
@@ -788,6 +815,8 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// ステータス文字列から hash= 以降の16進値を取り出します。
     /// </summary>
+    /// <param name="text">hash= を含む文字列。</param>
+    /// <returns>抽出した16進文字列。見つからなければ空。</returns>
     private static string ExtractHash(string text)
     {
         var marker = "hash=";
@@ -816,6 +845,8 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// 表示用サイズ文字列を N0（bytes なし）へ正規化します。
     /// </summary>
+    /// <param name="fileSizeText">元のサイズ表示（数字や "bytes" 付き可）。</param>
+    /// <returns>桁区切り数値、または "-"。</returns>
     private static string NormalizeSizeText(string fileSizeText)
     {
         if (string.IsNullOrWhiteSpace(fileSizeText) || fileSizeText == "-")
@@ -830,6 +861,8 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// ファイルサイズ表示から数値を取り出します。
     /// </summary>
+    /// <param name="text">数字を含むサイズ文字列。</param>
+    /// <returns>抽出したバイト数。解析失敗時は 0。</returns>
     private static long ParseFileSize(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -844,6 +877,9 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// ブロック数テキストを整数へ変換します。
     /// </summary>
+    /// <param name="text">ブロック数の表示文字列。</param>
+    /// <param name="fallback">解析失敗時の代替値。</param>
+    /// <returns>非負のブロック数。失敗時は fallback。</returns>
     private static int ParseBlockCount(string text, int fallback)
     {
         if (int.TryParse(text, out var value) && value >= 0)
@@ -857,6 +893,7 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// ブロック行を受理済み（OK）としてマークします。
     /// </summary>
+    /// <param name="index">ブロック番号（0 始まり）。</param>
     private void SetBlockAccepted(int index)
     {
         if (index < 0 || index >= _blockRows.Count)
@@ -958,6 +995,9 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// ブロック行へサイズと変調メタを反映します。
     /// </summary>
+    /// <param name="index">ブロック番号。</param>
+    /// <param name="dataModulation">データ部変調方式 4 バイト。null 可。</param>
+    /// <param name="payloadBytes">表示するブロックサイズ（バイト）。</param>
     private void ApplyBlockDisplayMeta(int index, byte[]? dataModulation, int payloadBytes)
     {
         if (index < 0 || index >= _blockRows.Count)
@@ -973,6 +1013,8 @@ public partial class ReceiveDetailPanel : UserControl
     /// <summary>
     /// DataModulation バイト列を表示文言へ変換します。
     /// </summary>
+    /// <param name="dataModulation">[0]=SC数 [1]=変調 [2]=mono/stereo。null 可。</param>
+    /// <returns>チャネル・サブキャリア数・変調の表示文字列タプル。</returns>
     private static (string ChannelText, string SubcarrierText, string ModulationText) FormatDataModulation(
         byte[]? dataModulation)
     {
@@ -1004,8 +1046,10 @@ public partial class ReceiveDetailPanel : UserControl
     }
 
     /// <summary>
-    /// ブロック行をエラー（NG）としてマークします。
+    /// ブロック行をエラー（NG）としてマークします。受理済みは上書きしません。
     /// </summary>
+    /// <param name="index">ブロック番号。</param>
+    /// <param name="error">エラー文言。空や "NG" は結果列を "NG" にします。</param>
     private void SetBlockError(int index, string error)
     {
         if (index < 0 || index >= _blockRows.Count)
@@ -1041,8 +1085,11 @@ public partial class ReceiveDetailPanel : UserControl
     }
 
     /// <summary>
-    /// 文字列を指定長へ切り詰めます。
+    /// 文字列を指定長へ切り詰めます。超過時は末尾に "..." を付けます。
     /// </summary>
+    /// <param name="text">元文字列。</param>
+    /// <param name="maxLength">最大文字数（"..." 込み）。</param>
+    /// <returns>切り詰め後の文字列。</returns>
     private static string Truncate(string text, int maxLength)
     {
         if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
@@ -1065,6 +1112,16 @@ public partial class ReceiveDetailPanel : UserControl
         private string _subcarrierText;
         private string _modulationText;
 
+        /// <summary>
+        /// 詳細グリッド行を初期化します。
+        /// </summary>
+        /// <param name="name">項目名（FH / BLK-n / Total など）。</param>
+        /// <param name="resultText">結果列の初期値。</param>
+        /// <param name="sizeText">サイズ列の初期値。</param>
+        /// <param name="channelText">stereo/mono 列の初期値。</param>
+        /// <param name="subcarrierText">サブキャリア数列の初期値。</param>
+        /// <param name="modulationText">変調列の初期値。</param>
+        /// <param name="showMeter">true なら進捗メーターを表示する。</param>
         private DetailRow(
             string name,
             string resultText,
@@ -1102,18 +1159,30 @@ public partial class ReceiveDetailPanel : UserControl
         /// <summary>
         /// メーター付きセグメント行を生成します。
         /// </summary>
+        /// <param name="name">項目名。</param>
+        /// <returns>進捗メーター付きの DetailRow。</returns>
         public static DetailRow Segment(string name) =>
             new(name, "-", "-", "-", "-", "-", showMeter: true);
 
         /// <summary>
         /// メーター無しの情報行を生成します（結果以外は "-"）。
         /// </summary>
+        /// <param name="name">項目名。</param>
+        /// <param name="sizeText">サイズ列の値。</param>
+        /// <returns>メーター無しの DetailRow。</returns>
         public static DetailRow Info(string name, string sizeText) =>
             new(name, "-", sizeText, "-", "-", "-", showMeter: false);
 
         /// <summary>
         /// メーター無しの情報行を全カラム指定で生成します。
         /// </summary>
+        /// <param name="name">項目名。</param>
+        /// <param name="result">結果列。</param>
+        /// <param name="size">サイズ列。</param>
+        /// <param name="channel">stereo/mono 列。</param>
+        /// <param name="sc">サブキャリア数列。</param>
+        /// <param name="mod">変調列。</param>
+        /// <returns>メーター無しの DetailRow。</returns>
         public static DetailRow Info(
             string name,
             string result,
@@ -1143,6 +1212,7 @@ public partial class ReceiveDetailPanel : UserControl
         /// <summary>
         /// 結果列を更新します。
         /// </summary>
+        /// <param name="value">新しい結果文言（OK / NG / - など）。</param>
         public void SetResult(string value)
         {
             if (_resultText == value)
@@ -1157,6 +1227,7 @@ public partial class ReceiveDetailPanel : UserControl
         /// <summary>
         /// サイズ列を更新します。
         /// </summary>
+        /// <param name="value">新しいサイズ表示。</param>
         public void SetSize(string value)
         {
             if (_sizeText == value)
@@ -1171,6 +1242,9 @@ public partial class ReceiveDetailPanel : UserControl
         /// <summary>
         /// stereo/mono・サブキャリア数・変調列を更新します。
         /// </summary>
+        /// <param name="channel">stereo または mono。</param>
+        /// <param name="sc">サブキャリア数の表示。</param>
+        /// <param name="mod">変調方式の表示。</param>
         public void SetModulationFields(string channel, string sc, string mod)
         {
             if (_channelText != channel)
@@ -1192,6 +1266,10 @@ public partial class ReceiveDetailPanel : UserControl
             }
         }
 
+        /// <summary>
+        /// PropertyChanged を発火します。
+        /// </summary>
+        /// <param name="propertyName">変更したプロパティ名。省略時は呼び出し元。</param>
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
