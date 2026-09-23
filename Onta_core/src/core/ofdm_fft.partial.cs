@@ -9,6 +9,10 @@ namespace Onta.Core;
 
 public sealed partial class OfdmGenerator
 {
+    /// <summary>
+    /// EnsureIfftScratch は、前提条件を満たすよう確保します。
+    /// </summary>
+    /// <param name="n">n。</param>
     private void EnsureIfftScratch(int n)
     {
         if (_ifftConjugateScratch is not null && _ifftConjugateScratch.Length == n)
@@ -20,6 +24,11 @@ public sealed partial class OfdmGenerator
         _ifftWorkScratch = new Complex[n];
     }
 
+    /// <summary>
+    /// InverseFftInto を実行します。
+    /// </summary>
+    /// <param name="frequency">frequency。</param>
+    /// <param name="destination">出力先。</param>
     private void InverseFftInto(Complex[] frequency, Complex[] destination)
     {
         if (destination.Length < frequency.Length)
@@ -35,6 +44,10 @@ public sealed partial class OfdmGenerator
         ConjugateAndScaleInPlace(destination, 1.0 / frequency.Length);
     }
 
+    /// <summary>
+    /// CreateConjugateSignMask は、インスタンスまたはバッファを生成します。
+    /// </summary>
+    /// <returns>Vector<double>。</returns>
     private static Vector<double> CreateConjugateSignMask()
     {
         var values = new double[Vector<double>.Count];
@@ -46,6 +59,11 @@ public sealed partial class OfdmGenerator
         return new Vector<double>(values);
     }
 
+    /// <summary>
+    /// ConjugateInto を実行します。
+    /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="destination">出力先。</param>
     private static void ConjugateInto(Complex[] source, Complex[] destination)
     {
         ReadOnlySpan<double> src = MemoryMarshal.Cast<Complex, double>(source.AsSpan());
@@ -64,6 +82,11 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// ConjugateAndScaleInPlace を実行します。
+    /// </summary>
+    /// <param name="values">values。</param>
+    /// <param name="scale">scale。</param>
     private static void ConjugateAndScaleInPlace(Complex[] values, double scale)
     {
         Span<double> data = MemoryMarshal.Cast<Complex, double>(values.AsSpan());
@@ -83,6 +106,12 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// LoadVector の結果を返します。
+    /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="index">インデックス。</param>
+    /// <returns>Vector<double>。</returns>
     private static Vector<double> LoadVector(ReadOnlySpan<double> source, int index)
     {
         ref var first = ref MemoryMarshal.GetReference(source);
@@ -90,6 +119,12 @@ public sealed partial class OfdmGenerator
         return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
     }
 
+    /// <summary>
+    /// LoadVector の結果を返します。
+    /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="index">インデックス。</param>
+    /// <returns>Vector<double>。</returns>
     private static Vector<double> LoadVector(Span<double> source, int index)
     {
         ref var first = ref MemoryMarshal.GetReference(source);
@@ -97,6 +132,12 @@ public sealed partial class OfdmGenerator
         return Unsafe.ReadUnaligned<Vector<double>>(ref Unsafe.As<double, byte>(ref at));
     }
 
+    /// <summary>
+    /// StoreVector を実行します。
+    /// </summary>
+    /// <param name="destination">出力先。</param>
+    /// <param name="index">インデックス。</param>
+    /// <param name="value">入力値。</param>
     private static void StoreVector(Span<double> destination, int index, Vector<double> value)
     {
         ref var first = ref MemoryMarshal.GetReference(destination);
@@ -122,6 +163,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 実数 PCM に Hann 窓を掛けて FFT 入力へ置きます（虚部 0）。
     /// </summary>
+    /// <param name="timePcm">timePcm。</param>
+    /// <param name="destination">出力先。</param>
     internal static void ApplyHannWindowFromRealPcm(ReadOnlySpan<Complex> timePcm, Complex[] destination)
     {
         var n = destination.Length;
@@ -164,6 +207,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 実数 PCM を虚部 0 の FFT 入力へコピーします。
     /// </summary>
+    /// <param name="timePcm">timePcm。</param>
+    /// <param name="destination">出力先。</param>
     internal static void CopyRealPcmToFftInput(ReadOnlySpan<Complex> timePcm, Span<Complex> destination)
     {
         var n = destination.Length;
@@ -196,6 +241,10 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// FftInPlace は、FFT/IFFT を実行します。
+    /// </summary>
+    /// <param name="output">output。</param>
     private static void FftInPlace(Complex[] output)
     {
         var n = output.Length;
@@ -232,6 +281,12 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// AVX で 2 バタフライずつ処理します（GetElement なし）。
     /// </summary>
+    /// <param name="data">入力データ。</param>
+    /// <param name="n">n。</param>
+    /// <param name="len">len。</param>
+    /// <param name="half">half。</param>
+    /// <param name="wLenRe">wLenRe。</param>
+    /// <param name="wLenIm">wLenIm。</param>
     private static void FftStageAvx(
         Span<double> data,
         int n,
@@ -272,6 +327,12 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// AdvSimd で 1 複素バタフライを処理します。
     /// </summary>
+    /// <param name="data">入力データ。</param>
+    /// <param name="n">n。</param>
+    /// <param name="len">len。</param>
+    /// <param name="half">half。</param>
+    /// <param name="wLenRe">wLenRe。</param>
+    /// <param name="wLenIm">wLenIm。</param>
     private static void FftStageNeon(
         Span<double> data,
         int n,
@@ -308,6 +369,12 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// SIMD が使えない場合の基数 2 バタフライです。
     /// </summary>
+    /// <param name="output">output。</param>
+    /// <param name="n">n。</param>
+    /// <param name="len">len。</param>
+    /// <param name="half">half。</param>
+    /// <param name="wLenRe">wLenRe。</param>
+    /// <param name="wLenIm">wLenIm。</param>
     private static void FftStageScalar(
         Complex[] output,
         int n,
@@ -335,6 +402,10 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// BitReversePermute を実行します。
+    /// </summary>
+    /// <param name="output">output。</param>
     private static void BitReversePermute(Complex[] output)
     {
         var n = output.Length;
@@ -353,6 +424,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// FFT 長に対応するビット逆順テーブルを返します（常用長は静的、他はキャッシュ）。
     /// </summary>
+    /// <param name="n">n。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] ResolveBitReverseTable(int n) =>
         n switch
         {
@@ -366,6 +439,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// FFT 長に対応する Hann 窓を返します（常用長は静的、他はキャッシュ）。
     /// </summary>
+    /// <param name="n">n。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] ResolveHannWindow(int n) =>
         n switch
         {
@@ -379,6 +454,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 非標準 FFT 長のビット逆順テーブルを取得／生成します。
     /// </summary>
+    /// <param name="n">n。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] GetOrCreateBitReverseExtra(int n)
     {
         lock (BitReverseCacheLock)
@@ -397,6 +474,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 非標準 FFT 長の Hann 窓を取得／生成します。
     /// </summary>
+    /// <param name="n">n。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] GetOrCreateHannExtra(int n)
     {
         lock (HannCacheLock)
@@ -412,6 +491,11 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// CreateBitReverseTable は、インスタンスまたはバッファを生成します。
+    /// </summary>
+    /// <param name="n">n。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] CreateBitReverseTable(int n)
     {
         var bits = (int)Math.Log2(n);
@@ -424,6 +508,11 @@ public sealed partial class OfdmGenerator
         return table;
     }
 
+    /// <summary>
+    /// CreateHannWindow は、インスタンスまたはバッファを生成します。
+    /// </summary>
+    /// <param name="n">n。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] CreateHannWindow(int n)
     {
         var denom = Math.Max(1, n - 1);
@@ -437,6 +526,12 @@ public sealed partial class OfdmGenerator
         return hann;
     }
 
+    /// <summary>
+    /// ReverseBits の結果を返します。
+    /// </summary>
+    /// <param name="value">入力値。</param>
+    /// <param name="bitCount">ビット数。</param>
+    /// <returns>計算した整数値。</returns>
     private static int ReverseBits(int value, int bitCount)
     {
         var reversed = 0;

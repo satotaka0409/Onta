@@ -4,7 +4,16 @@ namespace Onta.Core;
 
 public sealed partial class OfdmGenerator
 {
-    /// <returns>戻り値を返します。</returns>
+    /// <summary>
+    /// ストリーム上の OFDM シンボルからハード判定ビットを復調します（シンボル同期付き）。
+    /// </summary>
+    /// <param name="samples">入力 PCM（複素、Imag=0 可）。</param>
+    /// <param name="cursor">読み取り開始位置（サンプル）。終了位置で更新されます。</param>
+    /// <param name="bitCount">取り出すビット数。</param>
+    /// <param name="useRightChannel">R 搬送波を使うか。</param>
+    /// <param name="logicalSampleOffset">論理サンプル位置（互換用。現状未使用）。</param>
+    /// <param name="searchRadius">シンボル先頭探索半径（サンプル）。</param>
+    /// <returns>復調したハードビット列。</returns>
     public bool[] DemodulateBitsFromStream(
         Complex[] samples,
         ref int cursor,
@@ -84,8 +93,21 @@ public sealed partial class OfdmGenerator
         return bits;
     }
 
-    /// <param name="noiseVariance">譌｢遏･髮鷹浹蛻・淵縲・/param>
-    /// <returns>戻り値を返します。</returns>
+    /// <summary>
+    /// ストリーム上の OFDM からソフト LLR を復調します（パイロット雑音推定あり）。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="cursor">読み取り開始位置。終了位置で更新されます。</param>
+    /// <param name="bitCount">取り出す情報ビット数。</param>
+    /// <param name="useRightChannel">R 搬送波を使うか。</param>
+    /// <param name="logicalSampleOffset">論理サンプル位置。</param>
+    /// <param name="searchRadius">シンボル先頭探索半径。</param>
+    /// <param name="noiseVariance">雑音分散の初期値（パイロット推定のフォールバック）。</param>
+    /// <param name="onEqualizedDataSymbol">等化後データシンボルごとのコールバック。</param>
+    /// <param name="onEqualizedDataSymbolFrame">1 OFDM シンボル分の等化後シンボル／グループのコールバック。</param>
+    /// <param name="onFftSymbolFrame">FFT 後ビン配列のコールバック。</param>
+    /// <param name="onOfdmSymbolProgress">シンボル進捗コールバック（index, total, cursor）。</param>
+    /// <returns>ビットごとのソフト LLR。</returns>
     public double[] DemodulateSoftLlrsFromStream(
         Complex[] samples,
         ref int cursor,
@@ -116,8 +138,18 @@ public sealed partial class OfdmGenerator
             onOfdmSymbolProgress);
     }
 
-    /// <param name="noiseVariance">譌｢遏･髮鷹浹蛻・淵縲・/param>
-    /// <returns>戻り値を返します。</returns>
+    /// <summary>
+    /// ステレオ L/R を結合してソフト LLR を復調します。
+    /// </summary>
+    /// <param name="leftSamples">L チャネル PCM。</param>
+    /// <param name="rightSamples">R チャネル PCM。</param>
+    /// <param name="cursor">読み取り開始位置。終了位置で更新されます。</param>
+    /// <param name="bitCount">取り出す情報ビット数。</param>
+    /// <param name="logicalSampleOffset">論理サンプル位置。</param>
+    /// <param name="searchRadius">シンボル先頭探索半径。</param>
+    /// <param name="noiseVariance">雑音分散の初期値。</param>
+    /// <param name="estimateNoiseFromPilots">パイロットから雑音分散を推定するか。</param>
+    /// <returns>ビットごとのソフト LLR。</returns>
     public double[] DemodulateSoftLlrsStereoCombined(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -171,6 +203,14 @@ public sealed partial class OfdmGenerator
             onOfdmSymbolProgress: null);
     }
 
+    /// <summary>
+    /// プレアンブル等の OFDM シンボルをタイミング追従しながら読み飛ばします。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="cursor">読み取り開始位置。終了位置で更新されます。</param>
+    /// <param name="symbolCount">読み飛ばすシンボル数。</param>
+    /// <param name="useRightChannel">R 搬送波で同期するか。</param>
+    /// <param name="searchRadius">シンボル先頭探索半径。</param>
     public void SkipSymbolsWithTimingTracking(
         Complex[] samples,
         ref int cursor,
@@ -197,7 +237,14 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <returns>戻り値を返します。</returns>
+    /// <summary>
+    /// 固定長サンプル列からハード判定ビットを復調します（シンボル境界は既知）。
+    /// </summary>
+    /// <param name="samples">OFDM シンボル長の整数倍の PCM。</param>
+    /// <param name="bitCount">取り出すビット数。</param>
+    /// <param name="useRightChannel">R 搬送波を使うか。</param>
+    /// <param name="absoluteSampleOffset">絶対サンプル位置（互換用。現状未使用）。</param>
+    /// <returns>復調したハードビット列。</returns>
     public bool[] DemodulateBits(
         ReadOnlySpan<Complex> samples,
         int bitCount,
@@ -267,5 +314,3 @@ public sealed partial class OfdmGenerator
         return bits;
     }
 }
-
-

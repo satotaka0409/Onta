@@ -118,6 +118,8 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// PCM チャンクを追記します（リング上書きではなく、消費後に先頭圧縮します）。
     /// </summary>
+    /// <param name="left">L チャネル。</param>
+    /// <param name="right">R チャネル。</param>
     public void AppendSamples(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
     {
         ThrowIfDisposed();
@@ -196,6 +198,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// 現在の実行スナップショットを返します。
     /// </summary>
+    /// <returns>RealtimeDecodeSnapshot。</returns>
     public RealtimeDecodeSnapshot GetSnapshot()
     {
         lock (_sync)
@@ -207,11 +210,13 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// 共有状態メモリのスナップショットを読み取ります（セッションロックは取りません）。
     /// </summary>
+    /// <returns>CoreExecutionStatus。</returns>
     public CoreExecutionStatus ReadExecutionStatus() => _progressive.ReadExecutionStatus();
 
     /// <summary>
     /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
     /// </summary>
+    /// <returns>CoreExecutionStatus。</returns>
     public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 
     /// <summary>
@@ -232,6 +237,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// 復元済みバイト列がある場合に1回だけ取り出します。
     /// </summary>
     /// <param name="decoded">復元済みバイト列。未復元時は空配列。</param>
+    /// <returns>成功または条件成立時 true。</returns>
     public bool TryConsumeDecoded(out byte[] decoded)
     {
         lock (_sync)
@@ -248,7 +254,9 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Dispose を実行します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -264,6 +272,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// バッファ監視と段階復号を繰り返すバックグラウンド処理です。
     /// </summary>
     /// <param name="token">停止要求トークン。</param>
+    /// <returns>Task。</returns>
     private async Task WorkerLoop(CancellationToken token)
     {
         while (!token.IsCancellationRequested)

@@ -38,6 +38,7 @@ public sealed partial class FileWavCodec
     /// ペイロード末尾に CRC を付与し、Turbo 符号単位までパディングしたブロックを返します。
     /// </summary>
     /// <param name="payload">入力ペイロード。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] PackDataBlockWithCrc(byte[] payload)
     {
         if (payload.Length > DataBlockBytes)
@@ -58,6 +59,7 @@ public sealed partial class FileWavCodec
     /// Turbo 符号化単位に切り上げたバイト数を返します。
     /// </summary>
     /// <param name="contentLength">元データ長（CRC を含む）。</param>
+    /// <returns>計算した整数値。</returns>
     private static int TurboPaddedLength(int contentLength)
     {
         var unit = TurboEcc1024.DataUnitBytes;
@@ -171,6 +173,7 @@ public sealed partial class FileWavCodec
     /// <param name="leftBits">左チャネル側ビット列。</param>
     /// <param name="rightBits">右チャネル側ビット列。</param>
     /// <param name="totalBits">結合後の総ビット数。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] JoinStereoBits(bool[] leftBits, bool[] rightBits, int totalBits)
     {
         var joined = new bool[totalBits];
@@ -189,6 +192,7 @@ public sealed partial class FileWavCodec
     /// 入力ファイルを固定長データブロックへ分割します。
     /// </summary>
     /// <param name="fileBytes">入力ファイル全体のバイト列。</param>
+    /// <returns>結果のコレクション。</returns>
     private static List<DataBlock> SplitDataBlocks(byte[] fileBytes)
     {
         var blocks = new List<DataBlock>();
@@ -212,6 +216,7 @@ public sealed partial class FileWavCodec
     /// バイト列を MSB ファーストのビット列へ展開します。
     /// </summary>
     /// <param name="bytes">変換元バイト列。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] BytesToBitsMsb(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
@@ -230,6 +235,7 @@ public sealed partial class FileWavCodec
     /// MSB ファーストのビット列をバイト列へパックします。
     /// </summary>
     /// <param name="bits">変換元ビット列。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] BitsToBytesMsb(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
@@ -264,6 +270,7 @@ public sealed partial class FileWavCodec
     /// <param name="statusBoard">進捗・エラー率通知先。</param>
     /// <param name="diag">復号診断情報の出力先。</param>
     /// <param name="onSoftProgress">ソフト復号の進捗通知コールバック。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] DecodeDataBlockSynced(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -705,6 +712,7 @@ public sealed partial class FileWavCodec
     /// <param name="totalBitCount">左右結合後の総ビット数。</param>
     /// <param name="stereoSplit">左右チャネル分割復調を行うかどうか。</param>
     /// <param name="logical">論理サンプル位置。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] DemodulateDataBitsFixed(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -741,6 +749,7 @@ public sealed partial class FileWavCodec
     /// <param name="stereoSplit">左右チャネル分割復調を行うかどうか。</param>
     /// <param name="logical">論理サンプル位置。</param>
     /// <param name="searchRadius">シンボル開始位置探索半径。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] DemodulateDataBitsFromStream(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -784,6 +793,8 @@ public sealed partial class FileWavCodec
     /// <param name="modulationScheme">データ部の変調方式。</param>
     /// <param name="statusBoard">IQ/FFT 可視化と進捗通知の出力先。</param>
     /// <param name="onBlockProgress">ブロック復調進捗通知コールバック。</param>
+    /// <param name="captureIq">captureIq。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] DemodulateDataSoftLlrsFromStream(
         OfdmGenerator ofdm,
         Complex[] leftSamples,
@@ -933,6 +944,14 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// 受信 PCM から送信側と同じ連続スペクトルを StatusBoard へ書き込みます。
     /// </summary>
+    /// <param name="statusBoard">statusBoard。</param>
+    /// <param name="leftSamples">L チャネル PCM。</param>
+    /// <param name="rightSamples">R チャネル PCM。</param>
+    /// <param name="endExclusive">endExclusive。</param>
+    /// <param name="stereo">stereo。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="windowScratch">windowScratch。</param>
+    /// <param name="fftScratch">fftScratch。</param>
     private static void PublishReceivePcmFft(
         CoreExecutionStatusBoard statusBoard,
         Complex[] leftSamples,
@@ -998,6 +1017,7 @@ public sealed partial class FileWavCodec
     /// LLR 配列の平均絶対値を返します。
     /// </summary>
     /// <param name="llrs">対象 LLR スパン。</param>
+    /// <returns>計算した実数値。</returns>
     private static double MeanAbsLlrs(ReadOnlySpan<double> llrs)
     {
         if (llrs.Length == 0)
@@ -1018,6 +1038,7 @@ public sealed partial class FileWavCodec
     /// LLR 分布から推定ソフトビット誤り率（%）を計算します。
     /// </summary>
     /// <param name="llrs">対象 LLR スパン。</param>
+    /// <returns>計算した実数値。</returns>
     private static double EstimateSoftBitErrorPercent(ReadOnlySpan<double> llrs)
     {
         if (llrs.Length == 0)
@@ -1064,6 +1085,7 @@ public sealed partial class FileWavCodec
     /// <param name="hardCandidate">ハード復号候補。</param>
     /// <param name="expectedBlockHash">期待するブロックハッシュ。</param>
     /// <param name="payloadLength">期待するペイロード長。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] PreferHashMatch(
         byte[] softCandidate,
         byte[] hardCandidate,
@@ -1089,6 +1111,7 @@ public sealed partial class FileWavCodec
     /// <param name="candidate">検証対象ブロック。</param>
     /// <param name="expectedBlockHash">期待するブロックハッシュ。</param>
     /// <param name="payloadLength">期待するペイロード長。</param>
+    /// <returns>成功または条件成立時 true。</returns>
     private static bool IsDataBlockAcceptable(byte[] candidate, byte[] expectedBlockHash, int payloadLength)
     {
         var actualLen = Math.Clamp(payloadLength, 0, DataBlockBytes);
@@ -1112,6 +1135,7 @@ public sealed partial class FileWavCodec
     /// パディング済みデータを Turbo 符号化します。
     /// </summary>
     /// <param name="padded">Turbo 単位長に揃えた入力バイト列。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] EncodeTurboBlock(byte[] padded)
     {
         if (padded.Length == 0 || padded.Length % TurboEcc1024.DataUnitBytes != 0)
@@ -1141,6 +1165,7 @@ public sealed partial class FileWavCodec
     /// </summary>
     /// <param name="infoLlrs">畳み込み復号後の情報 LLR。</param>
     /// <param name="tuning">反復回数決定に使う閾値設定。</param>
+    /// <returns>計算した整数値。</returns>
     private static int ResolveTurboIterations(double[] infoLlrs, DecodeRuntimeTuning tuning)
     {
         var minIter = Math.Clamp(Math.Min(tuning.TurboIterationsMin, tuning.TurboIterationsMax), 1, 32);
@@ -1180,6 +1205,8 @@ public sealed partial class FileWavCodec
     /// <param name="paddedLength">復号後のパディング済み長。</param>
     /// <param name="iterations">Turbo 反復回数。</param>
     /// <param name="meanCorrectionRate">単位平均の訂正率出力。</param>
+    /// <param name="onUnitCorrectionRate">onUnitCorrectionRate。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] DecodeTurboBlock(
         byte[] turboEncoded,
         int paddedLength,
@@ -1214,6 +1241,7 @@ public sealed partial class FileWavCodec
     /// <param name="turboEncoded">Turbo 符号語バイト列。</param>
     /// <param name="paddedLength">復号後のパディング済み長。</param>
     /// <param name="iterations">Turbo 反復回数。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] DecodeTurboBlock(byte[] turboEncoded, int paddedLength, int iterations)
     {
         return DecodeTurboBlock(turboEncoded, paddedLength, iterations, out _);
@@ -1227,6 +1255,8 @@ public sealed partial class FileWavCodec
     /// <param name="paddedLength">復号後のパディング済み長。</param>
     /// <param name="iterations">Turbo 反復回数。</param>
     /// <param name="meanCorrectionRate">単位平均の訂正率出力。</param>
+    /// <param name="onUnitCorrectionRate">onUnitCorrectionRate。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] DecodeTurboBlockFromLlrs(
         double[] infoLlrs,
         byte[] turboEncodedHard,
@@ -1290,6 +1320,7 @@ public sealed partial class FileWavCodec
     /// <param name="turboEncodedHard">LLR 不足時に使うハード符号語。</param>
     /// <param name="paddedLength">復号後のパディング済み長。</param>
     /// <param name="iterations">Turbo 反復回数。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] DecodeTurboBlockFromLlrs(
         double[] infoLlrs,
         byte[] turboEncodedHard,
@@ -1313,6 +1344,7 @@ public sealed partial class FileWavCodec
     /// 指定ペイロード長を RS 符号化したときの符号語長を返します。
     /// </summary>
     /// <param name="payloadLength">入力ペイロード長。</param>
+    /// <returns>計算した整数値。</returns>
     private static int GetReedSolomonEncodedLength(int payloadLength)
     {
         var paddedLength = ((payloadLength + RsEcc256.DataUnitSize - 1) / RsEcc256.DataUnitSize) * RsEcc256.DataUnitSize;
@@ -1329,6 +1361,7 @@ public sealed partial class FileWavCodec
     /// </summary>
     /// <param name="inputByteLength">入力バイト長。</param>
     /// <param name="punctureRate">パンクチャ率。</param>
+    /// <returns>計算した整数値。</returns>
     private static int GetConvolutionalEncodedLength(int inputByteLength, ConvolutionalCode.PunctureRate punctureRate)
     {
         var encodedBits = ConvolutionalCode.GetEncodedBitLength(inputByteLength * 8, terminated: true, punctureRate: punctureRate);
@@ -1339,6 +1372,7 @@ public sealed partial class FileWavCodec
     /// 変調方式に対応するデータ部パンクチャ率を返します。
     /// </summary>
     /// <param name="modulationScheme">データ部の変調方式。</param>
+    /// <returns>ConvolutionalCode.PunctureRate。</returns>
     private static ConvolutionalCode.PunctureRate ResolveDataPunctureRate(ModulationScheme modulationScheme)
     {
         return modulationScheme switch
@@ -1386,6 +1420,7 @@ public sealed partial class FileWavCodec
     /// ペイロードを RS 符号化します。
     /// </summary>
     /// <param name="payload">入力ペイロード。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] ApplyReedSolomon(byte[] payload)
     {
         var paddedLength = ((payload.Length + RsEcc256.DataUnitSize - 1) / RsEcc256.DataUnitSize) * RsEcc256.DataUnitSize;
@@ -1416,6 +1451,7 @@ public sealed partial class FileWavCodec
     /// RS 符号語を復号します。
     /// </summary>
     /// <param name="encoded">RS 符号語バイト列。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] ApplyReedSolomonDecode(byte[] encoded) =>
         ApplyReedSolomonDecode(encoded, out _);
 
@@ -1424,6 +1460,7 @@ public sealed partial class FileWavCodec
     /// </summary>
     /// <param name="encoded">RS 符号語バイト列。</param>
     /// <param name="metrics">復号メトリクス出力。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] ApplyReedSolomonDecode(byte[] encoded, out RsEcc256.DecodeMetrics metrics)
     {
         if (encoded.Length % RsEcc256.EncodedUnitSize != 0)

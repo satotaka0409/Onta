@@ -4,7 +4,14 @@ namespace Onta.Core;
 
 public sealed partial class OfdmGenerator
 {
-    /// <param name="start">隧穂ｾ｡髢句ｧ九し繝ｳ繝励Ν菴咲ｽｮ縲・/param>
+    /// <summary>
+    /// 連続 OFDM シンボルのパイロット品質スコア平均を計算します（同期ロック判定用）。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="start">先頭シンボル開始位置。</param>
+    /// <param name="symbolCount">評価するシンボル数。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <returns>シンボル平均スコア。範囲外なら −∞。</returns>
     public double ScoreLock(Complex[] samples, int start, int symbolCount, bool useRightChannel = false)
     {
         ArgumentNullException.ThrowIfNull(samples);
@@ -32,6 +39,14 @@ public sealed partial class OfdmGenerator
         return score / symbolCount;
     }
 
+    /// <summary>
+    /// expectedStart 近傍で CP 相関／パイロット品質が最大になるシンボル先頭を探します。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="expectedStart">期待するシンボル先頭位置。</param>
+    /// <param name="searchRadius">前後の探索半径（サンプル）。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <returns>最良のシンボル先頭サンプル位置。</returns>
     public int FindBestSymbolStart(
         Complex[] samples,
         int expectedStart,
@@ -147,5 +162,3 @@ public sealed partial class OfdmGenerator
         return expectedStart + bestDelta;
     }
 }
-
-

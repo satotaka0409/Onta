@@ -211,20 +211,34 @@ public static class TurboEcc1024
             throw new ArgumentException("Iterations must be > 0.", nameof(iterations));
         }
 
-        var systematic = new double[DataUnitBits];
-        var parity1 = new double[DataUnitBits];
-        var parity2 = new double[DataUnitBits];
-        var sysBits = new bool[DataUnitBits];
-        for (var i = 0; i < DataUnitBits; i++)
+        var systematicBuf = ArrayPool<double>.Shared.Rent(DataUnitBits);
+        var parity1Buf = ArrayPool<double>.Shared.Rent(DataUnitBits);
+        var parity2Buf = ArrayPool<double>.Shared.Rent(DataUnitBits);
+        var sysBitsBuf = ArrayPool<bool>.Shared.Rent(DataUnitBits);
+        try
         {
-            var baseIndex = i * 3;
-            systematic[i] = encodedBitLlrs[baseIndex];
-            parity1[i] = encodedBitLlrs[baseIndex + 1];
-            parity2[i] = encodedBitLlrs[baseIndex + 2];
-            sysBits[i] = systematic[i] < 0.0;
-        }
+            var systematic = systematicBuf.AsSpan(0, DataUnitBits);
+            var parity1 = parity1Buf.AsSpan(0, DataUnitBits);
+            var parity2 = parity2Buf.AsSpan(0, DataUnitBits);
+            var sysBits = sysBitsBuf.AsSpan(0, DataUnitBits);
+            for (var i = 0; i < DataUnitBits; i++)
+            {
+                var baseIndex = i * 3;
+                systematic[i] = encodedBitLlrs[baseIndex];
+                parity1[i] = encodedBitLlrs[baseIndex + 1];
+                parity2[i] = encodedBitLlrs[baseIndex + 2];
+                sysBits[i] = systematic[i] < 0.0;
+            }
 
-        return DecodeFromComponentLlrs(systematic, parity1, parity2, sysBits, iterations, out metrics);
+            return DecodeFromComponentLlrs(systematic, parity1, parity2, sysBits, iterations, out metrics);
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(systematicBuf, clearArray: false);
+            ArrayPool<double>.Shared.Return(parity1Buf, clearArray: false);
+            ArrayPool<double>.Shared.Return(parity2Buf, clearArray: false);
+            ArrayPool<bool>.Shared.Return(sysBitsBuf, clearArray: false);
+        }
     }
 
     /// <summary>
@@ -380,7 +394,8 @@ public static class TurboEcc1024
     /// <summary>
     /// EncodeRscParity を符号化します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="inputBits">inputBits。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] EncodeRscParity(bool[] inputBits)
     {
         var parity = new bool[inputBits.Length];
@@ -424,9 +439,7 @@ public static class TurboEcc1024
 
         try
         {
-            Array.Fill(alpha, NegativeInfinity, 0, matrixLength);
-            Array.Fill(beta, NegativeInfinity, 0, matrixLength);
-
+            // ArrayPool 由来のゴミを避けるため、先頭行のみ初期化し各段で次行を明示クリアする
             for (var s = 0; s < StateCount; s++)
             {
                 alpha[s] = s == 0 ? 0.0 : NegativeInfinity;
@@ -574,7 +587,8 @@ public static class TurboEcc1024
     /// <summary>
     /// BuildNextStateByInput を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="inputBit">inputBit。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] BuildNextStateByInput(int inputBit)
     {
         var table = new byte[StateCount];
@@ -589,7 +603,8 @@ public static class TurboEcc1024
     /// <summary>
     /// BuildParityByInput を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="inputBit">inputBit。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] BuildParityByInput(int inputBit)
     {
         var table = new byte[StateCount];
@@ -604,7 +619,7 @@ public static class TurboEcc1024
     /// <summary>
     /// BuildNextStateTable を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] BuildNextStateTable()
     {
         return [0, 1, 3, 2, 4, 5, 7, 6, 1, 0, 2, 3, 5, 4, 6, 7];
@@ -613,7 +628,7 @@ public static class TurboEcc1024
     /// <summary>
     /// BuildParityTable を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] BuildParityTable()
     {
         return [0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1];
@@ -622,7 +637,9 @@ public static class TurboEcc1024
     /// <summary>
     /// BuildInterleaver を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="length">長さ。</param>
+    /// <param name="seed">seed。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] BuildInterleaver(int length, int seed)
     {
         var permutation = new int[length];
@@ -644,7 +661,8 @@ public static class TurboEcc1024
     /// <summary>
     /// BuildDeinterleaver を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="interleaver">interleaver。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] BuildDeinterleaver(int[] interleaver)
     {
         var deinterleaver = new int[interleaver.Length];
@@ -656,7 +674,12 @@ public static class TurboEcc1024
         return deinterleaver;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// InterleaveBits の結果を返します。
+    /// </summary>
+    /// <param name="input">input。</param>
+    /// <param name="permutation">permutation。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] InterleaveBits(bool[] input, int[] permutation)
     {
         var output = new bool[input.Length];
@@ -668,7 +691,12 @@ public static class TurboEcc1024
         return output;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// InterleaveDoubles の結果を返します。
+    /// </summary>
+    /// <param name="input">input。</param>
+    /// <param name="permutation">permutation。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] InterleaveDoubles(double[] input, int[] permutation)
     {
         var output = new double[input.Length];
@@ -677,7 +705,12 @@ public static class TurboEcc1024
         return output;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// DeinterleaveDoubles の結果を返します。
+    /// </summary>
+    /// <param name="input">input。</param>
+    /// <param name="deinterleaver">deinterleaver。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] DeinterleaveDoubles(double[] input, int[] deinterleaver)
     {
         var output = new double[input.Length];
@@ -686,6 +719,12 @@ public static class TurboEcc1024
         return output;
     }
 
+    /// <summary>
+    /// InterleaveDoublesInto を実行します。
+    /// </summary>
+    /// <param name="input">input。</param>
+    /// <param name="permutation">permutation。</param>
+    /// <param name="output">output。</param>
     private static void InterleaveDoublesInto(ReadOnlySpan<double> input, int[] permutation, Span<double> output)
     {
         for (var i = 0; i < permutation.Length; i++)
@@ -694,6 +733,12 @@ public static class TurboEcc1024
         }
     }
 
+    /// <summary>
+    /// DeinterleaveDoublesInto を実行します。
+    /// </summary>
+    /// <param name="input">input。</param>
+    /// <param name="deinterleaver">deinterleaver。</param>
+    /// <param name="output">output。</param>
     private static void DeinterleaveDoublesInto(ReadOnlySpan<double> input, int[] deinterleaver, Span<double> output)
     {
         for (var i = 0; i < deinterleaver.Length; i++)
@@ -702,7 +747,12 @@ public static class TurboEcc1024
         }
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BitsToLlr の結果を返します。
+    /// </summary>
+    /// <param name="bits">ビット列。</param>
+    /// <param name="reliability">reliability。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] BitsToLlr(bool[] bits, double reliability)
     {
         var llr = new double[bits.Length];
@@ -714,7 +764,11 @@ public static class TurboEcc1024
         return llr;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BytesToBits の結果を返します。
+    /// </summary>
+    /// <param name="bytes">バイト列。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] BytesToBits(byte[] bytes)
     {
         var bits = new bool[bytes.Length * 8];
@@ -736,7 +790,7 @@ public static class TurboEcc1024
     /// <summary>
     /// BuildByteToBitsLookup を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] BuildByteToBitsLookup()
     {
         var lookup = new byte[256 * 8];
@@ -756,7 +810,11 @@ public static class TurboEcc1024
         return lookup;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// BitsToBytes の結果を返します。
+    /// </summary>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] BitsToBytes(bool[] bits)
     {
         var bytes = new byte[bits.Length / 8];
@@ -772,7 +830,11 @@ public static class TurboEcc1024
         return bytes;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// PackBits の結果を返します。
+    /// </summary>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static byte[] PackBits(bool[] bits)
     {
         var bytes = new byte[(bits.Length + 7) / 8];
@@ -805,7 +867,12 @@ public static class TurboEcc1024
         return bytes;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// UnpackBits の結果を返します。
+    /// </summary>
+    /// <param name="bytes">バイト列。</param>
+    /// <param name="bitCount">ビット数。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static bool[] UnpackBits(byte[] bytes, int bitCount)
     {
         var bits = new bool[bitCount];
@@ -873,7 +940,12 @@ public static class TurboEcc1024
         return CountDifferentByteSpans(leftBytes, rightBytes);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// CountDifferentBytesAgainstBits の結果を返します。
+    /// </summary>
+    /// <param name="bytes">バイト列。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>計算した整数値。</returns>
     private static int CountDifferentBytesAgainstBits(ReadOnlySpan<byte> bytes, ReadOnlySpan<bool> bits)
     {
         var different = 0;
@@ -897,6 +969,8 @@ public static class TurboEcc1024
     /// <summary>
     /// ReadPackedBit を読み取ります。
     /// </summary>
+    /// <param name="packed">packed。</param>
+    /// <param name="bitIndex">bitIndex。</param>
     /// <returns>判定結果。</returns>
     private static bool ReadPackedBit(ReadOnlySpan<byte> packed, int bitIndex)
     {

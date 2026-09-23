@@ -290,7 +290,13 @@ internal static class ReedSolomonCodec
         return new DecodeResult(decoded, metrics);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// CountDifferentBytes の結果を返します。
+    /// </summary>
+    /// <param name="left">L チャネル。</param>
+    /// <param name="right">R チャネル。</param>
+    /// <param name="count">要素数。</param>
+    /// <returns>計算した整数値。</returns>
     private static int CountDifferentBytes(byte[] left, byte[] right, int count)
     {
         var different = 0;
@@ -356,7 +362,13 @@ internal static class ReedSolomonCodec
         return different;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// CountDifferentBits の結果を返します。
+    /// </summary>
+    /// <param name="left">L チャネル。</param>
+    /// <param name="right">R チャネル。</param>
+    /// <param name="count">要素数。</param>
+    /// <returns>計算した整数値。</returns>
     private static int CountDifferentBits(byte[] left, byte[] right, int count)
     {
         var bitCount = 0;
@@ -379,6 +391,9 @@ internal static class ReedSolomonCodec
         return bitCount;
     }
 
+    /// <summary>
+    /// InitializeTables を実行します。
+    /// </summary>
     private static void InitializeTables()
     {
         var x = 1;
@@ -399,6 +414,9 @@ internal static class ReedSolomonCodec
         }
     }
 
+    /// <summary>
+    /// InitializeMultiplicationTable を実行します。
+    /// </summary>
     private static void InitializeMultiplicationTable()
     {
         for (var a = 0; a < FieldSize; a++)
@@ -419,7 +437,8 @@ internal static class ReedSolomonCodec
     /// <summary>
     /// BuildGeneratorPolynomial を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="paritySymbols">paritySymbols。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] BuildGeneratorPolynomial(int paritySymbols)
     {
         var gen = new[] { 1 };
@@ -451,6 +470,7 @@ internal static class ReedSolomonCodec
     /// <summary>
     /// IsAllZero を判定します。
     /// </summary>
+    /// <param name="values">values。</param>
     /// <returns>条件を満たす場合 true、それ以外は false。</returns>
     private static bool IsAllZero(int[] values)
     {
@@ -465,7 +485,12 @@ internal static class ReedSolomonCodec
         return true;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// FindErrorLocatorBerlekampMassey は、条件に合う位置または値を探索します。
+    /// </summary>
+    /// <param name="syndromes">syndromes。</param>
+    /// <param name="paritySymbols">paritySymbols。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] FindErrorLocatorBerlekampMassey(int[] syndromes, int paritySymbols)
     {
         var c = new List<int> { 1 };
@@ -582,7 +607,12 @@ internal static class ReedSolomonCodec
         return SolveLinearSystemGf256(matrix, count);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// SolveLinearSystemGf256 の結果を返します。
+    /// </summary>
+    /// <param name="augmentedMatrix">augmentedMatrix。</param>
+    /// <param name="size">size。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static int[] SolveLinearSystemGf256(int[,] augmentedMatrix, int size)
     {
         var row = 0;
@@ -719,6 +749,10 @@ internal static class ReedSolomonCodec
         return result;
     }
 
+    /// <summary>
+    /// TrimTrailingZerosLowDegree を実行します。
+    /// </summary>
+    /// <param name="poly">poly。</param>
     private static void TrimTrailingZerosLowDegree(List<int> poly)
     {
         while (poly.Count > 1 && poly[poly.Count - 1] == 0)
@@ -835,7 +869,11 @@ internal static class ReedSolomonCodec
         return ExpTable[exponent];
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// GfInverse の結果を返します。
+    /// </summary>
+    /// <param name="value">入力値。</param>
+    /// <returns>計算した整数値。</returns>
     private static int GfInverse(int value)
     {
         if (value == 0)

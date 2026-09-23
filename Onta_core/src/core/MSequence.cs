@@ -73,13 +73,7 @@ public static class MSequence31
         var value = 0u;
         for (var i = 0; i < 31; i++)
         {
-            var feedback = ((state >> 30) ^ (state >> 27)) & 1u;
-            state = ((state << 1) & 0x7FFFFFFF) | feedback;
-            if (state == 0)
-            {
-                state = 1u;
-            }
-
+            state = Advance31(state);
             value = (value << 1) | (state & 1u);
         }
 

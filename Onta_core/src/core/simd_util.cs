@@ -21,6 +21,9 @@ internal static class SimdMath
     /// <summary>
     /// double 列から AVX ベクトルを読みます。
     /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="index">インデックス。</param>
+    /// <returns>Vector256<double>。</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector256<double> LoadAvx(ReadOnlySpan<double> source, int index)
     {
@@ -32,6 +35,9 @@ internal static class SimdMath
     /// <summary>
     /// double 列へ AVX ベクトルを書きます。
     /// </summary>
+    /// <param name="destination">出力先。</param>
+    /// <param name="index">インデックス。</param>
+    /// <param name="value">入力値。</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void StoreAvx(Span<double> destination, int index, Vector256<double> value)
     {
@@ -44,6 +50,9 @@ internal static class SimdMath
     /// <summary>
     /// double 列から NEON ベクトルを読みます。
     /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="index">インデックス。</param>
+    /// <returns>Vector128<double>。</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<double> LoadNeon(ReadOnlySpan<double> source, int index)
     {
@@ -55,6 +64,9 @@ internal static class SimdMath
     /// <summary>
     /// double 列へ NEON ベクトルを書きます。
     /// </summary>
+    /// <param name="destination">出力先。</param>
+    /// <param name="index">インデックス。</param>
+    /// <param name="value">入力値。</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void StoreNeon(Span<double> destination, int index, Vector128<double> value)
     {
@@ -67,6 +79,8 @@ internal static class SimdMath
     /// <summary>
     /// AVX 4 レーンの合計です。
     /// </summary>
+    /// <param name="value">入力値。</param>
+    /// <returns>計算した実数値。</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static double HorizontalSum(Vector256<double> value)
     {
@@ -79,6 +93,8 @@ internal static class SimdMath
     /// <summary>
     /// NEON 2 レーンの合計です。
     /// </summary>
+    /// <param name="value">入力値。</param>
+    /// <returns>計算した実数値。</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static double HorizontalSum(Vector128<double> value) =>
         value.GetElement(0) + value.GetElement(1);
@@ -86,6 +102,8 @@ internal static class SimdMath
     /// <summary>
     /// 複素配列の実部を連続 double へコピーします。
     /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="destination">出力先。</param>
     public static void CopyComplexReals(ReadOnlySpan<Complex> source, Span<double> destination)
     {
         var n = Math.Min(source.Length, destination.Length);
@@ -121,6 +139,8 @@ internal static class SimdMath
     /// <summary>
     /// 実部だけを複素配列へ書き、虚部は 0 にします。
     /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="destination">出力先。</param>
     public static void WriteComplexReals(ReadOnlySpan<double> source, Span<Complex> destination)
     {
         var n = Math.Min(source.Length, destination.Length);
@@ -152,6 +172,7 @@ internal static class SimdMath
     /// <summary>
     /// 複素配列の虚部を 0 にします。
     /// </summary>
+    /// <param name="values">values。</param>
     public static void ZeroImagInPlace(Span<Complex> values)
     {
         var data = MemoryMarshal.Cast<Complex, double>(values);
@@ -182,6 +203,8 @@ internal static class SimdMath
     /// <summary>
     /// 複素配列の実部絶対値の最大を返します。
     /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <returns>計算した実数値。</returns>
     public static double MaxAbsReals(ReadOnlySpan<Complex> source)
     {
         var n = source.Length;
@@ -234,6 +257,9 @@ internal static class SimdMath
     /// <summary>
     /// dest[i] = left[i] + right[i] を SIMD で計算します。
     /// </summary>
+    /// <param name="left">L チャネル。</param>
+    /// <param name="right">R チャネル。</param>
+    /// <param name="destination">出力先。</param>
     public static void Add(ReadOnlySpan<double> left, ReadOnlySpan<double> right, Span<double> destination)
     {
         var n = Math.Min(left.Length, Math.Min(right.Length, destination.Length));

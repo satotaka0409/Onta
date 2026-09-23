@@ -410,6 +410,11 @@ public sealed class CoreExecutionStatusBoard
     /// 推定ワウモデルを公開し、瞬間速度偏差（%）も更新します。
     /// UI はこのモデルから連続的にメーターを動かします。
     /// </summary>
+    /// <param name="amount">amount。</param>
+    /// <param name="wowPhase">wowPhase。</param>
+    /// <param name="flutterPhase">flutterPhase。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="sampleIndex">sampleIndex。</param>
     public void SetWowFlutterTracking(
         double amount,
         double wowPhase,
@@ -736,8 +741,12 @@ public sealed class CoreExecutionStatusBoard
     /// <summary>
     /// <see cref="Read"/> の互換エイリアスです。
     /// </summary>
+    /// <returns>CoreExecutionStatus。</returns>
     public CoreExecutionStatus Query() => Read();
 
+    /// <summary>
+    /// エラー率リングの読み書き位置をリセットします。
+    /// </summary>
     private void ResetErrorRateRingUnlocked()
     {
         _errorRateWriteSeq = 0;
@@ -745,6 +754,10 @@ public sealed class CoreExecutionStatusBoard
         Array.Clear(_errorRateRing);
     }
 
+    /// <summary>
+    /// 未読のエラー率サンプルをリングから取り出します。
+    /// </summary>
+    /// <returns>未読分のエラー率情報配列。</returns>
     private CoreErrorRateInfo[] ConsumeErrorRateSamplesUnlocked()
     {
         var unread = _errorRateWriteSeq - _errorRateReadSeq;

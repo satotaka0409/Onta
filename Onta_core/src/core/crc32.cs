@@ -85,9 +85,9 @@ public static class Crc32
     }
 
     /// <summary>
-    /// slicing-by-8 用のCRCテーブルを構築します。
+    /// slicing-by-8 用の CRC テーブル（8×256）を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <returns>各スライス段の 256 エントリ CRC テーブル。</returns>
     private static uint[][] BuildTables()
     {
         const uint poly = 0xEDB88320u;

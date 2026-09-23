@@ -235,6 +235,9 @@ public sealed record OfdmConfig
         ValidateCarrierBinsFitFft();
     }
 
+    /// <summary>
+    /// 概念キャリア周波数を FFT 正周波数ビンへ割り当て可能か検証します。範囲外なら例外です。
+    /// </summary>
     private void ValidateCarrierBinsFitFft()
     {
         foreach (var k in ConceptualLeftBins)
@@ -349,6 +352,12 @@ public sealed record OfdmConfig
     private static readonly int[] ConceptualLeftBins56 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins, GroupFLeftBins, GroupGLeftBins);
     private static readonly int[] ConceptualLeftBins64 = ConcatBins(GroupALeftBins, GroupBLeftBins, GroupCLeftBins, GroupDLeftBins, GroupELeftBins, GroupFLeftBins, GroupGLeftBins, GroupHLeftBins);
 
+    /// <summary>
+    /// start から count 個の連続整数配列を生成します。
+    /// </summary>
+    /// <param name="start">開始値。</param>
+    /// <param name="count">要素数。</param>
+    /// <returns>連続整数配列。</returns>
     private static int[] CreateRange(int start, int count)
     {
         var bins = new int[count];
@@ -360,6 +369,11 @@ public sealed record OfdmConfig
         return bins;
     }
 
+    /// <summary>
+    /// 複数のキャリア番号配列を連結して 1 本にします。
+    /// </summary>
+    /// <param name="groups">連結するキャリア番号配列の並び。</param>
+    /// <returns>連結後のキャリア番号配列。</returns>
     private static int[] ConcatBins(params int[][] groups)
     {
         var length = 0;
@@ -380,6 +394,11 @@ public sealed record OfdmConfig
         return result;
     }
 
+    /// <summary>
+    /// キャリア番号配列の防御的コピーを返します。
+    /// </summary>
+    /// <param name="source">コピー元配列。</param>
+    /// <returns>コピーされた配列。</returns>
     private static int[] CopyBins(int[] source)
     {
         var copy = new int[source.Length];
@@ -534,6 +553,8 @@ public sealed partial class OfdmGenerator
     private readonly Complex[] _scoreFreqBinsScratch;
     private Complex[]? _ifftConjugateScratch;
     private Complex[]? _ifftWorkScratch;
+    private Complex[]? _freqSymbolScratchA;
+    private Complex[]? _freqSymbolScratchB;
     private Complex[]? _unmodulatedLeftSymbol;
     private Complex[]? _unmodulatedRightSymbol;
     private readonly int _bitsPerOfdmSymbol;
@@ -544,6 +565,11 @@ public sealed partial class OfdmGenerator
     private static readonly int[] Qam256Levels = [-15, -13, -11, -9, -7, -5, -3, -1, 1, 3, 5, 7, 9, 11, 13, 15];
     private static readonly double[] Qam16PamByBinary = BuildPamByBinary(2, Qam16Levels);
     private static readonly double[] Qam64PamByBinary = BuildPamByBinary(3, Qam64Levels);
+    private static readonly double[] Qam256PamByBinary = BuildPamByBinary(4, Qam256Levels);
+    private static readonly double InvSqrt2 = 1.0 / Math.Sqrt(2.0);
+    private static readonly double InvSqrt10 = 1.0 / Math.Sqrt(10.0);
+    private static readonly double InvSqrt42 = 1.0 / Math.Sqrt(42.0);
+    private static readonly double InvSqrt170 = 1.0 / Math.Sqrt(170.0);
     private static readonly Complex PilotSymbol = Complex.One;
     private static readonly Vector256<double> RealLaneMask = Vector256.Create(1.0, 0.0, 1.0, 0.0);
     private static readonly Vector<double> ConjugateSignMask = CreateConjugateSignMask();
@@ -577,8 +603,9 @@ public sealed partial class OfdmGenerator
     private static readonly Complex UnmodulatedCarrierSymbol = Complex.One;
 
     /// <summary>
-    /// 内部処理です。
+    /// OFDM 生成／復調器を設定から初期化します。
     /// </summary>
+    /// <param name="config">FFT／SC／変調などの OFDM 設定。</param>
     public OfdmGenerator(OfdmConfig config)
     {
         _config = config;
@@ -626,8 +653,10 @@ public sealed partial class OfdmGenerator
     private int _txSpectrumCounter;
 
     /// <summary>
-    /// 内部処理です。
+    /// L または R のキャリア配置（全ビン／パイロット／データ／変調／グループ）を構築します。
     /// </summary>
+    /// <param name="channel">L/R キャリアチャネル。</param>
+    /// <returns>全キャリア、パイロット、データ基底、変調辞書、グループ辞書。</returns>
     private (List<int> All, List<int> Pilots, List<int> DataBase, Dictionary<int, ModulationScheme> DataModulationByBin, Dictionary<int, byte> DataGroupByBin)
         BuildChannelLayout(CarrierChannel channel)
     {
@@ -671,10 +700,11 @@ public sealed partial class OfdmGenerator
     private const int PilotCoverChannelsAbove = 1;
 
     /// <summary>
-    /// BuildPilotGroupedCarriers を構築します。
-    /// 各パイロットは「下2CH + 自身 + 上1CH」を担当します（グループ境界内でクランプ）。
+    /// 各パイロットが担当する下 2CH・自身・上 1CH のキャリア束を構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="allCarriers">チャネル内の全キャリアビン（昇順）。</param>
+    /// <param name="orderedPilots">パイロットビン一覧（CH2/CH6 相当）。</param>
+    /// <returns>パイロットごとの担当キャリアビン配列。</returns>
     private static int[][] BuildPilotGroupedCarriers(List<int> allCarriers, List<int> orderedPilots)
     {
         if (orderedPilots.Count == 0)
@@ -722,16 +752,19 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// Group E/F（変調1段下げ対象）の概念左キャリアか判定します。
+    /// Group E/F（および性能測定の G/H）など、変調を 1 段下げる対象の概念左ビンか判定します。
     /// </summary>
-    /// <returns>条件を満たす場合 true、それ以外は false。</returns>
+    /// <param name="conceptualLeftBin">概念左キャリア番号。</param>
+    /// <returns>変調ダウングレード対象なら true。</returns>
     private static bool IsDowngradedGroupConceptualLeftBin(int conceptualLeftBin) =>
         conceptualLeftBin is >= 33 and <= 48;
 
     /// <summary>
-    /// ResolveEffectiveCarrierModulation を解決します。
+    /// 設定変調と概念ビンから当該キャリアの実効変調を決定します（E/F 等は 1 段下げ）。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="configuredScheme">データ部の設定変調。</param>
+    /// <param name="conceptualLeftBin">概念左キャリア番号。</param>
+    /// <returns>実効変調方式。</returns>
     private static ModulationScheme ResolveEffectiveCarrierModulation(
         ModulationScheme configuredScheme,
         int conceptualLeftBin)
@@ -752,7 +785,11 @@ public sealed partial class OfdmGenerator
         };
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 変調方式 1 シンボルあたりのデータビット数を返します。
+    /// </summary>
+    /// <param name="modulationScheme">変調方式。</param>
+    /// <returns>ビット数。</returns>
     private static int BitsPerModulation(ModulationScheme modulationScheme) => modulationScheme switch
     {
         ModulationScheme.Bpsk => 1,
@@ -764,16 +801,18 @@ public sealed partial class OfdmGenerator
     };
 
     /// <summary>
-    /// ResolveDataCarrierOrder を解決します（割当なし・キャッシュ済みリスト）。
+    /// データキャリアの走査順（パイロット除外・キャッシュ済み）を返します。
     /// </summary>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
     /// <returns>データキャリアビン順。</returns>
     private List<int> ResolveDataCarrierOrder(bool useRightChannel) =>
         useRightChannel ? _rightDataCarrierBase : _leftDataCarrierBase;
 
     /// <summary>
-    /// GetPositiveCarrierBins を取得します。
+    /// 概念左ビンを正周波数 FFT ビンへ割り当て、チャネルのキャリア一覧を返します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="channel">L/R キャリアチャネル。</param>
+    /// <returns>正周波数キャリアビン一覧（昇順）。</returns>
     private List<int> GetPositiveCarrierBins(CarrierChannel channel)
     {
         var conceptBins = _config.ConceptualLeftBins;
@@ -806,7 +845,12 @@ public sealed partial class OfdmGenerator
         return bins;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 希望ビンが未使用ならそれを、使用済みなら近傍の未使用正周波数ビンを割り当てます。
+    /// </summary>
+    /// <param name="preferred">希望する正周波数ビン。</param>
+    /// <param name="used">既に割当済みのビン集合。</param>
+    /// <returns>割当した正周波数ビン。</returns>
     private int EnsureUniquePositiveBin(int preferred, HashSet<int> used)
     {
         var bin = preferred;
@@ -835,6 +879,11 @@ public sealed partial class OfdmGenerator
         return bin;
     }
 
+    /// <summary>
+    /// 正周波数ビンをリストへ追加します（無効値は無視）。
+    /// </summary>
+    /// <param name="bins">追加先リスト。</param>
+    /// <param name="bin">追加するビン番号。</param>
     private void AddPositiveBin(List<int> bins, int bin)
     {
         if (bin <= 0 || bin >= _config.FftSize / 2)
@@ -847,8 +896,9 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// ApplyHermitianSymmetry を適用します。
+    /// 実信号化のため、正周波数ビンの複素共役を負周波数側へミラーします。
     /// </summary>
+    /// <param name="bins">周波数領域シンボル（破壊的）。</param>
     private static void ApplyHermitianSymmetry(Complex[] bins)
     {
         var n = bins.Length;
@@ -866,7 +916,11 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 周波数領域シンボルにエルミート対称を付け IFFT し、実時間シンボルを返します。
+    /// </summary>
+    /// <param name="freqBins">周波数領域ビン。</param>
+    /// <returns>時間領域の実シンボル（CP なし）。</returns>
     private Complex[] ToRealTimeSymbol(Complex[] freqBins)
     {
         ApplyHermitianSymmetry(freqBins);
@@ -878,6 +932,11 @@ public sealed partial class OfdmGenerator
         return time;
     }
 
+    /// <summary>
+    /// 周波数領域から実時間シンボルを生成し、CP 付きで destination へ書きます。
+    /// </summary>
+    /// <param name="freqBins">周波数領域ビン。</param>
+    /// <param name="destinationWithCp">CP 付き出力バッファ。</param>
     private void EmitRealTimeSymbolWithCp(Complex[] freqBins, Span<Complex> destinationWithCp)
     {
         ApplyHermitianSymmetry(freqBins);
@@ -916,6 +975,10 @@ public sealed partial class OfdmGenerator
     /// </summary>
     public int SamplesPerOfdmSymbol => _config.FftSize + _config.CyclicPrefixLength;
 
+    /// <summary>
+    /// ランダムビット列から OFDM フレーム（複数シンボル）を生成します。
+    /// </summary>
+    /// <returns>CP 付き時間領域サンプル列。</returns>
     public Complex[] GenerateFrame()
     {
         if (_config.ChannelMode == ChannelMode.Stereo)
@@ -926,10 +989,11 @@ public sealed partial class OfdmGenerator
         var symbolLength = SamplesPerOfdmSymbol;
         var frame = new Complex[_config.OfdmSymbolCount * symbolLength];
         var write = 0;
+        var freqBins = EnsureFreqSymbolScratch(ref _freqSymbolScratchA);
 
         for (var i = 0; i < _config.OfdmSymbolCount; i++)
         {
-            var freqBins = BuildFrequencyDomainSymbol(CarrierChannel.Left);
+            BuildFrequencyDomainSymbol(CarrierChannel.Left, freqBins);
             EmitRealTimeSymbolWithCp(freqBins, frame.AsSpan(write, symbolLength));
             write += symbolLength;
         }
@@ -937,6 +1001,10 @@ public sealed partial class OfdmGenerator
         return frame;
     }
 
+    /// <summary>
+    /// ステレオ用に L/R 別キャリアの OFDM フレームを生成します。
+    /// </summary>
+    /// <returns>L/R の CP 付き時間領域サンプル列。</returns>
     public (Complex[] Left, Complex[] Right) GenerateStereoFrame()
     {
         if (_config.ChannelMode != ChannelMode.Stereo)
@@ -949,11 +1017,13 @@ public sealed partial class OfdmGenerator
         var left = new Complex[frameLength];
         var right = new Complex[frameLength];
         var write = 0;
+        var leftBins = EnsureFreqSymbolScratch(ref _freqSymbolScratchA);
+        var rightBins = EnsureFreqSymbolScratch(ref _freqSymbolScratchB);
 
         for (var i = 0; i < _config.OfdmSymbolCount; i++)
         {
-            var leftBins = BuildFrequencyDomainSymbol(CarrierChannel.Left);
-            var rightBins = BuildFrequencyDomainSymbol(CarrierChannel.Right);
+            BuildFrequencyDomainSymbol(CarrierChannel.Left, leftBins);
+            BuildFrequencyDomainSymbol(CarrierChannel.Right, rightBins);
 
             EmitRealTimeSymbolWithCp(leftBins, left.AsSpan(write, symbolLength));
             EmitRealTimeSymbolWithCp(rightBins, right.AsSpan(write, symbolLength));
@@ -963,6 +1033,11 @@ public sealed partial class OfdmGenerator
         return (left, right);
     }
 
+    /// <summary>
+    /// 全キャリア無変調の連続波形を生成します（プリアンブル等）。
+    /// </summary>
+    /// <param name="sampleCount">出力サンプル数。</param>
+    /// <returns>L（およびステレオ時 R）の無変調 PCM。モノラル時 R は空配列。</returns>
     public (Complex[] Left, Complex[] Right) GenerateUnmodulated(int sampleCount)
     {
         if (sampleCount <= 0)
@@ -980,7 +1055,12 @@ public sealed partial class OfdmGenerator
         return (left, right);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 指定キャリアを無変調で立て、指定サンプル数の無変調波形を生成します。
+    /// </summary>
+    /// <param name="sampleCount">出力サンプル数。</param>
+    /// <param name="carrierBins">無変調キャリアビン。</param>
+    /// <returns>無変調 PCM。</returns>
     private Complex[] GenerateUnmodulatedChannel(int sampleCount, List<int> carrierBins)
     {
         var symbolLength = SamplesPerOfdmSymbol;
@@ -1003,9 +1083,10 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// GetOrBuildUnmodulatedSymbol を取得します。
+    /// 無変調 OFDM シンボル（CP 付き）をキャッシュから取得、なければ構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="carrierBins">無変調キャリアビン。</param>
+    /// <returns>CP 付き無変調シンボル。</returns>
     private Complex[] GetOrBuildUnmodulatedSymbol(List<int> carrierBins)
     {
         if (ReferenceEquals(carrierBins, _leftAllCarrierBins))
@@ -1022,9 +1103,10 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// BuildUnmodulatedSymbol を構築します。
+    /// 指定キャリアを無変調で埋めた CP 付き OFDM シンボルを構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="carrierBins">無変調キャリアビン。</param>
+    /// <returns>CP 付き無変調シンボル。</returns>
     private Complex[] BuildUnmodulatedSymbol(List<int> carrierBins)
     {
         var symbolLength = SamplesPerOfdmSymbol;
@@ -1039,7 +1121,12 @@ public sealed partial class OfdmGenerator
         return symbol;
     }
 
-    /// <param name="destination">CP 付き出力先を指定します。</param>
+    /// <summary>
+    /// 時間領域シンボル末尾を先頭へ複製し、CP 付きシンボルを destination へ書きます。
+    /// </summary>
+    /// <param name="symbol">CP なし時間領域シンボル。</param>
+    /// <param name="cpLength">CP 長。</param>
+    /// <param name="destination">CP 付き出力バッファ。</param>
     private static void CopyWithCyclicPrefix(ReadOnlySpan<Complex> symbol, int cpLength, Span<Complex> destination)
     {
         if (destination.Length < symbol.Length + cpLength)
@@ -1057,6 +1144,11 @@ public sealed partial class OfdmGenerator
         symbol.CopyTo(destination.Slice(cpLength));
     }
 
+    /// <summary>
+    /// 指定ビット数の送信に必要な OFDM サンプル数（CP 込み）を計算します。
+    /// </summary>
+    /// <param name="bitCount">送信ビット数。</param>
+    /// <returns>必要サンプル数。</returns>
     public int SampleCountForBitCount(int bitCount)
     {
         if (bitCount < 0)
@@ -1070,6 +1162,17 @@ public sealed partial class OfdmGenerator
         return symbolCount * SamplesPerOfdmSymbol;
     }
 
+    /// <summary>
+    /// 診断用に、指定ワウ／フラッターパラメータでのプリアンブル相関スコアを返します。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <returns>相関スコア（大きいほど一致）。</returns>
     public double ScoreWowParamsForDiagnostics(
         Complex[] samples,
         bool useRightChannel,
@@ -1114,8 +1217,14 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// 内部処理です。
+    /// 診断用にプリアンブル相関でワウ／フラッターパラメータを探索します。
     /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <param name="onProgress">探索進捗 (done, total)。省略可。</param>
+    /// <returns>基準スコアと最良パラメータ。失敗時 null。</returns>
     public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         MatchWowParametersForDiagnostics(
             Complex[] samples,
@@ -1132,7 +1241,15 @@ public sealed partial class OfdmGenerator
     /// Match 結果を散乱 Correct（Apply の逆）モデルで局所精密化します。
     /// 採点は全長 scale のままプリアンブル近傍だけ散乱逆補正し、全波形 Correct より大幅に軽くします。
     /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <param name="amount">初期ワウ量。</param>
+    /// <param name="wowPhase">初期ワウ位相。</param>
+    /// <param name="flutterPhase">初期フラッター位相。</param>
     /// <param name="onProgress">探索進捗 (done, total)。省略可。</param>
+    /// <returns>精密化後の (amount, wowPhase, flutterPhase)。</returns>
     public (double Amount, double WowPhase, double FlutterPhase) RefineWowParametersForCorrectModel(
         Complex[] samples,
         bool useRightChannel,
@@ -1384,6 +1501,15 @@ public sealed partial class OfdmGenerator
         return (baseline, best, bestAmount, WrapPhase(bestWow), WrapPhase(bestFlutter));
     }
 
+    /// <summary>
+    /// プリアンブル相関でワウ／フラッターを推定し、逆写像リサンプリングで補正した PCM を返します。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <param name="passes">推定パス数。</param>
+    /// <returns>ワウ補正後 PCM。</returns>
     public Complex[] CorrectWowFlutter(
         Complex[] samples,
         bool useRightChannel = false,
@@ -1510,12 +1636,16 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// 全波形上の絶対時刻を保ったまま、指定区間だけをワウ逆補正して destination へ書き出します。
-    /// 先頭切り出しの CorrectInPlace は end-scale がずれるため使わず、source.Length 基準の scale を使います。
+    /// 既知のワウ／フラッター量・位相でセグメントを逆写像リサンプリングし output へ書きます。
     /// </summary>
-    /// <param name="streamBaseSample">
-    /// source[0] がストリーム先頭から何サンプル目か。圧縮バッファでは 0 以外になります。
-    /// </param>
+    /// <param name="source">入力 PCM。</param>
+    /// <param name="start">セグメント開始。</param>
+    /// <param name="length">セグメント長。</param>
+    /// <param name="destination">出力バッファ。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <param name="streamBaseSample">ストリーム基準サンプル位置。</param>
     public void CorrectWowFlutterSegmentTo(
         Complex[] source,
         int start,
@@ -1611,7 +1741,14 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 無変調プリアンブルと理想波形の相関が最大になるワウ／フラッターパラメータを探索します。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <returns>最良パラメータ [amount, wowPhase, flutterPhase]。失敗時 null。</returns>
     private double[]? MatchWowByPreambleCorrelation(
         Complex[] samples,
         bool useRightChannel,
@@ -1635,8 +1772,14 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// 内部処理です。
+    /// プリアンブル相関でワウ／フラッターを探索し、基準スコア付きで返します。
     /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <param name="onProgress">探索進捗 (done, total)。省略可。</param>
+    /// <returns>基準スコアと最良パラメータ。失敗時 null。</returns>
     private (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         MatchWowByPreambleCorrelationParams(
             Complex[] samples,
@@ -1937,6 +2080,11 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// 実数参照波形の平均・エネルギー・長さを計算します（相関の正規化用）。
+    /// </summary>
+    /// <param name="reference">参照実数系列。</param>
+    /// <returns>平均、エネルギー（平均除去後二乗和）、要素数。</returns>
     private static (double Mean, double Energy, int Count) BuildCorrelationReferenceReals(ReadOnlySpan<double> reference)
     {
         if (reference.Length <= 1)
@@ -1971,6 +2119,11 @@ public sealed partial class OfdmGenerator
         return (mean, energy, reference.Length);
     }
 
+    /// <summary>
+    /// 実数参照波形の平均・エネルギーを AVX で計算します。
+    /// </summary>
+    /// <param name="reference">参照実数系列。</param>
+    /// <returns>平均、エネルギー（平均除去後二乗和）、要素数。</returns>
     private static (double Mean, double Energy, int Count) BuildCorrelationReferenceRealsAvx(ReadOnlySpan<double> reference)
     {
         ref var first = ref MemoryMarshal.GetReference(reference);
@@ -2012,6 +2165,11 @@ public sealed partial class OfdmGenerator
         return (mean, energy, reference.Length);
     }
 
+    /// <summary>
+    /// 実数参照波形の平均・エネルギーを AdvSimd で計算します。
+    /// </summary>
+    /// <param name="reference">参照実数系列。</param>
+    /// <returns>平均、エネルギー（平均除去後二乗和）、要素数。</returns>
     private static (double Mean, double Energy, int Count) BuildCorrelationReferenceRealsAdvSimd(ReadOnlySpan<double> reference)
     {
         ref var first = ref MemoryMarshal.GetReference(reference);
@@ -2052,8 +2210,11 @@ public sealed partial class OfdmGenerator
         return (mean, energy, reference.Length);
     }
 
-    /// <param name="phase">折り返し正規化する位相 (rad)。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 位相を (−π, π] へ折り返します。
+    /// </summary>
+    /// <param name="phase">位相（ラジアン）。</param>
+    /// <returns>折り返し後の位相。</returns>
     private static double WrapPhase(double phase)
     {
         phase %= TwoPi;
@@ -2069,6 +2230,10 @@ public sealed partial class OfdmGenerator
         return phase;
     }
 
+    /// <summary>
+    /// 第 1 象限の sin LUT を構築します（高速 sin/cos 用）。
+    /// </summary>
+    /// <returns>四分円 sin テーブル。</returns>
     private static double[] BuildSinQuarterLut()
     {
         var table = new double[TrigQuarterTableSize + 1];
@@ -2080,6 +2245,11 @@ public sealed partial class OfdmGenerator
         return table;
     }
 
+    /// <summary>
+    /// 四分円 LUT から sin を求めます。
+    /// </summary>
+    /// <param name="angle">角度（ラジアン）。</param>
+    /// <returns>sin(angle)。</returns>
     private static double SinFromQuarterLut(double angle)
     {
         var x = angle % TwoPi;
@@ -2114,6 +2284,12 @@ public sealed partial class OfdmGenerator
         return quadrant >= 2 ? -baseValue : baseValue;
     }
 
+    /// <summary>
+    /// 四分円 LUT から sin と cos を同時に求めます。
+    /// </summary>
+    /// <param name="angle">角度（ラジアン）。</param>
+    /// <param name="sin">sin 出力。</param>
+    /// <param name="cos">cos 出力。</param>
     private static void SinCosFromQuarterLut(double angle, out double sin, out double cos)
     {
         sin = SinFromQuarterLut(angle);
@@ -2121,17 +2297,22 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// BuildCorrelationReference を構築します。
+    /// 複素参照の実部から平均・エネルギーを計算します（ストライド対応の入口）。
     /// </summary>
-    /// <param name="reference">参照シーケンスを指定します。</param>
+    /// <param name="reference">参照複素系列。</param>
+    /// <param name="stride">サンプル間隔。</param>
+    /// <returns>平均、エネルギー（平均除去後二乗和）、有効要素数。</returns>
     private static (double Mean, double Energy, int Count) BuildCorrelationReference(Complex[] reference, int stride)
     {
         return BuildCorrelationReference(reference.AsSpan(), stride);
     }
 
     /// <summary>
-    /// BuildCorrelationReference を構築します。
+    /// 複素参照の実部から平均・エネルギーを計算します（ストライド対応）。
     /// </summary>
+    /// <param name="reference">参照複素系列。</param>
+    /// <param name="stride">サンプル間隔。</param>
+    /// <returns>平均、エネルギー（平均除去後二乗和）、有効要素数。</returns>
     private static (double Mean, double Energy, int Count) BuildCorrelationReference(ReadOnlySpan<Complex> reference, int stride)
     {
         stride = Math.Max(1, stride);
@@ -2173,6 +2354,11 @@ public sealed partial class OfdmGenerator
         return (mean, energy, count);
     }
 
+    /// <summary>
+    /// 複素参照の実部から平均・エネルギーを AVX で計算します（密ストライド）。
+    /// </summary>
+    /// <param name="reference">参照複素系列。</param>
+    /// <returns>平均、エネルギー（平均除去後二乗和）、要素数。</returns>
     private static (double Mean, double Energy, int Count) BuildCorrelationReferenceDenseAvx(ReadOnlySpan<Complex> reference)
     {
         var count = reference.Length;
@@ -2222,6 +2408,11 @@ public sealed partial class OfdmGenerator
         return (mean, energy, count);
     }
 
+    /// <summary>
+    /// 複素参照の実部から平均・エネルギーを AdvSimd で計算します（密ストライド）。
+    /// </summary>
+    /// <param name="reference">参照複素系列。</param>
+    /// <returns>平均、エネルギー（平均除去後二乗和）、要素数。</returns>
     private static (double Mean, double Energy, int Count) BuildCorrelationReferenceDenseAdvSimd(ReadOnlySpan<Complex> reference)
     {
         var count = reference.Length;
@@ -2346,8 +2537,14 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// stride=1 の正規化相関（AVX: Complex の Real レーンだけ畳み込み）。
+    /// 実数ベクトルの正規化相関を AVX で計算します（密）。
     /// </summary>
+    /// <param name="a">入力 A。</param>
+    /// <param name="b">入力 B。</param>
+    /// <param name="meanB">B の平均。</param>
+    /// <param name="energyB">B のエネルギー。</param>
+    /// <param name="count">相関に使うサンプル数。</param>
+    /// <returns>正規化相関値。</returns>
     private static double CorrelateRealDenseAvx(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2419,8 +2616,14 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// stride=1 の正規化相関（ARM AdvSIMD）。
+    /// 実数ベクトルの正規化相関を AdvSimd で計算します（密）。
     /// </summary>
+    /// <param name="a">入力 A。</param>
+    /// <param name="b">入力 B。</param>
+    /// <param name="meanB">B の平均。</param>
+    /// <param name="energyB">B のエネルギー。</param>
+    /// <param name="count">相関に使うサンプル数。</param>
+    /// <returns>正規化相関値。</returns>
     private static double CorrelateRealDenseAdvSimd(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2476,8 +2679,15 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// stride&gt;1 の正規化相関（AVX: 間引きロード対応）。
+    /// ストライド付き実数ベクトルの正規化相関を AVX で計算します。
     /// </summary>
+    /// <param name="a">入力 A。</param>
+    /// <param name="b">入力 B。</param>
+    /// <param name="stride">サンプル間隔。</param>
+    /// <param name="meanB">B の平均。</param>
+    /// <param name="energyB">B のエネルギー。</param>
+    /// <param name="count">相関に使うサンプル数。</param>
+    /// <returns>正規化相関値。</returns>
     private static double CorrelateRealStridedAvx(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2550,8 +2760,15 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// stride&gt;1 の正規化相関（ARM AdvSIMD: 間引きロード対応）。
+    /// ストライド付き実数ベクトルの正規化相関を AdvSimd で計算します。
     /// </summary>
+    /// <param name="a">入力 A。</param>
+    /// <param name="b">入力 B。</param>
+    /// <param name="stride">サンプル間隔。</param>
+    /// <param name="meanB">B の平均。</param>
+    /// <param name="energyB">B のエネルギー。</param>
+    /// <param name="count">相関に使うサンプル数。</param>
+    /// <returns>正規化相関値。</returns>
     private static double CorrelateRealStridedAdvSimd(
         ReadOnlySpan<Complex> a,
         ReadOnlySpan<Complex> b,
@@ -2617,9 +2834,14 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// BuildCassetteSpeedProfilePerSample を構築します。
+    /// カセット想定のワウ／フラッターからサンプルごとの相対速度を生成します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="sampleCount">サンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <returns>サンプルごとの相対速度。</returns>
     private static double[] BuildCassetteSpeedProfilePerSample(
         int sampleCount,
         int sampleRate,
@@ -2664,9 +2886,16 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// BuildCassetteSpeedProfile を構築します。
+    /// シンボル単位のカセット相対速度プロファイルを生成します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="symbolCount">シンボル数。</param>
+    /// <param name="firstSymbol">先頭シンボル番号。</param>
+    /// <param name="symbolLength">1 シンボルのサンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <returns>シンボルごとの相対速度。</returns>
     private static double[] BuildCassetteSpeedProfile(
         int symbolCount,
         int firstSymbol,
@@ -2714,13 +2943,24 @@ public sealed partial class OfdmGenerator
         return profile;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 2 実数系列の正規化相関を計算します。
+    /// </summary>
+    /// <param name="a">入力 A。</param>
+    /// <param name="b">入力 B。</param>
+    /// <returns>正規化相関値。</returns>
     private static double CorrelateReal(Complex[] a, Complex[] b)
     {
         return CorrelateRealStrided(a, b, 1);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ストライド付き 2 実数系列の正規化相関を計算します。
+    /// </summary>
+    /// <param name="a">入力 A。</param>
+    /// <param name="b">入力 B。</param>
+    /// <param name="stride">サンプル間隔。</param>
+    /// <returns>正規化相関値。</returns>
     private static double CorrelateRealStrided(Complex[] a, Complex[] b, int stride)
     {
         var n = Math.Min(a.Length, b.Length);
@@ -2797,7 +3037,13 @@ public sealed partial class OfdmGenerator
             requireStrongCpImprovement: false);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// プリアンブル区間の速度プロファイルを全体サンプル長へ外挿します。
+    /// </summary>
+    /// <param name="preambleSpeeds">プリアンブル速度。</param>
+    /// <param name="sampleCount">全体サンプル数。</param>
+    /// <param name="analysisStartSample">解析開始位置。</param>
+    /// <returns>全体長の速度プロファイル。</returns>
     private double[] ExtrapolateSpeedProfile(double[] preambleSpeeds, int sampleCount, int analysisStartSample)
     {
         var symbolLength = Math.Max(1, SamplesPerOfdmSymbol);
@@ -2821,7 +3067,11 @@ public sealed partial class OfdmGenerator
         return full;
     }
 
-    /// <returns>条件を満たす場合 true、それ以外は false。</returns>
+    /// <summary>
+    /// 速度プロファイルの偏差からワウ補正が必要か判定します。
+    /// </summary>
+    /// <param name="speedProfile">相対速度プロファイル。</param>
+    /// <returns>補正が必要なら true。</returns>
     private static bool NeedsWowCorrection(double[] speedProfile)
     {
         if (speedProfile.Length < 32)
@@ -2855,7 +3105,16 @@ public sealed partial class OfdmGenerator
             && below >= 8;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// CP 相関／パイロットから受信相対速度プロファイルを推定します。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <param name="allowSymbolOffsetSearch">シンボルオフセット探索を許すか。</param>
+    /// <param name="requireStrongCpImprovement">強い CP 改善を要求するか。</param>
+    /// <returns>推定相対速度プロファイル。</returns>
     private double[] EstimateSpeedProfile(
         Complex[] samples,
         bool useRightChannel,
@@ -2935,7 +3194,13 @@ public sealed partial class OfdmGenerator
         return FitCassetteWowSpeedProfile(speeds, firstSymbol, symbolLength);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 測定速度をカセット・ワウモデルへ最小二乗フィットします。
+    /// </summary>
+    /// <param name="measured">測定速度。</param>
+    /// <param name="firstSymbol">先頭シンボル。</param>
+    /// <param name="symbolLength">シンボル長。</param>
+    /// <returns>フィット後の速度プロファイル。</returns>
     private double[] FitCassetteWowSpeedProfile(double[] measured, int firstSymbol, int symbolLength)
     {
         if (measured.Length < 32)
@@ -3021,10 +3286,12 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// TrySolve4x4 を試行します。
+    /// 4×4 連立方程式 Ax=b を解きます。
     /// </summary>
-    /// <param name="a">4x4 係数行列。</param>
-    /// <returns>条件を満たす場合 true、それ以外は false。</returns>
+    /// <param name="a">係数行列（16 要素）。</param>
+    /// <param name="b">右辺。</param>
+    /// <param name="x">解の出力。</param>
+    /// <returns>解けた場合 true。</returns>
     private static bool TrySolve4x4(double[,] a, double[] b, out double[] x)
     {
         x = new double[4];
@@ -3092,6 +3359,10 @@ public sealed partial class OfdmGenerator
         return true;
     }
 
+    /// <summary>
+    /// 速度プロファイルの平均が 1 になるよう正規化します。
+    /// </summary>
+    /// <param name="speeds">相対速度（破壊的）。</param>
     private static void NormalizeSpeedProfileMean(double[] speeds)
     {
         if (speeds.Length == 0)
@@ -3117,8 +3388,13 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <param name="window">評価ウィンドウ。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 窓内で CP 相関が最大になるシンボル先頭オフセットを探します。
+    /// </summary>
+    /// <param name="window">探索窓 PCM。</param>
+    /// <param name="maxSearch">最大探索サンプル数。</param>
+    /// <param name="requireStrongCpImprovement">強い改善が無い場合は 0 を返すか。</param>
+    /// <returns>最良オフセット（サンプル）。</returns>
     private int FindBestSymbolOffset(
         ReadOnlySpan<Complex> window,
         int maxSearch,
@@ -3155,7 +3431,14 @@ public sealed partial class OfdmGenerator
         return bestOffset;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// OFDM シンボルの CP と末尾の正規化相関スコアを計算します。
+    /// </summary>
+    /// <param name="window">CP 付きシンボル窓。</param>
+    /// <param name="offset">候補シンボル先頭オフセット。</param>
+    /// <param name="fftSize">FFT 長（データ部長）。</param>
+    /// <param name="cp">CP 長。</param>
+    /// <returns>正規化相関スコア。</returns>
     private static double ScoreCpCorrelation(ReadOnlySpan<Complex> window, int offset, int fftSize, int cp)
     {
         if (Avx.IsSupported && cp >= 2)
@@ -3217,7 +3500,13 @@ public sealed partial class OfdmGenerator
         return score;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// パイロット位相回転から相対速度（サンプリング速度比）を推定します。
+    /// </summary>
+    /// <param name="freqBins">受信周波数ビン。</param>
+    /// <param name="pilotBins">速度推定に使うパイロットビン。</param>
+    /// <param name="carrierBins">パイロット含むキャリアビン。</param>
+    /// <returns>推定相対速度。</returns>
     private static double EstimateSpeedFromPilots(
         Complex[] freqBins,
         List<int> pilotBins,
@@ -3283,14 +3572,22 @@ public sealed partial class OfdmGenerator
         return weightedSum / weightTotal;
     }
 
-    /// <param name="value">複素数値。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 複素数の振幅 |z| を返します。
+    /// </summary>
+    /// <param name="value">複素数。</param>
+    /// <returns>振幅。</returns>
     private static double ComplexMagnitude(Complex value)
     {
         return Math.Sqrt((value.Real * value.Real) + (value.Imaginary * value.Imaginary));
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 速度プロファイルの逆写像で PCM 全体をリサンプリングします（ワウ補正）。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="speedProfile">相対速度。</param>
+    /// <returns>補正後 PCM。</returns>
     private Complex[] ResampleWithInverseSpeed(Complex[] samples, double[] speedProfile)
     {
         var n = samples.Length;
@@ -3310,7 +3607,14 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 速度プロファイルの逆写像で指定セグメントをリサンプリングします。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="speedProfile">相対速度。</param>
+    /// <param name="segmentStart">セグメント開始。</param>
+    /// <param name="segmentLength">セグメント長。</param>
+    /// <returns>補正後セグメント。</returns>
     private Complex[] ResampleSegmentWithInverseSpeed(
         Complex[] samples,
         double[] speedProfile,
@@ -3339,7 +3643,18 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ワウ／フラッターパラメータの逆写像で指定セグメントをリサンプリングします。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="segmentStart">セグメント開始。</param>
+    /// <param name="segmentLength">セグメント長。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <param name="stride">間引きストライド。</param>
+    /// <returns>補正後セグメント。</returns>
     private Complex[] ResampleSegmentWithInverseSpeed(
         Complex[] samples,
         int segmentStart,
@@ -3364,6 +3679,19 @@ public sealed partial class OfdmGenerator
         return output;
     }
 
+    /// <summary>
+    /// ワウ／フラッターパラメータの逆写像でセグメントを output バッファへ書き込みます。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="segmentStart">セグメント開始。</param>
+    /// <param name="segmentLength">セグメント長。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <param name="output">出力バッファ。</param>
+    /// <param name="stride">間引きストライド。</param>
+    /// <param name="streamBaseSample">ストリーム基準サンプル。</param>
     private void ResampleSegmentWithInverseSpeed(
         Complex[] samples,
         int segmentStart,
@@ -3474,8 +3802,15 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <param name="i">サンプルインデックス。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// カセット速度モデルの累積サンプル位置を計算します。
+    /// </summary>
+    /// <param name="i">サンプル指数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <returns>累積位置。</returns>
     private static double CassetteCumulAt(
         int i,
         int sampleRate,
@@ -3502,12 +3837,17 @@ public sealed partial class OfdmGenerator
             flutterOmega);
     }
 
-    /// <param name="i">サンプルインデックス。</param>
-    /// <param name="wowGain">wow の振幅係数。</param>
-    /// <param name="flutterGain">flutter の振幅係数。</param>
-    /// <param name="wowOmega">wow 角周波数。</param>
-    /// <param name="flutterOmega">flutter 角周波数。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 事前計算ゲイン／角周波数を用いて累積サンプル位置を計算します。
+    /// </summary>
+    /// <param name="i">サンプル指数。</param>
+    /// <param name="wowGain">ワウ振幅ゲイン。</param>
+    /// <param name="flutterGain">フラッター振幅ゲイン。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="wowOmega">ワウ角周波数。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <param name="flutterOmega">フラッター角周波数。</param>
+    /// <returns>累積位置。</returns>
     private static double CassetteCumulAtCached(
         int i,
         double wowGain,
@@ -3527,9 +3867,13 @@ public sealed partial class OfdmGenerator
             + (flutterGain * SumOfSines(flutterPhase, flutterOmega, i));
     }
 
-    /// <param name="phase0">初期位相。</param>
-    /// <param name="omega">角周波数。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 等差位相の sin 和を閉形式で計算します。
+    /// </summary>
+    /// <param name="phase0">初項位相。</param>
+    /// <param name="omega">位相刻み。</param>
+    /// <param name="count">加算する項数。</param>
+    /// <returns>sin の総和。</returns>
     private static double SumOfSines(double phase0, double omega, int count)
     {
         if (count <= 0)
@@ -3547,8 +3891,16 @@ public sealed partial class OfdmGenerator
         return Math.Sin(count * half) / denom * Math.Sin(phase0 + ((count - 1) * half));
     }
 
-    /// <param name="target">目標累積値。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 累積位置 target に達する最小サンプル指数を二分探索します。
+    /// </summary>
+    /// <param name="target">目標累積位置。</param>
+    /// <param name="sampleCount">探索上限。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">ワウ量。</param>
+    /// <param name="wowPhase">ワウ位相。</param>
+    /// <param name="flutterPhase">フラッター位相。</param>
+    /// <returns>サンプル指数。</returns>
     private static int FindCassetteCumulIndex(
         double target,
         int sampleCount,
@@ -3576,10 +3928,13 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// BuildInverseCumul を構築します。
+    /// 速度プロファイルから逆写像用の累積位置テーブルを構築します。
     /// </summary>
-    /// <param name="cumul">累積配列。</param>
-    /// <param name="speedHop">速度サンプルの間引き間隔。</param>
+    /// <param name="sampleCount">サンプル数。</param>
+    /// <param name="speedProfile">相対速度。</param>
+    /// <param name="cumul">累積出力バッファ。</param>
+    /// <param name="scale">スケール。</param>
+    /// <param name="speedHop">速度プロファイルのホップ（1=毎サンプル、それ以外=シンボル長）。</param>
     private void BuildInverseCumul(
         int sampleCount,
         double[] speedProfile,
@@ -3612,10 +3967,15 @@ public sealed partial class OfdmGenerator
         scale = cumul[^1] > 1e-12 ? (sampleCount - 1) / cumul[^1] : 1.0;
     }
 
-    /// <param name="cumul">累積配列。</param>
-    /// <param name="outputIndex">出力サンプル位置。</param>
-    /// <param name="warpedIndex">逆写像後の実数サンプル位置。</param>
-    /// <returns>補間後サンプル。</returns>
+    /// <summary>
+    /// 累積位置テーブル上でエルミート補間し、歪み補正後サンプルを得ます。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="cumul">累積位置テーブル。</param>
+    /// <param name="scale">スケール。</param>
+    /// <param name="outputIndex">出力指数。</param>
+    /// <param name="warpedIndex">ワープ指数（探索用）。</param>
+    /// <returns>補間サンプル。</returns>
     private static Complex SampleWarpedAtCumul(
         Complex[] samples,
         double[] cumul,
@@ -3640,8 +4000,12 @@ public sealed partial class OfdmGenerator
         return SampleHermite(samples, pos);
     }
 
-    /// <param name="position">補間位置。</param>
-    /// <returns>補間後サンプル。</returns>
+    /// <summary>
+    /// 実 PCM をエルミート補間で読みます。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="position">実数位置。</param>
+    /// <returns>補間サンプル。</returns>
     private static Complex SampleHermite(Complex[] samples, double position)
     {
         if (samples.Length == 0)
@@ -3677,7 +4041,11 @@ public sealed partial class OfdmGenerator
         return new Complex(value, 0.0);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 単一シンボルの CP 相関ロックスコアを計算します。
+    /// </summary>
+    /// <param name="symbolWithCp">CP 付きシンボル。</param>
+    /// <returns>ロックスコア。</returns>
     private double ScoreSingleSymbolCpLock(ReadOnlySpan<Complex> symbolWithCp)
     {
         var fftSize = _config.FftSize;
@@ -3704,7 +4072,12 @@ public sealed partial class OfdmGenerator
         return cpScore / (energy * 0.5);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// L チャネル前提で単一シンボルの品質スコアを計算します。
+    /// </summary>
+    /// <param name="symbolWithCp">CP 付きシンボル。</param>
+    /// <param name="pilotBins">パイロットビン。</param>
+    /// <returns>品質スコア。</returns>
     private double ScoreSingleSymbolLock(ReadOnlySpan<Complex> symbolWithCp, List<int> pilotBins)
     {
         var timeNoCp = _scoreTimeNoCpScratch;
@@ -3712,7 +4085,14 @@ public sealed partial class OfdmGenerator
         return ScoreSingleSymbolLock(symbolWithCp, pilotBins, timeNoCp, freqBins);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// L チャネル前提で単一シンボルの品質スコアを計算します。
+    /// </summary>
+    /// <param name="symbolWithCp">CP 付きシンボル。</param>
+    /// <param name="pilotBins">パイロットビン。</param>
+    /// <param name="timeNoCp">CP 除去作業バッファ。</param>
+    /// <param name="freqBins">FFT 作業バッファ。</param>
+    /// <returns>品質スコア。</returns>
     private double ScoreSingleSymbolLock(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -3750,8 +4130,24 @@ public sealed partial class OfdmGenerator
         return (normalizedCp * 2.0) + Math.Log10(pilotPower + 1e-12);
     }
 
-    /// <param name="onOfdmSymbolProgress">OFDM シンボル進捗 (index, count, sampleEndExclusive)。</param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ストリーム上の OFDM からソフト LLR を復調する中核処理です（L/R 結合可）。
+    /// </summary>
+    /// <param name="samples">主チャネル PCM。</param>
+    /// <param name="secondarySamples">副チャネル PCM（ステレオ結合時）。null 可。</param>
+    /// <param name="cursor">読み取り位置（更新あり）。</param>
+    /// <param name="bitCount">取り出す情報ビット数。</param>
+    /// <param name="useRightChannel">主側で R 搬送波を使うか。</param>
+    /// <param name="secondaryUseRightChannel">副側で R 搬送波を使うか。</param>
+    /// <param name="logicalSampleOffset">論理サンプル位置。</param>
+    /// <param name="searchRadius">シンボル先頭探索半径。</param>
+    /// <param name="noiseVariance">雑音分散の初期値。</param>
+    /// <param name="estimateNoiseFromPilots">パイロットから雑音を推定するか。</param>
+    /// <param name="onEqualizedDataSymbol">等化後データシンボルのコールバック。</param>
+    /// <param name="onEqualizedDataSymbolFrame">シンボル単位の等化後フレーム・コールバック。</param>
+    /// <param name="onFftSymbolFrame">FFT 後ビンのコールバック。</param>
+    /// <param name="onOfdmSymbolProgress">進捗コールバック。</param>
+    /// <returns>ビットごとのソフト LLR。</returns>
     private double[] DemodulateSoftLlrsFromStreamCore(
         Complex[] samples,
         Complex[]? secondarySamples,
@@ -3902,6 +4298,21 @@ public sealed partial class OfdmGenerator
         return llrs;
     }
 
+    /// <summary>
+    /// 1 OFDM シンボルを等化し、データキャリアのソフト LLR を llrs へ書き出します。
+    /// </summary>
+    /// <param name="symbolWithCp">CP 付きシンボル。</param>
+    /// <param name="pilotBins">パイロットビン。</param>
+    /// <param name="useRightChannel">R 搬送波を使うか。</param>
+    /// <param name="agcState">パイロット AGC 状態。</param>
+    /// <param name="logical">論理サンプル位置。</param>
+    /// <param name="timeNoCp">CP 除去作業バッファ。</param>
+    /// <param name="freqBins">FFT 作業バッファ。</param>
+    /// <param name="equalizers">等化係数作業バッファ。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
+    /// <param name="noiseVariance">雑音分散。</param>
+    /// <param name="addToExisting">既存 LLR に加算するか（ステレオ結合）。</param>
     private void EmitSymbolSoftLlrsForChannel(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -3937,6 +4348,19 @@ public sealed partial class OfdmGenerator
             onEqualizedDataSymbolFrame: null);
     }
 
+    /// <summary>
+    /// 既に FFT／等化済みの周波数ビンからデータキャリア LLR を書き出します。
+    /// </summary>
+    /// <param name="freqBins">周波数ビン。</param>
+    /// <param name="equalizers">等化係数。</param>
+    /// <param name="useRightChannel">R 搬送波を使うか。</param>
+    /// <param name="logical">論理サンプル位置。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
+    /// <param name="noiseVariance">雑音分散。</param>
+    /// <param name="addToExisting">既存 LLR に加算するか。</param>
+    /// <param name="onEqualizedDataSymbol">等化後シンボル・コールバック。</param>
+    /// <param name="onEqualizedDataSymbolFrame">フレーム・コールバック。</param>
     private void EmitSymbolSoftLlrsFromPrepared(
         Complex[] freqBins,
         Complex[] equalizers,
@@ -4010,6 +4434,17 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// パイロット残差から雑音電力を累積します。
+    /// </summary>
+    /// <param name="symbolWithCp">CP 付きシンボル。</param>
+    /// <param name="pilotBins">パイロットビン。</param>
+    /// <param name="useRightChannel">R 搬送波を使うか。</param>
+    /// <param name="timeNoCp">CP 除去作業バッファ。</param>
+    /// <param name="freqBins">FFT 作業バッファ。</param>
+    /// <param name="equalizers">等化係数作業バッファ。</param>
+    /// <param name="noiseAccum">雑音電力累積（更新あり）。</param>
+    /// <param name="noiseCount">累積回数（更新あり）。</param>
     private void AccumulatePilotNoise(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -4195,16 +4630,23 @@ public sealed partial class OfdmGenerator
         private readonly Complex[] _smoothed;
         private readonly bool[] _initialized;
 
-        /// <summary>
-        /// 内部処理です。
-        /// </summary>
-        public PilotGroupAgcState(int groupCount)
+    /// <summary>
+    /// パイロットグループ別 AGC 状態を初期化します。
+    /// </summary>
+    /// <param name="groupCount">サブキャリアグループ数。</param>
+    public PilotGroupAgcState(int groupCount)
         {
             var size = Math.Max(1, groupCount);
             _smoothed = new Complex[size];
             _initialized = new bool[size];
         }
 
+        /// <summary>
+        /// パイロット瞬間チャネル推定を平滑化し、グループ AGC 係数を更新して返します。
+        /// </summary>
+        /// <param name="groupIndex">パイロットグループ指数。</param>
+        /// <param name="instantaneous">瞬間チャネル推定。</param>
+        /// <returns>平滑化後のチャネル／AGC 係数。</returns>
         public Complex Update(int groupIndex, Complex instantaneous)
         {
             if ((uint)groupIndex >= (uint)_smoothed.Length)
@@ -4225,7 +4667,13 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 隣接パイロットのチャネル推定をデータキャリア位置へ線形補間します。
+    /// </summary>
+    /// <param name="bin">データキャリアのビン番号。</param>
+    /// <param name="orderedPilots">パイロットビン（昇順）。</param>
+    /// <param name="channels">パイロットごとのチャネル推定。</param>
+    /// <returns>補間されたチャネル係数。</returns>
     private static Complex InterpolatePilotChannel(int bin, List<int> orderedPilots, Complex[] channels)
     {
         if (orderedPilots.Count == 1)
@@ -4269,7 +4717,13 @@ public sealed partial class OfdmGenerator
         return channels[0];
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 等化後パイロット残差から雑音電力を推定します。
+    /// </summary>
+    /// <param name="freqBins">周波数ビン。</param>
+    /// <param name="pilotBins">パイロットビン。</param>
+    /// <param name="allCarriers">全キャリアビン。</param>
+    /// <returns>推定雑音電力。</returns>
     private static double EstimateNoisePower(Complex[] freqBins, List<int> pilotBins, List<int> allCarriers)
     {
         var carrierSet = allCarriers.ToHashSet();
@@ -4318,7 +4772,12 @@ public sealed partial class OfdmGenerator
         return Math.Max(energy / count, 1e-4);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 前後シンボルの等化係数を平滑化します。
+    /// </summary>
+    /// <param name="previous">前シンボル等化。</param>
+    /// <param name="current">現シンボル等化。</param>
+    /// <returns>平滑化後の等化係数。</returns>
     private static Complex[] SmoothEqualizers(ref Complex[]? previous, Complex[] current)
     {
         if (previous is null || previous.Length != current.Length)
@@ -4338,7 +4797,12 @@ public sealed partial class OfdmGenerator
         return mixed;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// パイロット観測値と既知パイロットから等化係数（1/チャネル）を推定します。
+    /// </summary>
+    /// <param name="freqBins">受信周波数ビン。</param>
+    /// <param name="pilotBins">平均に使うパイロットビン。</param>
+    /// <returns>等化係数。</returns>
     private static Complex EstimatePilotEqualizer(Complex[] freqBins, List<int> pilotBins)
     {
         if (pilotBins.Count == 0)
@@ -4363,6 +4827,13 @@ public sealed partial class OfdmGenerator
         return Complex.One / average;
     }
 
+    /// <summary>
+    /// 等化後データシンボルを硬判定し、ビット列へ書き出します。
+    /// </summary>
+    /// <param name="symbol">等化後複素シンボル。</param>
+    /// <param name="modulationScheme">変調方式。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="bits">ビット出力。</param>
     private static void EmitSymbolBits(
         Complex symbol,
         ModulationScheme modulationScheme,
@@ -4395,6 +4866,14 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// 等化後データシンボルからソフト LLR を書き出します。
+    /// </summary>
+    /// <param name="symbol">等化後複素シンボル。</param>
+    /// <param name="modulationScheme">変調方式。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
+    /// <param name="noiseVariance">雑音分散。</param>
     private static void EmitSymbolSoftLlrs(
         Complex symbol,
         ModulationScheme modulationScheme,
@@ -4429,7 +4908,15 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <param name="amplitude">PAM 振幅値。</param>
+    /// <summary>
+    /// QAM の I または Q 軸（PAM）についてソフト LLR を書き出します。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="bitsPerAxis">軸あたりビット数。</param>
+    /// <param name="levels">PAM レベル表。</param>
+    /// <param name="invVariance">雑音分散の逆数。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
     private static void EmitPamAxisSoftLlrs(
         double amplitude,
         int bitsPerAxis,
@@ -4441,7 +4928,15 @@ public sealed partial class OfdmGenerator
         EmitPamAxisSoftLlrsCore(amplitude, bitsPerAxis, levels, invVariance, ref bitIndex, llrs.AsSpan());
     }
 
-    /// <param name="amplitude">PAM 振幅値。</param>
+    /// <summary>
+    /// PAM 軸ソフト LLR のスカラー実装です。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="bitsPerAxis">軸あたりビット数。</param>
+    /// <param name="levels">PAM レベル表。</param>
+    /// <param name="invVariance">雑音分散の逆数。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
     private static void EmitPamAxisSoftLlrsCore(
         double amplitude,
         int bitsPerAxis,
@@ -4499,7 +4994,13 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <param name="amplitude">PAM 振幅値。</param>
+    /// <summary>
+    /// 16QAM の PAM 軸ソフト LLR を AVX で計算します。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="invVariance">雑音分散の逆数。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
     private static void EmitPamAxisSoftLlrsQam16Avx(
         double amplitude,
         double invVariance,
@@ -4531,7 +5032,13 @@ public sealed partial class OfdmGenerator
         WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
     }
 
-    /// <param name="amplitude">PAM 振幅値。</param>
+    /// <summary>
+    /// 64QAM の PAM 軸ソフト LLR を AVX で計算します。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="invVariance">雑音分散の逆数。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
     private static void EmitPamAxisSoftLlrsQam64Avx(
         double amplitude,
         double invVariance,
@@ -4579,7 +5086,13 @@ public sealed partial class OfdmGenerator
         WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
     }
 
-    /// <param name="amplitude">PAM 振幅値。</param>
+    /// <summary>
+    /// 16QAM の PAM 軸ソフト LLR を AdvSimd で計算します。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="invVariance">雑音分散の逆数。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
     private static void EmitPamAxisSoftLlrsQam16Arm64(
         double amplitude,
         double invVariance,
@@ -4608,7 +5121,13 @@ public sealed partial class OfdmGenerator
         WriteLlr(ref bitIndex, llrs, 0.5 * (min00 - min01) * invVariance);
     }
 
-    /// <param name="amplitude">PAM 振幅値。</param>
+    /// <summary>
+    /// 64QAM の PAM 軸ソフト LLR を AdvSimd で計算します。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="invVariance">雑音分散の逆数。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
     private static void EmitPamAxisSoftLlrsQam64Arm64(
         double amplitude,
         double invVariance,
@@ -4658,9 +5177,11 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// BuildPamByBinary を構築します。
+    /// Gray 符号対応の PAM レベル表をビット数から構築します。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="bitsPerAxis">軸あたりビット数。</param>
+    /// <param name="levels">レベル数（通常 2^bits）。</param>
+    /// <returns>昇順 PAM 振幅レベル。</returns>
     private static double[] BuildPamByBinary(int bitsPerAxis, int[] levels)
     {
         var count = 1 << bitsPerAxis;
@@ -4676,8 +5197,11 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// WriteLlr を書き込みます。
+    /// LLR を指定ビット位置へ書き込みます（範囲外は無視）。
     /// </summary>
+    /// <param name="bitIndex">ビット位置。</param>
+    /// <param name="llrs">LLR 配列。</param>
+    /// <param name="value">LLR 値。</param>
     private static void WriteLlr(ref int bitIndex, Span<double> llrs, double value)
     {
         if (bitIndex >= llrs.Length)
@@ -4688,7 +5212,14 @@ public sealed partial class OfdmGenerator
         llrs[bitIndex++] = value;
     }
 
-    /// <param name="amplitude">PAM 振幅値。</param>
+    /// <summary>
+    /// PAM 軸振幅を最近傍レベル硬判定し、Gray→binary でビットを書き出します。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="bitsPerAxis">軸あたりビット数。</param>
+    /// <param name="levels">PAM レベル表。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="bits">ビット出力。</param>
     private static void EmitPamAxisBits(
         double amplitude,
         int bitsPerAxis,
@@ -4704,8 +5235,12 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <param name="amplitude">隕ｳ貂ｬ謖ｯ蟷・・/param>
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 振幅に最も近い PAM レベル指数を返します。
+    /// </summary>
+    /// <param name="amplitude">軸振幅。</param>
+    /// <param name="levels">PAM レベル表。</param>
+    /// <returns>レベル指数。</returns>
     private static int FindNearestLevelIndex(double amplitude, int[] levels)
     {
         var best = 0;
@@ -4723,7 +5258,11 @@ public sealed partial class OfdmGenerator
         return best;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// Gray 符号を通常の二進値へ変換します。
+    /// </summary>
+    /// <param name="gray">Gray 符号値。</param>
+    /// <returns>二進値。</returns>
     private static int GrayToBinary(int gray)
     {
         var binary = gray;
@@ -4736,8 +5275,11 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// WriteBit を書き込みます。
+    /// ビットを指定位置へ書き込みます（範囲外は無視）。
     /// </summary>
+    /// <param name="bitIndex">ビット位置。</param>
+    /// <param name="bits">ビット配列。</param>
+    /// <param name="value">ビット値。</param>
     private static void WriteBit(ref int bitIndex, bool[] bits, bool value)
     {
         if (bitIndex >= bits.Length)
@@ -4748,6 +5290,16 @@ public sealed partial class OfdmGenerator
         bits[bitIndex++] = value;
     }
 
+    /// <summary>
+    /// CP 除去→FFT→パイロット等化／AGC を行い、周波数ビンと等化係数を埋めます。
+    /// </summary>
+    /// <param name="symbolWithCp">CP 付き時間シンボル。</param>
+    /// <param name="pilotBins">パイロットビン。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="agcState">パイロット AGC 状態。</param>
+    /// <param name="timeNoCp">CP 除去後の作業バッファ。</param>
+    /// <param name="freqBins">FFT 出力ビン。</param>
+    /// <param name="equalizers">等化係数出力。</param>
     private void PrepareSymbolFrequency(
         ReadOnlySpan<Complex> symbolWithCp,
         List<int> pilotBins,
@@ -4762,7 +5314,12 @@ public sealed partial class OfdmGenerator
         EstimatePilotEqualizersInto(freqBins, pilotBins, useRightChannel, equalizers, agcState);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// CP 付きシンボルからデータ部だけを切り出します。
+    /// </summary>
+    /// <param name="withCp">CP 付きシンボル。</param>
+    /// <param name="cpLength">CP 長。</param>
+    /// <returns>CP 除去後の時間領域。</returns>
     private static Complex[] RemoveCyclicPrefix(ReadOnlySpan<Complex> withCp, int cpLength)
     {
         var result = new Complex[withCp.Length - cpLength];
@@ -4770,7 +5327,11 @@ public sealed partial class OfdmGenerator
         return result;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 送信 IFFT と対になる正規化のフォワード FFT を実行します。
+    /// </summary>
+    /// <param name="time">時間領域。</param>
+    /// <returns>周波数領域ビン。</returns>
     private static Complex[] ForwardFftMatchingInverse(Complex[] time)
     {
         var freq = new Complex[time.Length];
@@ -4778,6 +5339,11 @@ public sealed partial class OfdmGenerator
         return freq;
     }
 
+    /// <summary>
+    /// 送信 IFFT と対になる正規化のフォワード FFT を destination へ書き込みます。
+    /// </summary>
+    /// <param name="time">時間領域。</param>
+    /// <param name="destination">周波数領域出力。</param>
     private static void ForwardFftMatchingInverseInto(ReadOnlySpan<Complex> time, Complex[] destination)
     {
         if (destination.Length < time.Length)
@@ -4790,9 +5356,10 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// 実数 PCM（Imag=0）から表示用フォワード FFT を計算します。
-    /// Hann 窓をかけてスペクトル漏れを抑え、聴感に近い連続スペクトルにします。
+    /// 実数 PCM に Hann 窓を掛けフォワード FFT し、表示用スペクトルを destination へ書きます。
     /// </summary>
+    /// <param name="timePcm">実数 PCM（Imag=0）。末尾 destination 長を使用。</param>
+    /// <param name="destination">スペクトル出力。</param>
     public static void ComputeForwardSpectrumFromRealPcm(
         ReadOnlySpan<Complex> timePcm,
         Complex[] destination)
@@ -4813,10 +5380,10 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// 実数 PCM から矩形窓のフォワード FFT を計算します（I-Q コンスタレーション用）。
+    /// 実数 PCM を矩形窓のままフォワード FFT し、destination へ書きます（I-Q 用）。
     /// </summary>
-    /// <param name="timePcm">実数 PCM（Imag=0）。末尾 <paramref name="destination"/> 長を使います。</param>
-    /// <param name="destination">FFT 出力（破壊的）。</param>
+    /// <param name="timePcm">実数 PCM（Imag=0）。末尾 destination 長を使用。</param>
+    /// <param name="destination">FFT 出力。</param>
     public static void ComputeRectangularForwardFftFromRealPcm(
         ReadOnlySpan<Complex> timePcm,
         Complex[] destination)
@@ -4841,12 +5408,18 @@ public sealed partial class OfdmGenerator
     public int SampleRate => _config.SampleRate;
 
     /// <summary>
-    /// BuildFrequencyDomainSymbol を構築します。
+    /// キャリア配置に従いパイロット／データシンボルを周波数ビンへ配置します。
     /// </summary>
-    /// <returns>処理結果。</returns>
-    private Complex[] BuildFrequencyDomainSymbol(CarrierChannel channel)
+    /// <param name="channel">L/R チャネル。</param>
+    /// <param name="bins">周波数ビン出力。</param>
+    private void BuildFrequencyDomainSymbol(CarrierChannel channel, Complex[] bins)
     {
-        var bins = new Complex[_config.FftSize];
+        if (bins.Length < _config.FftSize)
+        {
+            throw new ArgumentException("Frequency bin buffer is too short.", nameof(bins));
+        }
+
+        Array.Clear(bins, 0, _config.FftSize);
         var useRight = channel == CarrierChannel.Right;
         var pilotBins = useRight ? _rightPilotBins : _leftPilotBins;
         var dataBins = useRight ? _rightDataCarrierBase : _leftDataCarrierBase;
@@ -4863,11 +5436,30 @@ public sealed partial class OfdmGenerator
         {
             bins[dataBin] = GenerateModulatedSymbol(dataModulationByBin[dataBin]);
         }
-
-        return bins;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 周波数シンボル作業バッファを必要長で確保（または再利用）します。
+    /// </summary>
+    /// <param name="scratch">既存バッファ。null 可。</param>
+    /// <returns>長さ FftSize のバッファ。</returns>
+    private Complex[] EnsureFreqSymbolScratch(ref Complex[]? scratch)
+    {
+        if (scratch is null || scratch.Length != _config.FftSize)
+        {
+            scratch = new Complex[_config.FftSize];
+        }
+
+        return scratch;
+    }
+
+    /// <summary>
+    /// 変調方式に応じてビット列から 1 複素シンボルを消費・生成します。
+    /// </summary>
+    /// <param name="modulationScheme">変調方式。</param>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>複素シンボル。</returns>
     private static Complex ConsumeModulatedSymbol(
         ModulationScheme modulationScheme,
         ref int bitIndex,
@@ -4885,9 +5477,11 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// ReadBitOrZero を読み取ります。
+    /// ビット列から 1 ビットを読みます。末尾超過時は false を返します。
     /// </summary>
-    /// <returns>判定結果。</returns>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>読み取ったビット。末尾を超えた場合は false。</returns>
     private static bool ReadBitOrZero(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         if (bitIndex >= bits.Length)
@@ -4900,9 +5494,12 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// ReadBitField を読み取ります。
+    /// ビット列から bitCount ビットを MSB 先で整数として読みます。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <param name="bitCount">読むビット数。</param>
+    /// <returns>読み取った整数値。</returns>
     private static int ReadBitField(ref int bitIndex, ReadOnlySpan<bool> bits, int bitCount)
     {
         var value = 0;
@@ -4914,55 +5511,78 @@ public sealed partial class OfdmGenerator
         return value;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ビット列から BPSK シンボルを 1 つ生成します。
+    /// </summary>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>BPSK 複素シンボル。</returns>
     private static Complex ConsumeBpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var bit = ReadBitOrZero(ref bitIndex, bits);
         return new Complex(bit ? 1.0 : -1.0, 0.0);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ビット列から QPSK シンボルを 1 つ生成します。
+    /// </summary>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>QPSK 複素シンボル。</returns>
     private static Complex ConsumeQpskSymbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var iBit = ReadBitOrZero(ref bitIndex, bits);
         var qBit = ReadBitOrZero(ref bitIndex, bits);
-        var real = iBit ? 1.0 : -1.0;
-        var imag = qBit ? 1.0 : -1.0;
-        return new Complex(real, imag) / Math.Sqrt(2.0);
+        var real = iBit ? InvSqrt2 : -InvSqrt2;
+        var imag = qBit ? InvSqrt2 : -InvSqrt2;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ビット列から 16QAM シンボルを 1 つ生成します。
+    /// </summary>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>16QAM 複素シンボル。</returns>
     private static Complex ConsumeQam16Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
-        var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 2), bitsPerAxis: 2, Qam16Levels);
-        var imag = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 2), bitsPerAxis: 2, Qam16Levels);
-        return new Complex(real, imag) / Math.Sqrt(10.0);
+        var real = Qam16PamByBinary[ReadBitField(ref bitIndex, bits, 2)] * InvSqrt10;
+        var imag = Qam16PamByBinary[ReadBitField(ref bitIndex, bits, 2)] * InvSqrt10;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ビット列から 64QAM シンボルを 1 つ生成します。
+    /// </summary>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>64QAM 複素シンボル。</returns>
     private static Complex ConsumeQam64Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
-        var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 3), bitsPerAxis: 3, Qam64Levels);
-        var imag = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 3), bitsPerAxis: 3, Qam64Levels);
-        return new Complex(real, imag) / Math.Sqrt(42.0);
+        var real = Qam64PamByBinary[ReadBitField(ref bitIndex, bits, 3)] * InvSqrt42;
+        var imag = Qam64PamByBinary[ReadBitField(ref bitIndex, bits, 3)] * InvSqrt42;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// ビット列から 256QAM シンボルを 1 つ生成します（性能測定用）。
+    /// </summary>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>256QAM 複素シンボル。</returns>
     private static Complex ConsumeQam256Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
-        var real = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 4), bitsPerAxis: 4, Qam256Levels);
-        var imag = GrayMappedPamLevel(ReadBitField(ref bitIndex, bits, 4), bitsPerAxis: 4, Qam256Levels);
-        return new Complex(real, imag) / Math.Sqrt(170.0);
+        var real = Qam256PamByBinary[ReadBitField(ref bitIndex, bits, 4)] * InvSqrt170;
+        var imag = Qam256PamByBinary[ReadBitField(ref bitIndex, bits, 4)] * InvSqrt170;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
-    private static int GrayMappedPamLevel(int binaryIndex, int bitsPerAxis, int[] levels)
-    {
-        var grayIndex = (binaryIndex ^ (binaryIndex >> 1)) & ((1 << bitsPerAxis) - 1);
-        return levels[grayIndex];
-    }
-
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// キャリア列から spacing 間隔でパイロットビン集合を選びます（CH2/CH6 相当）。
+    /// </summary>
+    /// <param name="orderedBins">昇順キャリアビン。</param>
+    /// <param name="spacing">パイロット間隔（通常 8）。</param>
+    /// <returns>パイロットビン集合。</returns>
     private static HashSet<int> SelectPilotBins(List<int> orderedBins, int spacing)
     {
         // グループ内 CH2/CH6（0起点で index 2 と 6）をパイロットにする（modulation.mdc）。
@@ -4995,8 +5615,16 @@ public sealed partial class OfdmGenerator
         return pilots;
     }
 
+    /// <summary>
+    /// 配列をインスタンス乱数で Fisher–Yates シャッフルします。
+    /// </summary>
     private void ShuffleInPlace(List<int> values) => ShuffleInPlace(values, _random);
 
+    /// <summary>
+    /// 配列を指定 Random で Fisher–Yates シャッフルします。
+    /// </summary>
+    /// <param name="values">シャッフル対象。</param>
+    /// <param name="random">乱数源。</param>
     private static void ShuffleInPlace(List<int> values, Random random)
     {
         for (var i = values.Count - 1; i > 0; i--)
@@ -5006,6 +5634,11 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// 配列を指定 Random で Fisher–Yates シャッフルします。
+    /// </summary>
+    /// <param name="values">シャッフル対象。</param>
+    /// <param name="random">乱数源。</param>
     private static void ShuffleInPlace(int[] values, Random random)
     {
         for (var i = values.Length - 1; i > 0; i--)
@@ -5015,7 +5648,11 @@ public sealed partial class OfdmGenerator
         }
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 乱数から指定変調の複素シンボルを 1 つ生成します。
+    /// </summary>
+    /// <param name="modulationScheme">変調方式。</param>
+    /// <returns>複素シンボル。</returns>
     private Complex GenerateModulatedSymbol(ModulationScheme modulationScheme)
     {
         return modulationScheme switch
@@ -5029,57 +5666,68 @@ public sealed partial class OfdmGenerator
         };
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 乱数から BPSK シンボルを生成します。
+    /// </summary>
+    /// <returns>BPSK 複素シンボル。</returns>
     private Complex GenerateBpskSymbol()
     {
         var bit = _random.Next(2);
         return new Complex(bit == 0 ? -1.0 : 1.0, 0.0);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 乱数から QPSK シンボルを生成します。
+    /// </summary>
+    /// <returns>QPSK 複素シンボル。</returns>
     private Complex GenerateQpskSymbol()
     {
         var iBit = _random.Next(2);
         var qBit = _random.Next(2);
 
-        var real = iBit == 0 ? -1.0 : 1.0;
-        var imag = qBit == 0 ? -1.0 : 1.0;
-        return new Complex(real, imag) / Math.Sqrt(2.0);
+        var real = iBit == 0 ? -InvSqrt2 : InvSqrt2;
+        var imag = qBit == 0 ? -InvSqrt2 : InvSqrt2;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 乱数から 16QAM シンボルを生成します。
+    /// </summary>
+    /// <returns>16QAM 複素シンボル。</returns>
     private Complex GenerateQam16Symbol()
     {
-        var real = GenerateGrayMappedPamLevel(bitsPerAxis: 2, Qam16Levels);
-        var imag = GenerateGrayMappedPamLevel(bitsPerAxis: 2, Qam16Levels);
-        return new Complex(real, imag) / Math.Sqrt(10.0);
+        var real = Qam16PamByBinary[NextBits(2)] * InvSqrt10;
+        var imag = Qam16PamByBinary[NextBits(2)] * InvSqrt10;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 乱数から 64QAM シンボルを生成します。
+    /// </summary>
+    /// <returns>64QAM 複素シンボル。</returns>
     private Complex GenerateQam64Symbol()
     {
-        var real = GenerateGrayMappedPamLevel(bitsPerAxis: 3, Qam64Levels);
-        var imag = GenerateGrayMappedPamLevel(bitsPerAxis: 3, Qam64Levels);
-        return new Complex(real, imag) / Math.Sqrt(42.0);
+        var real = Qam64PamByBinary[NextBits(3)] * InvSqrt42;
+        var imag = Qam64PamByBinary[NextBits(3)] * InvSqrt42;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 乱数から 256QAM シンボルを生成します。
+    /// </summary>
+    /// <returns>256QAM 複素シンボル。</returns>
     private Complex GenerateQam256Symbol()
     {
-        var real = GenerateGrayMappedPamLevel(bitsPerAxis: 4, Qam256Levels);
-        var imag = GenerateGrayMappedPamLevel(bitsPerAxis: 4, Qam256Levels);
-        return new Complex(real, imag) / Math.Sqrt(170.0);
+        var real = Qam256PamByBinary[NextBits(4)] * InvSqrt170;
+        var imag = Qam256PamByBinary[NextBits(4)] * InvSqrt170;
+        return new Complex(real, imag);
     }
 
-    /// <returns>処理結果。</returns>
-    private int GenerateGrayMappedPamLevel(int bitsPerAxis, int[] levels)
-    {
-        var binaryIndex = NextBits(bitsPerAxis);
-        var grayIndex = (binaryIndex ^ (binaryIndex >> 1)) & ((1 << bitsPerAxis) - 1);
-        return levels[grayIndex];
-    }
-
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 内部乱数から bitCount ビットの整数を生成します。
+    /// </summary>
+    /// <param name="bitCount">ビット数。</param>
+    /// <returns>乱数ビットフィールド。</returns>
     private int NextBits(int bitCount)
     {
         var value = 0;
@@ -5099,7 +5747,12 @@ public sealed partial class OfdmGenerator
         return value;
     }
 
-    /// <returns>処理結果。</returns>
+    /// <summary>
+    /// 時間領域シンボルにサイクリックプレフィックスを付与します。
+    /// </summary>
+    /// <param name="symbol">CP なし時間領域シンボル。</param>
+    /// <param name="cpLength">CP 長。</param>
+    /// <returns>CP 付きシンボル。</returns>
     private static Complex[] AddCyclicPrefix(Complex[] symbol, int cpLength)
     {
         if (cpLength == 0)

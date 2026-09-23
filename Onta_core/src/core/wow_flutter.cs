@@ -67,6 +67,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 指定サンプル位置の相対速度（1.0 = 無変調）を返します。
     /// </summary>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">amount。</param>
+    /// <param name="wowPhase">wowPhase。</param>
+    /// <param name="flutterPhase">flutterPhase。</param>
+    /// <param name="sampleIndex">sampleIndex。</param>
+    /// <returns>計算した実数値。</returns>
     public static double EvaluateSpeed(
         int sampleRate,
         double amount,
@@ -90,6 +96,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 指定サンプル位置の速度偏差を百分率で返します（(speed-1)×100）。
     /// </summary>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">amount。</param>
+    /// <param name="wowPhase">wowPhase。</param>
+    /// <param name="flutterPhase">flutterPhase。</param>
+    /// <param name="sampleIndex">sampleIndex。</param>
+    /// <returns>計算した実数値。</returns>
     public static double EvaluateSpeedDeviationPercent(
         int sampleRate,
         double amount,
@@ -101,6 +113,11 @@ public static class WowFlutterWarp
     /// <summary>
     /// 速度変調プロファイルを既存バッファへ書き込みます。
     /// </summary>
+    /// <param name="profile">符号化プロファイル。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">amount。</param>
+    /// <param name="wowPhase">wowPhase。</param>
+    /// <param name="flutterPhase">flutterPhase。</param>
     private static void FillSpeedProfile(
         Span<double> profile,
         int sampleRate,
@@ -526,6 +543,12 @@ public static class WowFlutterWarp
     /// <param name="amount">変調量（送信時と同一値）。</param>
     /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
     /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="warped">warped。</param>
+    /// <param name="referenceLength">referenceLength。</param>
+    /// <param name="prefixStart">prefixStart。</param>
+    /// <param name="prefixLength">prefixLength。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="destination">出力先。</param>
     public static void CorrectPrefixWithReferenceLength(
         Complex[] warped,
         int referenceLength,
@@ -591,6 +614,17 @@ public static class WowFlutterWarp
     /// <param name="amount">変調量（送信時と同一値）。</param>
     /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
     /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+    /// <param name="warped">warped。</param>
+    /// <param name="referenceLength">referenceLength。</param>
+    /// <param name="prefixStart">prefixStart。</param>
+    /// <param name="prefixLength">prefixLength。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="idealReals">idealReals。</param>
+    /// <param name="meanIdeal">meanIdeal。</param>
+    /// <param name="energyIdeal">energyIdeal。</param>
+    /// <param name="sumScratch">sumScratch。</param>
+    /// <param name="countScratch">countScratch。</param>
+    /// <returns>計算した実数値。</returns>
     public static double CorrectPrefixCorrelateReal(
         Complex[] warped,
         int referenceLength,
@@ -652,6 +686,16 @@ public static class WowFlutterWarp
     /// <summary>
     /// 散乱 Correct の sum/count を埋めます（呼び出し側で Clear 済み scratch を渡す必要なし）。
     /// </summary>
+    /// <param name="warped">warped。</param>
+    /// <param name="referenceLength">referenceLength。</param>
+    /// <param name="prefixStart">prefixStart。</param>
+    /// <param name="prefixLength">prefixLength。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">amount。</param>
+    /// <param name="wowPhase">wowPhase。</param>
+    /// <param name="flutterPhase">flutterPhase。</param>
+    /// <param name="sum">sum。</param>
+    /// <param name="count">要素数。</param>
     private static void ScatterCorrectPrefix(
         Complex[] warped,
         int referenceLength,
@@ -752,6 +796,11 @@ public static class WowFlutterWarp
     /// <summary>
     /// 連続 double 系列の正規化相関係数（ideal 側 mean/energy 既知）。
     /// </summary>
+    /// <param name="a">a。</param>
+    /// <param name="b">b。</param>
+    /// <param name="meanB">meanB。</param>
+    /// <param name="energyB">energyB。</param>
+    /// <returns>計算した実数値。</returns>
     public static double CorrelateDenseReals(
         ReadOnlySpan<double> a,
         ReadOnlySpan<double> b,
@@ -797,6 +846,9 @@ public static class WowFlutterWarp
     /// <summary>
     /// Internal helper method: LoadAvx.
     /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="index">インデックス。</param>
+    /// <returns>Vector256<double>。</returns>
     private static Vector256<double> LoadAvx(ReadOnlySpan<double> source, int index)
     {
         ref var first = ref MemoryMarshal.GetReference(source);
@@ -807,6 +859,9 @@ public static class WowFlutterWarp
     /// <summary>
     /// Internal helper method: LoadNeon.
     /// </summary>
+    /// <param name="source">入力元。</param>
+    /// <param name="index">インデックス。</param>
+    /// <returns>Vector128<double>。</returns>
     private static Vector128<double> LoadNeon(ReadOnlySpan<double> source, int index)
     {
         ref var first = ref MemoryMarshal.GetReference(source);
@@ -817,6 +872,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// Internal helper method: CorrelateDenseRealsAvx.
     /// </summary>
+    /// <param name="a">a。</param>
+    /// <param name="b">b。</param>
+    /// <param name="meanB">meanB。</param>
+    /// <param name="energyB">energyB。</param>
+    /// <param name="count">要素数。</param>
+    /// <returns>計算した実数値。</returns>
     private static double CorrelateDenseRealsAvx(
         ReadOnlySpan<double> a,
         ReadOnlySpan<double> b,
@@ -868,6 +929,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// Internal helper method: CorrelateDenseRealsAdvSimd.
     /// </summary>
+    /// <param name="a">a。</param>
+    /// <param name="b">b。</param>
+    /// <param name="meanB">meanB。</param>
+    /// <param name="energyB">energyB。</param>
+    /// <param name="count">要素数。</param>
+    /// <returns>計算した実数値。</returns>
     private static double CorrelateDenseRealsAdvSimd(
         ReadOnlySpan<double> a,
         ReadOnlySpan<double> b,
@@ -918,6 +985,10 @@ public static class WowFlutterWarp
     /// <summary>
     /// Internal helper method: SumOfSines.
     /// </summary>
+    /// <param name="phase0">phase0。</param>
+    /// <param name="omega">omega。</param>
+    /// <param name="count">要素数。</param>
+    /// <returns>計算した実数値。</returns>
     private static double SumOfSines(double phase0, double omega, int count)
     {
         if (count <= 0)
@@ -943,6 +1014,8 @@ public static class WowFlutterWarp
     /// <summary>
     /// Internal helper method: RoundAwayFromZeroPositive.
     /// </summary>
+    /// <param name="value">入力値。</param>
+    /// <returns>計算した整数値。</returns>
     private static int RoundAwayFromZeroPositive(double value) =>
         (int)(value + 0.5);
 
@@ -980,6 +1053,12 @@ public static class WowFlutterWarp
     /// <summary>
     /// 逆補正結果を指定バッファへ書き込みます。
     /// </summary>
+    /// <param name="warped">warped。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">amount。</param>
+    /// <param name="wowPhase">wowPhase。</param>
+    /// <param name="flutterPhase">flutterPhase。</param>
+    /// <param name="destination">出力先。</param>
     private static void CorrectInto(
         Complex[] warped,
         int sampleRate,
@@ -994,6 +1073,13 @@ public static class WowFlutterWarp
     /// <summary>
     /// 先頭指定長の逆補正結果を指定バッファへ書き込みます。
     /// </summary>
+    /// <param name="warped">warped。</param>
+    /// <param name="length">長さ。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="amount">amount。</param>
+    /// <param name="wowPhase">wowPhase。</param>
+    /// <param name="flutterPhase">flutterPhase。</param>
+    /// <param name="destination">出力先。</param>
     private static void CorrectInto(
         Complex[] warped,
         int length,
@@ -1182,6 +1268,9 @@ public static class WowFlutterWarp
     /// <summary>
     /// 速度プロファイルから累積時間軸と正規化係数を算出します。
     /// </summary>
+    /// <param name="speedProfile">speedProfile。</param>
+    /// <param name="cumul">cumul。</param>
+    /// <param name="scale">scale。</param>
     private static void BuildCumul(ReadOnlySpan<double> speedProfile, out double[] cumul, out double scale)
     {
         var n = speedProfile.Length;
@@ -1210,13 +1299,18 @@ public static class WowFlutterWarp
     /// <summary>
     /// 配列版の累積時間軸算出ヘルパーです。
     /// </summary>
+    /// <param name="speedProfile">speedProfile。</param>
+    /// <param name="cumul">cumul。</param>
+    /// <param name="scale">scale。</param>
     private static void BuildCumul(double[] speedProfile, out double[] cumul, out double scale) =>
         BuildCumul((ReadOnlySpan<double>)speedProfile, out cumul, out scale);
 
     /// <summary>
     /// 線形補間で波形をオーバーサンプリングします。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="source">入力元。</param>
+    /// <param name="factor">factor。</param>
+    /// <returns>結果の配列またはスライス。</returns>
     private static double[] UpsampleLinear(ReadOnlySpan<double> source, int factor)
     {
         if (source.Length == 0)
@@ -1277,7 +1371,9 @@ public static class WowFlutterWarp
     /// <summary>
     /// 指定位置の値を線形補間でサンプリングします。
     /// </summary>
-    /// <returns>処理結果。</returns>
+    /// <param name="samples">入力サンプル列。</param>
+    /// <param name="position">position。</param>
+    /// <returns>計算した実数値。</returns>
     private static double SampleLinear(ReadOnlySpan<double> samples, double position)
     {
         if (samples.Length == 0)
