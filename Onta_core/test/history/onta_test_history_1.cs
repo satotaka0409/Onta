@@ -11,7 +11,7 @@ namespace Onta.Core.Tests.History;
 public sealed class OntaTestHistory1
 {
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 8,
+        ActiveSubcarriers: 16,
         ModulationScheme: ModulationScheme.Bpsk,
         ChannelMode: ChannelMode.Mono,
         BlockInterleaveFactor: 1);

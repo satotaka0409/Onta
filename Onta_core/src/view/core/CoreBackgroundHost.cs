@@ -174,7 +174,7 @@ internal static class CoreBackgroundHost
             cancellationToken.ThrowIfCancellationRequested();
 
             var profile = new FileWavCodecProfile(
-                ActiveSubcarriers: 8,
+                ActiveSubcarriers: 16,
                 ModulationScheme: ModulationScheme.Qpsk,
                 ChannelMode: ChannelMode.Mono);
             _ = FileWavCodec.EstimateTransmissionDuration(profile, 8192);

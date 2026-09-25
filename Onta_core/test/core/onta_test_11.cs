@@ -5,7 +5,7 @@ namespace Onta.Core.Tests.Core;
 
 /// <summary>
 /// ステレオ 48SC / QPSK の往復テストです。
-/// Group E/F の変調1段下げ（QPSK→BPSK）を含む SC-48 構成を検証します。
+/// あわせて Group G/H の変調1段下げ（QPSK→BPSK）を含む SC-64 構成を検証します。
 /// </summary>
 public sealed class OntaTest11
 {
@@ -15,11 +15,11 @@ public sealed class OntaTest11
         ChannelMode: ChannelMode.Stereo);
 
     [Fact]
-    public void BitsPerOfdmSymbol_Sc48Qpsk_AppliesGroupEFDowngrade()
+    public void BitsPerOfdmSymbol_Sc64Qpsk_AppliesGroupGHDowngrade()
     {
         var config = new OfdmConfig(
-            fftSize: OfdmConfig.ResolveFftSize(48, ChannelMode.Stereo),
-            activeSubcarriers: 48,
+            fftSize: OfdmConfig.ResolveFftSize(64, ChannelMode.Stereo),
+            activeSubcarriers: 64,
             cyclicPrefixLength: 16,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Qpsk,
@@ -30,11 +30,11 @@ public sealed class OntaTest11
 
         var ofdm = new OfdmGenerator(config);
 
-        // 48SC: 12 pilot + 36 data。A–D は QPSK、E/F は BPSK → 60bit/symbol。
-        Assert.Equal(60, ofdm.BitsPerOfdmSymbol);
-        Assert.Equal(Enumerable.Range(1, 48), OfdmConfig.ResolveConceptualLeftBins(48));
-        Assert.Equal((byte)5, OfdmConfig.ResolveSubcarrierGroupId(41));
-        Assert.Equal((byte)5, OfdmConfig.ResolveSubcarrierGroupId(48));
+        // 64SC: 16 pilot + 48 data。A–F は QPSK、G/H は BPSK → 84bit/symbol。
+        Assert.Equal(84, ofdm.BitsPerOfdmSymbol);
+        Assert.Equal(Enumerable.Range(1, 64), OfdmConfig.ResolveConceptualLeftBins(64));
+        Assert.Equal((byte)6, OfdmConfig.ResolveSubcarrierGroupId(49));
+        Assert.Equal((byte)7, OfdmConfig.ResolveSubcarrierGroupId(64));
     }
 
     [Fact]

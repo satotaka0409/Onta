@@ -16,7 +16,8 @@
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
-          <ColumnDefinition Width="Auto" MinWidth="320"/>
+          <ColumnDefinition Width="Auto"
+                            MinWidth="320"/>
           <ColumnDefinition Width="8"/>
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
@@ -37,7 +38,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+          <StackPanel Orientation="Horizontal"
+                      Margin="0,0,0,4">
             <RadioButton x:Name="ReferenceSignalRadio"
                          Content="基準信号"
                          GroupName="PerfSignalMode"
@@ -76,36 +78,60 @@
                                  VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="400Hz" Tag="400"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="400Hz"
+                                 Tag="400"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="1KHz" Tag="1000"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="1KHz"
+                                 Tag="1000"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="3KHz" Tag="3000"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="3KHz"
+                                 Tag="3000"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="8KHz" Tag="8000"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="8KHz"
+                                 Tag="8000"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="10KHz" Tag="10000"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="10KHz"
+                                 Tag="10000"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="12.5KHz" Tag="12500"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="12.5KHz"
+                                 Tag="12500"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="15KHz" Tag="15000"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="15KHz"
+                                 Tag="15000"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
-                    <RadioButton GroupName="PerfTone" Content="20KHz" Tag="20000"
-                                 VerticalAlignment="Center" VerticalContentAlignment="Center"
+                    <RadioButton GroupName="PerfTone"
+                                 Content="20KHz"
+                                 Tag="20000"
+                                 VerticalAlignment="Center"
+                                 VerticalContentAlignment="Center"
                                  Margin="0,0,12,4"
                                  Checked="OnToneSelectionChanged"/>
                     <FrameworkElement Margin="0,0,12,4"/>
@@ -165,29 +191,73 @@
                     <ColumnDefinition Width="180"/>
                     <ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
-                  <GroupBox Header="サブキャリア" Margin="4">
+                  <GroupBox Header="サブキャリア"
+                            Margin="4">
                     <UniformGrid x:Name="SubcarrierPanel"
                                  Columns="3"
                                  Margin="3">
-                      <RadioButton Content="8-SC" Tag="8" GroupName="PerfSubcarrier" IsChecked="True" Margin="0,0,4,2"/>
-                      <RadioButton Content="16-SC" Tag="16" GroupName="PerfSubcarrier" Margin="0,0,4,2"/>
-                      <RadioButton Content="24-SC" Tag="24" GroupName="PerfSubcarrier" Margin="0,0,4,2"/>
-                      <RadioButton Content="32-SC" Tag="32" GroupName="PerfSubcarrier" Margin="0,0,4,2"/>
-                      <RadioButton Content="40-SC" Tag="40" GroupName="PerfSubcarrier" Margin="0,0,4,2"/>
-                      <RadioButton Content="48-SC" Tag="48" GroupName="PerfSubcarrier" Margin="0,0,4,2"/>
-                      <RadioButton Content="56-SC" Tag="56" GroupName="PerfSubcarrier" Margin="0,0,4,2"/>
-                      <RadioButton Content="64-SC" Tag="64" GroupName="PerfSubcarrier" Margin="0,0,4,2"/>
+                      <RadioButton Content="16-SC"
+                                   Tag="16"
+                                   GroupName="PerfSubcarrier"
+                                   IsChecked="True"
+                                   Margin="0,0,4,2"/>
+                      <RadioButton Content="24-SC"
+                                   Tag="24"
+                                   GroupName="PerfSubcarrier"
+                                   Margin="0,0,4,2"/>
+                      <RadioButton Content="32-SC"
+                                   Tag="32"
+                                   GroupName="PerfSubcarrier"
+                                   Margin="0,0,4,2"/>
+                      <RadioButton Content="40-SC"
+                                   Tag="40"
+                                   GroupName="PerfSubcarrier"
+                                   Margin="0,0,4,2"/>
+                      <RadioButton Content="48-SC"
+                                   Tag="48"
+                                   GroupName="PerfSubcarrier"
+                                   Margin="0,0,4,2"/>
+                      <RadioButton Content="56-SC"
+                                   Tag="56"
+                                   GroupName="PerfSubcarrier"
+                                   Margin="0,0,4,2"/>
+                      <RadioButton Content="64-SC"
+                                   Tag="64"
+                                   GroupName="PerfSubcarrier"
+                                   Margin="0,0,4,2"/>
                     </UniformGrid>
                   </GroupBox>
-                  <GroupBox Grid.Column="1" Header="変調" Margin="4">
+                  <GroupBox Grid.Column="1"
+                            Header="変調"
+                            Margin="4">
                     <UniformGrid x:Name="ModulationPanel"
                                  Columns="2"
                                  Margin="2">
-                      <RadioButton Content="BPSK" Tag="Bpsk" GroupName="PerfModulation" IsChecked="True" Margin="0,0,6,4"/>
-                      <RadioButton Content="QPSK" Tag="Qpsk" GroupName="PerfModulation" Margin="0,0,0,4"/>
-                      <RadioButton Content="16QAM" Tag="Qam16" GroupName="PerfModulation" Margin="0,0,6,4"/>
-                      <RadioButton Content="64QAM" Tag="Qam64" GroupName="PerfModulation" Margin="0,0,0,4"/>
-                      <RadioButton Content="256QAM" Tag="Qam256" GroupName="PerfModulation" Margin="0,0,6,0"/>
+                      <RadioButton Content="BPSK"
+                                   Tag="Bpsk"
+                                   GroupName="PerfModulation"
+                                   IsChecked="True"
+                                   Margin="0,0,6,4"/>
+                      <RadioButton Content="QPSK"
+                                   Tag="Qpsk"
+                                   GroupName="PerfModulation"
+                                   Margin="0,0,0,4"/>
+                      <RadioButton Content="8PSK"
+                                   Tag="Psk8"
+                                   GroupName="PerfModulation"
+                                   Margin="0,0,6,4"/>
+                      <RadioButton Content="16QAM"
+                                   Tag="Qam16"
+                                   GroupName="PerfModulation"
+                                   Margin="0,0,6,4"/>
+                      <RadioButton Content="64QAM"
+                                   Tag="Qam64"
+                                   GroupName="PerfModulation"
+                                   Margin="0,0,0,4"/>
+                      <RadioButton Content="256QAM"
+                                   Tag="Qam256"
+                                   GroupName="PerfModulation"
+                                   Margin="0,0,6,0"/>
                     </UniformGrid>
                   </GroupBox>
                 </Grid>
@@ -205,140 +275,159 @@
             <ColumnDefinition Width="Auto"/>
           </Grid.ColumnDefinitions>
 
-          <GroupBox Header="秒数" VerticalAlignment="Stretch">
-            <StackPanel Margin="2" HorizontalAlignment="Left">
-              <RadioButton x:Name="Sec30Radio" GroupName="PerfDuration" Content="30秒" Tag="30" IsChecked="True"/>
-              <RadioButton GroupName="PerfDuration" Content="60秒" Tag="60"/>
-              <RadioButton GroupName="PerfDuration" Content="120秒" Tag="120"/>
+          <GroupBox Header="秒数"
+                    VerticalAlignment="Stretch">
+            <StackPanel Margin="2"
+                        HorizontalAlignment="Left">
+              <RadioButton x:Name="Sec30Radio"
+                           GroupName="PerfDuration"
+                           Content="30秒"
+                           Tag="30"
+                           IsChecked="True"/>
+              <RadioButton GroupName="PerfDuration"
+                           Content="60秒"
+                           Tag="60"/>
+              <RadioButton GroupName="PerfDuration"
+                           Content="120秒"
+                           Tag="120"/>
             </StackPanel>
           </GroupBox>
 
-          <GroupBox Grid.Column="2" Header="出力">
-              <Grid Margin="2">
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto"/>
-                  <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                  <RadioButton x:Name="WriteWavRadio"
-                               Content="WAV出力"
-                               GroupName="PerfOutputMode"
-                               IsChecked="True"
-                               VerticalAlignment="Center"
-                               Checked="OnOutputModeChanged"/>
-                  <RadioButton x:Name="PlayAudioRadio"
-                               Content="音声出力"
-                               GroupName="PerfOutputMode"
-                               Margin="16,0,0,0"
-                               VerticalAlignment="Center"
-                               Checked="OnOutputModeChanged"/>
-                </StackPanel>
-                <Grid Grid.Row="2">
-                  <StackPanel x:Name="WavOutputPanel"
-                              Orientation="Horizontal"
-                              VerticalAlignment="Center">
-                    <TextBlock Text="出力ファイル"
-                               VerticalAlignment="Center"
-                               Margin="0,0,8,0"/>
-                    <TextBox x:Name="WavPathTextBox"
-                             MinWidth="400"
-                             IsReadOnly="True"
-                             VerticalAlignment="Center"/>
-                    <Button x:Name="BrowseWavButton"
-                            Content="..."
-                            Width="36"
-                            Margin="8,0,0,0"
-                            Click="OnBrowseWavClick"/>
-                  </StackPanel>
-                  <StackPanel x:Name="AudioOutputPanel"
-                              Orientation="Vertical"
-                              VerticalAlignment="Center"
-                              Visibility="Collapsed">
-                    <ComboBox x:Name="OutputDeviceCombo"
-                              Width="400"
-                              HorizontalAlignment="Left"
-                              Foreground="#FF1E2024"
-                              VerticalAlignment="Center">
-                      <ComboBox.ItemTemplate>
-                        <DataTemplate>
-                          <TextBlock Text="{Binding Name}" Foreground="#FF1E2024"/>
-                        </DataTemplate>
-                      </ComboBox.ItemTemplate>
-                      <ComboBox.ItemContainerStyle>
-                        <Style TargetType="ComboBoxItem">
-                          <Setter Property="Foreground" Value="#FF1E2024"/>
-                          <Setter Property="Background" Value="White"/>
-                        </Style>
-                      </ComboBox.ItemContainerStyle>
-                    </ComboBox>
-                    <StackPanel Orientation="Horizontal"
-                                Margin="0,6,0,0"
-                                HorizontalAlignment="Left">
-                      <TextBlock Text="音量"
-                                 VerticalAlignment="Center"
-                                 Margin="0,0,6,0"/>
-                      <Slider x:Name="OutputVolumeSlider"
-                              Width="120"
-                              Minimum="0"
-                              Maximum="100"
-                              Value="80"
-                              TickFrequency="5"
-                              IsSnapToTickEnabled="False"
-                              VerticalAlignment="Center"
-                              ValueChanged="OnOutputVolumeChanged"/>
-                      <TextBlock x:Name="OutputVolumeValueText"
-                                 Text="80%"
-                                 Width="36"
-                                 Margin="6,0,0,0"
-                                 VerticalAlignment="Center"
-                                 TextAlignment="Right"/>
-                    </StackPanel>
-                  </StackPanel>
-                </Grid>
-              </Grid>
-            </GroupBox>
-
-            <Grid Grid.Column="3"
-                  VerticalAlignment="Stretch"
-                  Margin="16,0,4,4">
-              <StackPanel VerticalAlignment="Bottom"
-                          HorizontalAlignment="Right">
-                <Button x:Name="TxStartButton"
-                        Content="スタート"
-                        Width="110"
-                        Height="34"
-                        Click="OnTxStartClick"/>
-                <Button x:Name="TxStopButton"
-                        Content="ストップ"
-                        Width="110"
-                        Height="34"
-                        Margin="0,8,0,0"
-                        IsEnabled="False"
-                        Click="OnTxStopClick"/>
+          <GroupBox Grid.Column="2"
+                    Header="出力">
+            <Grid Margin="2">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <StackPanel Orientation="Horizontal"
+                          Margin="0,0,0,8">
+                <RadioButton x:Name="WriteWavRadio"
+                             Content="WAV出力"
+                             GroupName="PerfOutputMode"
+                             IsChecked="True"
+                             VerticalAlignment="Center"
+                             Checked="OnOutputModeChanged"/>
+                <RadioButton x:Name="PlayAudioRadio"
+                             Content="音声出力"
+                             GroupName="PerfOutputMode"
+                             Margin="16,0,0,0"
+                             VerticalAlignment="Center"
+                             Checked="OnOutputModeChanged"/>
               </StackPanel>
-              <TextBlock x:Name="TxStatusText"
-                         VerticalAlignment="Top"
-                         HorizontalAlignment="Right"
-                         Foreground="{StaticResource BrushTextMuted}"
-                         Text=""/>
+              <Grid Grid.Row="2">
+                <StackPanel x:Name="WavOutputPanel"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                  <TextBlock Text="出力ファイル"
+                             VerticalAlignment="Center"
+                             Margin="0,0,8,0"/>
+                  <TextBox x:Name="WavPathTextBox"
+                           MinWidth="400"
+                           IsReadOnly="True"
+                           VerticalAlignment="Center"/>
+                  <Button x:Name="BrowseWavButton"
+                          Content="..."
+                          Width="36"
+                          Margin="8,0,0,0"
+                          Click="OnBrowseWavClick"/>
+                </StackPanel>
+                <StackPanel x:Name="AudioOutputPanel"
+                            Orientation="Vertical"
+                            VerticalAlignment="Center"
+                            Visibility="Collapsed">
+                  <ComboBox x:Name="OutputDeviceCombo"
+                            Width="400"
+                            HorizontalAlignment="Left"
+                            Foreground="#FF1E2024"
+                            VerticalAlignment="Center">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Name}"
+                                   Foreground="#FF1E2024"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                    <ComboBox.ItemContainerStyle>
+                      <Style TargetType="ComboBoxItem">
+                        <Setter Property="Foreground"
+                                Value="#FF1E2024"/>
+                        <Setter Property="Background"
+                                Value="White"/>
+                      </Style>
+                    </ComboBox.ItemContainerStyle>
+                  </ComboBox>
+                  <StackPanel Orientation="Horizontal"
+                              Margin="0,6,0,0"
+                              HorizontalAlignment="Left">
+                    <TextBlock Text="音量"
+                               VerticalAlignment="Center"
+                               Margin="0,0,6,0"/>
+                    <Slider x:Name="OutputVolumeSlider"
+                            Width="120"
+                            Minimum="0"
+                            Maximum="100"
+                            Value="80"
+                            TickFrequency="5"
+                            IsSnapToTickEnabled="False"
+                            VerticalAlignment="Center"
+                            ValueChanged="OnOutputVolumeChanged"/>
+                    <TextBlock x:Name="OutputVolumeValueText"
+                               Text="80%"
+                               Width="36"
+                               Margin="6,0,0,0"
+                               VerticalAlignment="Center"
+                               TextAlignment="Right"/>
+                  </StackPanel>
+                </StackPanel>
+              </Grid>
             </Grid>
+          </GroupBox>
+
+          <Grid Grid.Column="3"
+                VerticalAlignment="Stretch"
+                Margin="16,0,4,4">
+            <StackPanel VerticalAlignment="Bottom"
+                        HorizontalAlignment="Right">
+              <Button x:Name="TxStartButton"
+                      Content="スタート"
+                      Width="110"
+                      Height="34"
+                      Click="OnTxStartClick"/>
+              <Button x:Name="TxStopButton"
+                      Content="ストップ"
+                      Width="110"
+                      Height="34"
+                      Margin="0,8,0,0"
+                      IsEnabled="False"
+                      Click="OnTxStopClick"/>
+            </StackPanel>
+            <TextBlock x:Name="TxStatusText"
+                       VerticalAlignment="Top"
+                       HorizontalAlignment="Right"
+                       Foreground="{StaticResource BrushTextMuted}"
+                       Text=""/>
+          </Grid>
         </Grid>
       </Grid>
     </Border>
 
     <!-- 受信 -->
-    <Border Grid.Row="1" Style="{StaticResource PanelBorder}">
+    <Border Grid.Row="1"
+            Style="{StaticResource PanelBorder}">
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*" MinHeight="360"/>
+          <RowDefinition Height="*"
+                         MinHeight="360"/>
         </Grid.RowDefinitions>
 
         <!-- 受信ラベル | 入力 | スタート/ストップ -->
-        <Grid Grid.Row="0" Margin="0,0,0,8">
+        <Grid Grid.Row="0"
+              Margin="0,0,0,8">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="*" MinWidth="320"/>
+            <ColumnDefinition Width="*"
+                              MinWidth="320"/>
             <ColumnDefinition Width="Auto"/>
           </Grid.ColumnDefinitions>
 
@@ -359,7 +448,8 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
               </Grid.RowDefinitions>
-              <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+              <StackPanel Orientation="Horizontal"
+                          Margin="0,0,0,6">
                 <RadioButton x:Name="RxWavInputRadio"
                              Content="WAV入力"
                              GroupName="PerfReceiveInputMode"
@@ -394,7 +484,8 @@
                           Margin="8,0,0,0"
                           Click="OnBrowseRxWavClick"/>
                 </Grid>
-                <Grid x:Name="RxAudioInputPanel" Visibility="Collapsed">
+                <Grid x:Name="RxAudioInputPanel"
+                      Visibility="Collapsed">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="72"/>
                     <ColumnDefinition Width="*"/>
@@ -412,13 +503,16 @@
                               VerticalAlignment="Center">
                       <ComboBox.ItemTemplate>
                         <DataTemplate>
-                          <TextBlock Text="{Binding Name}" Foreground="#FF1E2024"/>
+                          <TextBlock Text="{Binding Name}"
+                                     Foreground="#FF1E2024"/>
                         </DataTemplate>
                       </ComboBox.ItemTemplate>
                       <ComboBox.ItemContainerStyle>
                         <Style TargetType="ComboBoxItem">
-                          <Setter Property="Foreground" Value="#FF1E2024"/>
-                          <Setter Property="Background" Value="White"/>
+                          <Setter Property="Foreground"
+                                  Value="#FF1E2024"/>
+                          <Setter Property="Background"
+                                  Value="White"/>
                         </Style>
                       </ComboBox.ItemContainerStyle>
                     </ComboBox>
@@ -483,11 +577,14 @@
           <Grid Grid.Column="0">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
-              <RowDefinition Height="*" MinHeight="200"/>
-              <RowDefinition Height="*" MinHeight="200"/>
+              <RowDefinition Height="*"
+                             MinHeight="200"/>
+              <RowDefinition Height="*"
+                             MinHeight="200"/>
             </Grid.RowDefinitions>
 
-            <Grid x:Name="WaveGraphTabHeaderRow" Margin="0,0,0,4">
+            <Grid x:Name="WaveGraphTabHeaderRow"
+                  Margin="0,0,0,4">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -559,24 +656,32 @@
                           SelectionChanged="OnFftWindowSelectionChanged">
                   <ComboBox.ItemContainerStyle>
                     <Style TargetType="ComboBoxItem">
-                      <Setter Property="Foreground" Value="#FF1E2024"/>
-                      <Setter Property="Background" Value="White"/>
+                      <Setter Property="Foreground"
+                              Value="#FF1E2024"/>
+                      <Setter Property="Background"
+                              Value="White"/>
                     </Style>
                   </ComboBox.ItemContainerStyle>
-                  <ComboBoxItem Tag="Hanning" IsSelected="True">
-                    <TextBlock Text="Hanning" Foreground="#FF1E2024"/>
+                  <ComboBoxItem Tag="Hanning"
+                                IsSelected="True">
+                    <TextBlock Text="Hanning"
+                               Foreground="#FF1E2024"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="Hamming">
-                    <TextBlock Text="Hamming" Foreground="#FF1E2024"/>
+                    <TextBlock Text="Hamming"
+                               Foreground="#FF1E2024"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="Blackman">
-                    <TextBlock Text="Blackman" Foreground="#FF1E2024"/>
+                    <TextBlock Text="Blackman"
+                               Foreground="#FF1E2024"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="FlatTop">
-                    <TextBlock Text="Flat Top" Foreground="#FF1E2024"/>
+                    <TextBlock Text="Flat Top"
+                               Foreground="#FF1E2024"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="Rectangular">
-                    <TextBlock Text="Rectangular" Foreground="#FF1E2024"/>
+                    <TextBlock Text="Rectangular"
+                               Foreground="#FF1E2024"/>
                   </ComboBoxItem>
                 </ComboBox>
               </StackPanel>
@@ -595,8 +700,11 @@
                   Grid.Row="1"
                   Margin="0,0,0,8"
                   SizeChanged="OnWaveRowSizeChanged">
-              <Border BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                      CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+              <Border BorderBrush="{StaticResource BrushBorder}"
+                      BorderThickness="1"
+                      CornerRadius="3"
+                      Background="{StaticResource BrushInput}"
+                      Padding="6"
                       ClipToBounds="False"
                       Grid.IsSharedSizeScope="True">
                 <Grid>
@@ -609,13 +717,17 @@
                              Text="L FFT"
                              Foreground="{StaticResource BrushTextMuted}"
                              Margin="0,0,0,2"/>
-                  <Grid Grid.Row="1" ClipToBounds="False">
+                  <Grid Grid.Row="1"
+                        ClipToBounds="False">
                     <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYLeft"/>
+                      <ColumnDefinition Width="Auto"
+                                        SharedSizeGroup="PerfFftYLeft"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Grid>
-                      <Grid x:Name="FftLeftDbLabels" Margin="0,0,4,0" ClipToBounds="False">
+                      <Grid x:Name="FftLeftDbLabels"
+                            Margin="0,0,4,0"
+                            ClipToBounds="False">
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="Auto"/>
                           <ColumnDefinition Width="32"/>
@@ -640,24 +752,54 @@
                             <RowDefinition Height="*"/>
                             <RowDefinition Height="*"/>
                           </Grid.RowDefinitions>
-                          <TextBlock Text="0" Grid.Row="0" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-20" Grid.Row="1" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-40" Grid.Row="2" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-60" Grid.Row="3" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-80" Grid.Row="4" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-100" Grid.Row="4" Height="14" Margin="0,0,0,-7"
-                                     VerticalAlignment="Bottom" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="0"
+                                     Grid.Row="0"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-20"
+                                     Grid.Row="1"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-40"
+                                     Grid.Row="2"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-60"
+                                     Grid.Row="3"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-80"
+                                     Grid.Row="4"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-100"
+                                     Grid.Row="4"
+                                     Height="14"
+                                     Margin="0,0,0,-7"
+                                     VerticalAlignment="Bottom"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
                         </Grid>
                       </Grid>
                       <Grid x:Name="ScopeLeftAmpHost"
@@ -689,8 +831,10 @@
                                 ValueChanged="OnScopeRangeChanged"/>
                       </Grid>
                     </Grid>
-                    <Grid Grid.Column="1" ClipToBounds="False">
-                      <Border x:Name="FftLeftHost" ClipToBounds="False">
+                    <Grid Grid.Column="1"
+                          ClipToBounds="False">
+                      <Border x:Name="FftLeftHost"
+                              ClipToBounds="False">
                         <Grid ClipToBounds="False">
                           <lvc:CartesianChart x:Name="FftLeftChart"
                                               Background="{StaticResource BrushInput}"
@@ -720,31 +864,58 @@
                           <Grid x:Name="ScopeLeftYOverlay"
                                 IsHitTestVisible="False">
                             <Grid.ColumnDefinitions>
-                              <ColumnDefinition x:Name="ScopeLeftYLabelCol" Width="40"/>
+                              <ColumnDefinition x:Name="ScopeLeftYLabelCol"
+                                                Width="40"/>
                               <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Grid Grid.Column="0" Margin="0,0,4,0">
+                            <Grid Grid.Column="0"
+                                  Margin="0,0,4,0">
                               <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="*"/>
                               </Grid.RowDefinitions>
-                              <TextBlock x:Name="ScopeLeftYLabel0" Grid.Row="0" Text="1.0" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeLeftYLabel1" Grid.Row="1" Text="0.5" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeLeftYLabel2" Grid.Row="2" Text="0.0" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeLeftYLabel3" Grid.Row="3" Text="-0.5" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeLeftYLabel4" Grid.Row="3" Text="-1.0" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                         Margin="0,0,0,-5" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel0"
+                                         Grid.Row="0"
+                                         Text="1.0"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel1"
+                                         Grid.Row="1"
+                                         Text="0.5"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel2"
+                                         Grid.Row="2"
+                                         Text="0.0"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel3"
+                                         Grid.Row="3"
+                                         Text="-0.5"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeLeftYLabel4"
+                                         Grid.Row="3"
+                                         Text="-1.0"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Bottom"
+                                         Margin="0,0,0,-5"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
                             </Grid>
                             <Grid Grid.Column="1">
                               <Canvas x:Name="ScopeLeftWaveCanvas"
@@ -757,16 +928,31 @@
                                   <RowDefinition Height="*"/>
                                   <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
-                                <Border Grid.Row="0" Height="1" VerticalAlignment="Top"
-                                        Background="#5C616C" Opacity="0.85"/>
-                                <Border Grid.Row="1" Height="1" VerticalAlignment="Top"
-                                        Background="#5C616C" Opacity="0.85"/>
-                                <Border x:Name="ScopeLeftZeroLine" Grid.Row="2" Height="1" VerticalAlignment="Top"
+                                <Border Grid.Row="0"
+                                        Height="1"
+                                        VerticalAlignment="Top"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
+                                <Border Grid.Row="1"
+                                        Height="1"
+                                        VerticalAlignment="Top"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
+                                <Border x:Name="ScopeLeftZeroLine"
+                                        Grid.Row="2"
+                                        Height="1"
+                                        VerticalAlignment="Top"
                                         Background="#FFD650"/>
-                                <Border Grid.Row="3" Height="1" VerticalAlignment="Top"
-                                        Background="#5C616C" Opacity="0.85"/>
-                                <Border Grid.Row="3" Height="1" VerticalAlignment="Bottom"
-                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border Grid.Row="3"
+                                        Height="1"
+                                        VerticalAlignment="Top"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
+                                <Border Grid.Row="3"
+                                        Height="1"
+                                        VerticalAlignment="Bottom"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
                               </Grid>
                             </Grid>
                           </Grid>
@@ -774,9 +960,12 @@
                       </Border>
                     </Grid>
                   </Grid>
-                  <Grid Grid.Row="2" Margin="0,2,0,0" ClipToBounds="False">
+                  <Grid Grid.Row="2"
+                        Margin="0,2,0,0"
+                        ClipToBounds="False">
                     <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYLeft"/>
+                      <ColumnDefinition Width="Auto"
+                                        SharedSizeGroup="PerfFftYLeft"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Canvas x:Name="FftLeftFreqLabels"
@@ -820,8 +1009,11 @@
                   Grid.Row="2"
                   Margin="0,0,0,0"
                   SizeChanged="OnWaveRowSizeChanged">
-              <Border BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                      CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+              <Border BorderBrush="{StaticResource BrushBorder}"
+                      BorderThickness="1"
+                      CornerRadius="3"
+                      Background="{StaticResource BrushInput}"
+                      Padding="6"
                       ClipToBounds="False"
                       Grid.IsSharedSizeScope="True">
                 <Grid>
@@ -834,13 +1026,17 @@
                              Text="R FFT"
                              Foreground="{StaticResource BrushTextMuted}"
                              Margin="0,0,0,2"/>
-                  <Grid Grid.Row="1" ClipToBounds="False">
+                  <Grid Grid.Row="1"
+                        ClipToBounds="False">
                     <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYRight"/>
+                      <ColumnDefinition Width="Auto"
+                                        SharedSizeGroup="PerfFftYRight"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Grid>
-                      <Grid x:Name="FftRightDbLabels" Margin="0,0,4,0" ClipToBounds="False">
+                      <Grid x:Name="FftRightDbLabels"
+                            Margin="0,0,4,0"
+                            ClipToBounds="False">
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="Auto"/>
                           <ColumnDefinition Width="32"/>
@@ -865,24 +1061,54 @@
                             <RowDefinition Height="*"/>
                             <RowDefinition Height="*"/>
                           </Grid.RowDefinitions>
-                          <TextBlock Text="0" Grid.Row="0" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-20" Grid.Row="1" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-40" Grid.Row="2" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-60" Grid.Row="3" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-80" Grid.Row="4" Height="14" Margin="0,-7,0,0"
-                                     VerticalAlignment="Top" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
-                          <TextBlock Text="-100" Grid.Row="4" Height="14" Margin="0,0,0,-7"
-                                     VerticalAlignment="Bottom" TextAlignment="Right"
-                                     FontSize="9" Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="0"
+                                     Grid.Row="0"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-20"
+                                     Grid.Row="1"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-40"
+                                     Grid.Row="2"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-60"
+                                     Grid.Row="3"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-80"
+                                     Grid.Row="4"
+                                     Height="14"
+                                     Margin="0,-7,0,0"
+                                     VerticalAlignment="Top"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
+                          <TextBlock Text="-100"
+                                     Grid.Row="4"
+                                     Height="14"
+                                     Margin="0,0,0,-7"
+                                     VerticalAlignment="Bottom"
+                                     TextAlignment="Right"
+                                     FontSize="9"
+                                     Foreground="{StaticResource BrushTextMuted}"/>
                         </Grid>
                       </Grid>
                       <Grid x:Name="ScopeRightAmpHost"
@@ -914,8 +1140,10 @@
                                 ValueChanged="OnScopeRangeChanged"/>
                       </Grid>
                     </Grid>
-                    <Grid Grid.Column="1" ClipToBounds="False">
-                      <Border x:Name="FftRightHost" ClipToBounds="False">
+                    <Grid Grid.Column="1"
+                          ClipToBounds="False">
+                      <Border x:Name="FftRightHost"
+                              ClipToBounds="False">
                         <Grid ClipToBounds="False">
                           <lvc:CartesianChart x:Name="FftRightChart"
                                               Background="{StaticResource BrushInput}"
@@ -943,31 +1171,58 @@
                           <Grid x:Name="ScopeRightYOverlay"
                                 IsHitTestVisible="False">
                             <Grid.ColumnDefinitions>
-                              <ColumnDefinition x:Name="ScopeRightYLabelCol" Width="40"/>
+                              <ColumnDefinition x:Name="ScopeRightYLabelCol"
+                                                Width="40"/>
                               <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Grid Grid.Column="0" Margin="0,0,4,0">
+                            <Grid Grid.Column="0"
+                                  Margin="0,0,4,0">
                               <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="*"/>
                               </Grid.RowDefinitions>
-                              <TextBlock x:Name="ScopeRightYLabel0" Grid.Row="0" Text="1.0" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeRightYLabel1" Grid.Row="1" Text="0.5" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeRightYLabel2" Grid.Row="2" Text="0.0" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeRightYLabel3" Grid.Row="3" Text="-0.5" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                                         Margin="0,-5,0,0" Foreground="{StaticResource BrushTextMuted}"/>
-                              <TextBlock x:Name="ScopeRightYLabel4" Grid.Row="3" Text="-1.0" FontSize="8"
-                                         HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                         Margin="0,0,0,-5" Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel0"
+                                         Grid.Row="0"
+                                         Text="1.0"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel1"
+                                         Grid.Row="1"
+                                         Text="0.5"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel2"
+                                         Grid.Row="2"
+                                         Text="0.0"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel3"
+                                         Grid.Row="3"
+                                         Text="-0.5"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,-5,0,0"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
+                              <TextBlock x:Name="ScopeRightYLabel4"
+                                         Grid.Row="3"
+                                         Text="-1.0"
+                                         FontSize="8"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Bottom"
+                                         Margin="0,0,0,-5"
+                                         Foreground="{StaticResource BrushTextMuted}"/>
                             </Grid>
                             <Grid Grid.Column="1">
                               <Canvas x:Name="ScopeRightWaveCanvas"
@@ -980,16 +1235,31 @@
                                   <RowDefinition Height="*"/>
                                   <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
-                                <Border Grid.Row="0" Height="1" VerticalAlignment="Top"
-                                        Background="#5C616C" Opacity="0.85"/>
-                                <Border Grid.Row="1" Height="1" VerticalAlignment="Top"
-                                        Background="#5C616C" Opacity="0.85"/>
-                                <Border x:Name="ScopeRightZeroLine" Grid.Row="2" Height="1" VerticalAlignment="Top"
+                                <Border Grid.Row="0"
+                                        Height="1"
+                                        VerticalAlignment="Top"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
+                                <Border Grid.Row="1"
+                                        Height="1"
+                                        VerticalAlignment="Top"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
+                                <Border x:Name="ScopeRightZeroLine"
+                                        Grid.Row="2"
+                                        Height="1"
+                                        VerticalAlignment="Top"
                                         Background="#FFD650"/>
-                                <Border Grid.Row="3" Height="1" VerticalAlignment="Top"
-                                        Background="#5C616C" Opacity="0.85"/>
-                                <Border Grid.Row="3" Height="1" VerticalAlignment="Bottom"
-                                        Background="#5C616C" Opacity="0.85"/>
+                                <Border Grid.Row="3"
+                                        Height="1"
+                                        VerticalAlignment="Top"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
+                                <Border Grid.Row="3"
+                                        Height="1"
+                                        VerticalAlignment="Bottom"
+                                        Background="#5C616C"
+                                        Opacity="0.85"/>
                               </Grid>
                             </Grid>
                           </Grid>
@@ -997,9 +1267,12 @@
                       </Border>
                     </Grid>
                   </Grid>
-                  <Grid Grid.Row="2" Margin="0,2,0,0" ClipToBounds="False">
+                  <Grid Grid.Row="2"
+                        Margin="0,2,0,0"
+                        ClipToBounds="False">
                     <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto" SharedSizeGroup="PerfFftYRight"/>
+                      <ColumnDefinition Width="Auto"
+                                        SharedSizeGroup="PerfFftYRight"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Canvas x:Name="FftRightFreqLabels"
@@ -1064,7 +1337,9 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
-                  <Grid Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                  <Grid Grid.Column="0"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
                     <Grid.ColumnDefinitions>
                       <ColumnDefinition Width="Auto"/>
                       <ColumnDefinition Width="*"/>
@@ -1074,15 +1349,18 @@
                       <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <!-- R (Y) ラベル -->
-                    <TextBlock Grid.Row="0" Grid.Column="0"
+                    <TextBlock Grid.Row="0"
+                               Grid.Column="0"
                                Text="R"
                                FontSize="10"
                                Foreground="{StaticResource BrushTextMuted}"
                                VerticalAlignment="Center"
                                Margin="0,0,6,0"/>
                     <Grid x:Name="LissajousPlotHost"
-                          Grid.Row="0" Grid.Column="1"
-                          Width="360" Height="360"
+                          Grid.Row="0"
+                          Grid.Column="1"
+                          Width="360"
+                          Height="360"
                           ClipToBounds="True"
                           SizeChanged="OnLissajousPlotSizeChanged">
                       <Border Background="{StaticResource BrushInput}"/>
@@ -1100,35 +1378,116 @@
                           <ColumnDefinition Width="*"/>
                           <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#5C616C" Opacity="0.7"/>
-                        <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#5C616C" Opacity="0.7"/>
-                        <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#FFD650"/>
-                        <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top" Background="#5C616C" Opacity="0.7"/>
-                        <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Bottom" Background="#5C616C" Opacity="0.7"/>
-                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="0" Width="1" HorizontalAlignment="Left" Background="#5C616C" Opacity="0.7"/>
-                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="1" Width="1" HorizontalAlignment="Left" Background="#5C616C" Opacity="0.7"/>
-                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="2" Width="1" HorizontalAlignment="Left" Background="#FFD650"/>
-                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="3" Width="1" HorizontalAlignment="Left" Background="#5C616C" Opacity="0.7"/>
-                        <Border Grid.Row="0" Grid.RowSpan="4" Grid.Column="3" Width="1" HorizontalAlignment="Right" Background="#5C616C" Opacity="0.7"/>
+                        <Border Grid.Row="0"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="4"
+                                Height="1"
+                                VerticalAlignment="Top"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
+                        <Border Grid.Row="1"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="4"
+                                Height="1"
+                                VerticalAlignment="Top"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
+                        <Border Grid.Row="2"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="4"
+                                Height="1"
+                                VerticalAlignment="Top"
+                                Background="#FFD650"/>
+                        <Border Grid.Row="3"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="4"
+                                Height="1"
+                                VerticalAlignment="Top"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
+                        <Border Grid.Row="3"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="4"
+                                Height="1"
+                                VerticalAlignment="Bottom"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
+                        <Border Grid.Row="0"
+                                Grid.RowSpan="4"
+                                Grid.Column="0"
+                                Width="1"
+                                HorizontalAlignment="Left"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
+                        <Border Grid.Row="0"
+                                Grid.RowSpan="4"
+                                Grid.Column="1"
+                                Width="1"
+                                HorizontalAlignment="Left"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
+                        <Border Grid.Row="0"
+                                Grid.RowSpan="4"
+                                Grid.Column="2"
+                                Width="1"
+                                HorizontalAlignment="Left"
+                                Background="#FFD650"/>
+                        <Border Grid.Row="0"
+                                Grid.RowSpan="4"
+                                Grid.Column="3"
+                                Width="1"
+                                HorizontalAlignment="Left"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
+                        <Border Grid.Row="0"
+                                Grid.RowSpan="4"
+                                Grid.Column="3"
+                                Width="1"
+                                HorizontalAlignment="Right"
+                                Background="#5C616C"
+                                Opacity="0.7"/>
                       </Grid>
                       <!-- 理想対角線（同位相） -->
                       <Canvas IsHitTestVisible="False">
-                        <Line X1="0" Y1="360" X2="360" Y2="0"
-                              Stroke="#6E7380" StrokeThickness="1" StrokeDashArray="4 3"
+                        <Line X1="0"
+                              Y1="360"
+                              X2="360"
+                              Y2="0"
+                              Stroke="#6E7380"
+                              StrokeThickness="1"
+                              StrokeDashArray="4 3"
                               x:Name="LissajousIdealDiagonal"/>
                       </Canvas>
-                      <Canvas x:Name="LissajousCanvas" ClipToBounds="True"/>
+                      <Canvas x:Name="LissajousCanvas"
+                              ClipToBounds="True"/>
                       <!-- 軸数値 -->
-                      <TextBlock Text="1.0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
-                                 HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4,2,0,0"/>
-                      <TextBlock Text="-1.0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
-                                 HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="4,0,0,2"/>
-                      <TextBlock Text="1.0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
-                                 HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,2"/>
-                      <TextBlock Text="0" FontSize="8" Foreground="{StaticResource BrushTextMuted}"
-                                 HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,2"/>
+                      <TextBlock Text="1.0"
+                                 FontSize="8"
+                                 Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Left"
+                                 VerticalAlignment="Top"
+                                 Margin="4,2,0,0"/>
+                      <TextBlock Text="-1.0"
+                                 FontSize="8"
+                                 Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Left"
+                                 VerticalAlignment="Bottom"
+                                 Margin="4,0,0,2"/>
+                      <TextBlock Text="1.0"
+                                 FontSize="8"
+                                 Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Right"
+                                 VerticalAlignment="Bottom"
+                                 Margin="0,0,4,2"/>
+                      <TextBlock Text="0"
+                                 FontSize="8"
+                                 Foreground="{StaticResource BrushTextMuted}"
+                                 HorizontalAlignment="Center"
+                                 VerticalAlignment="Bottom"
+                                 Margin="0,0,0,2"/>
                     </Grid>
-                    <TextBlock Grid.Row="1" Grid.Column="1"
+                    <TextBlock Grid.Row="1"
+                               Grid.Column="1"
                                Text="L"
                                FontSize="10"
                                HorizontalAlignment="Center"
@@ -1187,7 +1546,8 @@
                             <ColumnDefinition Width="28"/>
                             <ColumnDefinition Width="*"/>
                           </Grid.ColumnDefinitions>
-                          <TextBlock Text="L" VerticalAlignment="Center"
+                          <TextBlock Text="L"
+                                     VerticalAlignment="Center"
                                      Foreground="{StaticResource BrushTextMuted}"/>
                           <TextBlock x:Name="LissFreqLeftText"
                                      Grid.Column="1"
@@ -1202,7 +1562,8 @@
                             <ColumnDefinition Width="28"/>
                             <ColumnDefinition Width="*"/>
                           </Grid.ColumnDefinitions>
-                          <TextBlock Text="R" VerticalAlignment="Center"
+                          <TextBlock Text="R"
+                                     VerticalAlignment="Center"
                                      Foreground="{StaticResource BrushTextMuted}"/>
                           <TextBlock x:Name="LissFreqRightText"
                                      Grid.Column="1"
@@ -1221,7 +1582,8 @@
                             <ColumnDefinition Width="28"/>
                             <ColumnDefinition Width="*"/>
                           </Grid.ColumnDefinitions>
-                          <TextBlock Text="L" VerticalAlignment="Center"
+                          <TextBlock Text="L"
+                                     VerticalAlignment="Center"
                                      Foreground="{StaticResource BrushTextMuted}"/>
                           <TextBlock x:Name="LissThdLeftText"
                                      Grid.Column="1"
@@ -1236,7 +1598,8 @@
                             <ColumnDefinition Width="28"/>
                             <ColumnDefinition Width="*"/>
                           </Grid.ColumnDefinitions>
-                          <TextBlock Text="R" VerticalAlignment="Center"
+                          <TextBlock Text="R"
+                                     VerticalAlignment="Center"
                                      Foreground="{StaticResource BrushTextMuted}"/>
                           <TextBlock x:Name="LissThdRightText"
                                      Grid.Column="1"
@@ -1258,16 +1621,21 @@
           <Grid Grid.Column="2">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
-              <RowDefinition Height="*" MinHeight="200"/>
-              <RowDefinition Height="*" MinHeight="200"/>
+              <RowDefinition Height="*"
+                             MinHeight="200"/>
+              <RowDefinition Height="*"
+                             MinHeight="200"/>
             </Grid.RowDefinitions>
             <Border Height="{Binding ActualHeight, ElementName=WaveGraphTabHeaderRow}"
                     Margin="0,0,0,4"
                     Visibility="Hidden"/>
             <Border x:Name="IqLeftHost"
                     Grid.Row="1"
-                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                    CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+                    BorderBrush="{StaticResource BrushBorder}"
+                    BorderThickness="1"
+                    CornerRadius="3"
+                    Background="{StaticResource BrushInput}"
+                    Padding="6"
                     Width="260"
                     Margin="0,0,0,8"
                     VerticalAlignment="Stretch">
@@ -1286,7 +1654,8 @@
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <lvc:CartesianChart x:Name="IqLeftChart"
-                                      Width="240" Height="240"
+                                      Width="240"
+                                      Height="240"
                                       HorizontalAlignment="Left"
                                       VerticalAlignment="Top"
                                       Background="{StaticResource BrushInput}"
@@ -1302,8 +1671,11 @@
             </Border>
             <Border x:Name="IqRightHost"
                     Grid.Row="2"
-                    BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                    CornerRadius="3" Background="{StaticResource BrushInput}" Padding="6"
+                    BorderBrush="{StaticResource BrushBorder}"
+                    BorderThickness="1"
+                    CornerRadius="3"
+                    Background="{StaticResource BrushInput}"
+                    Padding="6"
                     Width="260"
                     VerticalAlignment="Stretch">
               <Grid>
@@ -1321,7 +1693,8 @@
                     <ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <lvc:CartesianChart x:Name="IqRightChart"
-                                      Width="240" Height="240"
+                                      Width="240"
+                                      Height="240"
                                       HorizontalAlignment="Left"
                                       VerticalAlignment="Top"
                                       Background="{StaticResource BrushInput}"

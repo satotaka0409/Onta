@@ -455,6 +455,7 @@ public partial class HistoryPanel : UserControl
         {
             1 => "BPSK",
             2 => "QPSK",
+            6 => "8PSK",
             3 => "16QAM",
             4 => "64QAM",
             _ => "-"

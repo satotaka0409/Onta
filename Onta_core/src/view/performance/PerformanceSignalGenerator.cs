@@ -385,11 +385,10 @@ internal static class PerformanceSignalGenerator
     /// UI の SC 値をコア対応範囲へ丸めます（性能測定は 56/64 可）。
     /// </summary>
     /// <param name="value">希望サブキャリア数。</param>
-    /// <returns>8〜64 の対応値。</returns>
+    /// <returns>16〜64 の対応値。</returns>
     public static int ClampSubcarriers(int value) =>
         value switch
         {
-            <= 8 => 8,
             <= 16 => 16,
             <= 24 => 24,
             <= 32 => 32,
@@ -407,6 +406,7 @@ internal static class PerformanceSignalGenerator
     public static ModulationScheme ClampModulation(ModulationScheme value) =>
         value is ModulationScheme.Bpsk
             or ModulationScheme.Qpsk
+            or ModulationScheme.Psk8
             or ModulationScheme.Qam16
             or ModulationScheme.Qam64
             or ModulationScheme.Qam256

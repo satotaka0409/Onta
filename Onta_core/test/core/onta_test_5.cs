@@ -10,7 +10,7 @@ namespace Onta.Core.Tests.Core;
 public sealed class OntaTest5
 {
     private static readonly FileWavCodecProfile BaseProfile = new(
-        ActiveSubcarriers: 8,
+        ActiveSubcarriers: 16,
         ModulationScheme: ModulationScheme.Qpsk,
         ChannelMode: ChannelMode.Mono);
 
@@ -24,13 +24,15 @@ public sealed class OntaTest5
     [Fact]
     public void InterleavePassModulation_DowngradesOnSecondPass()
     {
-        Assert.Equal((8, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(0, 8, ModulationScheme.Qpsk));
-        Assert.Equal((8, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 8, ModulationScheme.Qpsk));
-        Assert.Equal((8, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 16, ModulationScheme.Bpsk));
-        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 24, ModulationScheme.Qam16));
-        Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 32, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(0, 16, ModulationScheme.Qpsk));
+        Assert.Equal((16, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 16, ModulationScheme.Qpsk));
+        Assert.Equal((16, ModulationScheme.Bpsk), FileWavCodec.ResolveInterleavePassModulation(1, 24, ModulationScheme.Bpsk));
+        Assert.Equal((16, ModulationScheme.Psk8), FileWavCodec.ResolveInterleavePassModulation(1, 32, ModulationScheme.Qam16));
+        Assert.Equal((16, ModulationScheme.Qpsk), FileWavCodec.ResolveInterleavePassModulation(1, 32, ModulationScheme.Psk8));
         Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 40, ModulationScheme.Qam64));
         Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 48, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 56, ModulationScheme.Qam64));
+        Assert.Equal((16, ModulationScheme.Qam16), FileWavCodec.ResolveInterleavePassModulation(1, 64, ModulationScheme.Qam64));
     }
 
     [Fact]
@@ -62,6 +64,31 @@ public sealed class OntaTest5
         Assert.NotNull(header);
         Assert.Equal(16, header![8]);
         Assert.Equal(3, header[9]);
+    }
+
+    [Fact]
+    public void ReadBlockDataModulation_AcceptsSc56AndSc64()
+    {
+        var method = typeof(FileWavCodec).GetMethod(
+            "ReadBlockDataModulation",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        static byte[] BuildHeader(byte subcarriers, byte modulation)
+        {
+            var header = new byte[10];
+            header[8] = subcarriers;
+            header[9] = modulation;
+            return header;
+        }
+
+        var parsed56 = ((int Subcarriers, ModulationScheme Modulation))method!.Invoke(null, [BuildHeader(56, 4)])!;
+        Assert.Equal(56, parsed56.Subcarriers);
+        Assert.Equal(ModulationScheme.Qam64, parsed56.Modulation);
+
+        var parsed64 = ((int Subcarriers, ModulationScheme Modulation))method.Invoke(null, [BuildHeader(64, 6)])!;
+        Assert.Equal(64, parsed64.Subcarriers);
+        Assert.Equal(ModulationScheme.Psk8, parsed64.Modulation);
     }
 
     [Fact]
@@ -99,7 +126,6 @@ public sealed class OntaTest5
     public void ConceptualLeftBins_MatchModulationGroupTable()
     {
         Assert.Equal(Enumerable.Range(9, 8), OfdmConfig.ResolveGroupBLeftBins());
-        Assert.Equal(Enumerable.Range(9, 8), OfdmConfig.ResolveConceptualLeftBins(8));
         Assert.Equal(Enumerable.Range(1, 16), OfdmConfig.ResolveConceptualLeftBins(16));
         Assert.Equal(Enumerable.Range(1, 24), OfdmConfig.ResolveConceptualLeftBins(24));
         Assert.Equal(Enumerable.Range(1, 32), OfdmConfig.ResolveConceptualLeftBins(32));
@@ -123,7 +149,6 @@ public sealed class OntaTest5
     [Fact]
     public void ResolveFftSize_IsAlways256()
     {
-        Assert.Equal(256, OfdmConfig.ResolveFftSize(8, ChannelMode.Mono));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(16, ChannelMode.Stereo));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(24, ChannelMode.Mono));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(32, ChannelMode.Stereo));
@@ -131,27 +156,28 @@ public sealed class OntaTest5
         Assert.Equal(256, OfdmConfig.ResolveFftSize(48, ChannelMode.Stereo));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(56, ChannelMode.Mono));
         Assert.Equal(256, OfdmConfig.ResolveFftSize(64, ChannelMode.Stereo));
-        Assert.Equal(OfdmConfig.FixedFftSize, OfdmConfig.ResolveFftSize(8, ChannelMode.Mono));
+        Assert.Equal(OfdmConfig.FixedFftSize, OfdmConfig.ResolveFftSize(16, ChannelMode.Mono));
     }
 
     [Fact]
-    public void HeaderOfdmConfig_UsesGroupBConceptualBins()
+    public void HeaderOfdmConfig_UsesSc16QpskConceptualBins()
     {
-        var groupB = OfdmConfig.ResolveGroupBLeftBins();
-        var fft = OfdmConfig.ResolveFftSize(activeSubcarriers: 8, ChannelMode.Mono);
+        var headerBins = OfdmConfig.ResolveConceptualLeftBins(16);
+        var fft = OfdmConfig.ResolveFftSize(activeSubcarriers: 16, ChannelMode.Mono);
         var config = new OfdmConfig(
             fftSize: fft,
-            activeSubcarriers: groupB.Length,
+            activeSubcarriers: headerBins.Length,
             cyclicPrefixLength: 32,
             ofdmSymbolCount: 1,
-            modulationScheme: ModulationScheme.Bpsk,
+            modulationScheme: ModulationScheme.Qpsk,
             channelMode: ChannelMode.Mono,
-            conceptualLeftBins: groupB,
+            conceptualLeftBins: headerBins,
             carrierGrid: OfdmCarrierGrid.Sc8Family);
 
-        Assert.Equal(groupB, config.ConceptualLeftBins);
-        Assert.Equal(Enumerable.Range(9, 8), config.ConceptualLeftBins);
+        Assert.Equal(headerBins, config.ConceptualLeftBins);
+        Assert.Equal(Enumerable.Range(1, 16), config.ConceptualLeftBins);
         Assert.Equal(256, config.FftSize);
+        Assert.Equal(ModulationScheme.Qpsk, config.ModulationScheme);
         Assert.Equal(OfdmCarrierGrid.Sc8Family, config.CarrierGrid);
         Assert.Equal(OfdmConfig.Sc8StartHz, OfdmConfig.LeftCarrierHzSc8(0), 3);
         Assert.Equal(OfdmConfig.CarrierSpacingHz, OfdmConfig.DeltaF8(), 6);
@@ -225,13 +251,13 @@ public sealed class OntaTest5
     }
 
     [Fact]
-    public void EncodeDecode_QrPng_MatchesOriginal_Mono8ScQpsk_InterleaveX2()
+    public void EncodeDecode_QrPng_MatchesOriginal_Mono16ScQpsk_InterleaveX2()
     {
         RoundTrip(
             BaseProfile with { BlockInterleaveFactor = 2 },
             "Sample1_test5_x2.wav",
             "Sample1_test5_x2.png",
-            nameof(EncodeDecode_QrPng_MatchesOriginal_Mono8ScQpsk_InterleaveX2));
+            nameof(EncodeDecode_QrPng_MatchesOriginal_Mono16ScQpsk_InterleaveX2));
     }
 
     [Fact]

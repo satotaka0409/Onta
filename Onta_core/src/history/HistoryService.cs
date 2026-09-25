@@ -179,7 +179,7 @@ internal static class HistoryService
     }
 
     /// <summary>
-    /// 送信完了を履歴へ記録します（既定: SC-8 / BPSK / モノラル）。
+    /// 送信完了を履歴へ記録します（既定: SC-16 / BPSK / モノラル）。
     /// </summary>
     /// <param name="historyFilePath">履歴ファイルパス。</param>
     /// <param name="inputPath">送信元ファイルパス。</param>
@@ -195,7 +195,7 @@ internal static class HistoryService
             historyFilePath,
             inputPath,
             outputWavPath,
-            activeSubcarriers: 8,
+            activeSubcarriers: 16,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: ChannelMode.Mono,
             completionMessage);

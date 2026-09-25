@@ -44,15 +44,15 @@ internal static class CodecProfileFactory
     }
 
     /// <summary>
-    /// 受信開始用の安全側既定プロファイル（BPSK / SC=8 / Interleave=1）を生成します。
+    /// 受信開始用の安全側既定プロファイル（BPSK / SC=16 / Interleave=1）を生成します。
     /// </summary>
     /// <param name="channelMode">チャネル構成（モノラル／ステレオ）。</param>
     /// <returns>受信用コーデックプロファイル。</returns>
     private static FileWavCodecProfile ForReceive(ChannelMode channelMode)
     {
-        // 受信は安全側の既定値（BPSK / SC=8 / Interleave=1）で開始する。
+        // 受信は安全側の既定値（BPSK / SC=16 / Interleave=1）で開始する。
         return Create(
-            activeSubcarriers: 8,
+            activeSubcarriers: 16,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: channelMode,
             blockInterleaveFactor: 1);

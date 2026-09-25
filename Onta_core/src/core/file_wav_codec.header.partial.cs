@@ -14,22 +14,21 @@ public sealed partial class FileWavCodec
     /// <returns>OfdmGenerator。</returns>
     private OfdmGenerator CreateHeaderOfdm(OfdmCarrierGrid? carrierGrid = null)
     {
-        var groupB = OfdmConfig.ResolveGroupBLeftBins();
-        // 文字化けしていたコメントを整理しました。
+        var headerBins = OfdmConfig.ResolveConceptualLeftBins(16);
         var grid = carrierGrid ?? OfdmConfig.ResolveCarrierGrid(_profile.ActiveSubcarriers);
         var fftSize = OfdmConfig.ResolveFftSize(_profile.ActiveSubcarriers, _profile.ChannelMode);
         var config = new OfdmConfig(
             fftSize: fftSize,
-            activeSubcarriers: groupB.Length,
+            activeSubcarriers: headerBins.Length,
             cyclicPrefixLength: _profile.HeaderCyclicPrefixLength,
             ofdmSymbolCount: 1,
-            modulationScheme: ModulationScheme.Bpsk,
+            modulationScheme: ModulationScheme.Qpsk,
             channelMode: ChannelMode.Mono,
             pilotSpacing: 8,
             stereoFrequencyShiftBins: _profile.StereoFrequencyShiftBins,
             sampleRate: _profile.SampleRate,
             randomSeed: _profile.RandomSeed,
-            conceptualLeftBins: groupB,
+            conceptualLeftBins: headerBins,
             carrierGrid: grid);
 
         return new OfdmGenerator(config);
@@ -531,7 +530,7 @@ public sealed partial class FileWavCodec
                     logicalOffset,
                     searchRadius: Math.Max(2, ofdm.SamplesPerOfdmSymbol / 16),
                     noiseVariance: 0.05,
-                    ModulationScheme.Bpsk,
+                    ModulationScheme.Qpsk,
                     statusBoard,
                     onBlockProgress: null,
                     captureIq: false);
@@ -551,7 +550,7 @@ public sealed partial class FileWavCodec
                     logicalOffset,
                     perSymbolSearchRadius,
                     noiseVariance: 0.05,
-                    ModulationScheme.Bpsk,
+                    ModulationScheme.Qpsk,
                     statusBoard,
                     onBlockProgress: null,
                     captureIq: false);

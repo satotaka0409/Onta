@@ -66,7 +66,7 @@ internal static class MainWindowSettingsStore
         settings = new MainWindowSettings(
             Send: new SendSettingsSnapshot(
                 ChannelMode: Enum.IsDefined(typeof(ChannelMode), sendChannel) ? sendChannel : ChannelMode.Mono,
-                ActiveSubcarriers: sendSubcarriers,
+                ActiveSubcarriers: OfdmConfig.IsSupportedActiveSubcarriers(sendSubcarriers) ? sendSubcarriers : 16,
                 ModulationScheme: Enum.IsDefined(typeof(ModulationScheme), sendModulation) ? sendModulation : ModulationScheme.Bpsk,
                 BlockInterleaveFactor: sendInterleave,
                 InputFilePath: sendInputPath,

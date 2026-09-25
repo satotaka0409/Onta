@@ -21,7 +21,7 @@ public sealed class OntaTest6
             BlockInterleaveFactor: 1);
         // 受信プロファイルを意図的に不一致にしても、ヘッダー情報で復号できることを確認する。
         var rxProfile = new FileWavCodecProfile(
-            ActiveSubcarriers: 8,
+            ActiveSubcarriers: 16,
             ModulationScheme: ModulationScheme.Qam64,
             ChannelMode: ChannelMode.Stereo,
             BlockInterleaveFactor: 1);
@@ -104,7 +104,7 @@ public sealed class OntaTest6
     }
 
     [Fact]
-    public void GroupE_Downgrade_AdjustsBitsPerOfdmSymbol_For40Sc64Qam()
+    public void Sc40Qam64_NoDowngrade_BitsPerOfdmSymbolMatchesFullCapacity()
     {
         var config = new OfdmConfig(
             fftSize: OfdmConfig.ResolveFftSize(40, ChannelMode.Mono),
@@ -119,12 +119,12 @@ public sealed class OntaTest6
 
         var ofdm = new OfdmGenerator(config);
 
-        // 40SC: 10 pilot + 30 data。Group E の6本のみ16QAMに落として 168bit/symbol。
-        Assert.Equal(168, ofdm.BitsPerOfdmSymbol);
+        // 40SC: 10 pilot + 30 data。G/H未使用のため全データキャリアが64QAMで 180bit/symbol。
+        Assert.Equal(180, ofdm.BitsPerOfdmSymbol);
     }
 
     [Fact]
-    public void GroupEF_Downgrade_AdjustsBitsPerOfdmSymbol_For48Sc64Qam()
+    public void Sc48Qam64_NoDowngrade_BitsPerOfdmSymbolMatchesFullCapacity()
     {
         var config = new OfdmConfig(
             fftSize: OfdmConfig.ResolveFftSize(48, ChannelMode.Mono),
@@ -139,16 +139,57 @@ public sealed class OntaTest6
 
         var ofdm = new OfdmGenerator(config);
 
-        // 48SC: 12 pilot + 36 data。Group E/F の12本を16QAMに落として 192bit/symbol。
-        Assert.Equal(192, ofdm.BitsPerOfdmSymbol);
+        // 48SC: 12 pilot + 36 data。G/H未使用のため全データキャリアが64QAMで 216bit/symbol。
+        Assert.Equal(216, ofdm.BitsPerOfdmSymbol);
     }
 
     [Fact]
-    public void SampleCountForBitCount_UsesDowngradedGroupECapacity()
+    public void Sc40Psk8_NoDowngrade_BitsPerOfdmSymbolMatchesFullCapacity()
     {
         var config = new OfdmConfig(
             fftSize: OfdmConfig.ResolveFftSize(40, ChannelMode.Mono),
             activeSubcarriers: 40,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Psk8,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 7,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 40SC: 10 pilot + 30 data。G/H未使用のため全データキャリアが8PSKで 90bit/symbol。
+        Assert.Equal(90, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
+    public void Sc64Psk8_GhDowngradeToQpsk_BitsPerOfdmSymbolIsReduced()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(64, ChannelMode.Mono),
+            activeSubcarriers: 64,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Psk8,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 8,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 64SC: 16 pilot + 48 data。A-F の 36 本は 8PSK、G/H の 12 本は QPSK へ 1段階ダウン。
+        // 36*3 + 12*2 = 132bit/symbol（非ダウングレードなら 144）。
+        Assert.Equal(132, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
+    public void SampleCountForBitCount_UsesDowngradedGroupGHCapacity()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(64, ChannelMode.Mono),
+            activeSubcarriers: 64,
             cyclicPrefixLength: 16,
             ofdmSymbolCount: 1,
             modulationScheme: ModulationScheme.Qam64,
@@ -159,8 +200,9 @@ public sealed class OntaTest6
 
         var ofdm = new OfdmGenerator(config);
 
-        // 337bit は 168bit/symbol なら 3 symbol 必要（180bit/symbol 前提なら 2）。
-        Assert.Equal(3 * ofdm.SamplesPerOfdmSymbol, ofdm.SampleCountForBitCount(337));
+        // 64SC: 16 pilot + 48 data。G/H の12本を16QAMへ落として 264bit/symbol（非ダウングレードなら 288）。
+        // 529bit は 264bit/symbol なら 3 symbol 必要（288bit/symbol 前提なら 2）。
+        Assert.Equal(3 * ofdm.SamplesPerOfdmSymbol, ofdm.SampleCountForBitCount(529));
     }
 
     [Fact]

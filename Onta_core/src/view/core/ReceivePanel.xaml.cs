@@ -152,7 +152,7 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
-    /// I-Q グラフ横のグループ凡例（色ドット + A〜F）を構築します。G/H は性能測定側です。
+    /// I-Q グラフ横のグループ凡例（色ドット + A〜H）を構築します。
     /// </summary>
     private void BuildIqGroupLegend()
     {

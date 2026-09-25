@@ -15,12 +15,13 @@
       </Grid.ColumnDefinitions>
 
       <TextBlock Text="送信"
-                FontSize="14"
-                FontWeight="SemiBold"
-                Margin="0,6,0,8"/>
+                 FontSize="14"
+                 FontWeight="SemiBold"
+                 Margin="0,6,0,8"/>
 
       <!-- 送信中はここ全体を Disable（ストップだけ右側に残す） -->
-      <Grid Margin="30,0,0,0" x:Name="SettingsHost">
+      <Grid Margin="30,0,0,0"
+            x:Name="SettingsHost">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="90"/>
           <ColumnDefinition Width="140"/>
@@ -48,15 +49,10 @@
                   Margin="4">
           <UniformGrid Columns="2"
                        Margin="3">
-            <RadioButton Content="8-SC"
-                         Tag="8"
-                         GroupName="Subcarrier"
-                         IsChecked="True"
-                         Checked="OnSettingsChanged"
-                         Margin="0,0,4,2"/>
             <RadioButton Content="16-SC"
                          Tag="16"
                          GroupName="Subcarrier"
+                         IsChecked="True"
                          Checked="OnSettingsChanged"
                          Margin="0,0,4,2"/>
             <RadioButton Content="24-SC"
@@ -79,6 +75,16 @@
                          GroupName="Subcarrier"
                          Checked="OnSettingsChanged"
                          Margin="0,0,4,2"/>
+            <RadioButton Content="56-SC"
+                         Tag="56"
+                         GroupName="Subcarrier"
+                         Checked="OnSettingsChanged"
+                         Margin="0,0,4,2"/>
+            <RadioButton Content="64-SC"
+                         Tag="64"
+                         GroupName="Subcarrier"
+                         Checked="OnSettingsChanged"
+                         Margin="0,0,4,2"/>
           </UniformGrid>
         </GroupBox>
 
@@ -93,6 +99,11 @@
                          Checked="OnSettingsChanged"/>
             <RadioButton Content="QPSK"
                          Tag="Qpsk"
+                         GroupName="Modulation"
+                         Checked="OnSettingsChanged"
+                         Margin="0,6,0,0"/>
+            <RadioButton Content="8PSK"
+                         Tag="Psk8"
                          GroupName="Modulation"
                          Checked="OnSettingsChanged"
                          Margin="0,6,0,0"/>

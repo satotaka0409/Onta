@@ -4,12 +4,12 @@ using Xunit;
 namespace Onta.Core.Tests.Core;
 
 /// <summary>
-/// ステレオ 8SC / QPSK の往復テストです。
+/// ステレオ 16SC / QPSK の往復テストです。
 /// </summary>
 public sealed class OntaTest1
 {
     private static readonly FileWavCodecProfile Profile = new(
-        ActiveSubcarriers: 8,
+        ActiveSubcarriers: 16,
         ModulationScheme: ModulationScheme.Qpsk);
 
     [Fact]

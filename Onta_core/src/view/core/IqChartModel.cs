@@ -35,13 +35,13 @@ public sealed class IqChartModel
     private static readonly string[] GroupLabels = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
     /// <summary>
-    /// メイン画面の I-Q 凡例（GROUP A〜F）。G/H は性能測定のみ。
+    /// メイン画面の I-Q 凡例（GROUP A〜H）。
     /// </summary>
     public static IReadOnlyList<(string Label, byte R, byte G, byte B)> CoreGroupLegendItems { get; } =
-        CreateGroupLegendItems(6);
+        CreateGroupLegendItems(8);
 
     /// <summary>
-    /// 性能測定の I-Q 凡例（GROUP A〜H。G/H は SC-56/64）。
+    /// 性能測定の I-Q 凡例（GROUP A〜H）。
     /// </summary>
     public static IReadOnlyList<(string Label, byte R, byte G, byte B)> PerformanceGroupLegendItems { get; } =
         CreateGroupLegendItems(8);

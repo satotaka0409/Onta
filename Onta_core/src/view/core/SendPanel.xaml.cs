@@ -42,7 +42,7 @@ public partial class SendPanel : UserControl
         var writeWav = WriteWavRadio.IsChecked == true;
         return new SendSettingsSnapshot(
             ChannelMode: MonoRadio.IsChecked == true ? Onta.Core.ChannelMode.Mono : Onta.Core.ChannelMode.Stereo,
-            ActiveSubcarriers: ReadSelectedInt("Subcarrier", 8),
+            ActiveSubcarriers: ReadSelectedInt("Subcarrier", 16),
             ModulationScheme: ReadSelectedModulation(),
             BlockInterleaveFactor: ReadRepeatCount(),
             InputFilePath: InputPathBox.Text,
@@ -64,11 +64,12 @@ public partial class SendPanel : UserControl
 
         MonoRadio.IsChecked = snapshot.ChannelMode == ChannelMode.Mono;
         StereoRadio.IsChecked = snapshot.ChannelMode == ChannelMode.Stereo;
-        SetCheckedRadio("Subcarrier", snapshot.ActiveSubcarriers.ToString(), fallbackTag: "8");
+        SetCheckedRadio("Subcarrier", snapshot.ActiveSubcarriers.ToString(), fallbackTag: "16");
         SetCheckedRadio("Modulation", snapshot.ModulationScheme switch
         {
             ModulationScheme.Bpsk => "Bpsk",
             ModulationScheme.Qpsk => "Qpsk",
+            ModulationScheme.Psk8 => "Psk8",
             ModulationScheme.Qam16 => "Qam16",
             ModulationScheme.Qam64 => "Qam64",
             _ => "Bpsk"
@@ -364,6 +365,7 @@ public partial class SendPanel : UserControl
             {
                 "Bpsk" => ModulationScheme.Bpsk,
                 "Qpsk" => ModulationScheme.Qpsk,
+                "Psk8" => ModulationScheme.Psk8,
                 "Qam16" => ModulationScheme.Qam16,
                 "Qam64" => ModulationScheme.Qam64,
                 _ => ModulationScheme.Bpsk

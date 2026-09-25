@@ -134,15 +134,16 @@ public sealed partial class FileWavCodec
 
         var sc = baseSubcarriers switch
         {
-            48 or 40 or 32 or 24 => 16,
-            16 or 8 => 8,
+            64 or 56 or 48 or 40 or 32 or 24 => 16,
+            16 => 16,
             _ => throw new ArgumentOutOfRangeException(nameof(baseSubcarriers), baseSubcarriers, "Unsupported subcarrier count.")
         };
         var mod = baseModulation switch
         {
             ModulationScheme.Qam256 => ModulationScheme.Qam64,
             ModulationScheme.Qam64 => ModulationScheme.Qam16,
-            ModulationScheme.Qam16 => ModulationScheme.Qpsk,
+            ModulationScheme.Qam16 => ModulationScheme.Psk8,
+            ModulationScheme.Psk8 => ModulationScheme.Qpsk,
             ModulationScheme.Qpsk or ModulationScheme.Bpsk => ModulationScheme.Bpsk,
             _ => throw new ArgumentOutOfRangeException(nameof(baseModulation), baseModulation, "Unsupported modulation scheme.")
         };
@@ -1379,6 +1380,7 @@ public sealed partial class FileWavCodec
         {
             ModulationScheme.Bpsk => ConvolutionalCode.PunctureRate.Rate1_2,
             ModulationScheme.Qpsk => ConvolutionalCode.PunctureRate.Rate1_2,
+            ModulationScheme.Psk8 => ConvolutionalCode.PunctureRate.Rate2_3,
             ModulationScheme.Qam16 => ConvolutionalCode.PunctureRate.Rate2_3,
             ModulationScheme.Qam64 => ConvolutionalCode.PunctureRate.Rate3_4,
             // 256QAM は性能測定向け。ファイル符号化で使う場合は 64QAM と同様のパンクチャを適用する。
@@ -1399,7 +1401,7 @@ public sealed partial class FileWavCodec
         }
 
         var subcarriers = blockHeader[8];
-        if (subcarriers is not (8 or 16 or 24 or 32 or 40 or 48))
+        if (subcarriers is not (16 or 24 or 32 or 40 or 48 or 56 or 64))
         {
             throw new InvalidDataException($"Invalid block header subcarrier count: {subcarriers}.");
         }
@@ -1408,6 +1410,7 @@ public sealed partial class FileWavCodec
         {
             1 => ModulationScheme.Bpsk,
             2 => ModulationScheme.Qpsk,
+            6 => ModulationScheme.Psk8,
             3 => ModulationScheme.Qam16,
             4 => ModulationScheme.Qam64,
             5 => ModulationScheme.Qam256,

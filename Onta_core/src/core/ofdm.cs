@@ -24,6 +24,11 @@ public enum ModulationScheme : byte
     Qpsk = 2,
 
     /// <summary>
+    /// 8PSK（3 bit/symbol）。
+    /// </summary>
+    Psk8 = 6,
+
+    /// <summary>
     /// 16QAM（4 bit/symbol）。
     /// </summary>
     Qam16 = 3,
@@ -76,7 +81,7 @@ public sealed record OfdmConfig
     public int FftSize { get; }
 
     /// <summary>
-    /// 有効サブキャリア数（8/16/24/32/40/48。性能測定のみ 56/64）。
+    /// 有効サブキャリア数（16/24/32/40/48/56/64）。
     /// </summary>
     public int ActiveSubcarriers { get; }
 
@@ -180,7 +185,7 @@ public sealed record OfdmConfig
         if (!IsSupportedActiveSubcarriers(ActiveSubcarriers))
         {
             throw new ArgumentException(
-            "Active subcarriers must be 8, 16, 24, 32, 40, 48, 56, or 64 (56/64 are performance-measurement only).",
+            "Active subcarriers must be 16, 24, 32, 40, 48, 56, or 64.",
                 nameof(activeSubcarriers));
         }
 
@@ -203,12 +208,13 @@ public sealed record OfdmConfig
 
         if (modulationScheme is not ModulationScheme.Bpsk
             and not ModulationScheme.Qpsk
+            and not ModulationScheme.Psk8
             and not ModulationScheme.Qam16
             and not ModulationScheme.Qam64
             and not ModulationScheme.Qam256)
         {
             throw new ArgumentException(
-                "Modulation scheme must be BPSK, QPSK, 16QAM, 64QAM, or 256QAM.",
+                "Modulation scheme must be BPSK, QPSK, 8PSK, 16QAM, 64QAM, or 256QAM.",
                 nameof(modulationScheme));
         }
 
@@ -303,13 +309,13 @@ public sealed record OfdmConfig
     public static int[] ResolveGroupFLeftBins() => CopyBins(GroupFLeftBins);
 
     /// <summary>
-    /// Group G の左チャネルキャリア番号を返します（性能測定 SC-56/64）。
+    /// Group G の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group G のキャリア番号配列。</returns>
     public static int[] ResolveGroupGLeftBins() => CopyBins(GroupGLeftBins);
 
     /// <summary>
-    /// Group H の左チャネルキャリア番号を返します（性能測定 SC-64）。
+    /// Group H の左チャネルキャリア番号を返します。
     /// </summary>
     /// <returns>Group H のキャリア番号配列。</returns>
     public static int[] ResolveGroupHLeftBins() => CopyBins(GroupHLeftBins);
@@ -322,7 +328,6 @@ public sealed record OfdmConfig
     public static int[] ResolveConceptualLeftBins(int activeSubcarriers) =>
         activeSubcarriers switch
         {
-            8 => CopyBins(GroupBLeftBins),
             16 => CopyBins(ConceptualLeftBins16),
             24 => CopyBins(ConceptualLeftBins24),
             32 => CopyBins(ConceptualLeftBins32),
@@ -333,7 +338,7 @@ public sealed record OfdmConfig
             _ => throw new ArgumentOutOfRangeException(
                 nameof(activeSubcarriers),
                 activeSubcarriers,
-                "Active subcarriers must be 8, 16, 24, 32, 40, 48, 56, or 64.")
+                "Active subcarriers must be 16, 24, 32, 40, 48, 56, or 64.")
         };
 
     private static readonly int[] GroupALeftBins = CreateRange(1, 8);
@@ -476,9 +481,9 @@ public sealed record OfdmConfig
     /// ファイル送受信または性能測定で使えるサブキャリア数か判定します。
     /// </summary>
     /// <param name="activeSubcarriers">有効サブキャリア数。</param>
-    /// <returns>8/16/24/32/40/48/56/64 なら true。</returns>
+    /// <returns>16/24/32/40/48/56/64 なら true。</returns>
     public static bool IsSupportedActiveSubcarriers(int activeSubcarriers) =>
-        activeSubcarriers is 8 or 16 or 24 or 32 or 40 or 48 or 56 or 64;
+        activeSubcarriers is 16 or 24 or 32 or 40 or 48 or 56 or 64;
 
     /// <summary>
     /// サブキャリア数からキャリアグリッド種別を解決します。
@@ -486,7 +491,7 @@ public sealed record OfdmConfig
     /// <param name="activeSubcarriers">有効サブキャリア数。</param>
     /// <returns>キャリアグリッド種別。</returns>
     public static OfdmCarrierGrid ResolveCarrierGrid(int activeSubcarriers) =>
-        activeSubcarriers is 8 or 16 ? OfdmCarrierGrid.Sc8Family : OfdmCarrierGrid.Sc24Family;
+        activeSubcarriers == 16 ? OfdmCarrierGrid.Sc8Family : OfdmCarrierGrid.Sc24Family;
 
     /// <summary>
     /// 概念左キャリア番号からサブキャリアグループ ID（0=A..7=H）を返します。
@@ -566,6 +571,19 @@ public sealed partial class OfdmGenerator
     private static readonly double[] Qam16PamByBinary = BuildPamByBinary(2, Qam16Levels);
     private static readonly double[] Qam64PamByBinary = BuildPamByBinary(3, Qam64Levels);
     private static readonly double[] Qam256PamByBinary = BuildPamByBinary(4, Qam256Levels);
+    private static readonly byte[] Psk8BitsByPhaseIndex =
+    [
+        0b000,
+        0b001,
+        0b011,
+        0b010,
+        0b110,
+        0b111,
+        0b101,
+        0b100
+    ];
+    private static readonly byte[] Psk8PhaseIndexByBits = BuildPsk8PhaseIndexByBits();
+    private static readonly Complex[] Psk8Symbols = BuildPsk8Symbols();
     private static readonly double InvSqrt2 = 1.0 / Math.Sqrt(2.0);
     private static readonly double InvSqrt10 = 1.0 / Math.Sqrt(10.0);
     private static readonly double InvSqrt42 = 1.0 / Math.Sqrt(42.0);
@@ -752,12 +770,12 @@ public sealed partial class OfdmGenerator
     }
 
     /// <summary>
-    /// Group E/F（および性能測定の G/H）など、変調を 1 段下げる対象の概念左ビンか判定します。
+    /// Group G/H など、変調を 1 段下げる対象の概念左ビンか判定します。
     /// </summary>
     /// <param name="conceptualLeftBin">概念左キャリア番号。</param>
     /// <returns>変調ダウングレード対象なら true。</returns>
     private static bool IsDowngradedGroupConceptualLeftBin(int conceptualLeftBin) =>
-        conceptualLeftBin is >= 33 and <= 48;
+        conceptualLeftBin is >= 49 and <= 64;
 
     /// <summary>
     /// 設定変調と概念ビンから当該キャリアの実効変調を決定します（E/F 等は 1 段下げ）。
@@ -778,7 +796,8 @@ public sealed partial class OfdmGenerator
         {
             ModulationScheme.Qam256 => ModulationScheme.Qam64,
             ModulationScheme.Qam64 => ModulationScheme.Qam16,
-            ModulationScheme.Qam16 => ModulationScheme.Qpsk,
+            ModulationScheme.Qam16 => ModulationScheme.Psk8,
+            ModulationScheme.Psk8 => ModulationScheme.Qpsk,
             ModulationScheme.Qpsk => ModulationScheme.Bpsk,
             ModulationScheme.Bpsk => ModulationScheme.Bpsk,
             _ => configuredScheme
@@ -794,6 +813,7 @@ public sealed partial class OfdmGenerator
     {
         ModulationScheme.Bpsk => 1,
         ModulationScheme.Qpsk => 2,
+        ModulationScheme.Psk8 => 3,
         ModulationScheme.Qam16 => 4,
         ModulationScheme.Qam64 => 6,
         ModulationScheme.Qam256 => 8,
@@ -954,6 +974,7 @@ public sealed partial class OfdmGenerator
     {
         ModulationScheme.Bpsk => 1,
         ModulationScheme.Qpsk => 2,
+        ModulationScheme.Psk8 => 3,
         ModulationScheme.Qam16 => 4,
         ModulationScheme.Qam64 => 6,
         ModulationScheme.Qam256 => 8,
@@ -4630,11 +4651,11 @@ public sealed partial class OfdmGenerator
         private readonly Complex[] _smoothed;
         private readonly bool[] _initialized;
 
-    /// <summary>
-    /// パイロットグループ別 AGC 状態を初期化します。
-    /// </summary>
-    /// <param name="groupCount">サブキャリアグループ数。</param>
-    public PilotGroupAgcState(int groupCount)
+        /// <summary>
+        /// パイロットグループ別 AGC 状態を初期化します。
+        /// </summary>
+        /// <param name="groupCount">サブキャリアグループ数。</param>
+        public PilotGroupAgcState(int groupCount)
         {
             var size = Math.Max(1, groupCount);
             _smoothed = new Complex[size];
@@ -4849,6 +4870,9 @@ public sealed partial class OfdmGenerator
                 WriteBit(ref bitIndex, bits, symbol.Real >= 0.0);
                 WriteBit(ref bitIndex, bits, symbol.Imaginary >= 0.0);
                 break;
+            case ModulationScheme.Psk8:
+                EmitPsk8Bits(symbol, ref bitIndex, bits);
+                break;
             case ModulationScheme.Qam16:
                 EmitPamAxisBits(symbol.Real * Math.Sqrt(10.0), bitsPerAxis: 2, Qam16Levels, ref bitIndex, bits);
                 EmitPamAxisBits(symbol.Imaginary * Math.Sqrt(10.0), bitsPerAxis: 2, Qam16Levels, ref bitIndex, bits);
@@ -4890,6 +4914,9 @@ public sealed partial class OfdmGenerator
             case ModulationScheme.Qpsk:
                 WriteLlr(ref bitIndex, llrs, 2.0 * symbol.Real * Math.Sqrt(2.0) * invVar);
                 WriteLlr(ref bitIndex, llrs, 2.0 * symbol.Imaginary * Math.Sqrt(2.0) * invVar);
+                break;
+            case ModulationScheme.Psk8:
+                EmitPsk8SoftLlrs(symbol, invVar, ref bitIndex, llrs);
                 break;
             case ModulationScheme.Qam16:
                 EmitPamAxisSoftLlrsCore(symbol.Real * Math.Sqrt(10.0), bitsPerAxis: 2, Qam16Levels, invVar, ref bitIndex, llrs);
@@ -4992,6 +5019,66 @@ public sealed partial class OfdmGenerator
 
             WriteLlr(ref bitIndex, llrs, 0.5 * (minDist0 - minDist1) * invVariance);
         }
+    }
+
+    /// <summary>
+    /// 8PSK シンボルを最近傍位相へ硬判定し、3bit を書き込みます。
+    /// </summary>
+    private static void EmitPsk8Bits(Complex symbol, ref int bitIndex, bool[] bits)
+    {
+        var phaseIndex = ResolveNearestPsk8PhaseIndex(symbol);
+        var packed = Psk8BitsByPhaseIndex[phaseIndex];
+        WriteBit(ref bitIndex, bits, (packed & 0b100) != 0);
+        WriteBit(ref bitIndex, bits, (packed & 0b010) != 0);
+        WriteBit(ref bitIndex, bits, (packed & 0b001) != 0);
+    }
+
+    /// <summary>
+    /// 8PSK のソフト LLR（Max-Log 近似）を 3bit 分書き込みます。
+    /// </summary>
+    private static void EmitPsk8SoftLlrs(Complex symbol, double invVariance, ref int bitIndex, Span<double> llrs)
+    {
+        for (var bitOffset = 2; bitOffset >= 0; bitOffset--)
+        {
+            var best0 = double.PositiveInfinity;
+            var best1 = double.PositiveInfinity;
+            for (var i = 0; i < Psk8Symbols.Length; i++)
+            {
+                var d = symbol - Psk8Symbols[i];
+                var metric = (d.Real * d.Real) + (d.Imaginary * d.Imaginary);
+                if (((Psk8BitsByPhaseIndex[i] >> bitOffset) & 1) == 0)
+                {
+                    best0 = Math.Min(best0, metric);
+                }
+                else
+                {
+                    best1 = Math.Min(best1, metric);
+                }
+            }
+
+            WriteLlr(ref bitIndex, llrs, (best0 - best1) * 0.5 * invVariance);
+        }
+    }
+
+    /// <summary>
+    /// 8PSK の最近傍位相インデックス（0..7）を返します。
+    /// </summary>
+    private static int ResolveNearestPsk8PhaseIndex(Complex symbol)
+    {
+        var bestIndex = 0;
+        var bestMetric = double.PositiveInfinity;
+        for (var i = 0; i < Psk8Symbols.Length; i++)
+        {
+            var d = symbol - Psk8Symbols[i];
+            var metric = (d.Real * d.Real) + (d.Imaginary * d.Imaginary);
+            if (metric < bestMetric)
+            {
+                bestMetric = metric;
+                bestIndex = i;
+            }
+        }
+
+        return bestIndex;
     }
 
     /// <summary>
@@ -5469,6 +5556,7 @@ public sealed partial class OfdmGenerator
         {
             ModulationScheme.Bpsk => ConsumeBpskSymbol(ref bitIndex, bits),
             ModulationScheme.Qpsk => ConsumeQpskSymbol(ref bitIndex, bits),
+            ModulationScheme.Psk8 => ConsumePsk8Symbol(ref bitIndex, bits),
             ModulationScheme.Qam16 => ConsumeQam16Symbol(ref bitIndex, bits),
             ModulationScheme.Qam64 => ConsumeQam64Symbol(ref bitIndex, bits),
             ModulationScheme.Qam256 => ConsumeQam256Symbol(ref bitIndex, bits),
@@ -5536,6 +5624,16 @@ public sealed partial class OfdmGenerator
         var real = iBit ? InvSqrt2 : -InvSqrt2;
         var imag = qBit ? InvSqrt2 : -InvSqrt2;
         return new Complex(real, imag);
+    }
+
+    /// <summary>
+    /// ビット列から 8PSK シンボルを 1 つ生成します。
+    /// </summary>
+    private static Complex ConsumePsk8Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
+    {
+        var packed = ReadBitField(ref bitIndex, bits, 3);
+        var phaseIndex = Psk8PhaseIndexByBits[packed & 0b111];
+        return Psk8Symbols[phaseIndex];
     }
 
     /// <summary>
@@ -5659,6 +5757,7 @@ public sealed partial class OfdmGenerator
         {
             ModulationScheme.Bpsk => GenerateBpskSymbol(),
             ModulationScheme.Qpsk => GenerateQpskSymbol(),
+            ModulationScheme.Psk8 => GeneratePsk8Symbol(),
             ModulationScheme.Qam16 => GenerateQam16Symbol(),
             ModulationScheme.Qam64 => GenerateQam64Symbol(),
             ModulationScheme.Qam256 => GenerateQam256Symbol(),
@@ -5688,6 +5787,16 @@ public sealed partial class OfdmGenerator
         var real = iBit == 0 ? -InvSqrt2 : InvSqrt2;
         var imag = qBit == 0 ? -InvSqrt2 : InvSqrt2;
         return new Complex(real, imag);
+    }
+
+    /// <summary>
+    /// 乱数から 8PSK シンボルを生成します。
+    /// </summary>
+    private Complex GeneratePsk8Symbol()
+    {
+        var packed = NextBits(3);
+        var phaseIndex = Psk8PhaseIndexByBits[packed & 0b111];
+        return Psk8Symbols[phaseIndex];
     }
 
     /// <summary>
@@ -5745,6 +5854,35 @@ public sealed partial class OfdmGenerator
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// Gray 符号化 8PSK のビット→位相逆引き表を構築します。
+    /// </summary>
+    private static byte[] BuildPsk8PhaseIndexByBits()
+    {
+        var table = new byte[8];
+        for (byte phase = 0; phase < Psk8BitsByPhaseIndex.Length; phase++)
+        {
+            table[Psk8BitsByPhaseIndex[phase]] = phase;
+        }
+
+        return table;
+    }
+
+    /// <summary>
+    /// 8PSK の位相点（単位円）を生成します。
+    /// </summary>
+    private static Complex[] BuildPsk8Symbols()
+    {
+        var symbols = new Complex[8];
+        for (var i = 0; i < symbols.Length; i++)
+        {
+            var phase = (2.0 * Math.PI * i) / symbols.Length;
+            symbols[i] = new Complex(Math.Cos(phase), Math.Sin(phase));
+        }
+
+        return symbols;
     }
 
     /// <summary>

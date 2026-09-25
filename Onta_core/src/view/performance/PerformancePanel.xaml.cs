@@ -130,10 +130,11 @@ public partial class PerformancePanel : UserControl
         }
 
         ApplyToneSelection(snapshot.SignalMode, snapshot.ToneHz);
-        SetCheckedRadio("PerfSubcarrier", snapshot.ActiveSubcarriers.ToString(), "8");
+        SetCheckedRadio("PerfSubcarrier", snapshot.ActiveSubcarriers.ToString(), "16");
         SetCheckedRadio("PerfModulation", snapshot.ModulationScheme switch
         {
             ModulationScheme.Qpsk => "Qpsk",
+            ModulationScheme.Psk8 => "Psk8",
             ModulationScheme.Qam16 => "Qam16",
             ModulationScheme.Qam64 => "Qam64",
             ModulationScheme.Qam256 => "Qam256",
@@ -649,7 +650,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// I-Q グラフ横のグループ凡例（A〜H。G/H は性能測定のみ）を構築します。
+    /// I-Q グラフ横のグループ凡例（A〜H）を構築します。
     /// </summary>
     /// <param name="host">ホスト要素。</param>
     private void BuildIqGroupLegend(Panel host)
@@ -2514,7 +2515,7 @@ public partial class PerformancePanel : UserControl
             }
         }
 
-        return 8;
+        return 16;
     }
 
     /// <summary>
@@ -2534,6 +2535,7 @@ public partial class PerformancePanel : UserControl
             {
                 "Bpsk" => ModulationScheme.Bpsk,
                 "Qpsk" => ModulationScheme.Qpsk,
+                "Psk8" => ModulationScheme.Psk8,
                 "Qam16" => ModulationScheme.Qam16,
                 "Qam64" => ModulationScheme.Qam64,
                 "Qam256" => ModulationScheme.Qam256,

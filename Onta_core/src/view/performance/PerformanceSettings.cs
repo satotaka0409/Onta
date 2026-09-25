@@ -109,7 +109,7 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
         new(
             SignalMode: PerformanceSignalMode.Tone,
             ToneHz: 315.0,
-            ActiveSubcarriers: 8,
+            ActiveSubcarriers: 16,
             ModulationScheme: ModulationScheme.Bpsk,
             DurationSeconds: 30.0,
             WriteWav: true,
