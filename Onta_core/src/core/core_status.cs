@@ -15,15 +15,20 @@ public enum CoreFrameKind : byte
 /// <summary>
 /// 進捗表示に必要な最小情報を保持します。
 /// </summary>
+/// <param name="CurrentFrame">現在処理中のフレーム種別（FH / BH / BD）。</param>
+/// <param name="CurrentBlockIndex">現在処理中のブロック番号（未処理時は -1）。</param>
+/// <param name="PassIndex">インターリーブのパス番号（0 始まり）。</param>
+/// <param name="AcceptedBlockCount">受理済みブロック数。</param>
+/// <param name="TotalBlockCount">ファイル全体のブロック数。</param>
+/// <param name="ProgressPercent">0 から 100 の全体進捗率。</param>
+/// <param name="CurrentBlockProgressPercent">現在ブロック内の局所進捗（0..100）。BH/BD メーター用。</param>
 public readonly record struct CoreProgressInfo(
     CoreFrameKind CurrentFrame,
     int CurrentBlockIndex,
     int PassIndex,
     int AcceptedBlockCount,
     int TotalBlockCount,
-    /// <summary>0 から 100 の全体進捗率です。</summary>
     double ProgressPercent,
-    /// <summary>現在ブロック内の局所進捗（0..100）。BH/BD メーター用。</summary>
     double CurrentBlockProgressPercent = 0)
 {
     /// <summary>
@@ -55,6 +60,11 @@ public enum CoreEccDecoderKind : byte
 /// <summary>
 /// 最新エラー率と対象フレーム種別を保持します。
 /// </summary>
+/// <param name="LatestPercent">左（または単一）チャネルの推定エラー率（0 から 100）。</param>
+/// <param name="FrameKind">エラー率の対象フレーム種別。</param>
+/// <param name="DecoderKind">誤り訂正段階（ビタビ / ターボ / RS）。</param>
+/// <param name="Sequence">更新連番（グラフ時系列の順序付け用）。</param>
+/// <param name="RightPercent">右チャネルの推定エラー率（ステレオ時）。null の場合は単一系列。</param>
 public readonly record struct CoreErrorRateInfo(
     double LatestPercent,
     CoreFrameKind FrameKind,
@@ -71,11 +81,18 @@ public readonly record struct CoreErrorRateInfo(
 /// <summary>
 /// I/Q 平面上の1サンプルです。
 /// </summary>
+/// <param name="I">同相成分 I。</param>
+/// <param name="Q">直交成分 Q。</param>
+/// <param name="Group">サブキャリアグループ番号（0=A .. 5=F、性能測定時は 6=G / 7=H も可）。</param>
 public readonly record struct CoreIqSample(double I, double Q, byte Group = 0);
 
 /// <summary>
 /// IQグラフ描画に必要な系列情報です。
 /// </summary>
+/// <param name="Points">等化後の I/Q サンプル列。</param>
+/// <param name="ActiveSubcarrierCount">表示上の有効サブキャリア数。</param>
+/// <param name="ModulationScheme">現在受信中の変調方式（星座グリッド切替用）。</param>
+/// <param name="LeftPointCount">先頭から左チャネルとして扱う点数（性能測定の L/R 分割用。0 は未分割）。</param>
 public readonly record struct CoreIqGraphInfo(
     IReadOnlyList<CoreIqSample> Points,
     int ActiveSubcarrierCount,
@@ -98,6 +115,10 @@ public readonly record struct CoreFftSample(double FrequencyHz, double Magnitude
 /// <summary>
 /// 左右FFTの描画データとモード情報を保持します。
 /// </summary>
+/// <param name="LeftPoints">左チャネルの FFT ビン列。</param>
+/// <param name="RightPoints">右チャネルの FFT ビン列（モノラル時は空）。</param>
+/// <param name="IsStereo">ステレオ表示モードなら true。</param>
+/// <param name="FftSize">FFT サイズ（ビン数）。</param>
 public readonly record struct CoreFftGraphInfo(
     IReadOnlyList<CoreFftSample> LeftPoints,
     IReadOnlyList<CoreFftSample> RightPoints,
@@ -117,21 +138,39 @@ public readonly record struct CoreFftGraphInfo(
 /// <summary>
 /// UI表示向けに集約した実行状態です。
 /// </summary>
+/// <param name="IsRunning">コア処理が実行中なら true。</param>
+/// <param name="IsCompleted">処理が完了（成功／失敗問わず）したら true。</param>
+/// <param name="IsFaulted">失敗終了なら true。</param>
+/// <param name="IsAnalyzing">FH ワウ推定など、ヘッダー確定前の解析中は true。</param>
+/// <param name="Progress">進捗表示用の最小情報。</param>
+/// <param name="ErrorRate">最新のエラー率情報。</param>
+/// <param name="ErrorRateSamples">前回 Read 以降にコアが書き込んだエラー率サンプル（ビタビ/RS/ターボ）。</param>
+/// <param name="IqGraph">I-Q グラフ描画用データ。</param>
+/// <param name="FftGraph">FFT グラフ描画用データ。</param>
+/// <param name="WowLeftPercent">左チャネルの速度偏差（%）。</param>
+/// <param name="WowRightPercent">右チャネルの速度偏差（%）。</param>
+/// <param name="WowTrackingActive">推定ワウモデルが有効なら true（UI が瞬間速度を連続評価する）。</param>
+/// <param name="WowAmount">ワウ／フラッター変調量（相対速度振幅）。</param>
+/// <param name="WowPhase">wow 成分の初期位相（ラジアン）。</param>
+/// <param name="FlutterPhase">flutter 成分の初期位相（ラジアン）。</param>
+/// <param name="WowSampleRate">ワウ評価に使うサンプリング周波数（Hz）。</param>
+/// <param name="WowSampleIndex">ワウ評価の基準サンプル位置。</param>
+/// <param name="FileName">表示用ファイル名。</param>
+/// <param name="FileSizeText">表示用ファイルサイズ文字列。</param>
+/// <param name="BlockCountText">表示用ブロック数文字列。</param>
+/// <param name="LastError">直近のエラーメッセージ。なければ null。</param>
 public readonly record struct CoreExecutionStatus(
     bool IsRunning,
     bool IsCompleted,
     bool IsFaulted,
-    /// <summary>FH ワウ推定など、ヘッダー確定前の解析中は true。</summary>
     bool IsAnalyzing,
     CoreProgressInfo Progress,
     CoreErrorRateInfo ErrorRate,
-    /// <summary>前回 Read 以降にコアが書き込んだエラー率サンプル（ビタビ/RS/ターボ）。</summary>
     IReadOnlyList<CoreErrorRateInfo> ErrorRateSamples,
     CoreIqGraphInfo IqGraph,
     CoreFftGraphInfo FftGraph,
     double WowLeftPercent,
     double WowRightPercent,
-    /// <summary>推定ワウモデルが有効なら true（UI が瞬間速度を連続評価する）。</summary>
     bool WowTrackingActive,
     double WowAmount,
     double WowPhase,
@@ -344,7 +383,7 @@ public sealed class CoreExecutionStatusBoard
     /// </summary>
     /// <param name="percent">誤り訂正段階の推定エラー率（0 から 100）。</param>
     /// <param name="frameKind">エラー率の対象フレーム種別。</param>
-    /// <param name="decoderKind">ビタビ / ターボの区別。</param>
+    /// <param name="decoderKind">誤り訂正段階（ビタビ / ターボ / RS）。</param>
     /// <param name="rightPercent">右チャネルの推定エラー率（ステレオ時）。null の場合は単一系列として扱います。</param>
     public void SetErrorRate(
         double percent,
@@ -410,11 +449,11 @@ public sealed class CoreExecutionStatusBoard
     /// 推定ワウモデルを公開し、瞬間速度偏差（%）も更新します。
     /// UI はこのモデルから連続的にメーターを動かします。
     /// </summary>
-    /// <param name="amount">amount。</param>
-    /// <param name="wowPhase">wowPhase。</param>
-    /// <param name="flutterPhase">flutterPhase。</param>
+    /// <param name="amount">ワウ／フラッター変調量（相対速度振幅。0 で無変調）。</param>
+    /// <param name="wowPhase">wow 成分の初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 成分の初期位相（ラジアン）。</param>
     /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
-    /// <param name="sampleIndex">sampleIndex。</param>
+    /// <param name="sampleIndex">評価するサンプル位置（0 始まり）。</param>
     public void SetWowFlutterTracking(
         double amount,
         double wowPhase,
@@ -741,7 +780,7 @@ public sealed class CoreExecutionStatusBoard
     /// <summary>
     /// <see cref="Read"/> の互換エイリアスです。
     /// </summary>
-    /// <returns>CoreExecutionStatus。</returns>
+    /// <returns>現在の実行状態スナップショット。</returns>
     public CoreExecutionStatus Query() => Read();
 
     /// <summary>

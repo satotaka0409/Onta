@@ -2,8 +2,12 @@
 
 namespace Onta.History;
 
+/// <summary>
+/// Onta_history.bin（Magic=ONTAHIS1 / Version=1）のバイナリ読込・書込・マージを行います。
+/// </summary>
 internal static class ReceiveHistoryStore
 {
+    // Magic は ASCII "ONTAHIS1"（8 バイト）。FormatVersion は別フィールドの uint16。
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("ONTAHIS1");
     // v2: Entry Payloadを削除。
     private const ushort FormatVersion = 1;
@@ -543,7 +547,7 @@ internal static class ReceiveHistoryStore
     }
 
     /// <summary>
-    /// ブロックを BlockIndex キーで統合します。完了ブロックは未完了を上書きしません。
+    /// ブロックを BlockIndex キーで統合します。既存が完了済みのとき、未完了の新規では上書きしません。
     /// </summary>
     /// <param name="existing">既存ブロック一覧。</param>
     /// <param name="incoming">新規ブロック一覧。</param>

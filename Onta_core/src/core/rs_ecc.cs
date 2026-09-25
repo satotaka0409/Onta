@@ -18,6 +18,12 @@ public static class RsEcc256
     /// <summary>
     /// 復号時の訂正量メトリクスです。
     /// </summary>
+    /// <param name="PayloadCorrectedBitCount">ペイロード領域で訂正したビット数。</param>
+    /// <param name="PayloadCorrectedByteCount">ペイロード領域で訂正したバイト数。</param>
+    /// <param name="CodewordCorrectedSymbolCount">符号語全体で訂正したシンボル数。</param>
+    /// <param name="CodewordCorrectedBitCount">符号語全体で訂正したビット数。</param>
+    /// <param name="PayloadBitLength">ペイロードのビット長。</param>
+    /// <param name="PayloadCorrectionRate">ペイロードに対する訂正率（0〜1）。</param>
     public readonly record struct DecodeMetrics(
         int PayloadCorrectedBitCount,
         int PayloadCorrectedByteCount,
@@ -138,6 +144,8 @@ internal static class ReedSolomonCodec
     /// <summary>
     /// 復号バイト列とメトリクスの組です。
     /// </summary>
+    /// <param name="Decoded">復号したペイロード。</param>
+    /// <param name="Metrics">訂正量メトリクス。</param>
     internal readonly record struct DecodeResult(byte[] Decoded, RsEcc256.DecodeMetrics Metrics);
 
     private const int FieldSize = 256;
@@ -291,12 +299,12 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// CountDifferentBytes の結果を返します。
+    /// 2 つのバイト配列の先頭 count 要素について不一致バイト数を数えます。
     /// </summary>
-    /// <param name="left">L チャネル。</param>
-    /// <param name="right">R チャネル。</param>
-    /// <param name="count">要素数。</param>
-    /// <returns>計算した整数値。</returns>
+    /// <param name="left">比較元バイト配列。</param>
+    /// <param name="right">比較先バイト配列。</param>
+    /// <param name="count">比較する要素数。</param>
+    /// <returns>不一致バイト数。</returns>
     private static int CountDifferentBytes(byte[] left, byte[] right, int count)
     {
         var different = 0;
@@ -363,12 +371,12 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// CountDifferentBits の結果を返します。
+    /// 2 つのバイト配列の先頭 count 要素について不一致ビット数を数えます。
     /// </summary>
-    /// <param name="left">L チャネル。</param>
-    /// <param name="right">R チャネル。</param>
-    /// <param name="count">要素数。</param>
-    /// <returns>計算した整数値。</returns>
+    /// <param name="left">比較元バイト配列。</param>
+    /// <param name="right">比較先バイト配列。</param>
+    /// <param name="count">比較する要素数。</param>
+    /// <returns>不一致ビット数。</returns>
     private static int CountDifferentBits(byte[] left, byte[] right, int count)
     {
         var bitCount = 0;
@@ -392,7 +400,7 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// InitializeTables を実行します。
+    /// GF(256) の指数・対数表を初期化します。
     /// </summary>
     private static void InitializeTables()
     {
@@ -415,7 +423,7 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// InitializeMultiplicationTable を実行します。
+    /// GF(256) の乗算ルックアップ表を初期化します。
     /// </summary>
     private static void InitializeMultiplicationTable()
     {
@@ -435,10 +443,10 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// BuildGeneratorPolynomial を構築します。
+    /// 指定パリティ数の生成多項式を構築します。
     /// </summary>
-    /// <param name="paritySymbols">paritySymbols。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="paritySymbols">パリティシンボル数。</param>
+    /// <returns>高次係数先頭の生成多項式。</returns>
     private static int[] BuildGeneratorPolynomial(int paritySymbols)
     {
         var gen = new[] { 1 };
@@ -468,10 +476,10 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// IsAllZero を判定します。
+    /// 整数配列の全要素が 0 かどうかを判定します。
     /// </summary>
-    /// <param name="values">values。</param>
-    /// <returns>条件を満たす場合 true、それ以外は false。</returns>
+    /// <param name="values">判定対象の整数配列。</param>
+    /// <returns>全要素が 0 なら true、それ以外は false。</returns>
     private static bool IsAllZero(int[] values)
     {
         for (var i = 0; i < values.Length; i++)
@@ -486,11 +494,11 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// FindErrorLocatorBerlekampMassey は、条件に合う位置または値を探索します。
+    /// Berlekamp–Massey 法で誤り位置多項式を求めます。
     /// </summary>
-    /// <param name="syndromes">syndromes。</param>
-    /// <param name="paritySymbols">paritySymbols。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="syndromes">シンドローム配列。</param>
+    /// <param name="paritySymbols">パリティシンボル数（反復回数）。</param>
+    /// <returns>低次係数順の誤り位置多項式。</returns>
     private static int[] FindErrorLocatorBerlekampMassey(int[] syndromes, int paritySymbols)
     {
         var c = new List<int> { 1 };
@@ -608,11 +616,11 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// SolveLinearSystemGf256 の結果を返します。
+    /// GF(256) 上の拡大行列を掃き出し法で解きます。
     /// </summary>
-    /// <param name="augmentedMatrix">augmentedMatrix。</param>
-    /// <param name="size">size。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="augmentedMatrix">係数＋右辺を含む拡大行列。</param>
+    /// <param name="size">未知数の個数（正方部の次数）。</param>
+    /// <returns>解ベクトル。</returns>
     private static int[] SolveLinearSystemGf256(int[,] augmentedMatrix, int size)
     {
         var row = 0;
@@ -750,9 +758,9 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// TrimTrailingZerosLowDegree を実行します。
+    /// 低次係数順の多項式から末尾のゼロ係数を取り除きます。
     /// </summary>
-    /// <param name="poly">poly。</param>
+    /// <param name="poly">対象多項式（低次係数順、破壊的更新）。</param>
     private static void TrimTrailingZerosLowDegree(List<int> poly)
     {
         while (poly.Count > 1 && poly[poly.Count - 1] == 0)
@@ -870,10 +878,10 @@ internal static class ReedSolomonCodec
     }
 
     /// <summary>
-    /// GfInverse の結果を返します。
+    /// GF(256) 上で乗法逆元を求めます。
     /// </summary>
-    /// <param name="value">入力値。</param>
-    /// <returns>計算した整数値。</returns>
+    /// <param name="value">入力値（0 不可）。</param>
+    /// <returns>乗法逆元。</returns>
     private static int GfInverse(int value)
     {
         if (value == 0)

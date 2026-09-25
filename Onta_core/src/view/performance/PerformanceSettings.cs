@@ -9,7 +9,7 @@ internal static class PerformanceConstants
 {
     /// <summary>
     /// 性能測定の表示用解析 FFT 長の既定値です（メイン処理の <c>OfdmConfig.FixedFftSize=256</c> とは別）。
-    /// UI で 1024/2048/4096 を選択可能。
+    /// UI で 1024/2048/4096/8192 を選択可能。
     /// </summary>
     public const int VizFftSize = PerformanceFftAnalyzer.DefaultSize;
 
@@ -96,7 +96,7 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
     int InputDeviceNumber,
     /// <summary>入力ゲイン（0〜1）。</summary>
     double InputGain,
-    /// <summary>表示 FFT 長（1024/2048/4096）。</summary>
+    /// <summary>表示 FFT 長（1024/2048/4096/8192）。</summary>
     int FftSize,
     /// <summary>表示 FFT 窓関数。</summary>
     PerformanceFftWindowKind FftWindowKind)

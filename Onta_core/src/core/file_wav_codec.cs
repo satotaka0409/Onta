@@ -21,24 +21,25 @@ public enum TransmissionFrameKind
 /// <summary>
 /// 受信した PCM チャンクを処理するコールバックです。
 /// </summary>
+/// <param name="left">左チャネルの PCM サンプル列（複素数）。</param>
+/// <param name="right">右チャネルの PCM サンプル列（複素数。モノラル時は空）。</param>
 public delegate void PcmChunkHandler(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right);
 
 /// <summary>
 /// ファイル伝送に使用する OFDM/変調パラメータです。
 /// </summary>
-/// <param name="ActiveSubcarriers">ActiveSubcarriers。</param>
-/// <param name="ModulationScheme">ModulationScheme。</param>
-/// <param name="SampleRate">SampleRate。</param>
-/// <param name="SamplePeak">SamplePeak。</param>
-/// <param name="HeaderFftSize">HeaderFftSize。</param>
-/// <param name="DataFftSize">DataFftSize。</param>
-/// <param name="HeaderCyclicPrefixLength">HeaderCyclicPrefixLength。</param>
-/// <param name="DataCyclicPrefixLength">DataCyclicPrefixLength。</param>
-/// <param name="RandomSeed">RandomSeed。</param>
-/// <param name="StereoFrequencyShiftBins">StereoFrequencyShiftBins。</param>
-/// <param name="ChannelMode">ChannelMode。</param>
-/// <param name="BlockInterleaveFactor">BlockInterleaveFactor。</param>
-/// <returns>record。</returns>
+/// <param name="ActiveSubcarriers">データ部のアクティブサブキャリア数（8〜48 など）。</param>
+/// <param name="ModulationScheme">データ部の変調方式（BPSK〜64QAM 等）。</param>
+/// <param name="SampleRate">サンプリング周波数（Hz）。既定は 44100。</param>
+/// <param name="SamplePeak">PCM 正規化時のピーク振幅目標（0〜1）。</param>
+/// <param name="HeaderFftSize">ヘッダー部 OFDM の FFT サイズ。</param>
+/// <param name="DataFftSize">データ部 OFDM の FFT サイズ。</param>
+/// <param name="HeaderCyclicPrefixLength">ヘッダー部のサイクリックプレフィックス長（サンプル）。</param>
+/// <param name="DataCyclicPrefixLength">データ部のサイクリックプレフィックス長（サンプル）。</param>
+/// <param name="RandomSeed">インターリーブ等で使う疑似乱数の初期シード。</param>
+/// <param name="StereoFrequencyShiftBins">ステレオ時に R 側搬送波をずらすビン数。</param>
+/// <param name="ChannelMode">モノラル／ステレオのチャネル構成。</param>
+/// <param name="BlockInterleaveFactor">ブロック時系列インターリーブ倍率（1 または 2）。</param>
 public sealed record FileWavCodecProfile(
     int ActiveSubcarriers,
     ModulationScheme ModulationScheme,
@@ -67,26 +68,25 @@ public sealed record FileWavCodecProfile(
 /// <summary>
 /// 段階デコード時の探索・復号チューニング値です。
 /// </summary>
-/// <param name="TurboIterationsMin">TurboIterationsMin。</param>
-/// <param name="TurboIterationsMax">TurboIterationsMax。</param>
-/// <param name="TurboLowConfidenceLlr">TurboLowConfidenceLlr。</param>
-/// <param name="TurboHighConfidenceLlr">TurboHighConfidenceLlr。</param>
-/// <param name="PreferLocalWowTracking">PreferLocalWowTracking。</param>
-/// <param name="WowLocalPhaseRangeRad">WowLocalPhaseRangeRad。</param>
-/// <param name="WowLocalAmountRange">WowLocalAmountRange。</param>
-/// <param name="AdaptiveWowOnlyOnFileHeaderBoundaries">AdaptiveWowOnlyOnFileHeaderBoundaries。</param>
-/// <param name="ShareStereoWowFromLeft">ShareStereoWowFromLeft。</param>
-/// <param name="WowSkipRewarpAmountDelta">WowSkipRewarpAmountDelta。</param>
-/// <param name="WowSkipRewarpPhaseDeltaRad">WowSkipRewarpPhaseDeltaRad。</param>
-/// <param name="DataSyncMaxFullAttempts">DataSyncMaxFullAttempts。</param>
-/// <param name="DataSyncMaxSoftOnlyAttempts">DataSyncMaxSoftOnlyAttempts。</param>
-/// <param name="DataSyncMaxFullAttemptsWhenWowLocked">DataSyncMaxFullAttemptsWhenWowLocked。</param>
-/// <param name="DataSyncMaxSoftOnlyAttemptsWhenWowLocked">DataSyncMaxSoftOnlyAttemptsWhenWowLocked。</param>
-/// <param name="SoftLlrAbortMeanAbs">SoftLlrAbortMeanAbs。</param>
-/// <param name="SoftLlrAbortMeanAbsWhenWowLocked">SoftLlrAbortMeanAbsWhenWowLocked。</param>
-/// <param name="SoftHardFallbackMinMeanAbsLlr">SoftHardFallbackMinMeanAbsLlr。</param>
-/// <param name="WowRewarpLookaheadSeconds">WowRewarpLookaheadSeconds。</param>
-/// <returns>record。</returns>
+/// <param name="TurboIterationsMin">ターボ復号の最小反復回数。</param>
+/// <param name="TurboIterationsMax">ターボ復号の最大反復回数。</param>
+/// <param name="TurboLowConfidenceLlr">信頼度が低いとみなす平均 |LLR| の下限。</param>
+/// <param name="TurboHighConfidenceLlr">信頼度が高いとみなす平均 |LLR| の上限。</param>
+/// <param name="PreferLocalWowTracking">局所ワウ追跡を優先するか。</param>
+/// <param name="WowLocalPhaseRangeRad">局所ワウ探索の位相範囲（ラジアン）。</param>
+/// <param name="WowLocalAmountRange">局所ワウ探索の振幅（量）範囲。</param>
+/// <param name="AdaptiveWowOnlyOnFileHeaderBoundaries">適応ワウ補正を FH 境界付近に限定するか。</param>
+/// <param name="ShareStereoWowFromLeft">ステレオ時に L 側で推定したワウを R へ共有するか。</param>
+/// <param name="WowSkipRewarpAmountDelta">再ワープをスキップするワウ量の差分しきい値。</param>
+/// <param name="WowSkipRewarpPhaseDeltaRad">再ワープをスキップする位相差分しきい値（ラジアン）。</param>
+/// <param name="DataSyncMaxFullAttempts">データ同期のフル探索最大試行回数。</param>
+/// <param name="DataSyncMaxSoftOnlyAttempts">ソフトのみ同期の最大試行回数。</param>
+/// <param name="DataSyncMaxFullAttemptsWhenWowLocked">ワウロック済み時のフル探索最大試行回数。</param>
+/// <param name="DataSyncMaxSoftOnlyAttemptsWhenWowLocked">ワウロック済み時のソフトのみ最大試行回数。</param>
+/// <param name="SoftLlrAbortMeanAbs">ソフト LLR 平均絶対値がこれ未満なら早期打ち切り。</param>
+/// <param name="SoftLlrAbortMeanAbsWhenWowLocked">ワウロック済み時のソフト LLR 打ち切りしきい値。</param>
+/// <param name="SoftHardFallbackMinMeanAbsLlr">ソフト失敗後にハードへフォールバックする最小平均 |LLR|。</param>
+/// <param name="WowRewarpLookaheadSeconds">ワウ再補正時に先読みする秒数。</param>
 public sealed record DecodeRuntimeTuning(
     int TurboIterationsMin = 8,
     int TurboIterationsMax = 12,
@@ -106,9 +106,6 @@ public sealed record DecodeRuntimeTuning(
     double SoftLlrAbortMeanAbs = 0.35,
     double SoftLlrAbortMeanAbsWhenWowLocked = 0.55,
     double SoftHardFallbackMinMeanAbsLlr = 1.0,
-    /// <summary>
-    /// WOW 再補正時に先読みする秒数です。
-    /// </summary>
     double WowRewarpLookaheadSeconds = 8.0)
 {
     public static DecodeRuntimeTuning Default { get; } = new();
@@ -280,13 +277,13 @@ public sealed class ProgressiveDecodeState
     /// <summary>
     /// 共有状態メモリのスナップショットを読み取ります。
     /// </summary>
-    /// <returns>CoreExecutionStatus。</returns>
+    /// <returns>進捗・エラー率などを含む実行状態のスナップショット。</returns>
     public CoreExecutionStatus ReadExecutionStatus() => StatusBoard.Read();
 
     /// <summary>
     /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
     /// </summary>
-    /// <returns>CoreExecutionStatus。</returns>
+    /// <returns>進捗・エラー率などを含む実行状態のスナップショット。</returns>
     public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 }
 
@@ -303,6 +300,13 @@ public enum ProgressiveDecodeStatus
 /// <summary>
 /// デコード処理の集計メトリクスです。
 /// </summary>
+/// <param name="HeaderRsDecodeCount">ヘッダー部の RS 復号実行回数。</param>
+/// <param name="DataBlocksDecoded">データブロックの復号試行回数。</param>
+/// <param name="DataBlocksAccepted">受理されたデータブロック数。</param>
+/// <param name="DataAcceptedViaViterbi">ビタビ経路で受理されたブロック数。</param>
+/// <param name="DataAcceptedViaTurbo">ターボ経路で受理されたブロック数。</param>
+/// <param name="DataFallbackUsed">ハード／ソフトフォールバックを使った回数。</param>
+/// <param name="DataTotalAttempts">データ同期・復号の総試行回数。</param>
 public readonly record struct DecodeStageMetrics(
     int HeaderRsDecodeCount,
     int DataBlocksDecoded,
@@ -376,10 +380,10 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// 入力ファイルを WAV へ符号化し、再度復号して結果バイト列を返します。
     /// </summary>
-    /// <param name="inputPath">inputPath。</param>
-    /// <param name="wavPath">wavPath。</param>
-    /// <param name="restoredPath">restoredPath。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="inputPath">符号化元の入力ファイルパス。</param>
+    /// <param name="wavPath">中間 WAV の出力パス。</param>
+    /// <param name="restoredPath">復号結果を書き出すパス。省略時はファイル出力しない。</param>
+    /// <returns>ラウンドトリップ後に復元されたファイルバイト列。</returns>
     public byte[] EncodeDecodeRoundTrip(string inputPath, string wavPath, string? restoredPath = null)
     {
         if (!File.Exists(inputPath))
@@ -458,6 +462,10 @@ public sealed partial class FileWavCodec
                     txStatusBoard.SetFftStereoMode(false);
                 }
 
+        /// <summary>
+        /// ステレオ時に L/R の PCM 長が一致していることを確認します。
+        /// </summary>
+        /// <param name="stage">不一致時の例外メッセージに含める処理段階名。</param>
         void EnsureStereoParity(string stage)
         {
             if (_profile.ChannelMode == ChannelMode.Stereo && leftPcm.Count != rightPcm.Count)
@@ -467,6 +475,9 @@ public sealed partial class FileWavCodec
             }
         }
 
+        /// <summary>
+        /// 未送信の PCM をチャンク分割して onPcmChunk へ送出し、必要ならバッファを破棄します。
+        /// </summary>
         void FlushPcmChunk()
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -597,11 +608,11 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// WAV を読み込み、ファイルバイト列へ復号します。
     /// </summary>
-    /// <param name="wavPath">wavPath。</param>
-    /// <param name="correctWow">correctWow。</param>
-    /// <param name="wowParams">wowParams。</param>
-    /// <param name="tuning">tuning。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="wavPath">復号対象の WAV ファイルパス。</param>
+    /// <param name="correctWow">ワウ・フラッター補正を行うか。</param>
+    /// <param name="wowParams">既知のワウパラメータ。null なら推定する。</param>
+    /// <param name="tuning">復号探索・反復のチューニング値。null なら既定値。</param>
+    /// <returns>復号して得た元ファイルのバイト列。</returns>
     public byte[] DecodeWavToFileBytes(
         string wavPath,
         bool correctWow = true,
@@ -615,12 +626,12 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// PCM サンプル列をファイルバイト列へ復号します。
     /// </summary>
-    /// <param name="leftSamples">L チャネル PCM。</param>
-    /// <param name="rightSamples">R チャネル PCM。</param>
-    /// <param name="correctWow">correctWow。</param>
-    /// <param name="wowParams">wowParams。</param>
-    /// <param name="tuning">tuning。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="leftSamples">左チャネルの PCM サンプル列。</param>
+    /// <param name="rightSamples">右チャネルの PCM サンプル列（モノラル時は空可）。</param>
+    /// <param name="correctWow">ワウ・フラッター補正を行うか。</param>
+    /// <param name="wowParams">既知のワウパラメータ。null なら推定する。</param>
+    /// <param name="tuning">復号探索・反復のチューニング値。null なら既定値。</param>
+    /// <returns>復号して得た元ファイルのバイト列。</returns>
     public byte[] DecodePcmSamplesToFileBytes(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -648,10 +659,10 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// ProgressiveDecodeState から集計メトリクスを生成します。
+    /// 段階デコード状態から集計メトリクスを生成します。
     /// </summary>
-    /// <param name="state">状態。</param>
-    /// <returns>DecodeStageMetrics。</returns>
+    /// <param name="state">集計元の段階デコード状態。</param>
+    /// <returns>ヘッダー／データ復号回数などを含むメトリクス。</returns>
     private static DecodeStageMetrics BuildDecodeStageMetrics(ProgressiveDecodeState state)
     {
         return new DecodeStageMetrics(
@@ -665,21 +676,16 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-
-    /// <summary>
-    /// 指定したサブキャリア数と変調方式でデータ OFDM 生成器を作成します。
-    /// </summary>
-    /// <param name="leftSamples">L チャネル PCM。</param>
-    /// <param name="rightSamples">R チャネル PCM。</param>
-    /// <param name="state">状態。</param>
-    /// <param name="correctWow">correctWow。</param>
-    /// <param name="wowParams">wowParams。</param>
-    /// <param name="tuning">tuning。</param>
-    /// <param name="allowIncomplete">allowIncomplete。</param>
-    /// <returns>ProgressiveDecodeStatus。</returns>
     /// PCM サンプル列を入力として段階デコードを実行します。
     /// </summary>
-    /// <returns>ProgressiveDecodeStatus。</returns>
+    /// <param name="leftSamples">左チャネルの PCM サンプル列。</param>
+    /// <param name="rightSamples">右チャネルの PCM サンプル列（モノラル時は空可）。</param>
+    /// <param name="state">進捗と中間結果を保持する段階デコード状態。</param>
+    /// <param name="correctWow">ワウ・フラッター補正を行うか。</param>
+    /// <param name="wowParams">既知のワウパラメータ。null なら推定する。</param>
+    /// <param name="tuning">復号探索・反復のチューニング値。null なら既定値。</param>
+    /// <param name="allowIncomplete">未完了でも NeedMoreSamples を返すか。false なら失敗扱い。</param>
+    /// <returns>完了／追加サンプル待ち／失敗のいずれかの状態。</returns>
     public ProgressiveDecodeStatus DecodePcmSamplesProgressive(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -723,6 +729,12 @@ public sealed partial class FileWavCodec
         var headerOfdm = CreateHeaderOfdm();
         var dataOfdmCache = new Dictionary<(int Sc, ModulationScheme Mod), OfdmGenerator>();
 
+        /// <summary>
+        /// サブキャリア数と変調方式に対応するデータ部 OFDM 生成器をキャッシュから取得または生成します。
+        /// </summary>
+        /// <param name="activeSubcarriers">アクティブサブキャリア数。</param>
+        /// <param name="modulationScheme">データ部の変調方式。</param>
+        /// <returns>対応する OfdmGenerator。</returns>
         OfdmGenerator ResolveDataOfdmFor(int activeSubcarriers, ModulationScheme modulationScheme)
         {
             var key = (activeSubcarriers, modulationScheme);
@@ -926,9 +938,17 @@ public sealed partial class FileWavCodec
             headerOfdm.SamplesPerOfdmSymbol * 64,
             (int)(Math.Max(1.0, tuning.WowRewarpLookaheadSeconds) * _profile.SampleRate));
 
+        /// <summary>
+        /// 残サンプル数をワウ再ワープの先読み上限で打ち切ります。
+        /// </summary>
+        /// <param name="remaining">カーソル以降に残っているサンプル数。</param>
+        /// <returns>実際に再ワープするサンプル数。</returns>
         int ResolveRewarpLength(int remaining) =>
             Math.Min(remaining, rewarpLookaheadSamples);
 
+        /// <summary>
+        /// 現在のワープカーソル・論理オフセット・追跡ワウを state へ書き戻します。
+        /// </summary>
         void PersistCursor()
         {
             state.WarpedCursor = warpedCursor;
@@ -937,6 +957,14 @@ public sealed partial class FileWavCodec
             state.HasTrackedWow = hasTrackedWow;
         }
 
+        /// <summary>
+        /// 進捗・誤り率・ワウ・ファイル情報を共有ステータスボードへ反映します。
+        /// </summary>
+        /// <param name="frame">現在処理中のフレーム種別。</param>
+        /// <param name="blockIndex">現在のブロック番号（不明時は負値）。</param>
+        /// <param name="errorRatePercent">表示する誤り率（%）。null なら更新しない。</param>
+        /// <param name="blockFraction">現ブロック内の局所進捗（0〜1）。</param>
+        /// <param name="decoderKind">誤り率に紐づける復号器種別。</param>
         void PublishStatus(
             CoreFrameKind frame,
             int blockIndex,
@@ -1006,6 +1034,11 @@ public sealed partial class FileWavCodec
             }
         }
 
+        /// <summary>
+        /// カーソルを保存し、継続受信なら NeedMoreSamples、そうでなければ Failed を返します。
+        /// </summary>
+        /// <param name="detail">失敗時に state.LastError へ設定する詳細（省略可）。</param>
+        /// <returns>サンプル不足または失敗の段階デコード結果。</returns>
         ProgressiveDecodeStatus NeedMoreOrFail(string? detail = null)
         {
             PersistCursor();
@@ -1021,6 +1054,11 @@ public sealed partial class FileWavCodec
 
         var lastWowRewarpApplied = false;
 
+        /// <summary>
+        /// 適応ワウ推定を行い、必要ならチャネル末尾をその場で再ワープします。
+        /// </summary>
+        /// <param name="channelSamples">補正対象のチャネル PCM（必要時に置き換え）。</param>
+        /// <param name="useRightChannel">R チャネルとして解析する場合 true。</param>
         void ApplyAdaptiveWowCorrection(ref Complex[] channelSamples, bool useRightChannel)
         {
             lastWowRewarpApplied = false;
@@ -1087,6 +1125,15 @@ public sealed partial class FileWavCodec
             lastWowRewarpApplied = true;
         }
 
+        /// <summary>
+        /// 指定区間にワウ・フラッター逆補正をその場適用します。
+        /// </summary>
+        /// <param name="channelSamples">補正対象チャネル。</param>
+        /// <param name="start">補正開始サンプル位置。</param>
+        /// <param name="length">補正するサンプル数。</param>
+        /// <param name="amount">ワウ量。</param>
+        /// <param name="wowPhase">wow 位相（ラジアン）。</param>
+        /// <param name="flutterPhase">flutter 位相（ラジアン）。</param>
         void RewarpTailInPlace(
             ref Complex[] channelSamples,
             int start,
@@ -1104,6 +1151,9 @@ public sealed partial class FileWavCodec
                 flutterPhase);
         }
 
+        /// <summary>
+        /// L に適応ワウ補正を行い、設定に応じて R へ同じワープを共有適用します。
+        /// </summary>
         void ApplyAdaptiveWowCorrectionPair()
         {
             ApplyAdaptiveWowCorrection(ref leftSamples, useRightChannel: false);
@@ -1138,6 +1188,11 @@ public sealed partial class FileWavCodec
             ApplyAdaptiveWowCorrection(ref rightSamples, useRightChannel: true);
         }
 
+        /// <summary>
+        /// 位相差分を −π〜π の範囲へ折り返します。
+        /// </summary>
+        /// <param name="phase">折り返す前の位相差分（ラジアン）。</param>
+        /// <returns>−π〜π に正規化した位相差分。</returns>
         static double WrapPhaseDelta(double phase)
         {
             var twoPi = 2.0 * Math.PI;
@@ -1327,11 +1382,23 @@ public sealed partial class FileWavCodec
                 "1",
                 StringComparison.Ordinal);
 
+            /// <summary>
+            /// ハッシュバイト列を履歴照合用の 16 進キー文字列へ変換します。
+            /// </summary>
+            /// <param name="hash">変換元のハッシュ値。</param>
+            /// <returns>大文字 16 進文字列のキー。</returns>
             static string HashToKey(ReadOnlySpan<byte> hash)
             {
                 return Convert.ToHexString(hash);
             }
 
+            /// <summary>
+            /// ブロック番号と BH/FH ハッシュからブロックヘッダー同一性キーを組み立てます。
+            /// </summary>
+            /// <param name="blockIndex">ブロック番号。</param>
+            /// <param name="blockHash">ブロックハッシュ（SHA-256）。</param>
+            /// <param name="fileHash">ファイル全体ハッシュ（SHA-512）。</param>
+            /// <returns>blockIndex:fileHash:blockHash 形式の同一性キー。</returns>
             static string BuildBlockHeaderIdentityKey(long blockIndex, ReadOnlySpan<byte> blockHash, ReadOnlySpan<byte> fileHash)
             {
                 return string.Concat(
@@ -1342,6 +1409,10 @@ public sealed partial class FileWavCodec
                     Convert.ToHexString(blockHash));
             }
 
+            /// <summary>
+            /// FH 未確定のまま BH+BD を探索し、孤児ペイロードとして登録を試みます。
+            /// </summary>
+            /// <returns>1 件以上登録できた場合 true。</returns>
             bool TryDecodeStandaloneBhBdWithoutFileHeader()
             {
                 // FH 未確定時は常に先頭から BH を探す（先行スキップ後のカーソルでは BH+BD only を落とす）。
@@ -1511,6 +1582,11 @@ public sealed partial class FileWavCodec
                 return progressed;
             }
 
+            /// <summary>
+            /// ブロックハッシュの所有者を登録し、一致する孤児ペイロードがあればスロットへ取り込みます。
+            /// </summary>
+            /// <param name="blockIndex">所有者となるブロック番号。</param>
+            /// <param name="expectedHash">BH に含まれる期待ブロックハッシュ。</param>
             void RegisterHashOwner(int blockIndex, ReadOnlySpan<byte> expectedHash)
             {
                 if (blockIndex < 0 || blockIndex >= blockCountReady)
@@ -1556,6 +1632,12 @@ public sealed partial class FileWavCodec
                 }
             }
 
+            /// <summary>
+            /// ペイロードの SHA-256 から既知のブロック所有者番号を解決します。
+            /// </summary>
+            /// <param name="payload">照合対象のブロックペイロード。</param>
+            /// <param name="ownerBlock">見つかったブロック番号。失敗時は -1。</param>
+            /// <returns>所有者が見つかった場合 true。</returns>
             bool TryResolveOwnerByPayloadHash(byte[] payload, out int ownerBlock)
             {
                 ownerBlock = -1;
@@ -1571,6 +1653,15 @@ public sealed partial class FileWavCodec
                 return false;
             }
 
+            /// <summary>
+            /// 親 FH 未確定のブロックペイロードを孤児エントリとして保持します。
+            /// </summary>
+            /// <param name="payload">保持するブロックデータ。</param>
+            /// <param name="detail">履歴／診断用の説明文字列。</param>
+            /// <param name="blockIndex">ブロック番号。</param>
+            /// <param name="blockHash">ブロックハッシュ（SHA-256）。</param>
+            /// <param name="fileHash">ファイル全体ハッシュ（SHA-512）。</param>
+            /// <param name="dataModulation">データ部変調方式 4 バイト。</param>
             void SaveOrphanPayload(
                 byte[] payload,
                 string detail,
@@ -1606,6 +1697,14 @@ public sealed partial class FileWavCodec
                 var passBhPacketSamples = HeaderPacketSamples(
                     headerOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
 
+                /// <summary>
+                /// 現カーソル以降で次の有効 BH 開始位置を探索します。
+                /// </summary>
+                /// <param name="cursor">探索開始のワープカーソル。</param>
+                /// <param name="logical">探索開始の論理サンプル位置。</param>
+                /// <param name="nextCursor">見つかった BH 開始カーソル。</param>
+                /// <param name="nextLogical">見つかった BH 開始の論理位置。</param>
+                /// <returns>次 BH 開始が見つかった場合 true。</returns>
                 bool TrySeekNextBlockHeaderStart(int cursor, long logical, out int nextCursor, out long nextLogical)
                 {
                     nextCursor = cursor;
@@ -1675,6 +1774,10 @@ public sealed partial class FileWavCodec
                 {
                     var expectedBlockIndex = order[local];
 
+                    /// <summary>
+                    /// 現ブロックをエラー扱いにし、進捗カーソルとステータスを更新します。
+                    /// </summary>
+                    /// <param name="message">LastError に設定するエラー内容。</param>
                     void MarkBlockError(string message)
                     {
                         state.AcceptedBlockCount = 0;
@@ -2078,12 +2181,12 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// 追跡中のワウパラメータでバッファを補正した新規配列に差し替えます（元バッファは破壊しない）。
     /// </summary>
-    /// <param name="headerOfdm">headerOfdm。</param>
-    /// <param name="leftSamples">L チャネル PCM。</param>
-    /// <param name="rightSamples">R チャネル PCM。</param>
-    /// <param name="wow">wow。</param>
-    /// <param name="streamSampleBase">streamSampleBase。</param>
-    /// <param name="useSegmentModel">useSegmentModel。</param>
+    /// <param name="headerOfdm">ワウ補正に使うヘッダー用 OFDM 生成器。</param>
+    /// <param name="leftSamples">補正対象の左チャネル PCM（参照差し替えあり）。</param>
+    /// <param name="rightSamples">補正対象の右チャネル PCM（参照差し替えあり）。</param>
+    /// <param name="wow">適用するワウ量・ワウ位相・フラッター位相。</param>
+    /// <param name="streamSampleBase">ストリーム先頭からの論理サンプル基準位置。</param>
+    /// <param name="useSegmentModel">区間補正モデルを使うか（false なら全体補正）。</param>
     private void ApplyTrackedWowToBuffers(
         OfdmGenerator headerOfdm,
         ref Complex[] leftSamples,
@@ -2138,11 +2241,11 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// CreateDataOfdm は、インスタンスまたはバッファを生成します。
+    /// 指定したサブキャリア数と変調方式でデータ部 OFDM 生成器を作成します。
     /// </summary>
     /// <param name="activeSubcarriers">アクティブサブキャリア数。</param>
-    /// <param name="modulationScheme">変調方式。</param>
-    /// <returns>OfdmGenerator。</returns>
+    /// <param name="modulationScheme">データ部の変調方式。</param>
+    /// <returns>データ部変調用に構成した OFDM 生成器。</returns>
     private OfdmGenerator CreateDataOfdm(int activeSubcarriers, ModulationScheme modulationScheme)
     {
         var grid = OfdmConfig.ResolveCarrierGrid(activeSubcarriers);
@@ -2168,6 +2271,11 @@ public sealed partial class FileWavCodec
     /// プリアンブル相関が LPF 等で崩れる場合のフォールバックです。
     /// prefix Correct で粗い位置を掴み、最終適用と同じ全波形 Correct で精密化します。
     /// </summary>
+    /// <param name="leftSamples">探索対象の左チャネル PCM。</param>
+    /// <param name="rightSamples">探索対象の右チャネル PCM。</param>
+    /// <param name="headerOfdm">FH 同期・ワウ評価に使うヘッダー OFDM。</param>
+    /// <param name="onProgress">探索進捗（完了数, 総数）の通知コールバック。</param>
+    /// <returns>推定したワウ量・位相。見つからなければ null。</returns>
     private (double Amount, double WowPhase, double FlutterPhase)? TryEstimateWowByOpeningFileHeader(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -2225,6 +2333,16 @@ public sealed partial class FileWavCodec
         (Complex[] Left, Complex[] Right, OfdmGenerator Ofdm) CreateWorker() =>
             (new Complex[dataNeedLen], stereo ? new Complex[dataNeedLen] : Array.Empty<Complex>(), CreateHeaderOfdm());
 
+        /// <summary>
+        /// 指定ワウパラメータで先頭区間を補正し、作業バッファへ書き込みます。
+        /// </summary>
+        /// <param name="destLeft">補正結果の L バッファ。</param>
+        /// <param name="destRight">補正結果の R バッファ（モノラル時は未使用可）。</param>
+        /// <param name="ofdm">補正に使う OFDM 生成器。</param>
+        /// <param name="needLen">補正するサンプル数。</param>
+        /// <param name="amount">ワウ量。</param>
+        /// <param name="wowPhase">wow 位相（ラジアン）。</param>
+        /// <param name="flutterPhase">flutter 位相（ラジアン）。</param>
         void PrepareWork(
             Complex[] destLeft,
             Complex[] destRight,
@@ -2265,6 +2383,22 @@ public sealed partial class FileWavCodec
             }
         }
 
+        /// <summary>
+        /// 指定位置でヘッダーパケット復号を試し、成功時にペイロードを返します。
+        /// </summary>
+        /// <param name="left">L チャネル PCM。</param>
+        /// <param name="right">R チャネル PCM。</param>
+        /// <param name="ofdm">ヘッダー用 OFDM 生成器。</param>
+        /// <param name="start">復号開始サンプル位置。</param>
+        /// <param name="payloadLength">ヘッダーペイロード長（バイト）。</param>
+        /// <param name="rsLen">RS 符号化後バイト長。</param>
+        /// <param name="bits">畳み込み後の総ビット数。</param>
+        /// <param name="samples">想定 OFDM サンプル数。</param>
+        /// <param name="pilot">期待パイロット先頭パターン。</param>
+        /// <param name="endCursor">成功時のパケット終端カーソル。</param>
+        /// <param name="meanAbsLlr">ソフト LLR の平均絶対値。</param>
+        /// <param name="payload">復号したヘッダーペイロード。</param>
+        /// <returns>パイロット一致かつ復号成功時 true。</returns>
         bool TryHeader(
             Complex[] left,
             Complex[] right,
@@ -2619,6 +2753,9 @@ public sealed partial class FileWavCodec
             MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
         };
 
+        /// <summary>
+        /// 粗探索の完了数を増やし、間引きして onProgress へ通知します。
+        /// </summary>
         void ReportProgress()
         {
             var d = Interlocked.Increment(ref done);
@@ -2751,6 +2888,13 @@ public sealed partial class FileWavCodec
             }
         }
 
+        /// <summary>
+        /// 指定ワウ量で位相近傍を並列評価し、BH ロック候補を best に反映します。
+        /// </summary>
+        /// <param name="amount">評価するワウ量。</param>
+        /// <param name="center">粗探索で得た位相・スコア中心。</param>
+        /// <param name="best">これまでに得た最良 BH ロック候補。</param>
+        /// <returns>十分なスコアのロックが得られた場合 true。</returns>
         bool TryEvaluateBhAmount(
             double amount,
             (double Amount, double WowPhase, double FlutterPhase, double Score) center,
@@ -2834,6 +2978,11 @@ public sealed partial class FileWavCodec
             }
         }
 
+        /// <summary>
+        /// 0 を中心に ±1, ±2, … と広がる探索オフセット列を生成します。
+        /// </summary>
+        /// <param name="maxAbs">オフセット絶対値の上限。</param>
+        /// <returns>0, +1, −1, +2, −2, … の順の整数列。</returns>
         static IEnumerable<int> SpiralOffsets(int maxAbs)
         {
             yield return 0;
@@ -2998,6 +3147,11 @@ public sealed partial class FileWavCodec
 
         return null;
 
+        /// <summary>
+        /// 位相角を −π〜π の主値へ折り返します。
+        /// </summary>
+        /// <param name="x">折り返す前の位相（ラジアン）。</param>
+        /// <returns>−π〜π に正規化した位相。</returns>
         static double WrapPhase(double x)
         {
             while (x > Math.PI)
@@ -3017,10 +3171,10 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// 指定サンプル数の無音を PCM バッファへ追加します。
     /// </summary>
-    /// <param name="leftPcm">leftPcm。</param>
-    /// <param name="rightPcm">rightPcm。</param>
-    /// <param name="sampleCount">sampleCount。</param>
-    /// <param name="stereo">stereo。</param>
+    /// <param name="leftPcm">左チャネル出力バッファ。</param>
+    /// <param name="rightPcm">右チャネル出力バッファ。</param>
+    /// <param name="sampleCount">追加する無音サンプル数。</param>
+    /// <param name="stereo">true のとき右チャネルにも無音を追加する。</param>
     private static void AppendSilence(List<Complex> leftPcm, List<Complex> rightPcm, int sampleCount, bool stereo)
     {
         for (var i = 0; i < sampleCount; i++)
@@ -3036,9 +3190,9 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// 左右チャンネルのサンプル対を PCM バッファへ追加します。
     /// </summary>
-    /// <param name="leftPcm">leftPcm。</param>
-    /// <param name="rightPcm">rightPcm。</param>
-    /// <param name="pair">pair。</param>
+    /// <param name="leftPcm">左チャネル出力バッファ。</param>
+    /// <param name="rightPcm">右チャネル出力バッファ。</param>
+    /// <param name="pair">追加する L/R サンプル配列の組。</param>
     private static void AppendPair(List<Complex> leftPcm, List<Complex> rightPcm, (Complex[] Left, Complex[] Right) pair)
     {
         leftPcm.AddRange(pair.Left);
@@ -3053,10 +3207,10 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// 指定サンプル数だけカーソルを進めます。
     /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取り位置（更新あり）。</param>
-    /// <param name="count">要素数。</param>
-    /// <returns>計算した整数値。</returns>
+    /// <param name="samples">入力サンプル列（長さ検査に使用）。</param>
+    /// <param name="cursor">現在の読み取り位置。</param>
+    /// <param name="count">スキップするサンプル数。</param>
+    /// <returns>スキップ後の新しいカーソル位置。</returns>
     private static int SkipSamples(Complex[] samples, int cursor, int count)
     {
         var next = cursor + count;
@@ -3072,9 +3226,9 @@ public sealed partial class FileWavCodec
     /// カーソル位置から指定サンプル数を切り出して返します。
     /// </summary>
     /// <param name="samples">入力サンプル列。</param>
-    /// <param name="cursor">読み取り位置（更新あり）。</param>
-    /// <param name="count">要素数。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="cursor">読み取り位置（切り出し後に更新）。</param>
+    /// <param name="count">切り出すサンプル数。</param>
+    /// <returns>切り出したサンプル配列のコピー。</returns>
     private static Complex[] TakeSamples(Complex[] samples, ref int cursor, int count)
     {
         if (cursor + count > samples.Length)
@@ -3088,6 +3242,11 @@ public sealed partial class FileWavCodec
         return slice;
     }
 
+    /// <summary>
+    /// 送信時に分割したデータブロック 1 件分のペイロードです。
+    /// </summary>
+    /// <param name="Payload">ブロック本体のバイト列（最大 8192 バイト）。</param>
+    /// <param name="PayloadLength">有効ペイロード長（バイト）。</param>
     private readonly record struct DataBlock(byte[] Payload, int PayloadLength);
 }
 
@@ -3099,11 +3258,11 @@ public static class WavWriter
     /// <summary>
     /// ストリーミング書き込み用の WAV ライターを作成します。
     /// </summary>
-    /// <param name="path">ファイルパス。</param>
+    /// <param name="path">出力 WAV ファイルパス。</param>
     /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
-    /// <param name="peakTarget">peakTarget。</param>
-    /// <param name="channelMode">モノラル／ステレオ。</param>
-    /// <returns>StreamingPcm16Writer。</returns>
+    /// <param name="peakTarget">正規化後のピーク振幅目標（0〜1）。</param>
+    /// <param name="channelMode">モノラル／ステレオの出力構成。</param>
+    /// <returns>チャンク追記可能なストリーミング WAV ライター。</returns>
     public static StreamingPcm16Writer CreateStreamingPcm16(
         string path,
         int sampleRate,
@@ -3116,12 +3275,12 @@ public static class WavWriter
     /// <summary>
     /// 指定チャンネルモードで PCM16 WAV を書き出します。
     /// </summary>
-    /// <param name="path">ファイルパス。</param>
+    /// <param name="path">出力 WAV ファイルパス。</param>
     /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
-    /// <param name="left">L チャネル。</param>
-    /// <param name="right">R チャネル。</param>
-    /// <param name="peakTarget">peakTarget。</param>
-    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="left">左チャネルの Complex サンプル列。</param>
+    /// <param name="right">右チャネルの Complex サンプル列。</param>
+    /// <param name="peakTarget">正規化後のピーク振幅目標（0〜1）。</param>
+    /// <param name="channelMode">モノラル／ステレオの出力構成。</param>
     public static void WritePcm16(
         string path,
         int sampleRate,
@@ -3142,10 +3301,10 @@ public static class WavWriter
     /// <summary>
     /// モノラルの Complex サンプル列を PCM16 WAV として書き出します。
     /// </summary>
-    /// <param name="path">ファイルパス。</param>
+    /// <param name="path">出力 WAV ファイルパス。</param>
     /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="peakTarget">peakTarget。</param>
+    /// <param name="samples">書き出すモノラル Complex サンプル列。</param>
+    /// <param name="peakTarget">正規化後のピーク振幅目標（0〜1）。</param>
     public static void WriteMono16(
         string path,
         int sampleRate,
@@ -3189,11 +3348,11 @@ public static class WavWriter
     /// <summary>
     /// ステレオの Complex サンプル列を PCM16 WAV として書き出します。
     /// </summary>
-    /// <param name="path">ファイルパス。</param>
+    /// <param name="path">出力 WAV ファイルパス。</param>
     /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
-    /// <param name="left">L チャネル。</param>
-    /// <param name="right">R チャネル。</param>
-    /// <param name="peakTarget">peakTarget。</param>
+    /// <param name="left">左チャネルの Complex サンプル列。</param>
+    /// <param name="right">右チャネルの Complex サンプル列。</param>
+    /// <param name="peakTarget">正規化後のピーク振幅目標（0〜1）。</param>
     public static void WriteStereo16(
         string path,
         int sampleRate,
@@ -3244,9 +3403,9 @@ public static class WavWriter
     /// <summary>
     /// 正規化済み振幅値を PCM16 値へ変換します。
     /// </summary>
-    /// <param name="value">入力値。</param>
-    /// <param name="scale">scale。</param>
-    /// <returns>計算した整数値。</returns>
+    /// <param name="value">変換する実数値振幅（−1〜1 想定）。</param>
+    /// <param name="scale">ピーク正規化用の倍率。</param>
+    /// <returns>16 ビット PCM サンプル値。</returns>
     private static short ToPcm16(double value, double scale)
     {
         return (short)Math.Round(Math.Clamp(value * scale, -1.0, 1.0) * short.MaxValue);
@@ -3273,11 +3432,11 @@ public static class WavWriter
         private bool _disposed;
 
         /// <summary>
-        /// StreamingPcm16Writer を実行します。
+        /// 指定パスへストリーミング WAV ライターを開きます。
         /// </summary>
-        /// <param name="path">ファイルパス。</param>
+        /// <param name="path">出力 WAV ファイルパス。</param>
         /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
-        /// <param name="peakTarget">ピーク正規化目標。</param>
+        /// <param name="peakTarget">ピーク正規化目標（0〜1）。</param>
         /// <param name="channelMode">モノラル／ステレオ。</param>
         internal StreamingPcm16Writer(string path, int sampleRate, double peakTarget, ChannelMode channelMode)
         {
@@ -3295,8 +3454,8 @@ public static class WavWriter
         /// <summary>
         /// PCM チャンクを追記します。
         /// </summary>
-        /// <param name="left">L チャネル。</param>
-        /// <param name="right">R チャネル。</param>
+        /// <param name="left">左チャネルの Complex サンプル列。</param>
+        /// <param name="right">右チャネルの Complex サンプル列（モノラル時は無視）。</param>
         public void WriteChunk(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
         {
             if (_disposed)
@@ -3398,8 +3557,8 @@ public static class WavReader
     /// <summary>
     /// WAV のチャンネル数（1ch/2ch）を取得します。
     /// </summary>
-    /// <param name="path">ファイルパス。</param>
-    /// <returns>計算した整数値。</returns>
+    /// <param name="path">対象 WAV ファイルパス。</param>
+    /// <returns>チャンネル数（1 または 2）。</returns>
     public static int PeekChannelCount(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -3547,10 +3706,10 @@ public static class WavReader
     }
 
     /// <summary>
-    /// static を実行します。
+    /// ステレオ PCM16 WAV を読み込み、左右チャネルのサンプル列を返します。
     /// </summary>
-    /// <param name="Left">Left。</param>
-    /// <param name="path">ファイルパス。</param>
+    /// <param name="path">読み込むステレオ WAV ファイルパス。</param>
+    /// <returns>左・右チャネルの Complex サンプル列。</returns>
     public static (Complex[] Left, Complex[] Right) ReadStereo16(string path)
     {
         var (left, right) = ReadPcm16(path);
@@ -3587,14 +3746,14 @@ public sealed class WavPcmStreamReader : IDisposable
     private bool _disposed;
 
     /// <summary>
-    /// WavPcmStreamReader を実行します。
+    /// 既存のストリームと data チャンク位置からリーダーを構築します。
     /// </summary>
-    /// <param name="stream">入力ストリーム。</param>
-    /// <param name="reader">バイナリリーダー。</param>
-    /// <param name="channels">チャネル数。</param>
+    /// <param name="stream">入力ファイルストリーム。</param>
+    /// <param name="reader">ストリーム上のバイナリリーダー。</param>
+    /// <param name="channels">チャンネル数（1 または 2）。</param>
     /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
-    /// <param name="dataStart">データ開始位置。</param>
-    /// <param name="dataLength">データ長。</param>
+    /// <param name="dataStart">data チャンク先頭のファイル位置。</param>
+    /// <param name="dataLength">data チャンクのバイト長。</param>
     private WavPcmStreamReader(
         FileStream stream,
         BinaryReader reader,
@@ -3632,8 +3791,8 @@ public sealed class WavPcmStreamReader : IDisposable
     /// <summary>
     /// WAV を開き、data チャンク先頭までシークしたリーダーを返します。
     /// </summary>
-    /// <param name="path">ファイルパス。</param>
-    /// <returns>WavPcmStreamReader。</returns>
+    /// <param name="path">開く WAV ファイルパス。</param>
+    /// <returns>data チャンクから順次読めるストリームリーダー。</returns>
     public static WavPcmStreamReader Open(string path)
     {
         var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -3721,10 +3880,10 @@ public sealed class WavPcmStreamReader : IDisposable
     /// <summary>
     /// 最大 frameCount フレームを読み、Complex の L/R 配列を返します。
     /// </summary>
-    /// <param name="frameCount">frameCount。</param>
-    /// <param name="left">L チャネル。</param>
-    /// <param name="right">R チャネル。</param>
-    /// <returns>成功または条件成立時 true。</returns>
+    /// <param name="frameCount">読み取る最大フレーム数。</param>
+    /// <param name="left">読み取った左チャネルサンプル列。</param>
+    /// <param name="right">読み取った右チャネルサンプル列（モノラル時は空）。</param>
+    /// <returns>1 フレーム以上読めたとき true。EOF または不正時は false。</returns>
     public bool TryRead(int frameCount, out Complex[] left, out Complex[] right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -3780,7 +3939,7 @@ public sealed class WavPcmStreamReader : IDisposable
     }
 
     /// <summary>
-    /// Dispose を実行します。
+    /// BinaryReader と基底 FileStream を解放します。
     /// </summary>
     public void Dispose()
     {

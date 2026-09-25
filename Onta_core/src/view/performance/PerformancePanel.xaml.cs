@@ -2685,6 +2685,11 @@ public partial class PerformancePanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 音声入出力デバイスのコンボ項目（番号と表示名）です。
+    /// </summary>
+    /// <param name="deviceNumber">NAudio デバイス番号（既定は -1）。</param>
+    /// <param name="name">コンボに表示するデバイス名。</param>
     private sealed class AudioDeviceItem(int deviceNumber, string name)
     {
         public int DeviceNumber { get; } = deviceNumber;

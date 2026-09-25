@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 
 namespace Onta.Core;
 
@@ -54,6 +54,10 @@ public static class ConvolutionalCode
     /// <summary>
     /// 復号時の訂正メトリクスです。
     /// </summary>
+    /// <param name="PathHammingDistance">最良パスのハミング距離（硬判定時はパスメトリック）。</param>
+    /// <param name="ComparedCodeBitCount">比較対象となった符号ビット数（パンクチャ後）。</param>
+    /// <param name="CorrectedCodeBitCount">チャネル硬判定と再符号化結果が不一致だったビット数。</param>
+    /// <param name="CorrectionRate">CorrectedCodeBitCount / ComparedCodeBitCount（0 除算時は 0）。</param>
     public readonly record struct DecodeMetrics(
         int PathHammingDistance,
         int ComparedCodeBitCount,

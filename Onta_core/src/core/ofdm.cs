@@ -656,6 +656,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 送信側 FFT 可視化用。OFDM シンボルの周波数ビンを通知します（第2引数は右チャネルなら true）。
     /// </summary>
+    /// <param name="bins">通知する周波数領域ビン。</param>
+    /// <param name="isRightChannel">右チャネルの場合 true、左チャネルの場合 false。</param>
     public delegate void TxSpectrumHandler(ReadOnlySpan<Complex> bins, bool isRightChannel);
 
     /// <summary>
@@ -1301,6 +1303,13 @@ public sealed partial class OfdmGenerator
 
         try
         {
+            /// <summary>
+            /// 指定ワウパラメータでプリアンブル相関スコアを計算します。
+            /// </summary>
+            /// <param name="a">ワウ量。</param>
+            /// <param name="w">wow 位相（ラジアン）。</param>
+            /// <param name="f">flutter 位相（ラジアン）。</param>
+            /// <returns>正規化相関スコア。</returns>
             double Score(double a, double w, double f) =>
                 WowFlutterWarp.CorrectPrefixCorrelateReal(
                     samples,
@@ -1337,6 +1346,12 @@ public sealed partial class OfdmGenerator
                 + jointCells;
             var done = 0;
 
+            /// <summary>
+            /// 候補パラメータを採点し、最良スコアなら best を更新して進捗を進めます。
+            /// </summary>
+            /// <param name="a">ワウ量。</param>
+            /// <param name="w">wow 位相（ラジアン）。</param>
+            /// <param name="f">flutter 位相（ラジアン）。</param>
             void Consider(double a, double w, double f)
             {
                 var score = Score(a, w, f);
@@ -1420,6 +1435,19 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>
+    /// 診断用にヒント近傍でワウ／フラッターパラメータを局所精密化します。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="analysisStartSample">解析開始サンプル。</param>
+    /// <param name="analysisSampleCount">解析サンプル数。</param>
+    /// <param name="hintAmount">探索中心のワウ量。</param>
+    /// <param name="hintWowPhase">探索中心のワウ位相。</param>
+    /// <param name="hintFlutterPhase">探索中心のフラッター位相。</param>
+    /// <param name="phaseRangeRad">位相探索幅（ラジアン）。</param>
+    /// <param name="amountRange">ワウ量の探索幅。</param>
+    /// <returns>基準スコアと最良パラメータ。失敗時 null。</returns>
     public (double Baseline, double BestScore, double Amount, double WowPhase, double FlutterPhase)?
         RefineWowParametersNearHintForDiagnostics(
             Complex[] samples,
@@ -1446,6 +1474,14 @@ public sealed partial class OfdmGenerator
         var refStride1 = BuildCorrelationReference(ideal, 1);
         var refStride8 = BuildCorrelationReference(ideal, 8);
 
+        /// <summary>
+        /// ワウ補正後プリアンブルと理想波形の相関を、指定ストライドで評価します。
+        /// </summary>
+        /// <param name="amount">ワウ量。</param>
+        /// <param name="wowPhase">wow 位相（ラジアン）。</param>
+        /// <param name="flutterPhase">flutter 位相（ラジアン）。</param>
+        /// <param name="corrStride">相関計算のサンプルストライド。</param>
+        /// <returns>正規化相関スコア。</returns>
         double Evaluate(double amount, double wowPhase, double flutterPhase, int corrStride)
         {
             ResampleSegmentWithInverseSpeed(
@@ -1847,6 +1883,13 @@ public sealed partial class OfdmGenerator
                 refCorr.Energy);
             bestScore = baseline;
 
+            /// <summary>
+            /// ワウパラメータを評価し、最良なら best を更新してスコアを返します。
+            /// </summary>
+            /// <param name="amount">ワウ量。</param>
+            /// <param name="wowPhase">wow 位相（ラジアン）。</param>
+            /// <param name="flutterPhase">flutter 位相（ラジアン）。</param>
+            /// <returns>正規化相関スコア。</returns>
             double Evaluate(double amount, double wowPhase, double flutterPhase)
             {
                 var score = WowFlutterWarp.CorrectPrefixCorrelateReal(
@@ -1877,6 +1920,9 @@ public sealed partial class OfdmGenerator
             const double earlyExitScore = 0.97;
             const int progressTotal = 1200;
             var progressDone = 0;
+            /// <summary>
+            /// ワウ探索の進捗カウンタを進め、間引きして onProgress へ通知します。
+            /// </summary>
             void ReportProgress()
             {
                 progressDone++;
@@ -1890,6 +1936,11 @@ public sealed partial class OfdmGenerator
 
             // 粗探索: amount=0.01 は π/9 で十分広い。amount=0.005 は相関ピークが鋭く
             // π/9 では真値近傍でも baseline を下回るため、失敗時は π/18 で再掃引する。
+            /// <summary>
+            /// 固定ワウ量で位相平面を粗格子掃引し、有望ヒットを収集します。
+            /// </summary>
+            /// <param name="amount">掃引するワウ量。</param>
+            /// <param name="halfTurnDivisions">半回転あたりの格子分割数（π / 分割）。</param>
             void CoarsePhaseSweep(double amount, int halfTurnDivisions)
             {
                 var step = Math.PI / halfTurnDivisions;
@@ -1958,6 +2009,10 @@ public sealed partial class OfdmGenerator
             }
 
             // 以降の位相精密化は粗探索で更新された bestAmount を使う（0.01 固定だと 0.005 真値を壊す）。
+            /// <summary>
+            /// 位相精密化に使うワウ量を返します（未確定時は 0.01）。
+            /// </summary>
+            /// <returns>位相掃引に用いるワウ量。</returns>
             double PhaseAmount() => bestAmount > 1e-12 ? bestAmount : 0.01;
 
             // π/9 粗格子の隙間（鋭いピーク）を埋める。シード周辺を密に掃引する。
@@ -3751,6 +3806,11 @@ public sealed partial class OfdmGenerator
         var flutterGain = amount * 0.35;
         var baseAbs = Math.Max(0L, streamBaseSample);
 
+        /// <summary>
+        /// カセット速度モデルの絶対サンプル位置における累積時間を返します。
+        /// </summary>
+        /// <param name="absIndex">ストリーム絶対サンプル位置。</param>
+        /// <returns>累積サンプル相当値。</returns>
         double CumulAt(long absIndex)
         {
             if (absIndex <= 0)
@@ -5024,6 +5084,9 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 8PSK シンボルを最近傍位相へ硬判定し、3bit を書き込みます。
     /// </summary>
+    /// <param name="symbol">受信複素シンボル。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="bits">硬判定ビット出力。</param>
     private static void EmitPsk8Bits(Complex symbol, ref int bitIndex, bool[] bits)
     {
         var phaseIndex = ResolveNearestPsk8PhaseIndex(symbol);
@@ -5036,6 +5099,10 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 8PSK のソフト LLR（Max-Log 近似）を 3bit 分書き込みます。
     /// </summary>
+    /// <param name="symbol">受信複素シンボル。</param>
+    /// <param name="invVariance">雑音分散の逆数。</param>
+    /// <param name="bitIndex">書き込みビット位置（更新あり）。</param>
+    /// <param name="llrs">LLR 出力。</param>
     private static void EmitPsk8SoftLlrs(Complex symbol, double invVariance, ref int bitIndex, Span<double> llrs)
     {
         for (var bitOffset = 2; bitOffset >= 0; bitOffset--)
@@ -5063,6 +5130,8 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 8PSK の最近傍位相インデックス（0..7）を返します。
     /// </summary>
+    /// <param name="symbol">受信複素シンボル。</param>
+    /// <returns>最近傍の位相インデックス（0..7）。</returns>
     private static int ResolveNearestPsk8PhaseIndex(Complex symbol)
     {
         var bestIndex = 0;
@@ -5629,6 +5698,9 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// ビット列から 8PSK シンボルを 1 つ生成します。
     /// </summary>
+    /// <param name="bitIndex">読み取り位置（更新あり）。</param>
+    /// <param name="bits">ビット列。</param>
+    /// <returns>8PSK 複素シンボル。</returns>
     private static Complex ConsumePsk8Symbol(ref int bitIndex, ReadOnlySpan<bool> bits)
     {
         var packed = ReadBitField(ref bitIndex, bits, 3);
@@ -5716,6 +5788,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 配列をインスタンス乱数で Fisher–Yates シャッフルします。
     /// </summary>
+    /// <param name="values">シャッフル対象。</param>
     private void ShuffleInPlace(List<int> values) => ShuffleInPlace(values, _random);
 
     /// <summary>
@@ -5792,6 +5865,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 乱数から 8PSK シンボルを生成します。
     /// </summary>
+    /// <returns>8PSK 複素シンボル。</returns>
     private Complex GeneratePsk8Symbol()
     {
         var packed = NextBits(3);
@@ -5859,6 +5933,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// Gray 符号化 8PSK のビット→位相逆引き表を構築します。
     /// </summary>
+    /// <returns>ビット値（0..7）から位相インデックスへの対応表。</returns>
     private static byte[] BuildPsk8PhaseIndexByBits()
     {
         var table = new byte[8];
@@ -5873,6 +5948,7 @@ public sealed partial class OfdmGenerator
     /// <summary>
     /// 8PSK の位相点（単位円）を生成します。
     /// </summary>
+    /// <returns>位相インデックス順の 8PSK 複素シンボル配列。</returns>
     private static Complex[] BuildPsk8Symbols()
     {
         var symbols = new Complex[8];

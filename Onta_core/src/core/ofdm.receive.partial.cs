@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 namespace Onta.Core;
 
@@ -100,8 +100,8 @@ public sealed partial class OfdmGenerator
     /// <param name="cursor">読み取り開始位置。終了位置で更新されます。</param>
     /// <param name="bitCount">取り出す情報ビット数。</param>
     /// <param name="useRightChannel">R 搬送波を使うか。</param>
-    /// <param name="logicalSampleOffset">論理サンプル位置。</param>
-    /// <param name="searchRadius">シンボル先頭探索半径。</param>
+    /// <param name="logicalSampleOffset">論理サンプル位置（互換用。現状未使用）。</param>
+    /// <param name="searchRadius">シンボル先頭探索半径（サンプル）。</param>
     /// <param name="noiseVariance">雑音分散の初期値（パイロット推定のフォールバック）。</param>
     /// <param name="onEqualizedDataSymbol">等化後データシンボルごとのコールバック。</param>
     /// <param name="onEqualizedDataSymbolFrame">1 OFDM シンボル分の等化後シンボル／グループのコールバック。</param>
@@ -145,9 +145,9 @@ public sealed partial class OfdmGenerator
     /// <param name="rightSamples">R チャネル PCM。</param>
     /// <param name="cursor">読み取り開始位置。終了位置で更新されます。</param>
     /// <param name="bitCount">取り出す情報ビット数。</param>
-    /// <param name="logicalSampleOffset">論理サンプル位置。</param>
-    /// <param name="searchRadius">シンボル先頭探索半径。</param>
-    /// <param name="noiseVariance">雑音分散の初期値。</param>
+    /// <param name="logicalSampleOffset">論理サンプル位置（互換用。現状未使用）。</param>
+    /// <param name="searchRadius">シンボル先頭探索半径（サンプル）。</param>
+    /// <param name="noiseVariance">雑音分散の初期値（パイロット推定のフォールバック）。</param>
     /// <param name="estimateNoiseFromPilots">パイロットから雑音分散を推定するか。</param>
     /// <returns>ビットごとのソフト LLR。</returns>
     public double[] DemodulateSoftLlrsStereoCombined(

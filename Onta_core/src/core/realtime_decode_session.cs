@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 namespace Onta.Core;
 
@@ -118,8 +118,8 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// PCM チャンクを追記します（リング上書きではなく、消費後に先頭圧縮します）。
     /// </summary>
-    /// <param name="left">L チャネル。</param>
-    /// <param name="right">R チャネル。</param>
+    /// <param name="left">追記する L チャネル複素 PCM（Imag=0 可）。</param>
+    /// <param name="right">追記する R チャネル複素 PCM。ステレオ時は left と同長、モノラル時は参照しません。</param>
     public void AppendSamples(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
     {
         ThrowIfDisposed();
@@ -198,7 +198,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// 現在の実行スナップショットを返します。
     /// </summary>
-    /// <returns>RealtimeDecodeSnapshot。</returns>
+    /// <returns>バッファ量・試行回数・復元バイト・エラー等を含む公開スナップショット。</returns>
     public RealtimeDecodeSnapshot GetSnapshot()
     {
         lock (_sync)
@@ -210,13 +210,13 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>
     /// 共有状態メモリのスナップショットを読み取ります（セッションロックは取りません）。
     /// </summary>
-    /// <returns>CoreExecutionStatus。</returns>
+    /// <returns>画面反映用のコア実行状態（進捗・エラー率・I-Q 等）。</returns>
     public CoreExecutionStatus ReadExecutionStatus() => _progressive.ReadExecutionStatus();
 
     /// <summary>
     /// <see cref="ReadExecutionStatus"/> の互換エイリアスです。
     /// </summary>
-    /// <returns>CoreExecutionStatus。</returns>
+    /// <returns>画面反映用のコア実行状態（進捗・エラー率・I-Q 等）。</returns>
     public CoreExecutionStatus QueryExecutionStatus() => ReadExecutionStatus();
 
     /// <summary>
@@ -237,7 +237,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// 復元済みバイト列がある場合に1回だけ取り出します。
     /// </summary>
     /// <param name="decoded">復元済みバイト列。未復元時は空配列。</param>
-    /// <returns>成功または条件成立時 true。</returns>
+    /// <returns>取り出せた場合 true。未復元または既に取り出し済みの場合 false。</returns>
     public bool TryConsumeDecoded(out byte[] decoded)
     {
         lock (_sync)
@@ -255,7 +255,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
-    /// Dispose を実行します。
+    /// デコードループを停止し、ワーカーとキャンセルトークンを解放します。
     /// </summary>
     public void Dispose()
     {
@@ -272,7 +272,6 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// バッファ監視と段階復号を繰り返すバックグラウンド処理です。
     /// </summary>
     /// <param name="token">停止要求トークン。</param>
-    /// <returns>Task。</returns>
     private async Task WorkerLoop(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -538,6 +537,12 @@ public sealed class RealtimeDecodeSession : IDisposable
 /// <summary>
 /// リアルタイムデコードの公開スナップショットです。
 /// </summary>
+/// <param name="IsRunning">デコードワーカーが稼働中かどうか。</param>
+/// <param name="BufferedSamples">内部バッファに保持している PCM サンプル数。</param>
+/// <param name="DecodeAttemptCount">これまでに行った段階復号の試行回数。</param>
+/// <param name="LastDecodedAtUtc">最後にファイル復元へ成功した UTC 時刻。未成功時は null。</param>
+/// <param name="DecodedBytes">取り出し待ちの復元バイト列。<see cref="RealtimeDecodeSession.TryConsumeDecoded"/> で消費します。</param>
+/// <param name="LastError">直近のエラーメッセージ。正常時は null。</param>
 public readonly record struct RealtimeDecodeSnapshot(
     bool IsRunning,
     int BufferedSamples,

@@ -25,7 +25,7 @@
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="90"/>
           <ColumnDefinition Width="140"/>
-          <ColumnDefinition Width="95"/>
+          <ColumnDefinition Width="150"/>
           <ColumnDefinition Width="90"/>
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
@@ -91,7 +91,8 @@
         <GroupBox Grid.Column="2"
                   Header="変調"
                   Margin="4">
-          <StackPanel Margin="2">
+          <UniformGrid Columns="2"
+                       Margin="3">
             <RadioButton Content="BPSK"
                          Tag="Bpsk"
                          GroupName="Modulation"
@@ -100,24 +101,20 @@
             <RadioButton Content="QPSK"
                          Tag="Qpsk"
                          GroupName="Modulation"
-                         Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
+                         Checked="OnSettingsChanged"/>
             <RadioButton Content="8PSK"
                          Tag="Psk8"
                          GroupName="Modulation"
-                         Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
+                         Checked="OnSettingsChanged"/>
             <RadioButton Content="16QAM"
                          Tag="Qam16"
                          GroupName="Modulation"
-                         Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
+                         Checked="OnSettingsChanged"/>
             <RadioButton Content="64QAM"
                          Tag="Qam64"
                          GroupName="Modulation"
-                         Checked="OnSettingsChanged"
-                         Margin="0,6,0,0"/>
-          </StackPanel>
+                         Checked="OnSettingsChanged"/>
+          </UniformGrid>
         </GroupBox>
 
         <GroupBox Grid.Column="3"
@@ -152,7 +149,7 @@
                 <ColumnDefinition Width="*"/>
               </Grid.ColumnDefinitions>
               <Button Content="送信ファイル"
-                      Width="100"
+                      Width="90"
                       VerticalAlignment="Center"
                       Click="OnBrowseInput"/>
               <TextBox x:Name="InputPathBox"
@@ -186,7 +183,7 @@
                            VerticalAlignment="Center"
                            Margin="0,0,8,0"/>
                 <TextBox x:Name="WavPathBox"
-                         Width="500"
+                         Width="440"
                          IsReadOnly="True"
                          VerticalAlignment="Center"/>
                 <Button Content="..."
@@ -202,7 +199,7 @@
                            VerticalAlignment="Center"
                            Margin="0,0,8,0"/>
                 <ComboBox x:Name="AudioDeviceComboBox"
-                          Width="220"
+                          Width="160"
                           Foreground="#FF1E2024"
                           SelectedValuePath="DeviceNumber"
                           SelectionChanged="OnAudioDeviceSelectionChanged">

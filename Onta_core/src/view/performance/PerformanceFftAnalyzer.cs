@@ -30,19 +30,19 @@ internal enum PerformanceFftWindowKind : byte
 internal static class PerformanceFftAnalyzer
 {
     /// <summary>選択可能な FFT 長。</summary>
-    public static readonly int[] SupportedSizes = [1024, 2048, 4096];
+    public static readonly int[] SupportedSizes = [1024, 2048, 4096, 8192];
 
     /// <summary>既定 FFT 長。</summary>
     public const int DefaultSize = 2048;
 
     /// <summary>最大 FFT 長（作業バッファ確保用）。</summary>
-    public const int MaxSize = 4096;
+    public const int MaxSize = 8192;
 
     /// <summary>窓種数（キャッシュ行）。</summary>
     private const int WindowKindCount = 5;
 
-    /// <summary>対応 FFT 長の種類数（1024/2048/4096）。</summary>
-    private const int SizeCount = 3;
+    /// <summary>対応 FFT 長の種類数（1024/2048/4096/8192）。</summary>
+    private const int SizeCount = 4;
 
     /// <summary>コヒーレントゲイン込みの窓テーブル（kind * SizeCount + sizeIndex）。</summary>
     private static readonly double[]?[] WindowTables = new double[WindowKindCount * SizeCount][];
@@ -53,13 +53,14 @@ internal static class PerformanceFftAnalyzer
     /// FFT 長を対応値へ丸めます。
     /// </summary>
     /// <param name="fftSize">希望 FFT 長。</param>
-    /// <returns>1024 / 2048 / 4096。</returns>
+    /// <returns>1024 / 2048 / 4096 / 8192。</returns>
     public static int ClampSize(int fftSize) =>
         fftSize switch
         {
             <= 1024 => 1024,
             <= 2048 => 2048,
-            _ => 4096
+            <= 4096 => 4096,
+            _ => 8192
         };
 
     /// <summary>
@@ -142,14 +143,15 @@ internal static class PerformanceFftAnalyzer
     /// <summary>
     /// FFT 長をキャッシュ列インデックスへ変換します。
     /// </summary>
-    /// <param name="n">FFT 長（1024/2048/4096）。</param>
-    /// <returns>0..2 のスロット。</returns>
+    /// <param name="n">FFT 長（1024/2048/4096/8192）。</param>
+    /// <returns>0..3 のスロット。</returns>
     private static int SizeToIndex(int n) =>
         n switch
         {
             1024 => 0,
             2048 => 1,
-            _ => 2
+            4096 => 2,
+            _ => 3
         };
 
     /// <summary>

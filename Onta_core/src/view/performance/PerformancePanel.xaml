@@ -643,6 +643,13 @@
                              Content="4096"
                              Tag="4096"
                              VerticalAlignment="Center"
+                             Margin="0,0,8,0"
+                             Checked="OnFftAnalysisSettingsChanged"/>
+                <RadioButton x:Name="FftSize8192Radio"
+                             GroupName="PerfFftSize"
+                             Content="8192"
+                             Tag="8192"
+                             VerticalAlignment="Center"
                              Margin="0,0,12,0"
                              Checked="OnFftAnalysisSettingsChanged"/>
                 <TextBlock Text="窓"

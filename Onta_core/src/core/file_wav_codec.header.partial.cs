@@ -8,10 +8,10 @@ namespace Onta.Core;
 public sealed partial class FileWavCodec
 {
     /// <summary>
-    /// CreateHeaderOfdm は、インスタンスまたはバッファを生成します。
+    /// ヘッダー部（FH/BH）用の OFDM 生成器を作成します。
     /// </summary>
-    /// <param name="carrierGrid">搬送波グリッド（SC-8 族／SC-24 族）。</param>
-    /// <returns>OfdmGenerator。</returns>
+    /// <param name="carrierGrid">搬送波グリッド（SC-8 族／SC-24 族）。null ならプロファイルから決定。</param>
+    /// <returns>ヘッダー変調用に構成した OFDM 生成器。</returns>
     private OfdmGenerator CreateHeaderOfdm(OfdmCarrierGrid? carrierGrid = null)
     {
         var headerBins = OfdmConfig.ResolveConceptualLeftBins(16);
@@ -35,28 +35,28 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// AlternateCarrierGrid は、代替値へ切り替えます。
+    /// SC-8 族と SC-24 族の搬送波グリッドを互いに切り替えます。
     /// </summary>
-    /// <param name="grid">grid。</param>
-    /// <returns>OfdmCarrierGrid。</returns>
+    /// <param name="grid">現在の搬送波グリッド。</param>
+    /// <returns>反対側の搬送波グリッド族。</returns>
     private static OfdmCarrierGrid AlternateCarrierGrid(OfdmCarrierGrid grid) =>
         grid == OfdmCarrierGrid.Sc8Family ? OfdmCarrierGrid.Sc24Family : OfdmCarrierGrid.Sc8Family;
 
     /// <summary>
-    /// DecodeHeaderPacketSyncedTryingGrids は、復号します。
+    /// ヘッダーパケットを同期復号し、失敗時は反対の搬送波グリッドで再試行します。
     /// </summary>
-    /// <param name="headerOfdm">ヘッダー用 OFDM 生成器。</param>
-    /// <param name="leftSamples">L チャネル PCM。</param>
-    /// <param name="rightSamples">R チャネル PCM。</param>
-    /// <param name="warpedCursor">ワウ補正後カーソル（更新あり）。</param>
-    /// <param name="logicalOffset">論理サンプルオフセット（更新あり）。</param>
-    /// <param name="payloadLength">ペイロード長（バイト）。</param>
-    /// <param name="expectedPilot">期待パイロットパターン。</param>
-    /// <param name="searchRadius">探索半径（サンプル）。</param>
-    /// <param name="onSyncProgress">同期進捗コールバック。</param>
-    /// <param name="statusBoard">実行状態ボード。</param>
+    /// <param name="headerOfdm">ヘッダー用 OFDM 生成器（グリッド切替時に差し替え）。</param>
+    /// <param name="leftSamples">左チャネル PCM。</param>
+    /// <param name="rightSamples">右チャネル PCM。</param>
+    /// <param name="warpedCursor">ワウ補正後カーソル（成功時に更新）。</param>
+    /// <param name="logicalOffset">論理サンプルオフセット（成功時に更新）。</param>
+    /// <param name="payloadLength">期待するヘッダーペイロード長（バイト）。</param>
+    /// <param name="expectedPilot">期待する先頭パイロットパターン。</param>
+    /// <param name="searchRadius">同期探索半径（サンプル）。</param>
+    /// <param name="onSyncProgress">同期進捗（完了数, 総数）の通知。</param>
+    /// <param name="statusBoard">画面共有用の実行状態ボード。</param>
     /// <param name="frameKind">フレーム種別（FH/BH 等）。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <returns>復号したヘッダーバイト列。</returns>
     private byte[] DecodeHeaderPacketSyncedTryingGrids(
         ref OfdmGenerator headerOfdm,
         Complex[] leftSamples,
@@ -108,12 +108,12 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// AppendFileHeaderPacket は、追記します。
+    /// ファイルヘッダー（無変調区間付き）を PCM バッファへ追記します。
     /// </summary>
-    /// <param name="leftPcm">L チャネル PCM。</param>
-    /// <param name="rightPcm">R チャネル PCM。</param>
+    /// <param name="leftPcm">左チャネル出力 PCM バッファ。</param>
+    /// <param name="rightPcm">右チャネル出力 PCM バッファ。</param>
     /// <param name="headerOfdm">ヘッダー用 OFDM 生成器。</param>
-    /// <param name="fileHeader">ファイルヘッダーバイト列。</param>
+    /// <param name="fileHeader">送信するファイルヘッダーバイト列。</param>
     private void AppendFileHeaderPacket(
         List<Complex> leftPcm,
         List<Complex> rightPcm,
@@ -130,14 +130,14 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// AppendHeaderPackets は、追記します。
+    /// ヘッダーバイト列を符号化・変調し、無変調区間付きで PCM へ追記します。
     /// </summary>
-    /// <param name="leftPcm">L チャネル PCM。</param>
-    /// <param name="rightPcm">R チャネル PCM。</param>
-    /// <param name="ofdm">OFDM 生成器。</param>
-    /// <param name="leftHeaderBytes">L ヘッダーバイト列。</param>
-    /// <param name="rightHeaderBytes">R ヘッダーバイト列。</param>
-    /// <param name="unmodulatedSamples">無変調サンプル数。</param>
+    /// <param name="leftPcm">左チャネル出力 PCM バッファ。</param>
+    /// <param name="rightPcm">右チャネル出力 PCM バッファ。</param>
+    /// <param name="ofdm">変調に使う OFDM 生成器。</param>
+    /// <param name="leftHeaderBytes">符号化するヘッダーバイト列（L 基準）。</param>
+    /// <param name="rightHeaderBytes">互換用の右ヘッダー（現状未使用）。</param>
+    /// <param name="unmodulatedSamples">先頭に付ける無変調サンプル数。</param>
     private void AppendHeaderPackets(
         List<Complex> leftPcm,
         List<Complex> rightPcm,
@@ -164,11 +164,11 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// AppendHeaderPair は、追記します。
+    /// ヘッダー用サンプル対を追記し、ステレオ時は R 欠落を L で補います。
     /// </summary>
-    /// <param name="leftPcm">L チャネル PCM。</param>
-    /// <param name="rightPcm">R チャネル PCM。</param>
-    /// <param name="pair">L/R サンプル対。</param>
+    /// <param name="leftPcm">左チャネル出力 PCM バッファ。</param>
+    /// <param name="rightPcm">右チャネル出力 PCM バッファ。</param>
+    /// <param name="pair">追加する L/R サンプル配列の組。</param>
     private void AppendHeaderPair(List<Complex> leftPcm, List<Complex> rightPcm, (Complex[] Left, Complex[] Right) pair)
     {
         AppendPair(leftPcm, rightPcm, pair);
@@ -179,23 +179,23 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// HeaderUnmodulatedSamplesFor の結果を返します。
+    /// パケット長から FH/BH いずれかの無変調サンプル数を返します。
     /// </summary>
-    /// <param name="packetLength">packetLength。</param>
-    /// <returns>計算した整数値。</returns>
+    /// <param name="packetLength">ヘッダーパケット長（バイト。FH=880 / BH=124）。</param>
+    /// <returns>先頭に付ける無変調サンプル数。</returns>
     private int HeaderUnmodulatedSamplesFor(int packetLength) =>
         packetLength == FileHeaderBytes
             ? _profile.FileHeaderUnmodulatedSamples
             : _profile.BlockHeaderUnmodulatedSamples;
 
     /// <summary>
-    /// SkipHeaderUnmodulatedPreamble は、読み飛ばします。
+    /// ヘッダー先頭の無変調区間をカーソルから読み飛ばします。
     /// </summary>
     /// <param name="samples">入力サンプル列。</param>
-    /// <param name="warpedCursor">ワウ補正後カーソル（更新あり）。</param>
-    /// <param name="logicalOffset">論理サンプルオフセット（更新あり）。</param>
-    /// <param name="unmodulatedSamples">無変調サンプル数。</param>
-    /// <param name="statusBoard">実行状態ボード。</param>
+    /// <param name="warpedCursor">ワウ補正後カーソル（読み飛ばし分更新）。</param>
+    /// <param name="logicalOffset">論理サンプルオフセット（読み飛ばし分更新）。</param>
+    /// <param name="unmodulatedSamples">読み飛ばす無変調サンプル数。</param>
+    /// <param name="statusBoard">FFT 可視化用の実行状態ボード。</param>
     /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
     private static void SkipHeaderUnmodulatedPreamble(
         Complex[] samples,
@@ -248,20 +248,20 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// DecodeHeaderPacketSynced は、復号します。
+    /// 同期探索付きでヘッダーパケットを復号します。
     /// </summary>
-    /// <param name="leftSamples">L チャネル PCM。</param>
-    /// <param name="rightSamples">R チャネル PCM。</param>
-    /// <param name="warpedCursor">ワウ補正後カーソル（更新あり）。</param>
-    /// <param name="logicalOffset">論理サンプルオフセット（更新あり）。</param>
-    /// <param name="ofdm">OFDM 生成器。</param>
-    /// <param name="payloadLength">ペイロード長（バイト）。</param>
-    /// <param name="expectedPilot">期待パイロットパターン。</param>
-    /// <param name="searchRadius">探索半径（サンプル）。</param>
-    /// <param name="onSyncProgress">同期進捗コールバック。</param>
-    /// <param name="statusBoard">実行状態ボード。</param>
+    /// <param name="leftSamples">左チャネル PCM。</param>
+    /// <param name="rightSamples">右チャネル PCM。</param>
+    /// <param name="warpedCursor">ワウ補正後カーソル（成功時に更新）。</param>
+    /// <param name="logicalOffset">論理サンプルオフセット（成功時に更新）。</param>
+    /// <param name="ofdm">復調に使う OFDM 生成器。</param>
+    /// <param name="payloadLength">期待するヘッダーペイロード長（バイト）。</param>
+    /// <param name="expectedPilot">期待する先頭パイロットパターン。</param>
+    /// <param name="searchRadius">同期探索半径（サンプル）。</param>
+    /// <param name="onSyncProgress">同期進捗（完了数, 総数）の通知。</param>
+    /// <param name="statusBoard">画面共有用の実行状態ボード。</param>
     /// <param name="frameKind">フレーム種別（FH/BH 等）。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <returns>復号したヘッダーバイト列。</returns>
     private static byte[] DecodeHeaderPacketSynced(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -287,6 +287,11 @@ public sealed partial class FileWavCodec
         Complex[]? fftWindow = null;
         Complex[]? fftWork = null;
         var fftClock = System.Diagnostics.Stopwatch.StartNew();
+        /// <summary>
+        /// ヘッダー同期中の受信 PCM FFT をステータスボードへ公開します。
+        /// </summary>
+        /// <param name="sampleEnd">FFT 窓の終端サンプル位置。</param>
+        /// <param name="force">スロットルを無視して即時公開する場合 true。</param>
         void MaybePublishHeaderFft(int sampleEnd, bool force = false)
         {
             if (statusBoard is null)
@@ -404,24 +409,24 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// 指定位置からヘッダー復号を試行します。
+    /// 指定位置からヘッダー復号を試行します（meanAbsLlr なし簡易版）。
     /// </summary>
-    /// <param name="leftSamples">L チャネル PCM。</param>
-    /// <param name="rightSamples">R チャネル PCM。</param>
-    /// <param name="start">開始位置。</param>
-    /// <param name="logicalOffset">logicalOffset。</param>
-    /// <param name="ofdm">ofdm。</param>
-    /// <param name="totalBitCount">totalBitCount。</param>
-    /// <param name="channelBitCount">channelBitCount。</param>
-    /// <param name="sampleCount">sampleCount。</param>
-    /// <param name="payloadLength">payloadLength。</param>
-    /// <param name="rsByteLength">rsByteLength。</param>
-    /// <param name="expectedPilot">expectedPilot。</param>
-    /// <param name="stereoSplit">stereoSplit。</param>
-    /// <param name="perSymbolSearchRadius">perSymbolSearchRadius。</param>
-    /// <param name="payload">payload。</param>
-    /// <param name="endCursor">endCursor。</param>
-    /// <returns>成功または条件成立時 true。</returns>
+    /// <param name="leftSamples">左チャネル PCM。</param>
+    /// <param name="rightSamples">右チャネル PCM。</param>
+    /// <param name="start">復調開始サンプル位置。</param>
+    /// <param name="logicalOffset">論理サンプルオフセット。</param>
+    /// <param name="ofdm">復調に使う OFDM 生成器。</param>
+    /// <param name="totalBitCount">結合後の総ビット数。</param>
+    /// <param name="channelBitCount">1 チャネルあたりのビット数。</param>
+    /// <param name="sampleCount">復調に必要なサンプル数。</param>
+    /// <param name="payloadLength">期待するヘッダーペイロード長（バイト）。</param>
+    /// <param name="rsByteLength">RS 符号化後バイト長。</param>
+    /// <param name="expectedPilot">期待する先頭パイロット。null なら検査しない。</param>
+    /// <param name="stereoSplit">左右分割復調を行うか。</param>
+    /// <param name="perSymbolSearchRadius">シンボル単位の開始位置探索半径。</param>
+    /// <param name="payload">復号に成功したヘッダーバイト列。</param>
+    /// <param name="endCursor">復調終了後のサンプルカーソル。</param>
+    /// <returns>パイロット一致を含め復号に成功したとき true。</returns>
     private static bool TryDecodeHeaderAt(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -459,27 +464,27 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// TryDecodeHeaderAt は、条件を満たす場合に処理を試行します。
+    /// 指定位置からヘッダーをソフト復調し、パイロット一致を確認します。
     /// </summary>
-    /// <param name="leftSamples">L チャネル PCM。</param>
-    /// <param name="rightSamples">R チャネル PCM。</param>
-    /// <param name="start">開始位置。</param>
-    /// <param name="logicalOffset">論理サンプルオフセット（更新あり）。</param>
-    /// <param name="ofdm">OFDM 生成器。</param>
-    /// <param name="totalBitCount">totalBitCount。</param>
-    /// <param name="channelBitCount">channelBitCount。</param>
-    /// <param name="sampleCount">sampleCount。</param>
-    /// <param name="payloadLength">ペイロード長（バイト）。</param>
-    /// <param name="rsByteLength">rsByteLength。</param>
-    /// <param name="expectedPilot">期待パイロットパターン。</param>
-    /// <param name="stereoSplit">stereoSplit。</param>
-    /// <param name="perSymbolSearchRadius">perSymbolSearchRadius。</param>
-    /// <param name="payload">payload。</param>
-    /// <param name="endCursor">endCursor。</param>
-    /// <param name="meanAbsLlr">meanAbsLlr。</param>
-    /// <param name="statusBoard">実行状態ボード。</param>
+    /// <param name="leftSamples">左チャネル PCM。</param>
+    /// <param name="rightSamples">右チャネル PCM。</param>
+    /// <param name="start">復調開始サンプル位置。</param>
+    /// <param name="logicalOffset">論理サンプルオフセット。</param>
+    /// <param name="ofdm">復調に使う OFDM 生成器。</param>
+    /// <param name="totalBitCount">結合後の総ビット数。</param>
+    /// <param name="channelBitCount">1 チャネルあたりのビット数。</param>
+    /// <param name="sampleCount">復調に必要なサンプル数。</param>
+    /// <param name="payloadLength">期待するヘッダーペイロード長（バイト）。</param>
+    /// <param name="rsByteLength">RS 符号化後バイト長。</param>
+    /// <param name="expectedPilot">期待する先頭パイロット。null なら検査しない。</param>
+    /// <param name="stereoSplit">左右分割復調を行うか。</param>
+    /// <param name="perSymbolSearchRadius">シンボル単位の開始位置探索半径。</param>
+    /// <param name="payload">復号に成功したヘッダーバイト列。</param>
+    /// <param name="endCursor">復調終了後のサンプルカーソル。</param>
+    /// <param name="meanAbsLlr">復調 LLR の平均絶対値。</param>
+    /// <param name="statusBoard">エラー率通知先の実行状態ボード。</param>
     /// <param name="frameKind">フレーム種別（FH/BH 等）。</param>
-    /// <returns>成功または条件成立時 true。</returns>
+    /// <returns>パイロット一致を含め復号に成功したとき true。</returns>
     private static bool TryDecodeHeaderAt(
         Complex[] leftSamples,
         Complex[] rightSamples,
@@ -593,15 +598,15 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// DecodeHeaderFromSoftLlrs は、復号します。
+    /// ソフト LLR から畳み込み BCJR と RS 復号でヘッダーを復元します。
     /// </summary>
-    /// <param name="llrs">llrs。</param>
-    /// <param name="payloadLength">ペイロード長（バイト）。</param>
-    /// <param name="rsByteLength">rsByteLength。</param>
-    /// <param name="viterbiMetrics">viterbiMetrics。</param>
-    /// <param name="rsMetrics">rsMetrics。</param>
-    /// <param name="infoLlrs">infoLlrs。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="llrs">チャネルから得たソフト LLR 列。</param>
+    /// <param name="payloadLength">復元するヘッダーペイロード長（バイト）。</param>
+    /// <param name="rsByteLength">RS 符号化後バイト長。</param>
+    /// <param name="viterbiMetrics">畳み込み復号の訂正メトリクス。</param>
+    /// <param name="rsMetrics">RS 復号の訂正メトリクス。</param>
+    /// <param name="infoLlrs">畳み込み復号後の情報 LLR。</param>
+    /// <returns>復元したヘッダーペイロード。</returns>
     private static byte[] DecodeHeaderFromSoftLlrs(
         double[] llrs,
         int payloadLength,
@@ -624,17 +629,17 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// CollectSyncCandidates の結果を返します。
+    /// ヘッダー同期候補の開始サンプル位置を収集します。
     /// </summary>
-    /// <param name="samples">入力サンプル列。</param>
-    /// <param name="expectedStart">expectedStart。</param>
-    /// <param name="sampleCount">sampleCount。</param>
+    /// <param name="samples">探索対象のサンプル列。</param>
+    /// <param name="expectedStart">期待する開始位置。</param>
+    /// <param name="sampleCount">パケットに必要なサンプル数。</param>
     /// <param name="searchRadius">探索半径（サンプル）。</param>
-    /// <param name="ofdm">OFDM 生成器。</param>
-    /// <param name="probeSymbols">probeSymbols。</param>
+    /// <param name="ofdm">ロック評価に使う OFDM 生成器。</param>
+    /// <param name="probeSymbols">スコア計算に使うプローブシンボル数。</param>
     /// <param name="useRightChannel">R 搬送波を使うか。</param>
-    /// <param name="onProbe">onProbe。</param>
-    /// <returns>結果のコレクション。</returns>
+    /// <param name="onProbe">候補位置を探査したときの通知。</param>
+    /// <returns>重複除去済みの開始位置候補リスト。</returns>
     private static List<int> CollectSyncCandidates(
         Complex[] samples,
         int expectedStart,
@@ -650,6 +655,10 @@ public sealed partial class FileWavCodec
         var unique = new List<int>();
         var seen = new HashSet<int>();
 
+        /// <summary>
+        /// 有効範囲内の同期候補開始位置を重複なくリストへ追加します。
+        /// </summary>
+        /// <param name="start">候補とする開始サンプル位置。</param>
         void Add(int start)
         {
             if (start < 0 || start + sampleCount > samples.Length)
@@ -697,11 +706,11 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// HeaderPrefixMatches の結果を返します。
+    /// ヘッダー先頭のパイロットとバージョンが期待値と一致するか判定します。
     /// </summary>
-    /// <param name="header">header。</param>
-    /// <param name="expectedPilot">期待パイロットパターン。</param>
-    /// <returns>成功または条件成立時 true。</returns>
+    /// <param name="header">検査対象のヘッダーバイト列。</param>
+    /// <param name="expectedPilot">期待するパイロットパターン。</param>
+    /// <returns>パイロットとバージョンが一致するとき true。</returns>
     private static bool HeaderPrefixMatches(byte[] header, byte[] expectedPilot)
     {
         if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)
@@ -734,10 +743,10 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// ReadFileHeaderFileName は、読み取ります。
+    /// ファイルヘッダーから UTF-8 ファイル名を読み取ります。
     /// </summary>
     /// <param name="fileHeader">ファイルヘッダーバイト列。</param>
-    /// <returns>string。</returns>
+    /// <returns>切り出したファイル名。欠損時は空文字。</returns>
     private static string ReadFileHeaderFileName(ReadOnlySpan<byte> fileHeader)
     {
         if (fileHeader.Length < HeaderPrefixBytes + FileNameBytes)
@@ -760,11 +769,11 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// ReadFileHeaderTimestampUtc は、読み取ります。
+    /// ファイルヘッダー内の 7 バイトロール時刻を UTC の DateTime へ変換します。
     /// </summary>
     /// <param name="fileHeader">ファイルヘッダーバイト列。</param>
-    /// <param name="offset">オフセット。</param>
-    /// <returns>DateTime?。</returns>
+    /// <param name="offset">タイムスタンプ先頭のバイトオフセット。</param>
+    /// <returns>UTC 時刻。不正なら null。</returns>
     private static DateTime? ReadFileHeaderTimestampUtc(ReadOnlySpan<byte> fileHeader, int offset)
     {
         if (offset < 0 || fileHeader.Length < offset + 7)
@@ -801,13 +810,13 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// BuildFileHeader は、必要なテーブルまたは構造を構築します。
+    /// ファイル名・ハッシュ・属性などからファイルヘッダーを組み立てます。
     /// </summary>
-    /// <param name="fileInfo">fileInfo。</param>
-    /// <param name="fileSize">fileSize。</param>
-    /// <param name="blockCount">blockCount。</param>
-    /// <param name="fileHash">fileHash。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="fileInfo">ファイル名と属性の取得元。</param>
+    /// <param name="fileSize">ファイルサイズ（バイト）。</param>
+    /// <param name="blockCount">総ブロック数。</param>
+    /// <param name="fileHash">ファイル全体の SHA-512 ハッシュ（64 バイト）。</param>
+    /// <returns>CRC 付きのファイルヘッダーバイト列。</returns>
     private static byte[] BuildFileHeader(FileInfo fileInfo, long fileSize, int blockCount, byte[] fileHash)
     {
         if (fileHash.Length != 64)
@@ -833,10 +842,10 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// WriteFileAttributes は、書き込みます。
+    /// 作成／更新日時と属性フラグをファイル属性領域へ書き込みます。
     /// </summary>
-    /// <param name="dest">dest。</param>
-    /// <param name="fileInfo">fileInfo。</param>
+    /// <param name="dest">20 バイトの属性書き込み先。</param>
+    /// <param name="fileInfo">日時・属性の取得元。</param>
     private static void WriteFileAttributes(Span<byte> dest, FileInfo fileInfo)
     {
         WriteTimestamp(dest.Slice(0, 7), fileInfo.CreationTime);
@@ -863,10 +872,10 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// WriteTimestamp は、書き込みます。
+    /// ローカル時刻を 7 バイト（年〜秒）形式で書き込みます。
     /// </summary>
-    /// <param name="dest">dest。</param>
-    /// <param name="timestamp">timestamp。</param>
+    /// <param name="dest">7 バイトの書き込み先。</param>
+    /// <param name="timestamp">書き込む日時。</param>
     private static void WriteTimestamp(Span<byte> dest, DateTime timestamp)
     {
         var local = timestamp.ToLocalTime();
@@ -879,16 +888,16 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// BuildBlockHeader は、必要なテーブルまたは構造を構築します。
+    /// データ部変調情報とハッシュからブロックヘッダーを組み立てます。
     /// </summary>
-    /// <param name="subcarriers">subcarriers。</param>
-    /// <param name="modulationMode">modulationMode。</param>
-    /// <param name="channelMode">モノラル／ステレオ。</param>
-    /// <param name="blockIndex">blockIndex。</param>
-    /// <param name="blockSize">blockSize。</param>
-    /// <param name="blockHash">blockHash。</param>
-    /// <param name="fileHash">fileHash。</param>
-    /// <returns>結果の配列またはスライス。</returns>
+    /// <param name="subcarriers">データ部サブキャリア数。</param>
+    /// <param name="modulationMode">データ部変調方式コード。</param>
+    /// <param name="channelMode">モノラル／ステレオ（0/1）。</param>
+    /// <param name="blockIndex">ファイル内のブロック番号。</param>
+    /// <param name="blockSize">ブロックペイロード長（バイト）。</param>
+    /// <param name="blockHash">ブロックの SHA-256 ハッシュ（32 バイト）。</param>
+    /// <param name="fileHash">ファイル全体の SHA-512 ハッシュ（64 バイト）。</param>
+    /// <returns>CRC 付きのブロックヘッダーバイト列。</returns>
     private static byte[] BuildBlockHeader(
         byte subcarriers,
         byte modulationMode,
@@ -925,10 +934,10 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// EnsureHeaderCrc は、前提条件を満たすよう確保します。
+    /// ヘッダー末尾の CRC-32 が一致することを検証します。
     /// </summary>
-    /// <param name="header">header。</param>
-    /// <param name="headerName">headerName。</param>
+    /// <param name="header">検証対象のヘッダーバイト列。</param>
+    /// <param name="headerName">例外メッセージ用のヘッダー名称。</param>
     private static void EnsureHeaderCrc(byte[] header, string headerName)
     {
         if (header.Length < HeaderCrcDataOffset + CrcBytes)
@@ -944,11 +953,11 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
-    /// EnsureHeaderPilot は、前提条件を満たすよう確保します。
+    /// ヘッダー先頭のパイロットとバージョンが期待値と一致することを検証します。
     /// </summary>
-    /// <param name="header">header。</param>
-    /// <param name="expectedPilot">期待パイロットパターン。</param>
-    /// <param name="headerName">headerName。</param>
+    /// <param name="header">検証対象のヘッダーバイト列。</param>
+    /// <param name="expectedPilot">期待するパイロットパターン。</param>
+    /// <param name="headerName">例外メッセージ用のヘッダー名称。</param>
     private static void EnsureHeaderPilot(byte[] header, byte[] expectedPilot, string headerName)
     {
         if (expectedPilot.Length != HeaderPilotBytes || HeaderVersion.Length != HeaderVersionBytes)

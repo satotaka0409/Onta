@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Text;
 
 namespace Onta.Core;
@@ -8,10 +8,10 @@ public sealed partial class FileWavCodec
     /// <summary>
     /// 送信時間見積りの 1 セグメントです。
     /// </summary>
-    /// <param name="Label">項目名。</param>
-    /// <param name="Samples">サンプル数。</param>
-    /// <param name="Seconds">秒数。</param>
-    /// <param name="SizeBytes">表示用サイズ（bytes）。null のとき「-」。</param>
+    /// <param name="Label">表示用の項目名（プリアンブル／ファイルヘッダ／BLK 等）。</param>
+    /// <param name="Samples">当該セグメントの PCM サンプル数。</param>
+    /// <param name="Seconds">当該セグメントの所要秒数（Samples / SampleRate）。</param>
+    /// <param name="SizeBytes">表示用サイズ（bytes）。ヘッダや無音などサイズ無しのとき null（画面では「-」）。</param>
     public readonly record struct TransmissionDurationSegment(
         string Label,
         long Samples,
@@ -22,10 +22,9 @@ public sealed partial class FileWavCodec
     /// 送信全体の所要時間見積りです。
     /// </summary>
     /// <param name="SampleRate">サンプリング周波数（Hz）。</param>
-    /// <param name="TotalSamples">合計サンプル数。</param>
-    /// <param name="TotalSeconds">合計秒数。</param>
+    /// <param name="TotalSamples">全セグメント合算の PCM サンプル数。</param>
+    /// <param name="TotalSeconds">全セグメント合算の所要秒数。</param>
     /// <param name="Segments">セグメント一覧（プリアンブル／FH／BLK／TAIL 等）。</param>
-    /// <returns>record。</returns>
     public sealed record TransmissionDurationEstimate(
         int SampleRate,
         long TotalSamples,

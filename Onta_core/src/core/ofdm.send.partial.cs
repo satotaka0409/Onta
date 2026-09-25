@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 namespace Onta.Core;
 
@@ -9,6 +9,7 @@ public sealed partial class OfdmGenerator
     /// </summary>
     /// <param name="bits">変調対象ビット列。</param>
     /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
+    /// <returns>左／右チャネルの CP 付き OFDM PCM。モノラル時 Right は空配列。</returns>
     public (Complex[] Left, Complex[] Right) ModulateBits(ReadOnlySpan<bool> bits, long absoluteSampleOffset = 0)
     {
         return ModulateBitStreams(bits, bits, absoluteSampleOffset);
@@ -20,6 +21,7 @@ public sealed partial class OfdmGenerator
     /// <param name="leftBits">左チャネルに載せるビット列。</param>
     /// <param name="rightBits">右チャネルに載せるビット列。</param>
     /// <param name="absoluteSampleOffset">ストリーム先頭からの絶対サンプル位置。</param>
+    /// <returns>左／右チャネルの CP 付き OFDM PCM。モノラル時 Right は空配列。</returns>
     public (Complex[] Left, Complex[] Right) ModulateBitStreams(
         ReadOnlySpan<bool> leftBits,
         ReadOnlySpan<bool> rightBits,

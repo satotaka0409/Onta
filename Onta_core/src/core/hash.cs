@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 
 namespace Onta.Core;
 
@@ -10,8 +10,8 @@ public static class Hash
     /// <summary>
     /// バイト配列からSHA-256を計算します。
     /// </summary>
-    /// <param name="data">入力バイト配列。</param>
-    /// <returns>SHA-256ハッシュ値。</returns>
+    /// <param name="data">ハッシュ計算対象のバイト配列。</param>
+    /// <returns>32 バイトの SHA-256 ダイジェスト。</returns>
     public static byte[] ComputeSha256(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -21,8 +21,8 @@ public static class Hash
     /// <summary>
     /// SpanデータからSHA-256を計算します。
     /// </summary>
-    /// <param name="data">入力データ。</param>
-    /// <returns>SHA-256ハッシュ値。</returns>
+    /// <param name="data">ハッシュ計算対象のバイト列（Span）。</param>
+    /// <returns>32 バイトの SHA-256 ダイジェスト。</returns>
     public static byte[] ComputeSha256(ReadOnlySpan<byte> data)
     {
         return SHA256.HashData(data);
@@ -31,8 +31,8 @@ public static class Hash
     /// <summary>
     /// バイト配列からSHA-512を計算します。
     /// </summary>
-    /// <param name="data">入力バイト配列。</param>
-    /// <returns>SHA-512ハッシュ値。</returns>
+    /// <param name="data">ハッシュ計算対象のバイト配列。</param>
+    /// <returns>64 バイトの SHA-512 ダイジェスト。</returns>
     public static byte[] ComputeSha512(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -42,8 +42,8 @@ public static class Hash
     /// <summary>
     /// SpanデータからSHA-512を計算します。
     /// </summary>
-    /// <param name="data">入力データ。</param>
-    /// <returns>SHA-512ハッシュ値。</returns>
+    /// <param name="data">ハッシュ計算対象のバイト列（Span）。</param>
+    /// <returns>64 バイトの SHA-512 ダイジェスト。</returns>
     public static byte[] ComputeSha512(ReadOnlySpan<byte> data)
     {
         return SHA512.HashData(data);

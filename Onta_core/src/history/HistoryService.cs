@@ -2,6 +2,9 @@
 
 namespace Onta.History;
 
+/// <summary>
+/// 履歴の読込・削除・ペイロード書き出し・送受信保存の画面向けファサードです。
+/// </summary>
 internal static class HistoryService
 {
     /// <summary>
@@ -261,7 +264,7 @@ internal static class HistoryService
     /// </summary>
     /// <param name="activeSubcarriers">サブキャリア数。非対応時は 0。</param>
     /// <param name="modulationScheme">変調方式（1:BPSK … 5:256QAM）。</param>
-    /// <param name="channelMode">0:モノラル / 1:ステレオ。</param>
+    /// <param name="channelMode">チャネル構成（モノラル／ステレオ）。</param>
     /// <returns>長さ 4 の DataModulation バイト列。</returns>
     private static byte[] BuildDataModulation(
         int activeSubcarriers,

@@ -59,7 +59,7 @@ internal sealed class PerformanceRxWorker : IDisposable
     /// <summary>
     /// 受信中の FFT 解析サイズ／窓関数を更新します。
     /// </summary>
-    /// <param name="fftSize">FFT 長（1024/2048/4096）。</param>
+    /// <param name="fftSize">FFT 長（1024/2048/4096/8192）。</param>
     /// <param name="windowKind">窓関数。</param>
     public void UpdateFftAnalysis(int fftSize, PerformanceFftWindowKind windowKind)
     {
@@ -159,7 +159,9 @@ internal sealed class PerformanceRxWorker : IDisposable
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// 受信ワーカーを破棄し、キャプチャ／WAV 解析を停止します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
