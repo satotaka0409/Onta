@@ -3,6 +3,9 @@ bin/
 out_files/
 TestResults/
 **/BenchmarkDotNet.Artifacts
+Installer/publish/
+Installer/obj/
+*.bin
 *.log
 *.tmp
 *.cache

@@ -10,11 +10,30 @@
     <AssemblyName>Onta</AssemblyName>
     <LangVersion>latest</LangVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Product>音多 (Onta)</Product>
+    <AssemblyTitle>音多</AssemblyTitle>
+    <Company>Onta Project</Company>
+    <Version>1.0.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- ClickOnce 配布: x64 / ARM64 の両方を publish.ps1 で発行 -->
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.5" />
     <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <!-- ClickOnce / 実行時に同梱するマニュアルとスプラッシュ -->
+  <ItemGroup>
+    <Content Include="..\Onta_manual\*.md"
+             Link="manual\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Onta_manual\onta_splash_512x256.png"
+             Link="manual\onta_splash_512x256.png"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
