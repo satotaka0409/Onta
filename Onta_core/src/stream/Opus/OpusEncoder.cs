@@ -13,8 +13,10 @@ public sealed class OpusEncoder : IDisposable
 
     private readonly IntPtr _encoder;
     private readonly short[] _frame = new short[FrameSamplesPerChannel * 2];
-    private readonly List<short> _leftBuf = new(FrameSamplesPerChannel * 2);
-    private readonly List<short> _rightBuf = new(FrameSamplesPerChannel * 2);
+    private readonly byte[] _packet = new byte[4000];
+    private short[] _leftBuf = new short[FrameSamplesPerChannel * 4];
+    private short[] _rightBuf = new short[FrameSamplesPerChannel * 4];
+    private int _buffered;
     private bool _disposed;
 
     /// <summary>
@@ -66,11 +68,10 @@ public sealed class OpusEncoder : IDisposable
             var t = srcPos - i0;
             var l = (left[i0] * (1.0 - t)) + (left[i1] * t);
             var r = (right[i0] * (1.0 - t)) + (right[i1] * t);
-            _leftBuf.Add(ToShort(l));
-            _rightBuf.Add(ToShort(r));
+            Append(ToShort(l), ToShort(r));
         }
 
-        while (_leftBuf.Count >= FrameSamplesPerChannel)
+        while (_buffered >= FrameSamplesPerChannel)
         {
             for (var s = 0; s < FrameSamplesPerChannel; s++)
             {
@@ -78,18 +79,42 @@ public sealed class OpusEncoder : IDisposable
                 _frame[(s * 2) + 1] = _rightBuf[s];
             }
 
-            _leftBuf.RemoveRange(0, FrameSamplesPerChannel);
-            _rightBuf.RemoveRange(0, FrameSamplesPerChannel);
+            var remain = _buffered - FrameSamplesPerChannel;
+            if (remain > 0)
+            {
+                Array.Copy(_leftBuf, FrameSamplesPerChannel, _leftBuf, 0, remain);
+                Array.Copy(_rightBuf, FrameSamplesPerChannel, _rightBuf, 0, remain);
+            }
 
-            var packet = new byte[4000];
-            var len = OpusNative.opus_encode(_encoder, _frame, FrameSamplesPerChannel, packet, packet.Length);
+            _buffered = remain;
+
+            var len = OpusNative.opus_encode(_encoder, _frame, FrameSamplesPerChannel, _packet, _packet.Length);
             if (len > 0)
             {
                 var exact = new byte[len];
-                Buffer.BlockCopy(packet, 0, exact, 0, len);
+                Buffer.BlockCopy(_packet, 0, exact, 0, len);
                 packets.Add(exact);
             }
         }
+    }
+
+    /// <summary>
+    /// 48 kHz の 1 サンプルを左右バッファへ追加します。
+    /// </summary>
+    /// <param name="left">L サンプル。</param>
+    /// <param name="right">R サンプル。</param>
+    private void Append(short left, short right)
+    {
+        if (_buffered == _leftBuf.Length)
+        {
+            var grown = _leftBuf.Length * 2;
+            Array.Resize(ref _leftBuf, grown);
+            Array.Resize(ref _rightBuf, grown);
+        }
+
+        _leftBuf[_buffered] = left;
+        _rightBuf[_buffered] = right;
+        _buffered++;
     }
 
     private static short ToShort(double sample)

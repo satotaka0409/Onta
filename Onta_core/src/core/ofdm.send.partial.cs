@@ -74,7 +74,7 @@ public sealed partial class OfdmGenerator
         var samples = new Complex[symbolCount * symbolLength];
         var write = 0;
         var bitIndex = 0;
-        var freqBins = new Complex[_config.FftSize];
+        var freqBins = _txFreqBins;
         var dataCarrierOrder = ResolveDataCarrierOrder(useRightChannel);
 
         for (var s = 0; s < symbolCount; s++)

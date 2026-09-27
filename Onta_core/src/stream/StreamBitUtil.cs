@@ -6,6 +6,23 @@ namespace Onta.Stream;
 internal static class StreamBitUtil
 {
     /// <summary>
+    /// バイト列を MSB ファーストで <paramref name="bits"/> の先頭へ書き込みます。
+    /// </summary>
+    /// <param name="bytes">入力バイト列。</param>
+    /// <param name="bits">書き込み先。足りない分は書きません。</param>
+    /// <returns>書き込んだビット数。</returns>
+    public static int WriteBytesToBitsMsb(ReadOnlySpan<byte> bytes, Span<bool> bits)
+    {
+        var count = Math.Min(bits.Length, bytes.Length * 8);
+        for (var i = 0; i < count; i++)
+        {
+            bits[i] = ((bytes[i >> 3] >> (7 - (i & 7))) & 1) != 0;
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// バイト列を MSB ファーストのビット列へ展開します。
     /// </summary>
     public static bool[] BytesToBitsMsb(ReadOnlySpan<byte> bytes)

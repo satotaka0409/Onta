@@ -107,6 +107,8 @@ public sealed partial class OfdmGenerator
     /// <param name="onEqualizedDataSymbolFrame">1 OFDM シンボル分の等化後シンボル／グループのコールバック。</param>
     /// <param name="onFftSymbolFrame">FFT 後ビン配列のコールバック。</param>
     /// <param name="onOfdmSymbolProgress">シンボル進捗コールバック（index, total, cursor）。</param>
+    /// <param name="sampleCount">有効サンプル数。負なら配列長。</param>
+    /// <param name="llrDestination">十分な長さがあればここへ LLR を書く（呼び出し後に上書きされる）。</param>
     /// <returns>ビットごとのソフト LLR。</returns>
     public double[] DemodulateSoftLlrsFromStream(
         Complex[] samples,
@@ -119,7 +121,9 @@ public sealed partial class OfdmGenerator
         Action<Complex>? onEqualizedDataSymbol = null,
         Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame = null,
         Action<Complex[], int>? onFftSymbolFrame = null,
-        Action<int, int, int>? onOfdmSymbolProgress = null)
+        Action<int, int, int>? onOfdmSymbolProgress = null,
+        int sampleCount = -1,
+        double[]? llrDestination = null)
     {
         return DemodulateSoftLlrsFromStreamCore(
             samples,
@@ -135,7 +139,9 @@ public sealed partial class OfdmGenerator
             onEqualizedDataSymbol,
             onEqualizedDataSymbolFrame,
             onFftSymbolFrame,
-            onOfdmSymbolProgress);
+            onOfdmSymbolProgress,
+            sampleCount,
+            llrDestination);
     }
 
     /// <summary>
@@ -178,7 +184,9 @@ public sealed partial class OfdmGenerator
                 onEqualizedDataSymbol: null,
                 onEqualizedDataSymbolFrame: null,
                 onFftSymbolFrame: null,
-                onOfdmSymbolProgress: null);
+                onOfdmSymbolProgress: null,
+                sampleCount: -1,
+                llrDestination: null);
         }
 
         if (leftSamples.Length != rightSamples.Length)
@@ -200,7 +208,9 @@ public sealed partial class OfdmGenerator
             onEqualizedDataSymbol: null,
             onEqualizedDataSymbolFrame: null,
             onFftSymbolFrame: null,
-            onOfdmSymbolProgress: null);
+            onOfdmSymbolProgress: null,
+            sampleCount: -1,
+            llrDestination: null);
     }
 
     /// <summary>

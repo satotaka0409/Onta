@@ -50,8 +50,12 @@ public sealed class StreamRxPipeline : IDisposable
 
     private readonly StreamMetaAssembler _meta = new();
     private readonly OpusDecoder _opus = new();
-    private readonly List<Complex> _leftBuf = new(StreamConstants.SampleRate);
-    private readonly List<Complex> _rightBuf = new(StreamConstants.SampleRate);
+    private readonly List<Complex> _iqPoints = new(DefaultIqPointsPerPacket);
+    private readonly List<byte> _iqGroups = new(DefaultIqPointsPerPacket);
+    private Complex[] _leftBuf = new Complex[StreamConstants.SampleRate];
+    private Complex[] _rightBuf = new Complex[StreamConstants.SampleRate];
+    private double[] _power = new double[StreamConstants.SampleRate + 1];
+    private int _count;
     private readonly StreamOfdmCodec _headerCodec = new(StreamModeId.Rate18k);
     private readonly Dictionary<StreamModeId, StreamOfdmCodec> _codecs = new();
     private StreamModeId? _modeId;
@@ -79,17 +83,65 @@ public sealed class StreamRxPipeline : IDisposable
     public void PushCapture(Complex[] left, Complex[] right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _leftBuf.AddRange(left);
-        _rightBuf.AddRange(right);
+        var n = Math.Min(left.Length, right.Length);
+        EnsureCapacity(_count + n);
+        Array.Copy(left, 0, _leftBuf, _count, n);
+        Array.Copy(right, 0, _rightBuf, _count, n);
+        _count += n;
         // バッファ肥大防止（最大約 8 秒）。同期中に捨てると境界がずれるので再同期させる
         const int max = StreamConstants.SampleRate * 8;
-        if (_leftBuf.Count > max)
+        if (_count > max)
         {
-            var drop = _leftBuf.Count - max;
-            _leftBuf.RemoveRange(0, drop);
-            _rightBuf.RemoveRange(0, drop);
+            Consume(_count - max);
             _synced = false;
         }
+    }
+
+    /// <summary>
+    /// キャプチャバッファの容量を確保します。
+    /// </summary>
+    /// <param name="needed">必要なサンプル数。</param>
+    private void EnsureCapacity(int needed)
+    {
+        if (_leftBuf.Length >= needed)
+        {
+            return;
+        }
+
+        var cap = _leftBuf.Length;
+        while (cap < needed)
+        {
+            cap *= 2;
+        }
+
+        Array.Resize(ref _leftBuf, cap);
+        Array.Resize(ref _rightBuf, cap);
+    }
+
+    /// <summary>
+    /// バッファ先頭のサンプルを捨て、残りを前へ詰めます。
+    /// </summary>
+    /// <param name="samples">捨てるサンプル数。</param>
+    private void Consume(int samples)
+    {
+        if (samples <= 0)
+        {
+            return;
+        }
+
+        if (samples > _count)
+        {
+            samples = _count;
+        }
+
+        var remain = _count - samples;
+        if (remain > 0)
+        {
+            Array.Copy(_leftBuf, samples, _leftBuf, 0, remain);
+            Array.Copy(_rightBuf, samples, _rightBuf, 0, remain);
+        }
+
+        _count = remain;
     }
 
     /// <summary>
@@ -102,20 +154,21 @@ public sealed class StreamRxPipeline : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         status = null;
         var pcmOut = new List<(double[] Left, double[] Right)>();
-        if (_leftBuf.Count < _headerCodec.HeaderSectionSamples + TailMargin)
+        if (_count < _headerCodec.HeaderSectionSamples + TailMargin)
         {
             return pcmOut;
         }
 
-        var left = _leftBuf.ToArray();
-        var right = _rightBuf.ToArray();
-        var power = BuildPowerPrefix(left, right);
+        var left = _leftBuf;
+        var right = _rightBuf;
+        var length = _count;
+        var power = BuildPowerPrefix(length);
         var cursor = 0;
         while (true)
         {
             if (!_synced)
             {
-                var found = FindPacketStart(left, right, power, cursor, out var lastCandidate);
+                var found = FindPacketStart(left, right, power, cursor, length, out var lastCandidate);
                 if (found < 0)
                 {
                     // 探し終えた範囲は捨て、次回はパケット先頭になり得る末尾から探す
@@ -127,15 +180,15 @@ public sealed class StreamRxPipeline : IDisposable
                 _synced = true;
             }
 
-            if (cursor + RefineRadius + _headerCodec.HeaderSectionSamples + TailMargin > left.Length)
+            if (cursor + RefineRadius + _headerCodec.HeaderSectionSamples + TailMargin > length)
             {
                 break;
             }
 
             // ヘッダーは数十サンプルずれても読めるが、データ部はずれに弱いのでプリアンブル終端へ合わせる
-            cursor = RefinePacketStart(power, cursor, left.Length);
+            cursor = RefinePacketStart(power, cursor, length);
 
-            if (!_headerCodec.TryDemodulateHeader(left, right, cursor, out var modeId))
+            if (!_headerCodec.TryDemodulateHeader(left, right, cursor, out var modeId, length))
             {
                 _synced = false;
                 status = "sync lost";
@@ -144,12 +197,12 @@ public sealed class StreamRxPipeline : IDisposable
             }
 
             var codec = ResolveCodec(modeId);
-            if (cursor + codec.PacketSamples + TailMargin > left.Length)
+            if (cursor + codec.PacketSamples + TailMargin > length)
             {
                 break;
             }
 
-            if (!TryDemodulateNear(codec, left, right, cursor, out var next, out var packet))
+            if (!TryDemodulateNear(codec, left, right, cursor, length, out var next, out var packet))
             {
                 // ヘッダーが読めていればパケット長は分かるので、境界を保ったまま次へ進む
                 PacketErrors++;
@@ -185,12 +238,7 @@ public sealed class StreamRxPipeline : IDisposable
             }
         }
 
-        var consumed = Math.Min(cursor, _leftBuf.Count);
-        if (consumed > 0)
-        {
-            _leftBuf.RemoveRange(0, consumed);
-            _rightBuf.RemoveRange(0, consumed);
-        }
+        Consume(Math.Min(cursor, length));
 
         return pcmOut;
     }
@@ -204,11 +252,17 @@ public sealed class StreamRxPipeline : IDisposable
     /// <param name="from">探索開始位置。</param>
     /// <param name="lastCandidate">見つからなかった場合に次回の探索を始める位置。</param>
     /// <returns>見つかったパケット先頭。無ければ -1。</returns>
-    private int FindPacketStart(Complex[] left, Complex[] right, double[] power, int from, out int lastCandidate)
+    private int FindPacketStart(
+        Complex[] left,
+        Complex[] right,
+        double[] power,
+        int from,
+        int length,
+        out int lastCandidate)
     {
         var preamble = StreamConstants.PreambleSamples;
         var headerSpan = _headerCodec.HeaderSectionSamples - preamble;
-        var end = left.Length - _headerCodec.HeaderSectionSamples - TailMargin - RefineRadius;
+        var end = length - _headerCodec.HeaderSectionSamples - TailMargin - RefineRadius;
         lastCandidate = Math.Max(from, end + 1);
         if (end < from)
         {
@@ -225,7 +279,7 @@ public sealed class StreamRxPipeline : IDisposable
                 continue;
             }
 
-            if (_headerCodec.TryDemodulateHeader(left, right, p, out _))
+            if (_headerCodec.TryDemodulateHeader(left, right, p, out _, length))
             {
                 return p;
             }
@@ -284,6 +338,7 @@ public sealed class StreamRxPipeline : IDisposable
         Complex[] left,
         Complex[] right,
         int start,
+        int length,
         out int end,
         out StreamPacket packet)
     {
@@ -297,28 +352,26 @@ public sealed class StreamRxPipeline : IDisposable
                 continue;
             }
 
-            List<Complex>? iqPoints = null;
-            List<byte>? iqGroups = null;
             Action<Complex[], byte[], int>? onIq = null;
             if (report is not null)
             {
-                iqPoints = new List<Complex>(DefaultIqPointsPerPacket);
-                iqGroups = new List<byte>(DefaultIqPointsPerPacket);
+                _iqPoints.Clear();
+                _iqGroups.Clear();
                 onIq = (symbols, groups, count) =>
                 {
                     for (var i = 0; i < count; i++)
                     {
-                        iqPoints.Add(symbols[i]);
-                        iqGroups.Add(groups[i]);
+                        _iqPoints.Add(symbols[i]);
+                        _iqGroups.Add(groups[i]);
                     }
                 };
             }
 
-            var ok = codec.TryDemodulatePacket(left, right, ref cursor, out var decoded, out var body, onIq)
+            var ok = codec.TryDemodulatePacket(left, right, ref cursor, out var decoded, out var body, onIq, length)
                 && decoded is not null;
             if (report is not null)
             {
-                var attempt = new StreamRxPacketReport(ok, codec.Mode, body, iqPoints!.ToArray(), iqGroups!.ToArray());
+                var attempt = new StreamRxPacketReport(ok, codec.Mode, body, _iqPoints.ToArray(), _iqGroups.ToArray());
                 if (ok)
                 {
                     report(attempt);
@@ -350,12 +403,20 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>
     /// L²+R² の累積和を作ります（区間電力を O(1) で求めるため）。
     /// </summary>
-    private static double[] BuildPowerPrefix(Complex[] left, Complex[] right)
+    private double[] BuildPowerPrefix(int length)
     {
-        var power = new double[left.Length + 1];
-        for (var i = 0; i < left.Length; i++)
+        if (_power.Length < length + 1)
         {
-            power[i + 1] = power[i] + (left[i].Real * left[i].Real) + (right[i].Real * right[i].Real);
+            _power = new double[length + 1];
+        }
+
+        var power = _power;
+        power[0] = 0;
+        for (var i = 0; i < length; i++)
+        {
+            var l = _leftBuf[i].Real;
+            var r = _rightBuf[i].Real;
+            power[i + 1] = power[i] + (l * l) + (r * r);
         }
 
         return power;

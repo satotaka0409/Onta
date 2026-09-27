@@ -556,6 +556,15 @@ public sealed partial class OfdmGenerator
     private readonly int[][] _rightPilotGroupedCarriers;
     private readonly Complex[] _scoreTimeNoCpScratch;
     private readonly Complex[] _scoreFreqBinsScratch;
+    private readonly Complex[] _demodTimeNoCp;
+    private readonly Complex[] _demodFreqBins;
+    private readonly Complex[] _demodEqualizers;
+    private readonly Complex[] _demodTimeNoCpSecondary;
+    private readonly Complex[] _demodFreqBinsSecondary;
+    private readonly Complex[] _demodEqualizersSecondary;
+    private readonly Complex[] _txFreqBins;
+    private readonly Complex[] _eqFrameScratch;
+    private readonly byte[] _eqGroupScratch;
     private Complex[]? _ifftConjugateScratch;
     private Complex[]? _ifftWorkScratch;
     private Complex[]? _freqSymbolScratchA;
@@ -637,6 +646,15 @@ public sealed partial class OfdmGenerator
         _rightPilotGroupedCarriers = BuildPilotGroupedCarriers(_rightAllCarrierBins, _rightPilotBins);
         _scoreTimeNoCpScratch = new Complex[_config.FftSize];
         _scoreFreqBinsScratch = new Complex[_config.FftSize];
+        _demodTimeNoCp = new Complex[_config.FftSize];
+        _demodFreqBins = new Complex[_config.FftSize];
+        _demodEqualizers = new Complex[_config.FftSize];
+        _demodTimeNoCpSecondary = new Complex[_config.FftSize];
+        _demodFreqBinsSecondary = new Complex[_config.FftSize];
+        _demodEqualizersSecondary = new Complex[_config.FftSize];
+        _txFreqBins = new Complex[_config.FftSize];
+        _eqFrameScratch = new Complex[_config.FftSize];
+        _eqGroupScratch = new byte[_config.FftSize];
 
         if (_leftDataCarrierBase.Count != _rightDataCarrierBase.Count)
         {
@@ -4243,7 +4261,9 @@ public sealed partial class OfdmGenerator
         Action<Complex>? onEqualizedDataSymbol,
         Action<Complex[], byte[], int>? onEqualizedDataSymbolFrame,
         Action<Complex[], int>? onFftSymbolFrame,
-        Action<int, int, int>? onOfdmSymbolProgress)
+        Action<int, int, int>? onOfdmSymbolProgress,
+        int sampleCount,
+        double[]? llrDestination)
     {
         if (bitCount < 0)
         {
@@ -4251,7 +4271,9 @@ public sealed partial class OfdmGenerator
         }
 
         ArgumentNullException.ThrowIfNull(samples);
-        if (secondarySamples is not null && secondarySamples.Length != samples.Length)
+        var limit = sampleCount < 0 ? samples.Length : Math.Min(samples.Length, sampleCount);
+        if (secondarySamples is not null
+            && (secondarySamples.Length < limit || (sampleCount < 0 && secondarySamples.Length != samples.Length)))
         {
             throw new ArgumentException("Primary/secondary sample lengths must match.", nameof(secondarySamples));
         }
@@ -4263,24 +4285,33 @@ public sealed partial class OfdmGenerator
             ? 1
             : (bitCount + BitsPerOfdmSymbol - 1) / BitsPerOfdmSymbol;
 
-        var llrs = new double[bitCount];
+        double[] llrs;
+        if (llrDestination is not null && llrDestination.Length >= bitCount)
+        {
+            Array.Clear(llrDestination, 0, bitCount);
+            llrs = llrDestination;
+        }
+        else
+        {
+            llrs = new double[bitCount];
+        }
+
         var bitIndex = 0;
         _ = logicalSampleOffset;
         var primaryAgcState = new PilotGroupAgcState(primaryPilotBins.Count);
         var secondaryAgcState = new PilotGroupAgcState(secondaryPilotBins.Count);
-        var fftSize = _config.FftSize;
-        var primaryTimeNoCp = new Complex[fftSize];
-        var primaryFreqBins = new Complex[fftSize];
-        var primaryEqualizers = new Complex[fftSize];
-        var secondaryTimeNoCp = new Complex[fftSize];
-        var secondaryFreqBins = new Complex[fftSize];
-        var secondaryEqualizers = new Complex[fftSize];
+        var primaryTimeNoCp = _demodTimeNoCp;
+        var primaryFreqBins = _demodFreqBins;
+        var primaryEqualizers = _demodEqualizers;
+        var secondaryTimeNoCp = _demodTimeNoCpSecondary;
+        var secondaryFreqBins = _demodFreqBinsSecondary;
+        var secondaryEqualizers = _demodEqualizersSecondary;
         var position = cursor;
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
-            var start = FindBestSymbolStart(samples, position, searchRadius, useRightChannel);
-            if (start + symbolLength > samples.Length)
+            var start = FindBestSymbolStart(samples, position, searchRadius, useRightChannel, limit);
+            if (start + symbolLength > limit)
             {
                 throw new InvalidDataException("WAV ended while synchronizing OFDM symbol.");
             }
@@ -4463,8 +4494,21 @@ public sealed partial class OfdmGenerator
             ? _rightDataCarrierGroupByBin
             : _leftDataCarrierGroupByBin;
         Span<double> softLlrScratch = stackalloc double[6];
-        Complex[]? frameSnapshot = onEqualizedDataSymbolFrame is null ? null : new Complex[dataOrder.Count];
-        byte[]? groupSnapshot = onEqualizedDataSymbolFrame is null ? null : new byte[dataOrder.Count];
+        Complex[]? frameSnapshot = null;
+        byte[]? groupSnapshot = null;
+        if (onEqualizedDataSymbolFrame is not null)
+        {
+            if (dataOrder.Count <= _eqFrameScratch.Length)
+            {
+                frameSnapshot = _eqFrameScratch;
+                groupSnapshot = _eqGroupScratch;
+            }
+            else
+            {
+                frameSnapshot = new Complex[dataOrder.Count];
+                groupSnapshot = new byte[dataOrder.Count];
+            }
+        }
         var frameCount = 0;
         foreach (var dataBin in dataOrder)
         {

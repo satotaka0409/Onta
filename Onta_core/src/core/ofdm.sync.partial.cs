@@ -51,11 +51,13 @@ public sealed partial class OfdmGenerator
         Complex[] samples,
         int expectedStart,
         int searchRadius,
-        bool useRightChannel = false)
+        bool useRightChannel = false,
+        int sampleLimit = -1)
     {
         ArgumentNullException.ThrowIfNull(samples);
         var symbolLength = SamplesPerOfdmSymbol;
-        expectedStart = Math.Clamp(expectedStart, 0, Math.Max(0, samples.Length - symbolLength));
+        var limit = sampleLimit < 0 ? samples.Length : Math.Min(samples.Length, sampleLimit);
+        expectedStart = Math.Clamp(expectedStart, 0, Math.Max(0, limit - symbolLength));
         if (searchRadius <= 0)
         {
             return expectedStart;
@@ -65,7 +67,7 @@ public sealed partial class OfdmGenerator
         var timeNoCp = _scoreTimeNoCpScratch;
         var freqBins = _scoreFreqBinsScratch;
         var back = Math.Min(searchRadius, expectedStart);
-        var forward = Math.Min(searchRadius, samples.Length - symbolLength - expectedStart);
+        var forward = Math.Min(searchRadius, limit - symbolLength - expectedStart);
         var cpAtExpected = ScoreSingleSymbolCpLock(samples.AsSpan(expectedStart, symbolLength));
         var scoreAtExpected = ScoreSingleSymbolLock(samples.AsSpan(expectedStart, symbolLength), pilotBins, timeNoCp, freqBins);
         var bestDelta = 0;

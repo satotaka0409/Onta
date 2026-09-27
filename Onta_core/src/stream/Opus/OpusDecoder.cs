@@ -7,6 +7,7 @@ public sealed class OpusDecoder : IDisposable
 {
     private readonly IntPtr _decoder;
     private readonly short[] _pcm48 = new short[OpusEncoder.FrameSamplesPerChannel * 2 * 2];
+    private byte[] _packet = new byte[256];
     private bool _disposed;
 
     /// <summary>
@@ -37,11 +38,16 @@ public sealed class OpusDecoder : IDisposable
     public int DecodeToPcm44100(ReadOnlySpan<byte> packet, out double[] left, out double[] right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var data = packet.ToArray();
+        if (_packet.Length < packet.Length)
+        {
+            _packet = new byte[packet.Length];
+        }
+
+        packet.CopyTo(_packet);
         var samples = OpusNative.opus_decode(
             _decoder,
-            data,
-            data.Length,
+            _packet,
+            packet.Length,
             _pcm48,
             OpusEncoder.FrameSamplesPerChannel * 2,
             0);
