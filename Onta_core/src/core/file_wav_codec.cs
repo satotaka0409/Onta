@@ -3604,6 +3604,56 @@ public static class WavReader
     }
 
     /// <summary>
+    /// WAV のサンプリング周波数を取得します。
+    /// </summary>
+    /// <param name="path">対象 WAV ファイルパス。</param>
+    /// <returns>サンプリング周波数（Hz）。</returns>
+    public static int PeekSampleRate(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var reader = new BinaryReader(stream);
+
+        var riff = Encoding.ASCII.GetString(reader.ReadBytes(4));
+        if (riff != "RIFF")
+        {
+            throw new InvalidDataException("Not a RIFF file.");
+        }
+
+        reader.ReadInt32();
+        var wave = Encoding.ASCII.GetString(reader.ReadBytes(4));
+        if (wave != "WAVE")
+        {
+            throw new InvalidDataException("Not a WAVE file.");
+        }
+
+        while (stream.Position + 8 <= stream.Length)
+        {
+            var chunkId = Encoding.ASCII.GetString(reader.ReadBytes(4));
+            var chunkSize = reader.ReadInt32();
+            if (chunkId == "fmt ")
+            {
+                reader.ReadInt16();
+                reader.ReadInt16();
+                var sampleRate = reader.ReadInt32();
+                if (sampleRate <= 0)
+                {
+                    throw new InvalidDataException("WAV sample rate is invalid.");
+                }
+
+                return sampleRate;
+            }
+
+            stream.Position += Math.Max(0, chunkSize);
+            if ((chunkSize & 1) != 0)
+            {
+                stream.Position += 1;
+            }
+        }
+
+        throw new InvalidDataException("fmt chunk not found.");
+    }
+
+    /// <summary>
     /// PCM16 WAV を Complex サンプル列として読み込みます。
     /// </summary>
     /// <param name="path">WAV ファイルパス。</param>

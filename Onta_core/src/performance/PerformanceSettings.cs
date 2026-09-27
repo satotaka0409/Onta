@@ -13,8 +13,16 @@ internal static class PerformanceConstants
     /// </summary>
     public const int VizFftSize = PerformanceFftAnalyzer.DefaultSize;
 
-    /// <summary>性能測定の PCM サンプリング周波数（Hz）。</summary>
+    /// <summary>性能測定の PCM サンプリング周波数（Hz）。音声出力と、未指定の WAV 出力の既定です。</summary>
     public const int SampleRate = 44100;
+
+    /// <summary>
+    /// WAV 出力で選べるサンプリング周波数に揃えます。
+    /// </summary>
+    /// <param name="sampleRate">指定された周波数（Hz）。</param>
+    /// <returns>44100、48000、96000 のいずれか。</returns>
+    public static int NormalizeWavSampleRate(int sampleRate)
+        => sampleRate is 44100 or 48000 or 96000 ? sampleRate : SampleRate;
 
     /// <summary>
     /// オシロスコープ用に保持する直近 PCM 長です（約 370 ms @ 44.1 kHz）。FFT 窓以上。
@@ -57,7 +65,9 @@ internal readonly record struct PerformanceTxSettings(
     /// <summary>PCM 正弦波／変調の振幅（0.1〜1.0）。再生デバイス音量とは別。</summary>
     double SignalAmplitude,
     /// <summary>音声出力デバイスの再生音量（0〜1）。</summary>
-    double OutputVolume);
+    double OutputVolume,
+    /// <summary>WAV 出力のサンプリング周波数（Hz）。音声出力時は使いません。</summary>
+    int WavSampleRate = 44100);
 
 /// <summary>
 /// 性能測定受信の設定スナップショットです。
@@ -99,7 +109,9 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
     /// <summary>表示 FFT 長（1024/2048/4096/8192）。</summary>
     int FftSize,
     /// <summary>表示 FFT 窓関数。</summary>
-    PerformanceFftWindowKind FftWindowKind)
+    PerformanceFftWindowKind FftWindowKind,
+    /// <summary>WAV 出力のサンプリング周波数（Hz）。</summary>
+    int WavSampleRate = 44100)
 {
     /// <summary>
     /// ファイル未作成時の既定値（音量 80%、その他は画面左上の既定選択）を返します。
@@ -122,5 +134,6 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
             InputDeviceNumber: -1,
             InputGain: 0.80,
             FftSize: PerformanceFftAnalyzer.DefaultSize,
-            FftWindowKind: PerformanceFftWindowKind.Hanning);
+            FftWindowKind: PerformanceFftWindowKind.Hanning,
+            WavSampleRate: PerformanceConstants.SampleRate);
 }

@@ -46,6 +46,9 @@ public partial class FileEstimatePanel : UserControl
         var profile = new FileWavCodecProfile(
             ActiveSubcarriers: settings.ActiveSubcarriers,
             ModulationScheme: settings.ModulationScheme,
+            SampleRate: settings.WriteWav
+                ? SendSettingsSnapshot.NormalizeWavSampleRate(settings.WavSampleRate)
+                : 44100,
             ChannelMode: settings.ChannelMode,
             BlockInterleaveFactor: settings.BlockInterleaveFactor);
 

@@ -18,7 +18,8 @@ internal static class CodecProfileFactory
             snap.ActiveSubcarriers,
             snap.ModulationScheme,
             snap.ChannelMode,
-            snap.BlockInterleaveFactor);
+            snap.BlockInterleaveFactor,
+            snap.WriteWav ? SendSettingsSnapshot.NormalizeWavSampleRate(snap.WavSampleRate) : 44100);
     }
 
     /// <summary>
@@ -29,8 +30,9 @@ internal static class CodecProfileFactory
     public static FileWavCodecProfile ForWavReceive(string wavPath)
     {
         var channels = WavReader.PeekChannelCount(wavPath);
+        var sampleRate = WavReader.PeekSampleRate(wavPath);
         var channelMode = channels == 2 ? ChannelMode.Stereo : ChannelMode.Mono;
-        return ForReceive(channelMode);
+        return ForReceive(channelMode, sampleRate);
     }
 
     /// <summary>
@@ -40,22 +42,24 @@ internal static class CodecProfileFactory
     /// <returns>音声受信用プロファイル。</returns>
     public static FileWavCodecProfile ForAudioReceive(ChannelMode channelMode = ChannelMode.Stereo)
     {
-        return ForReceive(channelMode);
+        return ForReceive(channelMode, sampleRate: 44100);
     }
 
     /// <summary>
     /// 受信開始用の安全側既定プロファイル（BPSK / SC=16 / Interleave=1）を生成します。
     /// </summary>
     /// <param name="channelMode">チャネル構成（モノラル／ステレオ）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
     /// <returns>受信用コーデックプロファイル。</returns>
-    private static FileWavCodecProfile ForReceive(ChannelMode channelMode)
+    private static FileWavCodecProfile ForReceive(ChannelMode channelMode, int sampleRate)
     {
         // 受信は安全側の既定値（BPSK / SC=16 / Interleave=1）で開始する。
         return Create(
             activeSubcarriers: 16,
             modulationScheme: ModulationScheme.Bpsk,
             channelMode: channelMode,
-            blockInterleaveFactor: 1);
+            blockInterleaveFactor: 1,
+            sampleRate: sampleRate);
     }
 
     /// <summary>
@@ -65,17 +69,20 @@ internal static class CodecProfileFactory
     /// <param name="modulationScheme">データ部変調方式。</param>
     /// <param name="channelMode">チャネル構成。</param>
     /// <param name="blockInterleaveFactor">ブロック時系列インターリーブ倍率（1〜2）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
     /// <returns>送受信用コーデックプロファイル。</returns>
     private static FileWavCodecProfile Create(
         int activeSubcarriers,
         ModulationScheme modulationScheme,
         ChannelMode channelMode,
-        int blockInterleaveFactor)
+        int blockInterleaveFactor,
+        int sampleRate = 44100)
     {
         var fft = OfdmConfig.ResolveFftSize(activeSubcarriers, channelMode);
         return new FileWavCodecProfile(
             ActiveSubcarriers: activeSubcarriers,
             ModulationScheme: modulationScheme,
+            SampleRate: Math.Max(1, sampleRate),
             ChannelMode: channelMode,
             HeaderFftSize: fft,
             DataFftSize: fft,

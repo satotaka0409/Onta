@@ -16,8 +16,12 @@ internal sealed class RealtimePcmPlayer : IDisposable
     private WaveOutEvent? _waveOut;
     private BufferedWaveProvider? _buffer;
     private byte[]? _convertScratch;
+    private float[] _floatScratch = [];
+    private readonly List<float> _resampled = new();
+    private StreamingPcmResampler? _resampler;
     private int _channels;
-    private int _sampleRate = 44100;
+    private int _appSampleRate = 44100;
+    private int _deviceSampleRate = 44100;
     private double _scale = 1.0;
     private bool _disposed;
 
@@ -28,9 +32,10 @@ internal sealed class RealtimePcmPlayer : IDisposable
 
     /// <summary>
     /// 再生デバイスとフォーマットを初期化して再生を開始します。
+    /// 指定デバイスのミックス形式で開きます。入力が 44100 Hz のときはその周波数へ変換してから出力します。
     /// </summary>
     /// <param name="deviceNumber">出力デバイス番号。</param>
-    /// <param name="sampleRate">サンプルレート。</param>
+    /// <param name="sampleRate">入力サンプルのサンプリング周波数（変調・WAV 側は 44100）。</param>
     /// <param name="channelMode">モノラル/ステレオ。</param>
     /// <param name="samplePeak">出力振幅スケール。</param>
     public void Start(int deviceNumber, int sampleRate, Onta.Core.ChannelMode channelMode, double samplePeak)
@@ -39,12 +44,37 @@ internal sealed class RealtimePcmPlayer : IDisposable
         StopInternal();
 
         _channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
-        _sampleRate = Math.Max(1, sampleRate);
+        _appSampleRate = Math.Max(1, sampleRate);
         // 音量バー 0% は無音、それ以外は 0.05〜1.0 に制限する。
         _scale = samplePeak <= 0.0
             ? 0.0
             : Math.Clamp(samplePeak, 0.05, 1.0);
-        var format = new WaveFormat(_sampleRate, 16, _channels);
+        var deviceRate = AudioDeviceSampleRate.ResolveRender(deviceNumber, _appSampleRate);
+        try
+        {
+            Open(deviceNumber, deviceRate);
+        }
+        catch when (deviceRate != _appSampleRate)
+        {
+            StopInternal();
+            deviceRate = _appSampleRate;
+            Open(deviceNumber, deviceRate);
+        }
+
+        _resampler = deviceRate == _appSampleRate
+            ? null
+            : new StreamingPcmResampler(_appSampleRate, deviceRate, _channels);
+    }
+
+    /// <summary>
+    /// WaveOut を指定周波数で開いて再生を開始します。
+    /// </summary>
+    /// <param name="deviceNumber">出力デバイス番号。</param>
+    /// <param name="sampleRate">デバイス側サンプリング周波数。</param>
+    private void Open(int deviceNumber, int sampleRate)
+    {
+        _deviceSampleRate = Math.Max(1, sampleRate);
+        var format = new WaveFormat(_deviceSampleRate, 16, _channels);
         _buffer = new BufferedWaveProvider(format)
         {
             // 長時間先読みを避け、FFT/進捗と耳の聴感を揃える（エンコードはバッファ満杯で待機）。
@@ -110,23 +140,72 @@ internal sealed class RealtimePcmPlayer : IDisposable
         while (offset < left.Length && !_disposed)
         {
             var slice = Math.Min(MaxSliceSamples, left.Length - offset);
-            var byteCount = slice * bytesPerFrame;
+            int byteCount;
+            EnsureScratch(slice * bytesPerFrame);
+            var scratch = _convertScratch!;
+            if (_resampler is null)
+            {
+                byteCount = slice * bytesPerFrame;
+                var write = 0;
+                for (var i = 0; i < slice; i++)
+                {
+                    WritePcm16(scratch, ref write, left[offset + i].Real, scale);
+                    if (channels == 2)
+                    {
+                        WritePcm16(scratch, ref write, right[offset + i].Real, scale);
+                    }
+                }
+            }
+            else
+            {
+                var floatCount = slice * channels;
+                if (_floatScratch.Length < floatCount)
+                {
+                    _floatScratch = new float[floatCount];
+                }
+
+                var sampleIndex = 0;
+                for (var i = 0; i < slice; i++)
+                {
+                    _floatScratch[sampleIndex++] = (float)left[offset + i].Real;
+                    if (channels == 2)
+                    {
+                        _floatScratch[sampleIndex++] = (float)right[offset + i].Real;
+                    }
+                }
+
+                _resampled.Clear();
+                _resampler.Process(_floatScratch.AsSpan(0, floatCount), _resampled);
+                var outFrames = _resampled.Count / channels;
+                byteCount = outFrames * bytesPerFrame;
+                if (byteCount > 0)
+                {
+                    EnsureScratch(byteCount);
+                    scratch = _convertScratch!;
+                    var write = 0;
+                    sampleIndex = 0;
+                    for (var i = 0; i < outFrames; i++)
+                    {
+                        WritePcm16(scratch, ref write, _resampled[sampleIndex++], scale);
+                        if (channels == 2)
+                        {
+                            WritePcm16(scratch, ref write, _resampled[sampleIndex++], scale);
+                        }
+                    }
+                }
+            }
+
+            if (byteCount <= 0)
+            {
+                offset += slice;
+                onSamplesQueued?.Invoke(slice);
+                continue;
+            }
+
             WaitForBufferSpace(buffer, waveOut, byteCount, onBufferWait);
             if (_disposed)
             {
                 throw new OperationCanceledException("Realtime playback was stopped.");
-            }
-
-            EnsureScratch(byteCount);
-            var scratch = _convertScratch!;
-            var write = 0;
-            for (var i = 0; i < slice; i++)
-            {
-                WritePcm16(scratch, ref write, left[offset + i].Real, scale);
-                if (channels == 2)
-                {
-                    WritePcm16(scratch, ref write, right[offset + i].Real, scale);
-                }
             }
 
             buffer.AddSamples(scratch, 0, byteCount);
@@ -212,7 +291,18 @@ internal sealed class RealtimePcmPlayer : IDisposable
                 }
 
                 var bytesPerFrame = _channels * sizeof(short);
-                return bytesPerFrame <= 0 ? 0 : _buffer.BufferedBytes / bytesPerFrame;
+                if (bytesPerFrame <= 0)
+                {
+                    return 0;
+                }
+
+                var deviceFrames = _buffer.BufferedBytes / bytesPerFrame;
+                if (_deviceSampleRate <= 0 || _deviceSampleRate == _appSampleRate)
+                {
+                    return deviceFrames;
+                }
+
+                return (int)Math.Round(deviceFrames * (_appSampleRate / (double)_deviceSampleRate));
             }
         }
     }
@@ -285,6 +375,8 @@ internal sealed class RealtimePcmPlayer : IDisposable
             }
 
             _buffer = null;
+            _resampler = null;
+            _resampled.Clear();
         }
     }
 

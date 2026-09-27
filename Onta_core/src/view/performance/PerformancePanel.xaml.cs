@@ -30,6 +30,13 @@ public partial class PerformancePanel : UserControl
     private readonly PerformanceTxWorker _txWorker = new();
     private readonly PerformanceRxWorker _rxWorker = new();
     private readonly DispatcherTimer _pollTimer;
+    private bool _runningNotified;
+
+    /// <summary>送信または受信が実行中なら true。</summary>
+    public bool IsRunning => _txWorker.IsBusy || _rxWorker.IsBusy;
+
+    /// <summary>実行中状態が変わったときに通知します。</summary>
+    public event EventHandler? RunningStateChanged;
     private readonly FftChartModel _fftLeft = new(FftChartModel.ChannelLeftColor);
     private readonly FftChartModel _fftRight = new(FftChartModel.ChannelRightColor);
     private readonly OscilloscopeChartModel _scopeLeft = new(FftChartModel.ChannelLeftColor);
@@ -111,7 +118,8 @@ public partial class PerformancePanel : UserControl
             InputDeviceNumber: inputDevice,
             InputGain: inputGain,
             FftSize: ReadFftSize(),
-            FftWindowKind: ReadFftWindowKind());
+            FftWindowKind: ReadFftWindowKind(),
+            WavSampleRate: ReadWavSampleRate());
     }
 
     /// <summary>
@@ -151,6 +159,7 @@ public partial class PerformancePanel : UserControl
         }
 
         SelectComboDevice(OutputDeviceCombo, snapshot.OutputDeviceNumber);
+        SelectWavSampleRate(snapshot.WavSampleRate);
         if (SignalLevelSlider is not null)
         {
             SignalLevelSlider.Value = Math.Clamp(snapshot.SignalAmplitude, 0.10, 1.0);
@@ -1478,6 +1487,50 @@ public partial class PerformancePanel : UserControl
         var writeWav = WriteWavRadio.IsChecked == true;
         WavOutputPanel.Visibility = writeWav ? Visibility.Visible : Visibility.Collapsed;
         AudioOutputPanel.Visibility = writeWav ? Visibility.Collapsed : Visibility.Visible;
+        if (WavSampleRateCombo is not null)
+        {
+            WavSampleRateCombo.Visibility = writeWav ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// WAV 出力のサンプリング周波数コンボの選択値を返します。
+    /// </summary>
+    /// <returns>44100、48000、96000 のいずれか。未選択時は 44100。</returns>
+    private int ReadWavSampleRate()
+    {
+        if (WavSampleRateCombo?.SelectedItem is ComboBoxItem item
+            && item.Tag is string tag
+            && int.TryParse(tag, out var rate))
+        {
+            return PerformanceConstants.NormalizeWavSampleRate(rate);
+        }
+
+        return PerformanceConstants.SampleRate;
+    }
+
+    /// <summary>
+    /// WAV 出力のサンプリング周波数コンボを指定値に合わせます。
+    /// </summary>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    private void SelectWavSampleRate(int sampleRate)
+    {
+        if (WavSampleRateCombo is null)
+        {
+            return;
+        }
+
+        var rate = PerformanceConstants.NormalizeWavSampleRate(sampleRate).ToString();
+        foreach (var item in WavSampleRateCombo.Items)
+        {
+            if (item is ComboBoxItem combo
+                && combo.Tag is string tag
+                && string.Equals(tag, rate, StringComparison.Ordinal))
+            {
+                WavSampleRateCombo.SelectedItem = combo;
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -2299,6 +2352,10 @@ public partial class PerformancePanel : UserControl
         ModulatedSignalRadio.IsEnabled = !running;
         WriteWavRadio.IsEnabled = !running;
         PlayAudioRadio.IsEnabled = !running;
+        if (WavSampleRateCombo is not null)
+        {
+            WavSampleRateCombo.IsEnabled = !running;
+        }
         OutputDeviceCombo.IsEnabled = !running;
         OutputVolumeSlider.IsEnabled = !running;
         // 周波数ラジオ・信号レベルは再生中も変更可（PCM へライブ反映）
@@ -2338,6 +2395,8 @@ public partial class PerformancePanel : UserControl
         {
             UpdateOutputModePanels();
         }
+
+        NotifyRunningStateChanged();
     }
 
     /// <summary>
@@ -2437,6 +2496,23 @@ public partial class PerformancePanel : UserControl
         {
             UpdateRxInputModePanels();
         }
+
+        NotifyRunningStateChanged();
+    }
+
+    /// <summary>
+    /// 実行中フラグが変わったときだけ RunningStateChanged を通知します。
+    /// </summary>
+    private void NotifyRunningStateChanged()
+    {
+        var running = IsRunning;
+        if (running == _runningNotified)
+        {
+            return;
+        }
+
+        _runningNotified = running;
+        RunningStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -2472,7 +2548,8 @@ public partial class PerformancePanel : UserControl
             PlayAudio: !writeWav,
             AudioDeviceNumber: device,
             SignalAmplitude: amplitude,
-            OutputVolume: volume);
+            OutputVolume: volume,
+            WavSampleRate: writeWav ? ReadWavSampleRate() : PerformanceConstants.SampleRate);
     }
 
     /// <summary>

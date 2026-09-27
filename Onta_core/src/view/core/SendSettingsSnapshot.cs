@@ -1,4 +1,5 @@
 ﻿using Onta.Core;
+using Onta.Performance;
 
 namespace Onta.View.Core;
 
@@ -16,6 +17,7 @@ namespace Onta.View.Core;
 /// <param name="AudioDeviceNumber">再生デバイス番号。</param>
 /// <param name="AudioDeviceName">再生デバイス表示名。</param>
 /// <param name="AudioVolume">再生音量（0〜1）。</param>
+/// <param name="WavSampleRate">WAV 出力のサンプリング周波数（Hz）。音声出力時は使いません。</param>
 public sealed record SendSettingsSnapshot(
     ChannelMode ChannelMode,
     int ActiveSubcarriers,
@@ -27,7 +29,15 @@ public sealed record SendSettingsSnapshot(
     bool PlayAudio,
     int AudioDeviceNumber,
     string AudioDeviceName,
-    double AudioVolume);
+    double AudioVolume,
+    int WavSampleRate = 44100)
+{
+    /// <summary>
+    /// WAV 出力で選べるサンプリング周波数です。
+    /// </summary>
+    public static int NormalizeWavSampleRate(int sampleRate)
+        => PerformanceConstants.NormalizeWavSampleRate(sampleRate);
+}
 
 
 

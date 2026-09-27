@@ -156,7 +156,10 @@
                        Grid.Column="1"
                        Margin="8,0,0,0"
                        VerticalAlignment="Center"
-                       IsReadOnly="True"/>
+                       IsReadOnly="True"
+                       AllowDrop="True"
+                       PreviewDragOver="OnInputPathDragOver"
+                       Drop="OnInputPathDrop"/>
             </Grid>
             <StackPanel Grid.Row="1"
                         Orientation="Horizontal"
@@ -173,6 +176,25 @@
                            Margin="16,0,0,0"
                            VerticalAlignment="Center"
                            Checked="OnSettingsChanged"/>
+              <ComboBox x:Name="WavSampleRateCombo"
+                        Width="118"
+                        Margin="16,0,0,0"
+                        VerticalAlignment="Center"
+                        SelectionChanged="OnWavSampleRateChanged">
+                <ComboBoxItem Tag="44100"
+                              IsSelected="True">
+                  <TextBlock Text="44100 Hz"
+                             Foreground="{StaticResource BrushComboForeground}"/>
+                </ComboBoxItem>
+                <ComboBoxItem Tag="48000">
+                  <TextBlock Text="48000 Hz"
+                             Foreground="{StaticResource BrushComboForeground}"/>
+                </ComboBoxItem>
+                <ComboBoxItem Tag="96000">
+                  <TextBlock Text="96000 Hz"
+                             Foreground="{StaticResource BrushComboForeground}"/>
+                </ComboBoxItem>
+              </ComboBox>
             </StackPanel>
             <Grid Grid.Row="2"
                   Margin="0,8,0,0">

@@ -112,16 +112,19 @@ internal static class PerformanceSignalGenerator
     /// <param name="sampleCount">サンプル数。</param>
     /// <param name="channelMode">モノラル／ステレオ。</param>
     /// <param name="amplitude">振幅（0〜1）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。0 以下は 44100。</param>
     /// <returns>L/R PCM（モノラル時 Right は空）。</returns>
     public static (Complex[] Left, Complex[] Right) GenerateTone(
         double frequencyHz,
         int sampleCount,
         ChannelMode channelMode,
-        double amplitude = 0.7)
+        double amplitude = 0.7,
+        int sampleRate = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleCount);
+        var fs = sampleRate > 0 ? sampleRate : SampleRate;
         var amp = Math.Clamp(amplitude, 0.0, 1.0);
-        var omega = 2.0 * Math.PI * Math.Clamp(frequencyHz, 1.0, SampleRate * 0.49) / SampleRate;
+        var omega = 2.0 * Math.PI * Math.Clamp(frequencyHz, 1.0, fs * 0.49) / fs;
         var left = new Complex[sampleCount];
         for (var i = 0; i < sampleCount; i++)
         {
@@ -147,21 +150,24 @@ internal static class PerformanceSignalGenerator
     /// <param name="sampleCount">サンプル数。</param>
     /// <param name="channelMode">モノラル／ステレオ。</param>
     /// <param name="amplitude">振幅（0〜1）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。0 以下は 44100。</param>
     /// <returns>L/R PCM（モノラル時 Right は空）。</returns>
     public static (Complex[] Left, Complex[] Right) GenerateLogSweep(
         double startHz,
         double endHz,
         int sampleCount,
         ChannelMode channelMode,
-        double amplitude = 0.7)
+        double amplitude = 0.7,
+        int sampleRate = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleCount);
+        var fs = sampleRate > 0 ? sampleRate : SampleRate;
         var amp = Math.Clamp(amplitude, 0.0, 1.0);
-        var f0 = Math.Clamp(startHz, 1.0, SampleRate * 0.49);
-        var f1 = Math.Clamp(endHz, f0 + 1.0, SampleRate * 0.49);
+        var f0 = Math.Clamp(startHz, 1.0, fs * 0.49);
+        var f1 = Math.Clamp(endHz, f0 + 1.0, fs * 0.49);
         var lnRatio = Math.Log(f1 / f0);
         var denom = Math.Max(1, sampleCount - 1);
-        var twoPiOverFs = 2.0 * Math.PI / SampleRate;
+        var twoPiOverFs = 2.0 * Math.PI / fs;
         var left = new Complex[sampleCount];
         var phase = 0.0;
         for (var i = 0; i < sampleCount; i++)
@@ -190,15 +196,18 @@ internal static class PerformanceSignalGenerator
     /// <param name="sampleCount">サンプル数。</param>
     /// <param name="channelMode">モノラル／ステレオ。</param>
     /// <param name="amplitude">ピーク振幅。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。0 以下は 44100。</param>
     /// <returns>L/R PCM。</returns>
     public static (Complex[] Left, Complex[] Right) GenerateWhiteNoise(
         int sampleCount,
         ChannelMode channelMode,
-        double amplitude = 0.7)
+        double amplitude = 0.7,
+        int sampleRate = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleCount);
+        var fs = sampleRate > 0 ? sampleRate : SampleRate;
         var rng = new Random();
-        var filter = WhiteNoiseBandFilter.Create(SampleRate);
+        var filter = WhiteNoiseBandFilter.Create(fs);
         var left = new Complex[sampleCount];
         FillWhiteNoiseChunk(left, amplitude, rng, ref filter);
 
@@ -208,7 +217,7 @@ internal static class PerformanceSignalGenerator
         }
 
         // ステレオは L/R 独立ノイズ（相関なし）。
-        var rightFilter = WhiteNoiseBandFilter.Create(SampleRate);
+        var rightFilter = WhiteNoiseBandFilter.Create(fs);
         var right = new Complex[sampleCount];
         FillWhiteNoiseChunk(right, amplitude, rng, ref rightFilter);
         return (left, right);
@@ -221,12 +230,14 @@ internal static class PerformanceSignalGenerator
     /// <param name="modulation">変調方式。</param>
     /// <param name="channelMode">モノラル／ステレオ。</param>
     /// <param name="ofdmSymbolCount">1 フレームの OFDM シンボル数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。0 以下は 44100。</param>
     /// <returns>設定済み OfdmGenerator。</returns>
     public static OfdmGenerator CreateOfdmGenerator(
         int activeSubcarriers,
         ModulationScheme modulation,
         ChannelMode channelMode,
-        int ofdmSymbolCount = 8)
+        int ofdmSymbolCount = 8,
+        int sampleRate = 0)
     {
         var sc = ClampSubcarriers(activeSubcarriers);
         var mod = ClampModulation(modulation);
@@ -241,7 +252,7 @@ internal static class PerformanceSignalGenerator
             channelMode: channelMode,
             pilotSpacing: 8,
             stereoFrequencyShiftBins: 1,
-            sampleRate: SampleRate,
+            sampleRate: sampleRate > 0 ? sampleRate : SampleRate,
             randomSeed: Random.Shared.Next(),
             carrierGrid: grid);
         return new OfdmGenerator(config);
@@ -256,16 +267,24 @@ internal static class PerformanceSignalGenerator
     /// <param name="channelMode">モノラル／ステレオ。</param>
     /// <param name="durationSeconds">生成秒数。</param>
     /// <param name="amplitude">ピーク振幅（0〜1）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。0 以下は 44100。</param>
     /// <returns>L/R PCM（モノラル時 Right は空）。</returns>
     public static (Complex[] Left, Complex[] Right) GenerateModulated(
         int activeSubcarriers,
         ModulationScheme modulation,
         ChannelMode channelMode,
         double durationSeconds,
-        double amplitude = 0.7)
+        double amplitude = 0.7,
+        int sampleRate = 0)
     {
-        var totalSamples = Math.Max(1, (int)Math.Round(durationSeconds * SampleRate));
-        var ofdm = CreateOfdmGenerator(activeSubcarriers, modulation, channelMode, ofdmSymbolCount: 8);
+        var fs = sampleRate > 0 ? sampleRate : SampleRate;
+        var totalSamples = Math.Max(1, (int)Math.Round(durationSeconds * fs));
+        var ofdm = CreateOfdmGenerator(
+            activeSubcarriers,
+            modulation,
+            channelMode,
+            ofdmSymbolCount: 8,
+            sampleRate: fs);
         var leftChunks = new List<Complex[]>(capacity: 64);
         var rightChunks = new List<Complex[]>(capacity: 64);
         var produced = 0;

@@ -23,6 +23,7 @@ internal sealed class PerformanceRxWorker : IDisposable
     private readonly Complex[] _iqFftScratch = new Complex[PerformanceIqExtractor.FftSize];
 
     private RealtimePcmCapture? _capture;
+    private int _sampleRate = PerformanceConstants.SampleRate;
     private CancellationTokenSource? _wavCts;
     private Task? _wavTask;
     private PerformanceRxSettings _settings;
@@ -121,13 +122,17 @@ internal sealed class PerformanceRxWorker : IDisposable
             var capture = new RealtimePcmCapture();
             capture.SamplesAvailable += OnSamplesAvailable;
             capture.CaptureFailed += OnCaptureFailed;
+            var deviceRate = AudioDeviceSampleRate.ResolveCapture(
+                settings.InputDeviceNumber,
+                PerformanceConstants.SampleRate);
             try
             {
                 capture.Start(
                     settings.InputDeviceNumber,
                     settings.ChannelMode,
-                    PerformanceSignalGenerator.SampleRate,
+                    deviceRate,
                     settings.InputGain);
+                _sampleRate = deviceRate;
             }
             catch (Exception ex)
             {
@@ -239,6 +244,7 @@ internal sealed class PerformanceRxWorker : IDisposable
         try
         {
             using var reader = WavPcmStreamReader.Open(wavPath);
+            _sampleRate = Math.Max(1, reader.SampleRate);
             var chunkFrames = Math.Max(1, reader.SampleRate / 20); // 50ms
             var gain = Math.Clamp(_settings.InputGain, 0.0, 1.0);
 
@@ -382,9 +388,10 @@ internal sealed class PerformanceRxWorker : IDisposable
         FillWindow(_leftRing, _fftExact, fftSize);
         PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftExact, windowKind);
         _status.SetFftStereoMode(_settings.ChannelMode == ChannelMode.Stereo);
-        _status.SetFftFrame(_fftExact, isRightChannel: false, PerformanceSignalGenerator.SampleRate);
+        var sampleRate = Math.Max(1, _sampleRate);
+        _status.SetFftFrame(_fftExact, isRightChannel: false, sampleRate);
 
-        var leftPeakHz = FindPeakFrequencyHz(_fftExact, PerformanceSignalGenerator.SampleRate);
+        var leftPeakHz = FindPeakFrequencyHz(_fftExact, sampleRate);
         var leftCandidates = PerformanceWowReference.ResolveCandidates(
             _settings.SignalMode,
             _settings.ActiveSubcarriers,
@@ -395,8 +402,8 @@ internal sealed class PerformanceRxWorker : IDisposable
         PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftExact, windowKind);
         if (_settings.ChannelMode == ChannelMode.Stereo)
         {
-            _status.SetFftFrame(_fftExact, isRightChannel: true, PerformanceSignalGenerator.SampleRate);
-            var rightPeakHz = FindPeakFrequencyHz(_fftExact, PerformanceSignalGenerator.SampleRate);
+            _status.SetFftFrame(_fftExact, isRightChannel: true, sampleRate);
+            var rightPeakHz = FindPeakFrequencyHz(_fftExact, sampleRate);
             var rightCandidates = PerformanceWowReference.ResolveCandidates(
                 _settings.SignalMode,
                 _settings.ActiveSubcarriers,
@@ -436,7 +443,8 @@ internal sealed class PerformanceRxWorker : IDisposable
             _iqTimeScratch,
             _iqFftScratch,
             _iqScratch.AsSpan(),
-            _iqGroups.AsSpan());
+            _iqGroups.AsSpan(),
+            sampleRate: _sampleRate);
         var count = leftCount;
 
         if (_settings.ChannelMode == ChannelMode.Stereo
@@ -450,7 +458,8 @@ internal sealed class PerformanceRxWorker : IDisposable
                 _iqTimeScratch,
                 _iqFftScratch,
                 _iqScratch.AsSpan(leftCount),
-                _iqGroups.AsSpan(leftCount));
+                _iqGroups.AsSpan(leftCount),
+                sampleRate: _sampleRate);
             count = leftCount + rightCount;
         }
 
@@ -507,7 +516,7 @@ internal sealed class PerformanceRxWorker : IDisposable
     public bool TryCopyLatestPcm(double[] left, double[] right, out int count, out int sampleRate)
     {
         count = 0;
-        sampleRate = PerformanceSignalGenerator.SampleRate;
+        sampleRate = Math.Max(1, _sampleRate);
         ArgumentNullException.ThrowIfNull(left);
         ArgumentNullException.ThrowIfNull(right);
 

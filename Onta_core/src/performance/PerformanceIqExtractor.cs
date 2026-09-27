@@ -26,6 +26,8 @@ internal static class PerformanceIqExtractor
     private static readonly object BinCacheLock = new();
     private static readonly int[]?[] LeftBinCache = new int[9][];
     private static readonly int[]?[] RightBinCache = new int[9][];
+    private static readonly int[] LeftBinCacheRate = new int[9];
+    private static readonly int[] RightBinCacheRate = new int[9];
 
     /// <summary>
     /// 直近 PCM から等化後データキャリアを取り出します。パイロットは含めません。
@@ -38,6 +40,7 @@ internal static class PerformanceIqExtractor
     /// <param name="dest">等化後シンボル。</param>
     /// <param name="groups">グループ ID。</param>
     /// <param name="cyclicPrefixLength">CP 長（データ部 16、ヘッダー部 32）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。0 以下は 44100。</param>
     /// <returns>有効シンボル数。</returns>
     public static int ExtractEqualized(
         ReadOnlySpan<double> pcm,
@@ -47,7 +50,8 @@ internal static class PerformanceIqExtractor
         Complex[] fftScratch,
         Span<Complex> dest,
         Span<byte> groups,
-        int cyclicPrefixLength = CyclicPrefixLength)
+        int cyclicPrefixLength = CyclicPrefixLength,
+        int sampleRate = 0)
     {
         var sc = PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers);
         if (pcm.Length < FftSize || timeScratch.Length < FftSize || fftScratch.Length < FftSize)
@@ -70,7 +74,7 @@ internal static class PerformanceIqExtractor
             timeScratch.AsSpan(0, FftSize),
             fftScratch);
 
-        var bins = GetOrCreateCarrierBins(sc, useRightCarriers);
+        var bins = GetOrCreateCarrierBins(sc, useRightCarriers, sampleRate);
         var written = 0;
         var destLen = Math.Min(dest.Length, groups.Length);
         const double pilotMagSqMin = 1e-18;
@@ -151,14 +155,17 @@ internal static class PerformanceIqExtractor
     /// </summary>
     /// <param name="activeSubcarriers">サブキャリア数。</param>
     /// <param name="useRightCarriers">R 搬送波を使うか。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。0 以下は 44100。</param>
     /// <returns>キャリアごとの正周波数ビン番号。</returns>
-    private static int[] GetOrCreateCarrierBins(int activeSubcarriers, bool useRightCarriers)
+    private static int[] GetOrCreateCarrierBins(int activeSubcarriers, bool useRightCarriers, int sampleRate)
     {
         var sc = PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers);
         var slot = sc / 8;
+        var fs = sampleRate > 0 ? sampleRate : PerformanceSignalGenerator.SampleRate;
         var cache = useRightCarriers ? RightBinCache : LeftBinCache;
+        var rates = useRightCarriers ? RightBinCacheRate : LeftBinCacheRate;
         var existing = Volatile.Read(ref cache[slot]);
-        if (existing is not null)
+        if (existing is not null && Volatile.Read(ref rates[slot]) == fs)
         {
             return existing;
         }
@@ -166,7 +173,7 @@ internal static class PerformanceIqExtractor
         lock (BinCacheLock)
         {
             existing = cache[slot];
-            if (existing is not null)
+            if (existing is not null && rates[slot] == fs)
             {
                 return existing;
             }
@@ -179,10 +186,11 @@ internal static class PerformanceIqExtractor
             for (var i = 0; i < hz.Length; i++)
             {
                 bins[i] = AllocateUniqueBin(
-                    OfdmConfig.HzToPositiveBin(hz[i], FftSize, PerformanceSignalGenerator.SampleRate),
+                    OfdmConfig.HzToPositiveBin(hz[i], FftSize, fs),
                     used);
             }
 
+            rates[slot] = fs;
             Volatile.Write(ref cache[slot], bins);
             return bins;
         }

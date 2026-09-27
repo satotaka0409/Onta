@@ -241,6 +241,9 @@ internal sealed class OutputCoreWorker
             var profile = new FileWavCodecProfile(
                 ActiveSubcarriers: settings.ActiveSubcarriers,
                 ModulationScheme: settings.ModulationScheme,
+                SampleRate: settings.WriteWav
+                    ? SendSettingsSnapshot.NormalizeWavSampleRate(settings.WavSampleRate)
+                    : 44100,
                 ChannelMode: settings.ChannelMode,
                 BlockInterleaveFactor: settings.BlockInterleaveFactor);
             var estimate = FileWavCodec.EstimateTransmissionDuration(profile, bytes.Length);

@@ -51,7 +51,8 @@ public partial class SendPanel : UserControl
             PlayAudio: !writeWav,
             AudioDeviceNumber: ReadSelectedAudioDeviceNumber(),
             AudioDeviceName: ReadSelectedAudioDeviceName(),
-            AudioVolume: ReadAudioVolume());
+            AudioVolume: ReadAudioVolume(),
+            WavSampleRate: ReadWavSampleRate());
     }
 
     /// <summary>
@@ -81,6 +82,7 @@ public partial class SendPanel : UserControl
         PlayAudioRadio.IsChecked = !snapshot.WriteWav;
         WavPathBox.Text = snapshot.WavOutputPath ?? string.Empty;
         SelectAudioDevice(snapshot.AudioDeviceNumber);
+        SelectWavSampleRate(snapshot.WavSampleRate);
         var volume = Math.Clamp(snapshot.AudioVolume * 100.0, 0.0, 100.0);
         AudioVolumeSlider.Value = volume;
         AudioVolumeValueText.Text = $"{(int)Math.Round(volume)}%";
@@ -230,13 +232,82 @@ public partial class SendPanel : UserControl
             return;
         }
 
-        InputPathBox.Text = dlg.FileName;
+        ApplyInputFile(dlg.FileName);
+    }
+
+    /// <summary>
+    /// 送信ファイル欄へのドラッグを、ファイルのときだけ受け付けます。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ドラッグイベント引数。</param>
+    private void OnInputPathDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = TryGetDroppedFile(e.Data, out _)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// ドロップされたファイルを送信ファイルとして設定します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ドロップイベント引数。</param>
+    private void OnInputPathDrop(object sender, DragEventArgs e)
+    {
+        if (!TryGetDroppedFile(e.Data, out var path))
+        {
+            return;
+        }
+
+        ApplyInputFile(path);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// 送信ファイルパスを表示し、WAV 出力先が空なら既定名を埋めます。
+    /// </summary>
+    /// <param name="path">送信するファイルの絶対パス。</param>
+    private void ApplyInputFile(string path)
+    {
+        InputPathBox.Text = path;
         if (string.IsNullOrWhiteSpace(WavPathBox.Text))
         {
-            WavPathBox.Text = Path.Combine(AppPaths.OutputDir, Path.ChangeExtension(Path.GetFileName(dlg.FileName), ".wav"));
+            WavPathBox.Text = Path.Combine(AppPaths.OutputDir, Path.ChangeExtension(Path.GetFileName(path), ".wav"));
         }
 
         SettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// ドロップデータから先頭の実在ファイルを取り出します。
+    /// </summary>
+    /// <param name="data">ドラッグデータ。</param>
+    /// <param name="path">取り出したファイルパス。</param>
+    /// <returns>ファイルなら true。</returns>
+    private static bool TryGetDroppedFile(IDataObject data, out string path)
+    {
+        path = string.Empty;
+        if (!data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return false;
+        }
+
+        if (data.GetData(DataFormats.FileDrop) is not string[] files)
+        {
+            return false;
+        }
+
+        foreach (var file in files)
+        {
+            if (!string.IsNullOrWhiteSpace(file) && File.Exists(file))
+            {
+                path = file;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -282,6 +353,65 @@ public partial class SendPanel : UserControl
         var writeWav = WriteWavRadio.IsChecked == true;
         WavOutputPanel.Visibility = writeWav ? Visibility.Visible : Visibility.Collapsed;
         AudioOutputPanel.Visibility = writeWav ? Visibility.Collapsed : Visibility.Visible;
+        if (WavSampleRateCombo is not null)
+        {
+            WavSampleRateCombo.Visibility = writeWav ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// WAV 出力のサンプリング周波数コンボの選択値を返します。
+    /// </summary>
+    /// <returns>44100、48000、96000 のいずれか。未選択時は 44100。</returns>
+    private int ReadWavSampleRate()
+    {
+        if (WavSampleRateCombo?.SelectedItem is ComboBoxItem item
+            && item.Tag is string tag
+            && int.TryParse(tag, out var rate))
+        {
+            return SendSettingsSnapshot.NormalizeWavSampleRate(rate);
+        }
+
+        return 44100;
+    }
+
+    /// <summary>
+    /// WAV 出力のサンプリング周波数コンボを指定値に合わせます。
+    /// </summary>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    private void SelectWavSampleRate(int sampleRate)
+    {
+        if (WavSampleRateCombo is null)
+        {
+            return;
+        }
+
+        var rate = SendSettingsSnapshot.NormalizeWavSampleRate(sampleRate).ToString();
+        foreach (var item in WavSampleRateCombo.Items)
+        {
+            if (item is ComboBoxItem combo
+                && combo.Tag is string tag
+                && string.Equals(tag, rate, StringComparison.Ordinal))
+            {
+                WavSampleRateCombo.SelectedItem = combo;
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// WAV サンプリング周波数の変更を設定変更として通知します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">選択変更引数。</param>
+    private void OnWavSampleRateChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded || WavSampleRateCombo is null)
+        {
+            return;
+        }
+
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

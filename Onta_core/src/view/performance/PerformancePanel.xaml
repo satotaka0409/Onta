@@ -314,6 +314,24 @@
                              Margin="16,0,0,0"
                              VerticalAlignment="Center"
                              Checked="OnOutputModeChanged"/>
+                <ComboBox x:Name="WavSampleRateCombo"
+                          Width="118"
+                          Margin="16,0,0,0"
+                          VerticalAlignment="Center">
+                  <ComboBoxItem Tag="44100"
+                                IsSelected="True">
+                    <TextBlock Text="44100 Hz"
+                               Foreground="{StaticResource BrushComboForeground}"/>
+                  </ComboBoxItem>
+                  <ComboBoxItem Tag="48000">
+                    <TextBlock Text="48000 Hz"
+                               Foreground="{StaticResource BrushComboForeground}"/>
+                  </ComboBoxItem>
+                  <ComboBoxItem Tag="96000">
+                    <TextBlock Text="96000 Hz"
+                               Foreground="{StaticResource BrushComboForeground}"/>
+                  </ComboBoxItem>
+                </ComboBox>
               </StackPanel>
               <Grid Grid.Row="2">
                 <StackPanel x:Name="WavOutputPanel"
@@ -336,17 +354,22 @@
                             Orientation="Vertical"
                             VerticalAlignment="Center"
                             Visibility="Collapsed">
-                  <ComboBox x:Name="OutputDeviceCombo"
-                            Width="400"
-                            HorizontalAlignment="Left"
-                            VerticalAlignment="Center">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Name}"
-                                   Foreground="{StaticResource BrushComboForeground}"/>
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
+                  <StackPanel Orientation="Horizontal"
+                              HorizontalAlignment="Left">
+                    <TextBlock Text="出力デバイス"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"/>
+                    <ComboBox x:Name="OutputDeviceCombo"
+                              Width="400"
+                              VerticalAlignment="Center">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                          <TextBlock Text="{Binding Name}"
+                                     Foreground="{StaticResource BrushComboForeground}"/>
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                  </StackPanel>
                   <StackPanel Orientation="Horizontal"
                               Margin="0,6,0,0"
                               HorizontalAlignment="Left">

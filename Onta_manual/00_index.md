@@ -37,4 +37,4 @@
 
 ### ライセンス
 
-14. [ライセンス](./99_licence.md)
+14. [Licence](./99_licence.md)

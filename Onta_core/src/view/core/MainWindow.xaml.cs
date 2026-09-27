@@ -1,7 +1,9 @@
 ﻿using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using Onta.Core;
 using Onta.History;
 using System.Windows.Threading;
@@ -33,6 +35,8 @@ public partial class MainWindow : Window
         SendPanel.StopRequested += OnStopRequested;
         ReceivePanel.ReceiveStartRequested += OnReceiveStartRequested;
         ReceivePanel.ReceiveStopRequested += OnReceiveStopRequested;
+        StreamPanel.RunningStateChanged += (_, _) => UpdateRootTabLock();
+        PerformancePanel.RunningStateChanged += (_, _) => UpdateRootTabLock();
         _inputCoreWorker.FileHeaderReady += OnReceiveFileHeaderReady;
         _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _progressPollTimer.Tick += OnProgressPollTick;
@@ -168,11 +172,14 @@ public partial class MainWindow : Window
             {
                 _progressPollTimer.Start();
             }
+
+            UpdateRootTabLock();
         }
         catch (Exception ex)
         {
             SendPanel.SetTransmissionRunning(false);
             ReceivePanel.SetInteractionEnabled(true);
+            UpdateRootTabLock();
             MessageBox.Show(this, $"送信中にエラーが発生しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -292,6 +299,7 @@ public partial class MainWindow : Window
             {
                 ReceivePanel.SetReceiveRunning(false);
                 SendPanel.SetInteractionEnabled(true);
+                UpdateRootTabLock();
                 MessageBox.Show(this, "Receive core is already running.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -319,6 +327,7 @@ public partial class MainWindow : Window
             // 前回完了で止まっていても確実に再開する。
             _progressPollTimer.Stop();
             _progressPollTimer.Start();
+            UpdateRootTabLock();
             // 開始直後の共有状態を1回分すぐ反映（完了済表示のまま残るのを防ぐ）。
             var startStatus = _inputCoreWorker.SharedStatus.Read();
             ReceivePanel.ApplyExecutionStatus(startStatus);
@@ -328,6 +337,7 @@ public partial class MainWindow : Window
         {
             ReceivePanel.SetReceiveRunning(false);
             SendPanel.SetInteractionEnabled(true);
+            UpdateRootTabLock();
             MessageBox.Show(this, $"受信開始に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -358,6 +368,7 @@ public partial class MainWindow : Window
         {
             ReceivePanel.SetReceiveRunning(false);
             SendPanel.SetInteractionEnabled(true);
+            UpdateRootTabLock();
             MessageBox.Show(
                 this,
                 "Receive core is already running, or audio device failed to start.",
@@ -377,6 +388,7 @@ public partial class MainWindow : Window
         _pollingReceive = true;
         _progressPollTimer.Stop();
         _progressPollTimer.Start();
+        UpdateRootTabLock();
         var audioStartStatus = _inputCoreWorker.SharedStatus.Read();
         ReceivePanel.ApplyExecutionStatus(audioStartStatus);
         ReceiveDetailPanel.ApplyStatus(audioStartStatus);
@@ -438,6 +450,7 @@ public partial class MainWindow : Window
             {
                 _pollingReceive = false;
                 ReceivePanel.SetReceiveRunning(false);
+                UpdateRootTabLock();
                 if (!sendProgress.IsRunning)
                 {
                     SendPanel.SetInteractionEnabled(true);
@@ -486,6 +499,7 @@ public partial class MainWindow : Window
                 isRunning: false);
             HandleSendCompletion(completion);
             HistoryPanel.ReloadHistory();
+            UpdateRootTabLock();
         }
 
         if (!_pollingReceive && !_coreWorker.GetProgress().IsRunning)
@@ -715,13 +729,22 @@ public partial class MainWindow : Window
         StopAudioPlayback();
 
         _activeAudioReader = new AudioFileReader(wavPath);
+        var fileRate = _activeAudioReader.WaveFormat.SampleRate;
+        var deviceRate = AudioDeviceSampleRate.ResolveRender(deviceNumber, fileRate);
+        IWaveProvider playback = _activeAudioReader;
+        if (deviceRate != fileRate)
+        {
+            playback = new SampleToWaveProvider16(new WdlResamplingSampleProvider(_activeAudioReader, deviceRate));
+        }
+
         _activeWaveOut = new WaveOutEvent
         {
             DeviceNumber = deviceNumber
         };
         _activeWaveOut.PlaybackStopped += OnPlaybackStopped;
-        _activeWaveOut.Init(_activeAudioReader);
+        _activeWaveOut.Init(playback);
         _activeWaveOut.Play();
+        UpdateRootTabLock();
     }
 
     /// <summary>
@@ -750,6 +773,33 @@ public partial class MainWindow : Window
         {
             _activeAudioReader.Dispose();
             _activeAudioReader = null;
+        }
+
+        UpdateRootTabLock();
+    }
+
+    /// <summary>
+    /// 送信・受信・再生の実行中は、開いている画面以外のタブを選べなくします。
+    /// </summary>
+    private void UpdateRootTabLock()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(UpdateRootTabLock);
+            return;
+        }
+
+        var running = _coreWorker.GetProgress().IsRunning
+            || _inputCoreWorker.IsRunning
+            || _activeWaveOut is not null
+            || StreamPanel.IsRunning
+            || PerformancePanel.IsRunning;
+        foreach (var item in MainTabs.Items)
+        {
+            if (item is TabItem tab)
+            {
+                tab.IsEnabled = !running || ReferenceEquals(tab, MainTabs.SelectedItem);
+            }
         }
     }
 }

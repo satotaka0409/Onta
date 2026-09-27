@@ -75,7 +75,8 @@ internal static class MainWindowSettingsStore
                 PlayAudio: !sendWriteWav,
                 AudioDeviceNumber: sendAudioDeviceNumber,
                 AudioDeviceName: string.Empty,
-                AudioVolume: sendAudioVolume),
+                AudioVolume: sendAudioVolume,
+                WavSampleRate: 44100),
             Receive: new ReceivePanel.ReceiveSettingsSnapshot(
                 UseWavInput: receiveUseWav,
                 WavInputPath: receiveWavPath,
@@ -83,7 +84,35 @@ internal static class MainWindowSettingsStore
                 AudioDeviceNumber: receiveAudioDeviceNumber,
                 AudioVolume: receiveAudioVolume),
             Performance: ReadPerformance(reader));
+        var sendWavSampleRate = ReadOptionalWavSampleRate(reader);
+        var performanceWavSampleRate = ReadOptionalWavSampleRate(reader);
+        settings = settings with
+        {
+            Send = settings.Send with
+            {
+                WavSampleRate = sendWavSampleRate
+            },
+            Performance = settings.Performance with
+            {
+                WavSampleRate = performanceWavSampleRate
+            }
+        };
         return true;
+    }
+
+    /// <summary>
+    /// ファイル末尾にあれば WAV サンプリング周波数を読みます。無い古い設定は 44100 です。
+    /// </summary>
+    /// <param name="reader">設定バイナリの読み取り位置。</param>
+    /// <returns>44100、48000、96000 のいずれか。</returns>
+    private static int ReadOptionalWavSampleRate(BinaryReader reader)
+    {
+        if (reader.BaseStream.Position + sizeof(int) > reader.BaseStream.Length)
+        {
+            return 44100;
+        }
+
+        return SendSettingsSnapshot.NormalizeWavSampleRate(reader.ReadInt32());
     }
 
     /// <summary>
@@ -123,6 +152,8 @@ internal static class MainWindowSettingsStore
         writer.Write(settings.Receive.AudioVolume);
 
         WritePerformance(writer, settings.Performance);
+        writer.Write(SendSettingsSnapshot.NormalizeWavSampleRate(settings.Send.WavSampleRate));
+        writer.Write(PerformanceConstants.NormalizeWavSampleRate(settings.Performance.WavSampleRate));
     }
 
     /// <summary>

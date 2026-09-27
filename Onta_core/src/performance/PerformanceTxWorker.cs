@@ -268,7 +268,7 @@ internal sealed class PerformanceTxWorker : IDisposable
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
                 WavWriter.WritePcm16(
                     path,
-                    PerformanceSignalGenerator.SampleRate,
+                    PerformanceConstants.NormalizeWavSampleRate(settings.WavSampleRate),
                     left!,
                     right ?? Array.Empty<Complex>(),
                     peakTarget: Math.Clamp(settings.SignalAmplitude, 0.05, 1.0),
@@ -657,7 +657,10 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <returns>L/R PCM。</returns>
     private static (Complex[] Left, Complex[] Right) Generate(PerformanceTxSettings settings)
     {
-        var samples = Math.Max(1, (int)Math.Round(settings.DurationSeconds * PerformanceSignalGenerator.SampleRate));
+        var sampleRate = settings.WriteWav
+            ? PerformanceConstants.NormalizeWavSampleRate(settings.WavSampleRate)
+            : PerformanceSignalGenerator.SampleRate;
+        var samples = Math.Max(1, (int)Math.Round(settings.DurationSeconds * sampleRate));
         var amp = Math.Clamp(settings.SignalAmplitude, 0.05, 1.0);
         return settings.SignalMode switch
         {
@@ -665,23 +668,27 @@ internal sealed class PerformanceTxWorker : IDisposable
                 settings.ToneHz,
                 samples,
                 settings.ChannelMode,
-                amp),
+                amp,
+                sampleRate),
             PerformanceSignalMode.Sweep => PerformanceSignalGenerator.GenerateLogSweep(
                 20.0,
                 20000.0,
                 samples,
                 settings.ChannelMode,
-                amp),
+                amp,
+                sampleRate),
             PerformanceSignalMode.WhiteNoise => PerformanceSignalGenerator.GenerateWhiteNoise(
                 samples,
                 settings.ChannelMode,
-                amp),
+                amp,
+                sampleRate),
             _ => PerformanceSignalGenerator.GenerateModulated(
                 settings.ActiveSubcarriers,
                 settings.ModulationScheme,
                 settings.ChannelMode,
                 settings.DurationSeconds,
-                amp)
+                amp,
+                sampleRate)
         };
     }
 

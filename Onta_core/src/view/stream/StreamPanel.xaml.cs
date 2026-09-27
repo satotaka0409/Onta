@@ -20,6 +20,13 @@ public partial class StreamPanel : UserControl
     private readonly StreamTxWorker _tx = new();
     private readonly StreamRxWorker _rx = new();
     private readonly DispatcherTimer _pollTimer;
+    private bool _runningNotified;
+
+    /// <summary>送信または受信が実行中なら true。</summary>
+    public bool IsRunning => _tx.IsBusy || _rx.IsBusy;
+
+    /// <summary>実行中状態が変わったときに通知します。</summary>
+    public event EventHandler? RunningStateChanged;
     private readonly ErrorRateChartModel _errorChart = new();
     private readonly FftChartModel _fftChart = new();
     private readonly IqChartModel _iqChart = new();
@@ -244,17 +251,39 @@ public partial class StreamPanel : UserControl
         TxStopButton.IsEnabled = txBusy;
         RxStartButton.IsEnabled = !rxBusy && !txBusy;
         RxStopButton.IsEnabled = rxBusy;
+        NotifyRunningStateChanged();
     }
 
+    /// <summary>
+    /// 実行中フラグが変わったときだけ RunningStateChanged を通知します。
+    /// </summary>
+    private void NotifyRunningStateChanged()
+    {
+        var running = IsRunning;
+        if (running == _runningNotified)
+        {
+            return;
+        }
+
+        _runningNotified = running;
+        RunningStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 入出力デバイス一覧の先頭に既定デバイスを置き、続けて実デバイスを並べます。
+    /// </summary>
+    /// <param name="box">対象コンボボックス。</param>
+    /// <param name="isInput">true なら入力デバイス。</param>
     private static void FillDevices(ComboBox box, bool isInput)
     {
         box.Items.Clear();
+        box.Items.Add(new StreamDeviceItem(-1, "既定デバイス"));
         if (isInput)
         {
             for (var i = 0; i < WaveIn.DeviceCount; i++)
             {
                 var caps = WaveIn.GetCapabilities(i);
-                box.Items.Add($"{i}: {caps.ProductName}");
+                box.Items.Add(new StreamDeviceItem(i, $"{i}: {caps.ProductName}"));
             }
         }
         else
@@ -262,15 +291,47 @@ public partial class StreamPanel : UserControl
             for (var i = 0; i < WaveOut.DeviceCount; i++)
             {
                 var caps = WaveOut.GetCapabilities(i);
-                box.Items.Add($"{i}: {caps.ProductName}");
+                box.Items.Add(new StreamDeviceItem(i, $"{i}: {caps.ProductName}"));
             }
         }
 
-        if (box.Items.Count > 0)
+        box.SelectedIndex = 0;
+    }
+
+    /// <summary>
+    /// 音量スライダーの変更を、横のパーセント表示へ反映します。
+    /// </summary>
+    /// <param name="sender">音量スライダー。</param>
+    /// <param name="e">新しいスライダー値を含む変更引数。</param>
+    private void OnStreamVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        var text = sender switch
         {
-            box.SelectedIndex = 0;
+            _ when ReferenceEquals(sender, TxInputVolume) => TxInputVolumeValueText,
+            _ when ReferenceEquals(sender, TxOutputVolume) => TxOutputVolumeValueText,
+            _ => RxInputVolumeValueText,
+        };
+        if (text is not null)
+        {
+            text.Text = $"{(int)Math.Round(e.NewValue)}%";
         }
     }
+
+    /// <summary>
+    /// 0〜100 のスライダー値を、再生・録音に渡す 0〜1 の音量へ変換します。
+    /// </summary>
+    /// <param name="slider">音量スライダー。</param>
+    /// <returns>0〜1 の音量。</returns>
+    private static double ReadVolume(Slider slider)
+        => Math.Clamp(slider.Value / 100.0, 0.0, 1.0);
+
+    /// <summary>
+    /// コンボで選ばれているデバイス番号を返します。未選択時は既定デバイスです。
+    /// </summary>
+    /// <param name="box">対象コンボボックス。</param>
+    /// <returns>WaveIn / WaveOut のデバイス番号。既定は -1。</returns>
+    private static int ReadDeviceNumber(ComboBox box)
+        => box.SelectedItem is StreamDeviceItem item ? item.DeviceNumber : -1;
 
     private void OnBrowseTxWav(object sender, RoutedEventArgs e)
     {
@@ -286,10 +347,87 @@ public partial class StreamPanel : UserControl
             return;
         }
 
-        _txWavPath = dlg.FileName;
+        ApplyTxWavFile(dlg.FileName);
+    }
+
+    /// <summary>
+    /// 入力ファイル欄へのドラッグを、WAV / FLAC / MP3 のときだけ受け付けます。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ドラッグイベント引数。</param>
+    private void OnTxWavDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = TryGetAudioFile(e.Data, out _)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// ドロップされた WAV / FLAC / MP3 を入力ファイルに設定します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ドロップイベント引数。</param>
+    private void OnTxWavDrop(object sender, DragEventArgs e)
+    {
+        if (!TryGetAudioFile(e.Data, out var path))
+        {
+            return;
+        }
+
+        ApplyTxWavFile(path);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// 入力ファイルパスを表示し、ファイル入力モードに切り替えます。
+    /// </summary>
+    /// <param name="path">WAV / FLAC / MP3 のパス。</param>
+    private void ApplyTxWavFile(string path)
+    {
+        _txWavPath = path;
         SetTxWavPathBoxes(_txWavPath);
         TxWavRadio.IsChecked = true;
         UpdateTxInputModeUi();
+    }
+
+    /// <summary>
+    /// ドロップデータから WAV / FLAC / MP3 の実在ファイルを取り出します。
+    /// </summary>
+    /// <param name="data">ドラッグデータ。</param>
+    /// <param name="path">取り出したファイルパス。</param>
+    /// <returns>対応する音声ファイルなら true。</returns>
+    private static bool TryGetAudioFile(IDataObject data, out string path)
+    {
+        path = string.Empty;
+        if (!data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return false;
+        }
+
+        if (data.GetData(DataFormats.FileDrop) is not string[] files)
+        {
+            return false;
+        }
+
+        foreach (var file in files)
+        {
+            if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
+            {
+                continue;
+            }
+
+            var extension = System.IO.Path.GetExtension(file);
+            if (extension.Equals(".wav", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".flac", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase))
+            {
+                path = file;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -342,9 +480,87 @@ public partial class StreamPanel : UserControl
             return;
         }
 
-        _coverPath = dlg.FileName;
+        ApplyCoverFile(dlg.FileName);
+    }
+
+    /// <summary>
+    /// ジャケ写表示領域へのドラッグを、BMP / JPG / PNG のときだけ受け付けます。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ドラッグイベント引数。</param>
+    private void OnTxCoverDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = TryGetCoverFile(e.Data, out _)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// ドロップされた BMP / JPG / PNG をジャケ写に設定します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ドロップイベント引数。</param>
+    private void OnTxCoverDrop(object sender, DragEventArgs e)
+    {
+        if (!TryGetCoverFile(e.Data, out var path))
+        {
+            return;
+        }
+
+        ApplyCoverFile(path);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// ジャケ写ファイルを表示し、プレビューを更新します。
+    /// </summary>
+    /// <param name="path">BMP / JPG / PNG のパス。</param>
+    private void ApplyCoverFile(string path)
+    {
+        _coverPath = path;
         TxCoverPathBox.Text = _coverPath;
         RefreshCoverPreview();
+    }
+
+    /// <summary>
+    /// ドロップデータから BMP / JPG / PNG の実在ファイルを取り出します。
+    /// </summary>
+    /// <param name="data">ドラッグデータ。</param>
+    /// <param name="path">取り出したファイルパス。</param>
+    /// <returns>対応する画像ファイルなら true。</returns>
+    private static bool TryGetCoverFile(IDataObject data, out string path)
+    {
+        path = string.Empty;
+        if (!data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return false;
+        }
+
+        if (data.GetData(DataFormats.FileDrop) is not string[] files)
+        {
+            return false;
+        }
+
+        foreach (var file in files)
+        {
+            if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
+            {
+                continue;
+            }
+
+            var extension = System.IO.Path.GetExtension(file);
+            if (extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                path = file;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void OnCoverFormatChanged(object sender, RoutedEventArgs e)
@@ -454,10 +670,10 @@ public partial class StreamPanel : UserControl
                 ModeId = ReadModeId(),
                 UseWavInput = TxWavRadio.IsChecked == true,
                 WavPath = _txWavPath,
-                InputDevice = Math.Max(0, TxInputDeviceBox.SelectedIndex),
-                OutputDevice = Math.Max(0, TxOutputDeviceBox.SelectedIndex),
-                InputVolume = TxInputVolume.Value,
-                OutputVolume = TxOutputVolume.Value,
+                InputDevice = ReadDeviceNumber(TxInputDeviceBox),
+                OutputDevice = ReadDeviceNumber(TxOutputDeviceBox),
+                InputVolume = ReadVolume(TxInputVolume),
+                OutputVolume = ReadVolume(TxOutputVolume),
                 Title = TxTitleBox.Text ?? string.Empty,
                 Artist = TxArtistBox.Text ?? string.Empty,
                 CoverPath = _coverPath,
@@ -486,8 +702,8 @@ public partial class StreamPanel : UserControl
         {
             var settings = new StreamRxSettings
             {
-                InputDevice = Math.Max(0, RxInputDeviceBox.SelectedIndex),
-                InputVolume = RxInputVolume.Value,
+                InputDevice = ReadDeviceNumber(RxInputDeviceBox),
+                InputVolume = ReadVolume(RxInputVolume),
             };
             _errorChart.Clear();
             _rx.Start(settings);
@@ -652,5 +868,28 @@ public partial class StreamPanel : UserControl
                 yield return nested;
             }
         }
+    }
+
+    /// <summary>
+    /// ストリーム画面の入出力デバイス項目です。
+    /// </summary>
+    private sealed class StreamDeviceItem
+    {
+        /// <summary>
+        /// デバイス項目を作ります。
+        /// </summary>
+        /// <param name="deviceNumber">WaveIn / WaveOut の番号。既定は -1。</param>
+        /// <param name="name">表示名。</param>
+        public StreamDeviceItem(int deviceNumber, string name)
+        {
+            DeviceNumber = deviceNumber;
+            Name = name;
+        }
+
+        /// <summary>デバイス番号。</summary>
+        public int DeviceNumber { get; }
+
+        /// <summary>コンボボックスの表示名。</summary>
+        public string Name { get; }
     }
 }

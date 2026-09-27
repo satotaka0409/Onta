@@ -107,7 +107,10 @@
                            Width="280"
                            MinWidth="100"
                            IsReadOnly="True"
-                           VerticalAlignment="Center"/>
+                           VerticalAlignment="Center"
+                           AllowDrop="True"
+                           PreviewDragOver="OnTxWavDragOver"
+                           Drop="OnTxWavDrop"/>
                   <Button Content="..."
                           Width="45"
                           Margin="8,0,0,0"
@@ -124,7 +127,7 @@
                             Width="180">
                     <ComboBox.ItemTemplate>
                       <DataTemplate>
-                        <TextBlock Text="{Binding}"
+                        <TextBlock Text="{Binding Name}"
                                    Foreground="{StaticResource BrushComboForeground}"/>
                       </DataTemplate>
                     </ComboBox.ItemTemplate>
@@ -135,9 +138,18 @@
                   <Slider x:Name="TxInputVolume"
                           Width="100"
                           Minimum="0"
-                          Maximum="1"
-                          Value="1"
-                          VerticalAlignment="Center"/>
+                          Maximum="100"
+                          Value="100"
+                          TickFrequency="5"
+                          IsSnapToTickEnabled="False"
+                          VerticalAlignment="Center"
+                          ValueChanged="OnStreamVolumeChanged"/>
+                  <TextBlock x:Name="TxInputVolumeValueText"
+                             Text="100%"
+                             Width="36"
+                             Margin="6,0,0,0"
+                             VerticalAlignment="Center"
+                             TextAlignment="Right"/>
                 </StackPanel>
               </Grid>
               <StackPanel Grid.Column="2"
@@ -150,7 +162,7 @@
                           Width="140">
                   <ComboBox.ItemTemplate>
                     <DataTemplate>
-                      <TextBlock Text="{Binding}"
+                      <TextBlock Text="{Binding Name}"
                                  Foreground="{StaticResource BrushComboForeground}"/>
                     </DataTemplate>
                   </ComboBox.ItemTemplate>
@@ -161,9 +173,18 @@
                 <Slider x:Name="TxOutputVolume"
                         Width="100"
                         Minimum="0"
-                        Maximum="1"
-                        Value="0.8"
-                        VerticalAlignment="Center"/>
+                        Maximum="100"
+                        Value="80"
+                        TickFrequency="5"
+                        IsSnapToTickEnabled="False"
+                        VerticalAlignment="Center"
+                        ValueChanged="OnStreamVolumeChanged"/>
+                <TextBlock x:Name="TxOutputVolumeValueText"
+                           Text="80%"
+                           Width="36"
+                           Margin="6,0,0,0"
+                           VerticalAlignment="Center"
+                           TextAlignment="Right"/>
               </StackPanel>
             </Grid>
           </Grid>
@@ -295,7 +316,7 @@
                          Checked="OnCoverFormatChanged"/>
             <TextBlock x:Name="CoverBytesText"
                        Margin="0,4,0,0"
-                       Text="バイト数: 0"/>
+                       Text="サイズ: 0"/>
             <TextBlock x:Name="CoverSizeOverText"
                        Text="サイズオーバー"
                        Margin="0,2,0,0"
@@ -310,9 +331,13 @@
                     Height="96"
                     BorderBrush="{StaticResource BrushBorder}"
                     BorderThickness="1"
-                    Background="{StaticResource BrushInput}">
+                    Background="{StaticResource BrushInput}"
+                    AllowDrop="True"
+                    PreviewDragOver="OnTxCoverDragOver"
+                    Drop="OnTxCoverDrop">
               <Image x:Name="TxCoverPreview"
-                     Stretch="Uniform"/>
+                     Stretch="Uniform"
+                     IsHitTestVisible="False"/>
             </Border>
           </StackPanel>
         </Grid>
@@ -360,7 +385,7 @@
                         Margin="0,0,8,0">
                 <ComboBox.ItemTemplate>
                   <DataTemplate>
-                    <TextBlock Text="{Binding}"
+                    <TextBlock Text="{Binding Name}"
                                Foreground="{StaticResource BrushComboForeground}"/>
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
@@ -371,8 +396,18 @@
               <Slider x:Name="RxInputVolume"
                       Width="120"
                       Minimum="0"
-                      Maximum="1"
-                      Value="1"/>
+                      Maximum="100"
+                      Value="100"
+                      TickFrequency="5"
+                      IsSnapToTickEnabled="False"
+                      VerticalAlignment="Center"
+                      ValueChanged="OnStreamVolumeChanged"/>
+              <TextBlock x:Name="RxInputVolumeValueText"
+                         Text="100%"
+                         Width="36"
+                         Margin="6,0,0,0"
+                         VerticalAlignment="Center"
+                         TextAlignment="Right"/>
             </StackPanel>
 
             <Grid Margin="0,0,0,8">

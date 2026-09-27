@@ -11,7 +11,11 @@ namespace Onta.View.Core;
 internal sealed class RealtimePcmCapture : IDisposable
 {
     private WaveInEvent? _waveIn;
+    private StreamingPcmResampler? _resampler;
+    private readonly List<float> _resampled = new();
+    private float[] _floatScratch = [];
     private double _inputGain = 1.0;
+    private int _appSampleRate = 44100;
     private bool _disposed;
 
     /// <summary>
@@ -30,11 +34,12 @@ internal sealed class RealtimePcmCapture : IDisposable
     public bool IsRunning => _waveIn is not null;
 
     /// <summary>
-    /// 指定デバイスから 44.1kHz / 16bit で取り込みを開始します。
+    /// 指定デバイスから 16bit で取り込みを開始します。
+    /// デバイスはミックス形式のサンプリング周波数で開き、sampleRate と違うときは変換して通知します。
     /// </summary>
     /// <param name="deviceNumber">WaveIn デバイス番号（-1 は既定）。</param>
     /// <param name="channelMode">モノラル / ステレオ。</param>
-    /// <param name="sampleRate">サンプルレート。</param>
+    /// <param name="sampleRate">通知するサンプルレート（変調・解析側）。</param>
     /// <param name="inputGain">入力ゲイン（0〜1）。</param>
     public void Start(
         int deviceNumber,
@@ -46,7 +51,33 @@ internal sealed class RealtimePcmCapture : IDisposable
         Stop();
 
         _inputGain = inputGain <= 0.0 ? 0.0 : Math.Clamp(inputGain, 0.05, 1.0);
+        _appSampleRate = Math.Max(1, sampleRate);
         var channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
+        var deviceRate = AudioDeviceSampleRate.ResolveCapture(deviceNumber, _appSampleRate);
+        try
+        {
+            Open(deviceNumber, deviceRate, channels);
+        }
+        catch when (deviceRate != _appSampleRate)
+        {
+            Stop();
+            deviceRate = _appSampleRate;
+            Open(deviceNumber, deviceRate, channels);
+        }
+
+        _resampler = deviceRate == _appSampleRate
+            ? null
+            : new StreamingPcmResampler(deviceRate, _appSampleRate, channels);
+    }
+
+    /// <summary>
+    /// WaveIn を指定周波数で開いて録音を開始します。
+    /// </summary>
+    /// <param name="deviceNumber">WaveIn デバイス番号。</param>
+    /// <param name="sampleRate">デバイス側サンプリング周波数。</param>
+    /// <param name="channels">チャネル数。</param>
+    private void Open(int deviceNumber, int sampleRate, int channels)
+    {
         var waveIn = new WaveInEvent
         {
             DeviceNumber = deviceNumber,
@@ -84,6 +115,8 @@ internal sealed class RealtimePcmCapture : IDisposable
         waveIn.DataAvailable -= OnDataAvailable;
         waveIn.RecordingStopped -= OnRecordingStopped;
         waveIn.Dispose();
+        _resampler = null;
+        _resampled.Clear();
     }
 
     /// <summary>
@@ -127,25 +160,65 @@ internal sealed class RealtimePcmCapture : IDisposable
                 return;
             }
 
-            var left = new Complex[frames];
-            var right = format.Channels >= 2 ? new Complex[frames] : Array.Empty<Complex>();
             var src = e.Buffer;
-            var offset = 0;
             var gain = _inputGain;
-            for (var i = 0; i < frames; i++)
+            if (_resampler is null)
             {
-                var l = BitConverter.ToInt16(src, offset) / 32768.0 * gain;
-                offset += 2;
-                left[i] = new Complex(l, 0.0);
-                if (format.Channels >= 2)
+                var left = new Complex[frames];
+                var right = format.Channels >= 2 ? new Complex[frames] : Array.Empty<Complex>();
+                var offset = 0;
+                for (var i = 0; i < frames; i++)
                 {
-                    var r = BitConverter.ToInt16(src, offset) / 32768.0 * gain;
+                    var l = BitConverter.ToInt16(src, offset) / 32768.0 * gain;
                     offset += 2;
-                    right[i] = new Complex(r, 0.0);
+                    left[i] = new Complex(l, 0.0);
+                    if (format.Channels >= 2)
+                    {
+                        var r = BitConverter.ToInt16(src, offset) / 32768.0 * gain;
+                        offset += 2;
+                        right[i] = new Complex(r, 0.0);
+                    }
+                }
+
+                SamplesAvailable?.Invoke(left, right);
+                return;
+            }
+
+            var channels = format.Channels >= 2 ? 2 : 1;
+            var floatCount = frames * channels;
+            if (_floatScratch.Length < floatCount)
+            {
+                _floatScratch = new float[floatCount];
+            }
+
+            var srcOffset = 0;
+            for (var i = 0; i < floatCount; i++)
+            {
+                _floatScratch[i] = BitConverter.ToInt16(src, srcOffset) / 32768.0f * (float)gain;
+                srcOffset += 2;
+            }
+
+            _resampled.Clear();
+            _resampler.Process(_floatScratch.AsSpan(0, floatCount), _resampled);
+            var outFrames = _resampled.Count / channels;
+            if (outFrames <= 0)
+            {
+                return;
+            }
+
+            var outLeft = new Complex[outFrames];
+            var outRight = channels >= 2 ? new Complex[outFrames] : Array.Empty<Complex>();
+            var sampleIndex = 0;
+            for (var i = 0; i < outFrames; i++)
+            {
+                outLeft[i] = new Complex(_resampled[sampleIndex++], 0.0);
+                if (channels >= 2)
+                {
+                    outRight[i] = new Complex(_resampled[sampleIndex++], 0.0);
                 }
             }
 
-            SamplesAvailable?.Invoke(left, right);
+            SamplesAvailable?.Invoke(outLeft, outRight);
         }
         catch (Exception ex)
         {
