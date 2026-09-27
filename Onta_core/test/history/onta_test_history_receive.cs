@@ -79,6 +79,10 @@ public sealed class OntaTestHistoryReceive
         Assert.Equal(1, (int)(ReadProperty(storedBlocks[1], "BlockIndex") ?? -1));
         Assert.Equal(chunks[0].Length, ((byte[])ReadProperty(storedBlocks[0], "BlockData")!).Length);
         Assert.Equal(chunks[1].Length, ((byte[])ReadProperty(storedBlocks[1], "BlockData")!).Length);
+        Assert.Equal(SHA256.HashData(chunks[0]), (byte[])ReadProperty(storedBlocks[0], "ContentHash")!);
+        Assert.Equal(SHA256.HashData(chunks[1]), (byte[])ReadProperty(storedBlocks[1], "ContentHash")!);
+        Assert.Empty(ReadOrphans(receive));
+        Assert.True(InvokeCanExportPayload(receive));
     }
 
     /// <summary>
@@ -122,7 +126,10 @@ public sealed class OntaTestHistoryReceive
         // バイナリ履歴は BlockComplete のみ永続化（State/ErrorText は再読込で Unknown/空）
         Assert.False((bool)(ReadProperty(blk0, "BlockComplete") ?? true), "エラーブロックは未完了として残ること");
         Assert.Empty((byte[])(ReadProperty(blk0, "BlockData") ?? Array.Empty<byte>()));
+        Assert.Equal(0, (int)(ReadProperty(blk0, "BlockSize") ?? -1));
         Assert.NotEqual("Accepted", ReadProperty(blk0, "State")?.ToString());
+        Assert.False(InvokeCanExportPayload(receive));
+        Assert.Empty(ReadOrphans(receive));
     }
 
     /// <summary>
@@ -185,6 +192,188 @@ public sealed class OntaTestHistoryReceive
         Assert.Equal("Accepted", ReadProperty(blk0, "State")?.ToString());
         Assert.Equal(string.Empty, ReadProperty(blk0, "ErrorText")?.ToString());
         Assert.Equal(chunks[0], (byte[])ReadProperty(blk0, "BlockData")!);
+        Assert.False(InvokeCanExportPayload(entries[0]), "片ブロックだけではダウンロードできないこと");
+
+        InvokeSaveReceive(
+            scope.HistoryPath,
+            CreateReceiveEntry(
+                entryId: Guid.NewGuid().ToString("N"),
+                contentHashHex: fileHash,
+                sourcePath: sourceWav,
+                fileName: "Sample2.txt",
+                fileSize: payload.Length,
+                blockCount: chunks.Length,
+                isSuccess: false,
+                outputPath: string.Empty,
+                completionMessage: "未完了",
+                blocks: [CreateErrorBlock(0, "CRC-ERROR")],
+                orphans: Array.Empty<object>(),
+                receivedAtUtc: DateTime.UtcNow));
+
+        var kept = ReadBlocks(LoadEntries(scope.HistoryPath).Single()).Single(b => (int)(ReadProperty(b, "BlockIndex") ?? -1) == 0);
+        Assert.True((bool)(ReadProperty(kept, "BlockComplete") ?? false), "完了済みブロックは後からのエラーで消えないこと");
+        Assert.Equal(chunks[0], (byte[])ReadProperty(kept, "BlockData")!);
+
+        InvokeSaveReceive(
+            scope.HistoryPath,
+            CreateReceiveEntry(
+                entryId: Guid.NewGuid().ToString("N"),
+                contentHashHex: fileHash,
+                sourcePath: sourceWav,
+                fileName: "Sample2.txt",
+                fileSize: payload.Length,
+                blockCount: chunks.Length,
+                isSuccess: true,
+                outputPath: string.Empty,
+                completionMessage: "受信完了",
+                blocks: [CreateCompleteBlock(1, chunks[1])],
+                orphans: Array.Empty<object>(),
+                receivedAtUtc: DateTime.UtcNow));
+
+        var completed = LoadEntries(scope.HistoryPath).Single();
+        Assert.True((bool)(ReadProperty(completed, "IsSuccess") ?? false));
+        Assert.Equal(2, ReadBlocks(completed).Count);
+        var downloadPath = TestPaths.ResolveOutputPath($"history_rx_retry_dl_{Guid.NewGuid():N}.txt");
+        try
+        {
+            Assert.True(InvokeCanExportPayload(completed));
+            Assert.True(InvokeExportPayloadToFile(completed, downloadPath));
+            Assert.Equal(payload, File.ReadAllBytes(downloadPath));
+        }
+        finally
+        {
+            TryDelete(downloadPath);
+        }
+    }
+
+    /// <summary>
+    /// 親ファイルが無いブロックは不明ブロックとして残り、ダウンロードできないこと。
+    /// </summary>
+    [Fact]
+    public void Receive_Register_UnknownBlock_StaysOrphan()
+    {
+        using var scope = HistoryTemp.Create();
+        var payload = File.ReadAllBytes(TestPaths.ResolveInputTxt("Sample1.txt"));
+        var fileHash = ToSha512Hex(payload);
+        var blockHash = Convert.ToHexString(SHA256.HashData(payload));
+        var otherFileHash = ToSha512Hex([9, 8, 7]);
+        var sourceWav = TestPaths.ResolveOutputPath($"history_rx_orphan_{Guid.NewGuid():N}.wav");
+
+        InvokeSaveReceive(
+            scope.HistoryPath,
+            CreateReceiveEntry(
+                entryId: Guid.NewGuid().ToString("N"),
+                contentHashHex: fileHash,
+                sourcePath: sourceWav,
+                fileName: "(未登録データ)",
+                fileSize: 0,
+                blockCount: 0,
+                isSuccess: false,
+                outputPath: string.Empty,
+                completionMessage: "未完了",
+                blocks: Array.Empty<object>(),
+                orphans:
+                [
+                    CreateOrphan($"0:{fileHash}:{blockHash}", "BH+BD index=0", payload),
+                    CreateOrphan($"1:{otherFileHash}:{blockHash}", "別ファイル", [1, 2, 3])
+                ],
+                receivedAtUtc: DateTime.UtcNow));
+
+        var entries = LoadEntries(scope.HistoryPath);
+        Assert.Single(entries);
+        var unknown = entries[0];
+        Assert.Equal("Receive", ReadProperty(unknown, "Kind")?.ToString());
+        Assert.Equal("(未登録データ)", ReadProperty(unknown, "FileName")?.ToString());
+        Assert.False((bool)(ReadProperty(unknown, "IsSuccess") ?? true));
+        Assert.Empty(ReadBlocks(unknown));
+        Assert.False(InvokeCanExportPayload(unknown));
+
+        var orphans = ReadOrphans(unknown);
+        Assert.Equal(2, orphans.Count);
+        var matched = orphans.Single(o => string.Equals(ReadProperty(o, "HashHex")?.ToString(), $"0:{fileHash}:{blockHash}", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(payload, (byte[])ReadProperty(matched, "Payload")!);
+        Assert.Contains("BH+BD index=0", ReadProperty(matched, "Detail")?.ToString());
+    }
+
+    /// <summary>
+    /// 不明ブロックのあとファイルヘッダーが一致すると、そのブロックを取り込みダウンロードできること。
+    /// </summary>
+    [Fact]
+    public void Receive_FileHeader_MatchesOrphan_EnablesDownload()
+    {
+        using var scope = HistoryTemp.Create();
+        var payload = File.ReadAllBytes(TestPaths.ResolveInputTxt("Sample3.txt"));
+        var fileHash = ToSha512Hex(payload);
+        var blockHash = Convert.ToHexString(SHA256.HashData(payload));
+        var otherFileHash = ToSha512Hex([4, 5, 6]);
+        var sourceWav = TestPaths.ResolveOutputPath($"history_rx_fh_{Guid.NewGuid():N}.wav");
+        var downloadPath = TestPaths.ResolveOutputPath($"history_rx_fh_dl_{Guid.NewGuid():N}.txt");
+
+        InvokeSaveReceive(
+            scope.HistoryPath,
+            CreateReceiveEntry(
+                entryId: Guid.NewGuid().ToString("N"),
+                contentHashHex: fileHash,
+                sourcePath: sourceWav,
+                fileName: "(未登録データ)",
+                fileSize: 0,
+                blockCount: 0,
+                isSuccess: false,
+                outputPath: string.Empty,
+                completionMessage: "未完了",
+                blocks: Array.Empty<object>(),
+                orphans:
+                [
+                    CreateOrphan($"0:{fileHash}:{blockHash}", "BH+BD index=0", payload),
+                    CreateOrphan($"0:{otherFileHash}:{blockHash}", "別ファイル", [9])
+                ],
+                receivedAtUtc: DateTime.UtcNow.AddMinutes(-1)));
+
+        Assert.False(InvokeCanExportPayload(LoadEntries(scope.HistoryPath).Single()));
+
+        InvokeSaveReceive(
+            scope.HistoryPath,
+            CreateReceiveEntry(
+                entryId: Guid.NewGuid().ToString("N"),
+                contentHashHex: fileHash,
+                sourcePath: sourceWav,
+                fileName: "Sample3.txt",
+                fileSize: payload.Length,
+                blockCount: 1,
+                isSuccess: false,
+                outputPath: string.Empty,
+                completionMessage: "ファイルヘッダ",
+                blocks: Array.Empty<object>(),
+                orphans: Array.Empty<object>(),
+                receivedAtUtc: DateTime.UtcNow));
+
+        var entries = LoadEntries(scope.HistoryPath);
+        Assert.Single(entries);
+        var receive = entries[0];
+        Assert.Equal("Sample3.txt", ReadProperty(receive, "FileName")?.ToString());
+        Assert.Equal(payload.Length, (long)(ReadProperty(receive, "FileSize") ?? -1L));
+        Assert.True((bool)(ReadProperty(receive, "IsSuccess") ?? false));
+
+        var blocks = ReadBlocks(receive);
+        Assert.Single(blocks);
+        Assert.Equal(0, (int)(ReadProperty(blocks[0], "BlockIndex") ?? -1));
+        Assert.True((bool)(ReadProperty(blocks[0], "BlockComplete") ?? false));
+        Assert.Equal(payload, (byte[])ReadProperty(blocks[0], "BlockData")!);
+
+        var orphans = ReadOrphans(receive);
+        Assert.Single(orphans);
+        Assert.StartsWith($"0:{otherFileHash}:", ReadProperty(orphans[0], "HashHex")?.ToString(), StringComparison.OrdinalIgnoreCase);
+
+        try
+        {
+            Assert.True(InvokeCanExportPayload(receive));
+            Assert.True(InvokeExportPayloadToFile(receive, downloadPath));
+            Assert.Equal(payload, File.ReadAllBytes(downloadPath));
+        }
+        finally
+        {
+            TryDelete(downloadPath);
+        }
     }
 
     /// <summary>
@@ -261,6 +450,9 @@ public sealed class OntaTestHistoryReceive
         var after = LoadEntries(scope.HistoryPath);
         Assert.Single(after);
         Assert.Equal("Sample2.txt", ReadProperty(after[0], "FileName")?.ToString());
+        Assert.True(InvokeCanExportPayload(after[0]), "残した受信履歴はダウンロードできること");
+        Assert.False(InvokeDeleteEntry(scope.HistoryPath, "missing-receive-id"));
+        Assert.Single(LoadEntries(scope.HistoryPath));
     }
 
     /// <summary>
@@ -441,6 +633,55 @@ public sealed class OntaTestHistoryReceive
         var blocksObj = ReadProperty(entry, "Blocks") as IEnumerable;
         Assert.NotNull(blocksObj);
         return blocksObj!.Cast<object>().OrderBy(b => (int)(ReadProperty(b, "BlockIndex") ?? -1)).ToList();
+    }
+
+    /// <summary>
+    /// エントリのオーファン一覧を読みます。
+    /// </summary>
+    /// <param name="entry">受信履歴エントリ。</param>
+    /// <returns>不明ブロック一覧。</returns>
+    private static List<object> ReadOrphans(object entry)
+    {
+        var orphans = ReadProperty(entry, "Orphans") as IEnumerable;
+        Assert.NotNull(orphans);
+        return orphans!.Cast<object>().ToList();
+    }
+
+    /// <summary>
+    /// ペイロード付きの不明ブロックを作ります。
+    /// </summary>
+    /// <param name="hashHex">index:fileHash:blockHash 形式の識別子。</param>
+    /// <param name="detail">表示用の説明。</param>
+    /// <param name="payload">ブロック本体。</param>
+    /// <returns>ReceiveOrphanHistory。</returns>
+    private static object CreateOrphan(string hashHex, string detail, byte[] payload)
+    {
+        var orphanType = ResolveType(ReceiveOrphanTypeName);
+        return Activator.CreateInstance(orphanType, [
+            hashHex,
+            detail,
+            payload,
+            new byte[] { 16, 1, 0, 0 }
+        ])!;
+    }
+
+    /// <summary>
+    /// テストが書いたダウンロード先を消します。
+    /// </summary>
+    /// <param name="path">削除するファイル。</param>
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // 一時ファイル削除失敗はテスト結果に影響させない。
+        }
     }
 
     private static object CreateReceiveEntry(

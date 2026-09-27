@@ -4,13 +4,30 @@ using Onta.Core;
 namespace Onta.Stream;
 
 /// <summary>
+/// 曲情報／データ部をビタビ復号したときの中間訂正率です（CRC の合否によらず算出）。
+/// </summary>
+/// <param name="CorrectionRate">全符号ビットで、受信硬判定と再符号化結果が食い違った割合（0〜1）。</param>
+/// <param name="LeftCorrectionRate">L チャネル分の符号ビットでの同割合（0〜1）。</param>
+/// <param name="RightCorrectionRate">R チャネル分の符号ビットでの同割合（0〜1）。</param>
+public readonly record struct StreamBodyDiagnostics(
+    double CorrectionRate,
+    double LeftCorrectionRate,
+    double RightCorrectionRate);
+
+/// <summary>
 /// ストリームパケットを OFDM（畳み込みのみ）で変復調します。
 /// </summary>
 public sealed class StreamOfdmCodec
 {
+    private const int BodyBytes = StreamConstants.MetaBytes + StreamConstants.PayloadBytes;
+
     private readonly OfdmGenerator _headerOfdm;
     private readonly OfdmGenerator _dataOfdm;
     private readonly StreamModeInfo _mode;
+    private readonly int _headerCodedBits;
+    private readonly int _bodyCodedBits;
+    private readonly int _headerSectionSamples;
+    private readonly int _packetSamples;
 
     /// <summary>
     /// 指定モード用コーデックを構築します。
@@ -22,10 +39,27 @@ public sealed class StreamOfdmCodec
         // ヘッダーは常に ID=01（48SC / 8PSK / ステレオ、R=2/3）
         _headerOfdm = CreateGenerator(StreamConstants.HeaderSubcarriers, ModulationScheme.Psk8, symbolCount: 4);
         _dataOfdm = CreateGenerator(_mode.Subcarriers, _mode.Modulation, symbolCount: 16);
+
+        _headerCodedBits = ConvolutionalCode.GetEncodedBitLength(
+            StreamConstants.HeaderBytes * 8,
+            terminated: true,
+            ConvolutionalCode.PunctureRate.Rate2_3);
+        _bodyCodedBits = ConvolutionalCode.GetEncodedBitLength(
+            BodyBytes * 8,
+            terminated: true,
+            ConvolutionalCode.PunctureRate.Rate2_3);
+        _headerSectionSamples = StreamConstants.PreambleSamples + SectionSamples(_headerOfdm, _headerCodedBits);
+        _packetSamples = _headerSectionSamples + StreamConstants.PreambleSamples + SectionSamples(_dataOfdm, _bodyCodedBits);
     }
 
     /// <summary>現在のモード情報。</summary>
     public StreamModeInfo Mode => _mode;
+
+    /// <summary>パケット先頭からヘッダー末尾までのサンプル数（プリアンブル＋ヘッダー）。全モード共通。</summary>
+    public int HeaderSectionSamples => _headerSectionSamples;
+
+    /// <summary>1 パケットのサンプル数（プリアンブル＋ヘッダー＋プリアンブル＋曲情報／データ）。</summary>
+    public int PacketSamples => _packetSamples;
 
     /// <summary>ヘッダー用 OFDM。</summary>
     public OfdmGenerator HeaderOfdm => _headerOfdm;
@@ -90,61 +124,150 @@ public sealed class StreamOfdmCodec
     /// </summary>
     /// <param name="left">L PCM。</param>
     /// <param name="right">R PCM。</param>
-    /// <param name="cursor">読み取り位置（サンプル）。</param>
+    /// <param name="cursor">パケット先頭のサンプル位置。成功時のみパケット末尾へ進める。</param>
     /// <param name="packet">成功時のパケット。</param>
-    /// <returns>パイロット・CRC が妥当なら true。</returns>
+    /// <returns>パケット全体がバッファにあり、パイロット・CRC が妥当なら true。</returns>
     public bool TryDemodulatePacket(Complex[] left, Complex[] right, ref int cursor, out StreamPacket? packet)
     {
+        return TryDemodulatePacket(left, right, ref cursor, out packet, out _, onBodyIqFrame: null);
+    }
+
+    /// <summary>
+    /// ステレオ PCM からパケットを復調し、曲情報／データ部の I-Q とビタビ中間訂正率も取り出します。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="cursor">パケット先頭のサンプル位置。成功時のみパケット末尾へ進める。</param>
+    /// <param name="packet">成功時のパケット。</param>
+    /// <param name="body">曲情報／データ部をビタビ復号できた場合の訂正率（CRC 不一致でも設定）。復号前に失敗したら null。</param>
+    /// <param name="onBodyIqFrame">曲情報／データ部の 1 OFDM シンボルごとの等化後シンボル・グループ・点数（配列は再利用されるため呼び出し側で複製する）。</param>
+    /// <returns>パケット全体がバッファにあり、パイロット・CRC が妥当なら true。</returns>
+    public bool TryDemodulatePacket(
+        Complex[] left,
+        Complex[] right,
+        ref int cursor,
+        out StreamPacket? packet,
+        out StreamBodyDiagnostics? body,
+        Action<Complex[], byte[], int>? onBodyIqFrame)
+    {
         packet = null;
-        if (left.Length != right.Length || left.Length == 0)
+        body = null;
+        // 途中までしか無いパケットを復調すると、先頭の曲情報 CRC だけ通って欠けたペイロードを受理してしまう
+        if (left.Length != right.Length || cursor < 0 || cursor + _packetSamples > left.Length)
         {
             return false;
         }
 
-        // Skip header preamble
-        cursor = Math.Min(cursor + StreamConstants.PreambleSamples, left.Length);
-
-        var headerCodedBits = ConvolutionalCode.GetEncodedBitLength(
-            StreamConstants.HeaderBytes * 8,
-            terminated: true,
-            ConvolutionalCode.PunctureRate.Rate2_3);
+        var position = cursor + StreamConstants.PreambleSamples;
         if (!TryDemodulateSection(
                 left,
                 right,
-                ref cursor,
+                ref position,
                 StreamConstants.HeaderBytes,
                 _headerOfdm,
                 ConvolutionalCode.PunctureRate.Rate2_3,
-                headerCodedBits,
-                out var headerBytes))
+                _headerCodedBits,
+                onIqFrame: null,
+                out var headerBytes,
+                out _))
         {
             return false;
         }
 
-        cursor = Math.Min(cursor + StreamConstants.PreambleSamples, left.Length);
-
-        var bodyLen = StreamConstants.MetaBytes + StreamConstants.PayloadBytes;
-        var bodyCodedBits = ConvolutionalCode.GetEncodedBitLength(
-            bodyLen * 8,
-            terminated: true,
-            ConvolutionalCode.PunctureRate.Rate2_3);
+        position += StreamConstants.PreambleSamples;
         if (!TryDemodulateSection(
                 left,
                 right,
-                ref cursor,
-                bodyLen,
+                ref position,
+                BodyBytes,
                 _dataOfdm,
                 ConvolutionalCode.PunctureRate.Rate2_3,
-                bodyCodedBits,
-                out var bodyBytes))
+                _bodyCodedBits,
+                onBodyIqFrame,
+                out var bodyBytes,
+                out var bodyDiagnostics))
         {
             return false;
         }
 
+        body = bodyDiagnostics;
+
         var wire = new byte[StreamConstants.PacketBytes];
         Buffer.BlockCopy(headerBytes, 0, wire, 0, StreamConstants.HeaderBytes);
-        Buffer.BlockCopy(bodyBytes, 0, wire, StreamConstants.HeaderBytes, bodyLen);
-        return StreamPacket.TryUnpack(wire, out packet);
+        Buffer.BlockCopy(bodyBytes, 0, wire, StreamConstants.HeaderBytes, BodyBytes);
+        if (!StreamPacket.TryUnpack(wire, out packet))
+        {
+            return false;
+        }
+
+        cursor = position;
+        return true;
+    }
+
+    /// <summary>
+    /// パケット先頭（ヘッダー前プリアンブルの先頭）からヘッダーだけを復調し、パイロットと速度 ID を検証します。
+    /// </summary>
+    /// <remarks>ヘッダーは全モード共通の変調なので、どのモードのコーデックでも復調できます。</remarks>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packetStart">パケット先頭のサンプル位置。</param>
+    /// <param name="modeId">成功時のストリーム速度 ID。</param>
+    /// <returns>パイロット 3 バイトと速度 ID が妥当なら true。</returns>
+    public bool TryDemodulateHeader(Complex[] left, Complex[] right, int packetStart, out StreamModeId modeId)
+    {
+        modeId = default;
+        if (left.Length != right.Length || packetStart < 0 || packetStart + _headerSectionSamples > left.Length)
+        {
+            return false;
+        }
+
+        var position = packetStart + StreamConstants.PreambleSamples;
+        if (!TryDemodulateSection(
+                left,
+                right,
+                ref position,
+                StreamConstants.HeaderBytes,
+                _headerOfdm,
+                ConvolutionalCode.PunctureRate.Rate2_3,
+                _headerCodedBits,
+                onIqFrame: null,
+                out var header,
+                out _))
+        {
+            return false;
+        }
+
+        if (header[0] != StreamConstants.HeaderPilot[0]
+            || header[1] != StreamConstants.HeaderPilot[1]
+            || header[2] != StreamConstants.HeaderPilot[2])
+        {
+            return false;
+        }
+
+        var mode = StreamMode.TryResolve(header[3]);
+        if (mode is null)
+        {
+            return false;
+        }
+
+        modeId = mode.Value.Id;
+        return true;
+    }
+
+    /// <summary>
+    /// 1 セクション（ヘッダーまたは曲情報／データ）の OFDM サンプル数を求めます。
+    /// </summary>
+    /// <remarks>L/R に符号化ビットを前半／後半で分け、多い方のシンボル数に揃える送信側と同じ計算です。</remarks>
+    /// <param name="ofdm">セクションの OFDM。</param>
+    /// <param name="codedBitCount">畳み込み後のビット数。</param>
+    private static int SectionSamples(OfdmGenerator ofdm, int codedBitCount)
+    {
+        var mid = (codedBitCount + 1) / 2;
+        var bps = Math.Max(1, ofdm.BitsPerOfdmSymbol);
+        var symbols = Math.Max(
+            (mid + bps - 1) / bps,
+            (codedBitCount - mid + bps - 1) / bps);
+        return Math.Max(1, symbols) * ofdm.SamplesPerOfdmSymbol;
     }
 
     private static (Complex[] Left, Complex[] Right) ModulateSection(
@@ -182,6 +305,50 @@ public sealed class StreamOfdmCodec
         return ofdm.ModulateBitStreams(leftBits, rightBits, absoluteSampleOffset);
     }
 
+    /// <summary>
+    /// 復号結果を再符号化し、受信 LLR の硬判定と食い違った符号ビットの割合を L/R 別に求めます。
+    /// </summary>
+    /// <remarks>訂正後の残差ではなく、ビタビが訂正したビットの割合（画面のエラー率グラフ用）。</remarks>
+    /// <param name="llrs">L（前半 mid ビット）→ R の順に連結した符号ビット LLR（正がビット 1）。</param>
+    /// <param name="mid">L チャネルに載せた符号ビット数。</param>
+    /// <param name="payload">復号したバイト列。</param>
+    /// <param name="puncture">パンクチャ率。</param>
+    private static StreamBodyDiagnostics MeasureCorrection(
+        double[] llrs,
+        int mid,
+        byte[] payload,
+        ConvolutionalCode.PunctureRate puncture)
+    {
+        var reencoded = ConvolutionalCode.Encode(payload, terminate: true, punctureRate: puncture);
+        var count = Math.Min(llrs.Length, reencoded.Length * 8);
+        var leftErrors = 0;
+        var rightErrors = 0;
+        for (var i = 0; i < count; i++)
+        {
+            var sent = ((reencoded[i >> 3] >> (7 - (i & 7))) & 1) != 0;
+            if ((llrs[i] >= 0.0) == sent)
+            {
+                continue;
+            }
+
+            if (i < mid)
+            {
+                leftErrors++;
+            }
+            else
+            {
+                rightErrors++;
+            }
+        }
+
+        var leftCount = Math.Min(mid, count);
+        var rightCount = count - leftCount;
+        return new StreamBodyDiagnostics(
+            count == 0 ? 0.0 : (double)(leftErrors + rightErrors) / count,
+            leftCount == 0 ? 0.0 : (double)leftErrors / leftCount,
+            rightCount == 0 ? 0.0 : (double)rightErrors / rightCount);
+    }
+
     private static bool[] PadBits(bool[] bits, int length)
     {
         if (bits.Length == length)
@@ -194,6 +361,20 @@ public sealed class StreamOfdmCodec
         return padded;
     }
 
+    /// <summary>
+    /// 1 セクションを L/R 別に復調してソフト LLR を連結し、ビタビ復号します。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="cursor">セクション先頭。終了位置で更新されます。</param>
+    /// <param name="payloadBytes">復号後のバイト数。</param>
+    /// <param name="ofdm">セクションの OFDM。</param>
+    /// <param name="puncture">パンクチャ率。</param>
+    /// <param name="codedBitCount">畳み込み後のビット数。</param>
+    /// <param name="onIqFrame">等化後シンボルのコールバック（不要なら null）。</param>
+    /// <param name="payload">復号したバイト列。</param>
+    /// <param name="diagnostics">L/R 別のビタビ中間訂正率。</param>
+    /// <returns>復号できたら true（CRC は呼び出し側で検証）。</returns>
     private static bool TryDemodulateSection(
         Complex[] left,
         Complex[] right,
@@ -202,9 +383,12 @@ public sealed class StreamOfdmCodec
         OfdmGenerator ofdm,
         ConvolutionalCode.PunctureRate puncture,
         int codedBitCount,
-        out byte[] payload)
+        Action<Complex[], byte[], int>? onIqFrame,
+        out byte[] payload,
+        out StreamBodyDiagnostics diagnostics)
     {
         payload = Array.Empty<byte>();
+        diagnostics = default;
         try
         {
             var mid = (codedBitCount + 1) / 2;
@@ -222,13 +406,15 @@ public sealed class StreamOfdmCodec
                 ref cursorL,
                 aligned,
                 useRightChannel: false,
-                logicalSampleOffset: 0);
+                logicalSampleOffset: 0,
+                onEqualizedDataSymbolFrame: onIqFrame);
             var llrR = ofdm.DemodulateSoftLlrsFromStream(
                 right,
                 ref cursorR,
                 aligned,
                 useRightChannel: true,
-                logicalSampleOffset: 0);
+                logicalSampleOffset: 0,
+                onEqualizedDataSymbolFrame: onIqFrame);
             cursor = Math.Max(cursorL, cursorR);
 
             var llrs = new double[codedBitCount];
@@ -240,7 +426,13 @@ public sealed class StreamOfdmCodec
                 payloadBytes,
                 terminated: true,
                 punctureRate: puncture);
-            return payload.Length >= payloadBytes;
+            if (payload.Length < payloadBytes)
+            {
+                return false;
+            }
+
+            diagnostics = MeasureCorrection(llrs, mid, payload, puncture);
+            return true;
         }
         catch
         {

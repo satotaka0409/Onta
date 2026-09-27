@@ -24,14 +24,38 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Onta_core.Tests" />
+  </ItemGroup>
+
   <!-- ClickOnce / 実行時に同梱するマニュアルとスプラッシュ -->
   <ItemGroup>
+    <Content Include="..\LICENSE"
+             Link="LICENSE"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\Onta_manual\*.md"
              Link="manual\%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\Onta_manual\onta_splash_512x256.png"
              Link="manual\onta_splash_512x256.png"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\data_struct.mdc"
+             Link="manual\specification\data_struct.mdc"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\modulation.mdc"
+             Link="manual\specification\modulation.mdc"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\stream.mdc"
+             Link="manual\specification\stream.mdc"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\history_info.mdc"
+             Link="manual\specification\history_info.mdc"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
@@ -47,6 +71,26 @@
     <Page Remove="test_host\**" />
     <Page Remove="bench\**" />
   </ItemGroup>
+
+  <!-- 通常ビルドと ClickOnce 発行の前に、仕様 mdc をマニュアルへコピーする -->
+  <ItemGroup>
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\data_struct.mdc" />
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\modulation.mdc" />
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\stream.mdc" />
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\history_info.mdc" />
+  </ItemGroup>
+
+  <Target Name="CopySpecificationDocs"
+          BeforeTargets="BeforeBuild;PrepareForPublish"
+          Inputs="@(SpecificationDoc)"
+          Outputs="@(SpecificationDoc->'$(MSBuildProjectDirectory)\..\Onta_manual\specification\%(Filename)%(Extension)')">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\..\Onta_manual\specification" />
+    <Copy SourceFiles="@(SpecificationDoc)"
+          DestinationFiles="@(SpecificationDoc->'$(MSBuildProjectDirectory)\..\Onta_manual\specification\%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Message Importance="high"
+             Text="仕様ファイルを Onta_manual\specification へコピーしました。" />
+  </Target>
 
   <!-- native libopus（あれば出力へコピー。無くてもビルド可） -->
   <ItemGroup>

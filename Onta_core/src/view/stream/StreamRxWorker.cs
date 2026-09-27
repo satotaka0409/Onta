@@ -1,4 +1,6 @@
+using System.Numerics;
 using Onta.Core;
+using Onta.Performance;
 using Onta.Stream;
 using Onta.View.Core;
 
@@ -7,10 +9,24 @@ namespace Onta.View.Stream;
 /// <summary>
 /// ストリーム再生受信ワーカーです。
 /// </summary>
+/// <remarks>
+/// 受信 PCM の FFT、復調したパケットの I-Q とビタビ中間訂正率を共有ボード（<see cref="SharedStatus"/>）へ書き込みます。
+/// </remarks>
 internal sealed class StreamRxWorker : IDisposable
 {
+    private const int FftSize = 2048;
+    private const int MinFftPublishIntervalMs = 80;
+
     private readonly object _sync = new();
     private readonly CoreExecutionStatusBoard _status = new();
+    private readonly double[] _pcmLeft = new double[FftSize];
+    private readonly double[] _pcmRight = new double[FftSize];
+    private readonly Complex[] _fftLeft = new Complex[FftSize];
+    private readonly Complex[] _fftRight = new Complex[FftSize];
+    private long _pcmWriteTotal;
+    private long _lastFftPublishMs = -1;
+    private int _packetsReceived;
+    private int _packetErrors;
     private Task? _worker;
     private CancellationTokenSource? _cts;
     private (bool Success, string Message)? _completion;
@@ -59,6 +75,18 @@ internal sealed class StreamRxWorker : IDisposable
         get { lock (_sync) { return _displayKbps; } }
     }
 
+    /// <summary>受理したパケット数。</summary>
+    public int PacketsReceived
+    {
+        get { lock (_sync) { return _packetsReceived; } }
+    }
+
+    /// <summary>ヘッダーは読めたが受理できなかったパケット数。</summary>
+    public int PacketErrors
+    {
+        get { lock (_sync) { return _packetErrors; } }
+    }
+
     /// <summary>
     /// 完了結果を取り出します。
     /// </summary>
@@ -99,6 +127,10 @@ internal sealed class StreamRxWorker : IDisposable
             _artist = string.Empty;
             _cover = Array.Empty<byte>();
             _displayKbps = 0;
+            _packetsReceived = 0;
+            _packetErrors = 0;
+            _pcmWriteTotal = 0;
+            _lastFftPublishMs = -1;
             _worker = Task.Run(() => Run(settings, token), token);
         }
     }
@@ -121,11 +153,12 @@ internal sealed class StreamRxWorker : IDisposable
     {
         _status.BeginRun("ストリーム受信");
         _status.SetAnalyzing(false);
+        _status.SetFftStereoMode(true);
         RealtimePcmCapture? capture = null;
         StreamRxPipeline? pipeline = null;
         try
         {
-            pipeline = new StreamRxPipeline();
+            pipeline = new StreamRxPipeline { PacketReported = PublishPacket };
 
             var queue = new Queue<(Complex[] L, Complex[] R)>();
             var gate = new object();
@@ -157,6 +190,7 @@ internal sealed class StreamRxWorker : IDisposable
                     continue;
                 }
 
+                PublishFft(item.Value.L, item.Value.R);
                 pipeline.PushCapture(item.Value.L, item.Value.R);
                 // 再生／WAV 出力は UI から削除。復号結果（曲情報・状態）のみ利用する。
                 _ = pipeline.Pump(out var statusMsg);
@@ -166,6 +200,8 @@ internal sealed class StreamRxWorker : IDisposable
                     _title = pipeline.Meta.GetTitleText();
                     _artist = pipeline.Meta.GetArtistText();
                     _cover = pipeline.Meta.GetCoverBytes();
+                    _packetsReceived = pipeline.PacketsReceived;
+                    _packetErrors = pipeline.PacketErrors;
                     if (pipeline.DetectedModeId is { } mode)
                     {
                         _displayKbps = StreamMode.Resolve(mode).DisplayKbps;
@@ -199,6 +235,63 @@ internal sealed class StreamRxWorker : IDisposable
         {
             capture?.Dispose();
             pipeline?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 受信 PCM をリングへ載せ、スロットル付きで Hanning 窓 FFT を共有ボードへ公開します（送信側と同じ表示）。
+    /// </summary>
+    /// <param name="left">キャプチャした L PCM。</param>
+    /// <param name="right">キャプチャした R PCM。</param>
+    private void PublishFft(Complex[] left, Complex[] right)
+    {
+        var len = Math.Min(left.Length, right.Length);
+        for (var i = 0; i < len; i++)
+        {
+            var idx = (int)(_pcmWriteTotal % FftSize);
+            _pcmLeft[idx] = left[i].Real;
+            _pcmRight[idx] = right[i].Real;
+            _pcmWriteTotal++;
+        }
+
+        if (_pcmWriteTotal < FftSize)
+        {
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        if (_lastFftPublishMs >= 0 && now - _lastFftPublishMs < MinFftPublishIntervalMs)
+        {
+            return;
+        }
+
+        _lastFftPublishMs = now;
+        PerformanceRingCopy.FillComplexWindow(_pcmLeft, _pcmWriteTotal, _fftLeft, FftSize);
+        PerformanceRingCopy.FillComplexWindow(_pcmRight, _pcmWriteTotal, _fftRight, FftSize);
+        PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftLeft, PerformanceFftWindowKind.Hanning);
+        PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftRight, PerformanceFftWindowKind.Hanning);
+        _status.SetFftStereoFrames(_fftLeft, _fftRight, StreamConstants.SampleRate);
+    }
+
+    /// <summary>
+    /// 1 パケット分の I-Q（曲情報／データ部の等化後シンボル）とビタビ中間訂正率（L/R）を共有ボードへ公開します。
+    /// </summary>
+    /// <param name="report">パイプラインからの受信結果。</param>
+    private void PublishPacket(StreamRxPacketReport report)
+    {
+        if (report.IqPoints.Length > 0)
+        {
+            _status.BeginIqCapture(report.Mode.Subcarriers, report.Mode.Modulation);
+            _status.AppendIqFrame(report.IqPoints, report.IqGroups);
+        }
+
+        if (report.Body is { } body)
+        {
+            // グラフはデコーダ種別ごとに 1 系列なので、パケット全体（L+R）の訂正率を単一系列で載せる
+            _status.SetErrorRate(
+                body.CorrectionRate * 100.0,
+                CoreFrameKind.Bd,
+                CoreEccDecoderKind.Viterbi);
         }
     }
 

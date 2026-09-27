@@ -81,7 +81,7 @@ internal static class ReceiveHistoryStore
 
         if (!updated)
         {
-            all.Add(entry);
+            all.Add(AdoptMatchingOrphans(entry));
         }
 
         WriteAll(filePath, all);
@@ -525,7 +525,7 @@ internal static class ReceiveHistoryStore
         var orphans = incoming.Orphans.Count > 0 ? incoming.Orphans : existing.Orphans;
         var blocks = MergeBlocks(existing.Blocks, incoming.Blocks);
 
-        return existing with
+        var merged = existing with
         {
             ReceivedAtUtc = latest,
             DataModulation = incoming.DataModulation is { Length: > 0 }
@@ -544,6 +544,172 @@ internal static class ReceiveHistoryStore
             Blocks = blocks,
             Orphans = orphans
         };
+        return AdoptMatchingOrphans(merged);
+    }
+
+    /// <summary>
+    /// ファイルヘッダー確定後、ファイルハッシュが一致する不明ブロックを受信ブロックへ移します。
+    /// 移した不明ブロックはオーファン一覧から外します。必要ブロックが揃えば完了にします。
+    /// </summary>
+    /// <param name="entry">マージ後の受信エントリ。</param>
+    /// <returns>取り込み後のエントリ。親未確定や送信履歴はそのまま。</returns>
+    private static ReceiveHistoryEntry AdoptMatchingOrphans(ReceiveHistoryEntry entry)
+    {
+        if (entry.Kind != HistoryEntryKind.Receive
+            || entry.BlockCount <= 0
+            || entry.Orphans.Count == 0
+            || !IsShaHex(entry.ContentHashHex))
+        {
+            return entry;
+        }
+
+        var fileHash = entry.ContentHashHex.Trim();
+        var blocks = entry.Blocks.ToList();
+        var remaining = new List<ReceiveOrphanHistory>();
+        foreach (var orphan in entry.Orphans)
+        {
+            if (orphan.Payload is not { Length: > 0 }
+                || !TrySplitOrphanIdentity(orphan.HashHex, out var indexText, out var orphanFileHash, out var blockHashHex)
+                || !string.Equals(orphanFileHash, fileHash, StringComparison.OrdinalIgnoreCase)
+                || !int.TryParse(indexText, out var blockIndex)
+                || blockIndex < 0)
+            {
+                remaining.Add(orphan);
+                continue;
+            }
+
+            var prior = blocks.FirstOrDefault(block => block.BlockIndex == blockIndex);
+            if (prior is { BlockComplete: true, BlockData.Length: > 0 })
+            {
+                continue;
+            }
+
+            byte[] blockHash;
+            try
+            {
+                blockHash = Convert.FromHexString(blockHashHex);
+            }
+            catch (FormatException)
+            {
+                remaining.Add(orphan);
+                continue;
+            }
+
+            blocks.RemoveAll(block => block.BlockIndex == blockIndex);
+            blocks.Add(new ReceiveBlockHistory(
+                DataModulation: NormalizeDataModulation(orphan.DataModulation),
+                BlockIndex: blockIndex,
+                BlockSize: orphan.Payload.Length,
+                ContentHash: NormalizeHash32(blockHash),
+                BlockComplete: true,
+                BlockData: orphan.Payload,
+                State: ReceiveBlockState.Accepted,
+                ErrorText: string.Empty));
+        }
+
+        var ordered = blocks.OrderBy(block => block.BlockIndex).ToArray();
+        var success = entry.IsSuccess || HasAllBlocks(ordered, entry.BlockCount, entry.FileSize);
+        return entry with
+        {
+            Blocks = ordered,
+            Orphans = remaining,
+            IsSuccess = success
+        };
+    }
+
+    /// <summary>
+    /// 0 から BlockCount-1 まで完了ブロックが揃い、宣言サイズを満たすかを見ます。
+    /// </summary>
+    /// <param name="blocks">ブロック一覧。</param>
+    /// <param name="blockCount">必要なブロック数。</param>
+    /// <param name="fileSize">ファイルサイズ。0 以下なら長さは見ません。</param>
+    /// <returns>ダウンロードできる揃い方なら true。</returns>
+    private static bool HasAllBlocks(IReadOnlyList<ReceiveBlockHistory> blocks, int blockCount, long fileSize)
+    {
+        if (blockCount <= 0)
+        {
+            return false;
+        }
+
+        var sum = 0;
+        for (var i = 0; i < blockCount; i++)
+        {
+            var block = blocks.FirstOrDefault(item => item.BlockIndex == i);
+            if (block is not { BlockComplete: true, BlockData.Length: > 0 })
+            {
+                return false;
+            }
+
+            sum += block.BlockData.Length;
+        }
+
+        return fileSize <= 0 || sum >= fileSize;
+    }
+
+    /// <summary>
+    /// SHA-256（64桁）または SHA-512（128桁）の16進文字列かを判定します。
+    /// </summary>
+    /// <param name="value">判定する文字列。</param>
+    /// <returns>桁数と文字種が一致すれば true。</returns>
+    private static bool IsShaHex(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var text = value.Trim();
+        if (text.Length is not (64 or 128))
+        {
+            return false;
+        }
+
+        foreach (var c in text)
+        {
+            var hex = (c >= '0' && c <= '9')
+                || (c >= 'a' && c <= 'f')
+                || (c >= 'A' && c <= 'F');
+            if (!hex)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 不明ブロック識別子 index:fileHash:blockHash を分解します。
+    /// </summary>
+    /// <param name="identity">孤立キー。</param>
+    /// <param name="blockIndexText">ブロック番号の文字列。</param>
+    /// <param name="fileHashHex">ファイルハッシュ。</param>
+    /// <param name="blockHashHex">ブロックハッシュ。</param>
+    /// <returns>3要素で両ハッシュが16進なら true。</returns>
+    private static bool TrySplitOrphanIdentity(
+        string? identity,
+        out string blockIndexText,
+        out string fileHashHex,
+        out string blockHashHex)
+    {
+        blockIndexText = string.Empty;
+        fileHashHex = string.Empty;
+        blockHashHex = string.Empty;
+        if (string.IsNullOrWhiteSpace(identity))
+        {
+            return false;
+        }
+
+        var parts = identity.Split(':');
+        if (parts.Length < 3)
+        {
+            return false;
+        }
+
+        blockIndexText = parts[0];
+        fileHashHex = parts[1];
+        blockHashHex = parts[2];
+        return IsShaHex(fileHashHex) && IsShaHex(blockHashHex);
     }
 
     /// <summary>

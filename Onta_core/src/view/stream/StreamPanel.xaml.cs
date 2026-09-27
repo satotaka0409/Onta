@@ -489,6 +489,7 @@ public partial class StreamPanel : UserControl
                 InputDevice = Math.Max(0, RxInputDeviceBox.SelectedIndex),
                 InputVolume = RxInputVolume.Value,
             };
+            _errorChart.Clear();
             _rx.Start(settings);
             RxStatusText.Text = "受信中…";
             UpdateStartStopExclusive();
@@ -542,6 +543,7 @@ public partial class StreamPanel : UserControl
             RxArtistBox.Text = _rx.Artist;
             RxRateBox.Text = _rx.DisplayKbps > 0 ? $"{_rx.DisplayKbps} kbps" : "-";
             TryUpdateCoverPreview(_rx.CoverBytes);
+            RxStatusText.Text = $"受信中… パケット {_rx.PacketsReceived:N0}（エラー {_rx.PacketErrors:N0}）";
         }
 
         // 送信中は送信側ボード、それ以外は受信側（エラー率は受信のみ）

@@ -17,6 +17,33 @@ internal static class AppPaths
     /// <summary>メイン画面設定ファイルの保存先です。</summary>
     public static string MainSettingsFilePath => Path.Combine(ResolveRootDir(), "Onta_setting.bin");
 
+    /// <summary>マニュアル（Markdown）フォルダーです。</summary>
+    public static string ManualDir => ResolveManualDir();
+
+    /// <summary>
+    /// マニュアルフォルダーを解決します。リポジトリの Onta_manual を優先し、無ければ同梱の manual を使います。
+    /// </summary>
+    /// <remarks>開発中はリポジトリ側の編集を「再読込」で即反映できるよう、同梱コピーより優先します。</remarks>
+    /// <returns>Markdown を含む最初の候補フォルダー。見つからなければ同梱 manual のパス。</returns>
+    private static string ResolveManualDir()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(ResolveRootDir(), "Onta_manual"),
+            Path.Combine(AppContext.BaseDirectory, "manual"),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (Directory.Exists(candidate) && Directory.EnumerateFiles(candidate, "*.md").Any())
+            {
+                return candidate;
+            }
+        }
+
+        return candidates[^1];
+    }
+
     /// <summary>
     /// アプリルート（Onta リポジトリ直下など）を候補パスから解決します。
     /// </summary>

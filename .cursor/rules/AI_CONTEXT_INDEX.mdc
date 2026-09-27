@@ -24,10 +24,16 @@ alwaysApply: true
   - 要点: `Onta_history.bin`（Version=1）に送受信/未完了を保存、受信ブロックは Hash/BlockIndex で紐付け
 - ユーザマニュアル
   - `Onta_manual/README.md`
+  - `Onta_manual/00_index.md`（アプリのマニュアルタブで最初に表示する目次。バージョン表記）
   - `Onta_manual/01_音多とは何か.md`
   - `Onta_manual/02_メイン画面の説明.md`
   - `Onta_manual/03_履歴画面の説明.md`
-  - `Onta_manual/04_性能測定画面の説明.md`
+  - `Onta_manual/04_ストリーム画面の説明.md`
+  - `Onta_manual/05_性能測定画面の説明.md`
+  - `Onta_manual/06_メイン画面の使い方.md`
+  - `Onta_manual/07_履歴画面の使い方.md`
+  - `Onta_manual/08_ストリーム画面の使い方.md`
+  - `Onta_manual/09_性能測定画面の使い方.md`
 
 ## AIへの依頼テンプレート
 

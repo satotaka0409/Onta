@@ -1506,6 +1506,7 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
+        ResetPerformanceGraphs();
         SetTxRunning(true);
         TxStatusText.Text = $"送信中… {settings.DurationSeconds:0}s";
         EnsurePollRunning();
@@ -1520,6 +1521,77 @@ public partial class PerformancePanel : UserControl
     {
         _txWorker.RequestStop();
         TxStatusText.Text = "停止要求…";
+    }
+
+    /// <summary>
+    /// 送信・受信の開始時に、FFT / オシロ / リサージュ / I-Q / ワウフラッターを空へ戻します。
+    /// </summary>
+    private void ResetPerformanceGraphs()
+    {
+        _fftLeft.Clear();
+        _fftRight.Clear();
+        RestorePerfFftXMax();
+
+        _scopeLeft.Clear();
+        _scopeRight.Clear();
+        RedrawScopeWaveCanvases();
+        if (IsScopeWaveTabSelected)
+        {
+            if (LeftWaveTitle is not null)
+            {
+                LeftWaveTitle.Text = "L オシロスコープ  AUTO";
+            }
+
+            if (RightWaveTitle is not null)
+            {
+                RightWaveTitle.Text = "R オシロスコープ  AUTO";
+            }
+        }
+
+        _iqLeft.Clear();
+        _iqRight.Clear();
+        if (IqLeftTitle is not null)
+        {
+            IqLeftTitle.Text = "L I-Q";
+        }
+
+        if (IqRightTitle is not null)
+        {
+            IqRightTitle.Text = "R I-Q";
+        }
+
+        _wowChart.Clear();
+        _lastWowSampleUtc = DateTime.MinValue;
+        WowLeftMeter.Clear();
+        WowRightMeter.Clear();
+        WowLeftMeter.RangePercent = 1.0;
+        WowRightMeter.RangePercent = 1.0;
+
+        LissajousCanvas?.Children.Clear();
+        if (LissajousTitle is not null)
+        {
+            LissajousTitle.Text = "リサージュ（アジマス）  L→X / R→Y  ・同位相で対角線";
+        }
+
+        if (LissFreqLeftText is not null)
+        {
+            LissFreqLeftText.Text = "---- Hz";
+        }
+
+        if (LissFreqRightText is not null)
+        {
+            LissFreqRightText.Text = "---- Hz";
+        }
+
+        if (LissThdLeftText is not null)
+        {
+            LissThdLeftText.Text = "--.-- %";
+        }
+
+        if (LissThdRightText is not null)
+        {
+            LissThdRightText.Text = "--.-- %";
+        }
     }
 
     /// <summary>
@@ -1560,15 +1632,7 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
-        _fftLeft.Clear();
-        _fftRight.Clear();
-        _scopeLeft.Clear();
-        _scopeRight.Clear();
-        _iqLeft.Clear();
-        _iqRight.Clear();
-        _wowChart.Clear();
-        WowLeftMeter.Clear();
-        WowRightMeter.Clear();
+        ResetPerformanceGraphs();
         SetRxRunning(true);
         RxStatusText.Text = settings.UseWavInput ? "WAV 解析中" : "受信中";
         EnsurePollRunning();

@@ -35,11 +35,18 @@ public partial class HistoryPanel : UserControl
     /// </summary>
     public void ReloadHistory()
     {
+        ApplyEntries(HistoryService.LoadEntries(AppPaths.ReceiveHistoryFilePath));
+    }
+
+    /// <summary>
+    /// 渡された履歴を受信・送信・不明ブロックの各グリッドへ反映します。
+    /// </summary>
+    /// <param name="entries">表示する送受信履歴。</param>
+    internal void ApplyEntries(IReadOnlyList<ReceiveHistoryEntry> entries)
+    {
         _receiveRows.Clear();
         _sendRows.Clear();
         _uncompleteRows.Clear();
-
-        var entries = HistoryService.LoadEntries(AppPaths.ReceiveHistoryFilePath).ToArray();
 
         var receiveEntries = entries
             .Where(x => x.Kind == HistoryEntryKind.Receive)

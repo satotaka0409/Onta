@@ -5,6 +5,7 @@ TestResults/
 **/BenchmarkDotNet.Artifacts
 Installer/publish/
 Installer/obj/
+Onta_manual/specification
 *.bin
 *.log
 *.tmp

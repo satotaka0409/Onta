@@ -5,6 +5,7 @@
         xmlns:hist="clr-namespace:Onta.View.History"
         xmlns:stream="clr-namespace:Onta.View.Stream"
         xmlns:perf="clr-namespace:Onta.View.Performance"
+        xmlns:manual="clr-namespace:Onta.View.Manual"
         Title="Onta"
         Width="1280"
         Height="1024"
@@ -82,6 +83,15 @@
                     Margin="0,8,0,0"
                     Padding="8">
                 <perf:PerformancePanel x:Name="PerformancePanel"/>
+            </Border>
+        </TabItem>
+
+        <TabItem x:Name="ManualRootTab"
+                 Header="マニュアル">
+            <Border Style="{StaticResource PanelBorder}"
+                    Margin="0,8,0,0"
+                    Padding="8">
+                <manual:ManualPanel x:Name="ManualPanel"/>
             </Border>
         </TabItem>
     </TabControl>

@@ -40,6 +40,43 @@ public sealed class OntaTestHistorySend
         Assert.Equal(expectedSize, (long)(ReadProperty(send, "FileSize") ?? -1L));
         Assert.Equal(expectedHash, ReadProperty(send, "ContentHashHex")?.ToString());
         Assert.True((bool)(ReadProperty(send, "IsSuccess") ?? false));
+        Assert.Equal(0, (int)(ReadProperty(send, "BlockCount") ?? -1));
+        Assert.Equal("送信登録テスト1", ReadProperty(send, "CompletionMessage")?.ToString());
+        Assert.Empty(ReadList(send, "Blocks"));
+        Assert.Empty(ReadList(send, "Orphans"));
+        Assert.Equal(new byte[] { 16, 1, 0, 0 }, (byte[])(ReadProperty(send, "DataModulation") ?? Array.Empty<byte>()));
+        Assert.NotEqual(default, (DateTime)(ReadProperty(send, "ReceivedAtUtc") ?? default(DateTime)));
+    }
+
+    /// <summary>
+    /// 同一ファイルの再送信は履歴を増やさず、送信日時と出力先だけ更新すること。
+    /// </summary>
+    [Fact]
+    public void Send_Register_SameFile_UpdatesExistingEntry()
+    {
+        using var scope = HistoryTemp.Create();
+        var inputPath = TestPaths.ResolveInputTxt("Sample1.txt");
+        var wav1 = TestPaths.ResolveOutputPath($"history_send_same1_{Guid.NewGuid():N}.wav");
+        var wav2 = TestPaths.ResolveOutputPath($"history_send_same2_{Guid.NewGuid():N}.wav");
+
+        InvokeSaveSend(scope.HistoryPath, inputPath, wav1, "初回送信");
+        var first = LoadEntries(scope.HistoryPath).Single();
+        var entryId = ReadProperty(first, "EntryId")?.ToString();
+        var firstAt = (DateTime)(ReadProperty(first, "ReceivedAtUtc") ?? DateTime.MinValue);
+        Thread.Sleep(30);
+
+        InvokeSaveSend(scope.HistoryPath, inputPath, wav2, "再送信");
+
+        var entries = LoadEntries(scope.HistoryPath);
+        Assert.Single(entries);
+        Assert.Equal(entryId, ReadProperty(entries[0], "EntryId")?.ToString());
+        Assert.Equal(wav2, ReadProperty(entries[0], "OutputPath")?.ToString());
+        Assert.Equal("再送信", ReadProperty(entries[0], "CompletionMessage")?.ToString());
+        var secondAt = (DateTime)(ReadProperty(entries[0], "ReceivedAtUtc") ?? DateTime.MinValue);
+        Assert.True(secondAt >= firstAt);
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(inputPath))),
+            ReadProperty(entries[0], "ContentHashHex")?.ToString());
     }
 
     /// <summary>
@@ -105,6 +142,13 @@ public sealed class OntaTestHistorySend
         Assert.Single(after);
         Assert.Equal("Sample2.txt", ReadProperty(after[0], "FileName")?.ToString());
         Assert.Equal(sample2, ReadProperty(after[0], "SourcePath")?.ToString());
+        Assert.Equal(wav2, ReadProperty(after[0], "OutputPath")?.ToString());
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(sample2))),
+            ReadProperty(after[0], "ContentHashHex")?.ToString());
+        Assert.Equal(new FileInfo(sample2).Length, (long)(ReadProperty(after[0], "FileSize") ?? -1L));
+        Assert.False(InvokeDeleteEntry(scope.HistoryPath, "missing-send-id"));
+        Assert.Single(LoadEntries(scope.HistoryPath));
     }
 
     /// <summary>
@@ -195,6 +239,19 @@ public sealed class OntaTestHistorySend
         var prop = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         Assert.NotNull(prop);
         return prop!.GetValue(instance);
+    }
+
+    /// <summary>
+    /// 履歴エントリの一覧プロパティをオブジェクト列として読みます。
+    /// </summary>
+    /// <param name="instance">履歴エントリ。</param>
+    /// <param name="propertyName">Blocks または Orphans。</param>
+    /// <returns>要素一覧。null は失敗。</returns>
+    private static List<object> ReadList(object instance, string propertyName)
+    {
+        var items = ReadProperty(instance, propertyName) as IEnumerable;
+        Assert.NotNull(items);
+        return items!.Cast<object>().ToList();
     }
 
     /// <summary>

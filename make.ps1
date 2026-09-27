@@ -7,6 +7,7 @@
 #   .\make.ps1 core              # test/core
 #   .\make.ps1 history           # test/history
 #   .\make.ps1 performance       # test/performance
+#   .\make.ps1 stream            # test/stream
 #   .\make.ps1 testdebug
 #   .\make.ps1 rebuild -Config Debug
 #   .\make.ps1 build -Dotnet "C:\Program Files\dotnet\dotnet.exe"
@@ -14,7 +15,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("all", "build", "clean", "rebuild", "test", "testdebug", "core", "history", "performance")]
+    [ValidateSet("all", "build", "clean", "rebuild", "test", "testdebug", "core", "history", "performance", "stream")]
     [string]$Target = "build",
 
     [string]$Config = "Release",
@@ -40,6 +41,7 @@ $TestFilters = @{
     core        = "FullyQualifiedName~Onta.Core.Tests.Core."
     history     = "FullyQualifiedName~Onta.Core.Tests.History."
     performance = "FullyQualifiedName~Onta.Core.Tests.Performance."
+    stream      = "FullyQualifiedName~Onta.Core.Tests.Stream."
 }
 
 function Resolve-Dotnet {
@@ -138,4 +140,5 @@ switch ($Target) {
     "core" { Invoke-Test -Filter $TestFilters.core }
     "history" { Invoke-Test -Filter $TestFilters.history }
     "performance" { Invoke-Test -Filter $TestFilters.performance }
+    "stream" { Invoke-Test -Filter $TestFilters.stream }
 }
