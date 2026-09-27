@@ -1,7 +1,7 @@
 using System.Numerics;
 using Onta.Core;
 
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// リサージュ画面用の周波数カウンタ／歪み率（THD）計測です。

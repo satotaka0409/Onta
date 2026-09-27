@@ -619,75 +619,76 @@ public sealed class CoreExecutionStatusBoard
     {
         lock (_sync)
         {
-            var n = freqBins.Length;
-            _fftSize = n;
-            if (n < 2)
-            {
-                if (isRightChannel)
-                {
-                    if (!_fftIsStereo)
-                    {
-                        return;
-                    }
+            WriteFftChannelUnlocked(freqBins, isRightChannel, sampleRate);
+        }
+    }
 
-                    _fftRightCount = 0;
-                }
-                else
-                {
-                    _fftLeftCount = 0;
-                    if (!_fftIsStereo)
-                    {
-                        _fftRightCount = 0;
-                    }
-                }
-
-                return;
-            }
-
-            var half = n / 2;
-            var sr = Math.Max(1, sampleRate);
-            // 正周波数のみ（DC..Nyquist直前）
-            var pointCount = half;
-            EnsureFftCapacityUnlocked(pointCount, isRightChannel);
-
+    /// <summary>
+    /// FFT スペクトル 1 チャネル分をボードへ書き込みます（呼び出し元が _sync を保持）。
+    /// </summary>
+    private void WriteFftChannelUnlocked(ReadOnlySpan<Complex> freqBins, bool isRightChannel, int sampleRate)
+    {
+        var n = freqBins.Length;
+        _fftSize = n;
+        if (n < 2)
+        {
             if (isRightChannel)
             {
-                // モノラル表示中（ヘッダー等）は R 更新を無視する。
-                if (!_fftIsStereo)
+                if (_fftIsStereo)
                 {
-                    return;
+                    _fftRightCount = 0;
                 }
-
-                _fftRightCount = pointCount;
             }
             else
             {
-                _fftLeftCount = pointCount;
+                _fftLeftCount = 0;
                 if (!_fftIsStereo)
                 {
                     _fftRightCount = 0;
                 }
             }
 
-            var dest = isRightChannel ? _fftRightBins : _fftLeftBins;
-            // 実信号 FFT の片側振幅スケール（ピーク≈時間振幅、0 dB≒フルスケール正弦波）
-            var scale = 2.0 / n;
+            return;
+        }
 
-            for (var bin = 0; bin < half; bin++)
+        var half = n / 2;
+        var sr = Math.Max(1, sampleRate);
+        var pointCount = half;
+        EnsureFftCapacityUnlocked(pointCount, isRightChannel);
+
+        if (isRightChannel)
+        {
+            if (!_fftIsStereo)
             {
-                var c = freqBins[bin];
-                var magnitude = Math.Sqrt((c.Real * c.Real) + (c.Imaginary * c.Imaginary)) * scale;
-                if (bin == 0)
-                {
-                    // DC は片側スケールしない
-                    magnitude *= 0.5;
-                }
-
-                var magnitudeDb = 20.0 * Math.Log10(magnitude + 1e-12);
-                // 整数丸めすると隣接ビンが同じ X になり縦スパイクになるため、Hz は連続値で渡す
-                var hz = bin * (double)sr / n;
-                dest[bin] = new CoreFftSample(hz, magnitudeDb);
+                return;
             }
+
+            _fftRightCount = pointCount;
+        }
+        else
+        {
+            _fftLeftCount = pointCount;
+            if (!_fftIsStereo)
+            {
+                _fftRightCount = 0;
+            }
+        }
+
+        var dest = isRightChannel ? _fftRightBins : _fftLeftBins;
+        var scale = 2.0 / n;
+
+        for (var bin = 0; bin < half; bin++)
+        {
+            var c = freqBins[bin];
+            var magnitude = Math.Sqrt((c.Real * c.Real) + (c.Imaginary * c.Imaginary)) * scale;
+            if (bin == 0)
+            {
+                magnitude *= 0.5;
+            }
+
+            var magnitudeDb = 20.0 * Math.Log10(magnitude + 1e-12);
+            var hz = bin * (double)sr / n;
+            dest[bin] = new CoreFftSample(hz, magnitudeDb);
         }
     }
 
@@ -704,6 +705,25 @@ public sealed class CoreExecutionStatusBoard
             {
                 _fftRightCount = 0;
             }
+        }
+    }
+
+    /// <summary>
+    /// L/R FFT を同一ロック内でまとめて更新します（片側だけ古くなるのを防ぐ）。
+    /// </summary>
+    /// <param name="leftFreqBins">L スペクトル。</param>
+    /// <param name="rightFreqBins">R スペクトル。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    public void SetFftStereoFrames(
+        ReadOnlySpan<Complex> leftFreqBins,
+        ReadOnlySpan<Complex> rightFreqBins,
+        int sampleRate = 44100)
+    {
+        lock (_sync)
+        {
+            _fftIsStereo = true;
+            WriteFftChannelUnlocked(leftFreqBins, isRightChannel: false, sampleRate);
+            WriteFftChannelUnlocked(rightFreqBins, isRightChannel: true, sampleRate);
         }
     }
 

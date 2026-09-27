@@ -1,7 +1,7 @@
 using System.Numerics;
 using Onta.Core;
 
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// 性能測定の I-Q コンスタレーション抽出です（OFDM FFT=256、パイロット等化）。
@@ -37,6 +37,7 @@ internal static class PerformanceIqExtractor
     /// <param name="fftScratch">FFT 作業（長さ 256）。</param>
     /// <param name="dest">等化後シンボル。</param>
     /// <param name="groups">グループ ID。</param>
+    /// <param name="cyclicPrefixLength">CP 長（データ部 16、ヘッダー部 32）。</param>
     /// <returns>有効シンボル数。</returns>
     public static int ExtractEqualized(
         ReadOnlySpan<double> pcm,
@@ -45,7 +46,8 @@ internal static class PerformanceIqExtractor
         Complex[] timeScratch,
         Complex[] fftScratch,
         Span<Complex> dest,
-        Span<byte> groups)
+        Span<byte> groups,
+        int cyclicPrefixLength = CyclicPrefixLength)
     {
         var sc = PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers);
         if (pcm.Length < FftSize || timeScratch.Length < FftSize || fftScratch.Length < FftSize)
@@ -53,7 +55,7 @@ internal static class PerformanceIqExtractor
             return 0;
         }
 
-        var dataStart = FindOfdmDataStart(pcm);
+        var dataStart = FindOfdmDataStart(pcm, cyclicPrefixLength);
         if (dataStart < 0 || dataStart + FftSize > pcm.Length)
         {
             dataStart = pcm.Length - FftSize;
@@ -103,16 +105,19 @@ internal static class PerformanceIqExtractor
     /// CP 相関が最大になる OFDM データ開始位置を探します。
     /// </summary>
     /// <param name="pcm">振幅 PCM。</param>
+    /// <param name="cyclicPrefixLength">CP 長（データ部 16、ヘッダー部 32）。</param>
     /// <returns>データ部開始サンプル位置（CP 直後）。</returns>
-    public static int FindOfdmDataStart(ReadOnlySpan<double> pcm)
+    public static int FindOfdmDataStart(ReadOnlySpan<double> pcm, int cyclicPrefixLength = CyclicPrefixLength)
     {
-        if (pcm.Length < SymbolLength)
+        var cp = Math.Clamp(cyclicPrefixLength, 1, FftSize - 1);
+        var symbolLength = FftSize + cp;
+        if (pcm.Length < symbolLength)
         {
             return Math.Max(0, pcm.Length - FftSize);
         }
 
-        var searchFrom = Math.Max(0, pcm.Length - (SymbolLength * 2));
-        var searchTo = pcm.Length - SymbolLength;
+        var searchFrom = Math.Max(0, pcm.Length - (symbolLength * 2));
+        var searchTo = pcm.Length - symbolLength;
         var best = searchFrom;
         var bestScore = double.NegativeInfinity;
         for (var t = searchFrom; t <= searchTo; t++)
@@ -120,7 +125,7 @@ internal static class PerformanceIqExtractor
             var corr = 0.0;
             var e1 = 0.0;
             var e2 = 0.0;
-            for (var i = 0; i < CyclicPrefixLength; i++)
+            for (var i = 0; i < cp; i++)
             {
                 var a = pcm[t + i];
                 var b = pcm[t + FftSize + i];
@@ -138,7 +143,7 @@ internal static class PerformanceIqExtractor
             }
         }
 
-        return best + CyclicPrefixLength;
+        return best + cp;
     }
 
     /// <summary>

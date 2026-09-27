@@ -4,6 +4,7 @@ using LiveChartsCore.Defaults;
 using LiveChartsCore.Measure;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
+using Onta.Performance;
 using SkiaSharp;
 
 namespace Onta.View.Performance;

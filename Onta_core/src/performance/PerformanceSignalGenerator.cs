@@ -1,7 +1,7 @@
 using System.Numerics;
 using Onta.Core;
 
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// 性能測定用の PCM（トーン／スイープ／ホワイトノイズ／OFDM）を生成します。

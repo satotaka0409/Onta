@@ -1,0 +1,654 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using NAudio.Wave;
+using Onta.Core;
+using Onta.Stream;
+using Onta.View.Core;
+
+namespace Onta.View.Stream;
+
+/// <summary>
+/// ストリーム録音・再生パネルです。
+/// </summary>
+public partial class StreamPanel : UserControl
+{
+    private readonly StreamTxWorker _tx = new();
+    private readonly StreamRxWorker _rx = new();
+    private readonly DispatcherTimer _pollTimer;
+    private readonly ErrorRateChartModel _errorChart = new();
+    private readonly FftChartModel _fftChart = new();
+    private readonly IqChartModel _iqChart = new();
+    private string _txWavPath = string.Empty;
+    private string _coverPath = string.Empty;
+    private StreamCoverFormat _coverFormat = StreamCoverFormat.Color32;
+    private int _coverByteCount;
+    private int _lastRxCoverLength = -1;
+
+    /// <summary>
+    /// パネルを初期化します。
+    /// </summary>
+    public StreamPanel()
+    {
+        InitializeComponent();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        _pollTimer.Tick += OnPollTick;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        FillDevices(TxInputDeviceBox, isInput: true);
+        FillDevices(TxOutputDeviceBox, isInput: false);
+        FillDevices(RxInputDeviceBox, isInput: true);
+        UpdateTxInputModeUi();
+        RxErrorChart.Series = _errorChart.Series;
+        RxErrorChart.XAxes = _errorChart.XAxes;
+        RxErrorChart.YAxes = _errorChart.YAxes;
+        RxFftChart.Series = _fftChart.Series;
+        RxFftChart.XAxes = _fftChart.XAxes;
+        RxFftChart.YAxes = _fftChart.YAxes;
+        RxFftChart.DrawMargin = FftChartModel.CreateDrawMarginWithFrequencyLabels();
+        RxFftChart.ClipToBounds = false;
+        _fftChart.ShowStereoChannels();
+        RxIqChart.Series = _iqChart.Series;
+        RxIqChart.XAxes = _iqChart.XAxes;
+        RxIqChart.YAxes = _iqChart.YAxes;
+        BuildStreamIqGroupLegend();
+        UpdateStreamGraphTabVisibility();
+        UpdateStreamIqSquareSize();
+        UpdateStartStopExclusive();
+        _pollTimer.Start();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        _pollTimer.Stop();
+        _tx.Stop();
+        _rx.Stop();
+    }
+
+    /// <summary>
+    /// エラーレート／FFT タブ切替を反映します。
+    /// </summary>
+    private void OnStreamGraphTabChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateStreamGraphTabVisibility();
+    }
+
+    /// <summary>
+    /// エラーレートと FFT ホストの表示を切り替えます。
+    /// </summary>
+    private void UpdateStreamGraphTabVisibility()
+    {
+        if (StreamErrorChartHost is null || StreamFftChartHost is null || StreamFftTabRadio is null)
+        {
+            return;
+        }
+
+        var showFft = StreamFftTabRadio.IsChecked == true;
+        StreamErrorChartHost.Opacity = showFft ? 0 : 1;
+        StreamErrorChartHost.IsHitTestVisible = !showFft;
+        StreamFftChartHost.Opacity = showFft ? 1 : 0;
+        StreamFftChartHost.IsHitTestVisible = showFft;
+        StreamErrorChartHost.Visibility = Visibility.Visible;
+        StreamFftChartHost.Visibility = Visibility.Visible;
+        if (StreamFftLegend is not null)
+        {
+            StreamFftLegend.Visibility = showFft ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// I-Q 横のグループ凡例を構築します。
+    /// </summary>
+    private void BuildStreamIqGroupLegend()
+    {
+        if (StreamIqGroupLegend is null)
+        {
+            return;
+        }
+
+        StreamIqGroupLegend.Children.Clear();
+        foreach (var item in IqChartModel.PerformanceGroupLegendItems)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 2, 0, 2),
+            };
+            row.Children.Add(new Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                Fill = new SolidColorBrush(Color.FromRgb(item.R, item.G, item.B)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0),
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = item.Label,
+                Foreground = (Brush)FindResource("BrushTextMuted"),
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 11,
+            });
+            StreamIqGroupLegend.Children.Add(row);
+        }
+    }
+
+    /// <summary>
+    /// グラフ行リサイズ時に I-Q を正方形へ合わせます。
+    /// </summary>
+    private void OnStreamGraphsRowSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateStreamIqSquareSize();
+    }
+
+    /// <summary>
+    /// 左グラフ列の高さに合わせて I-Q 枠を揃え、プロットを正方形にします（性能測定 L 相当）。
+    /// 「I-Q」タイトルは枠の上に置き、枠本体だけ高さを合わせます。
+    /// </summary>
+    private void UpdateStreamIqSquareSize()
+    {
+        if (StreamGraphsRow is null || StreamIqPanelHost is null || StreamIqHost is null
+            || StreamIqTitle is null || StreamIqGroupLegend is null || RxIqChart is null
+            || StreamGraphsRow.ActualHeight <= 1)
+        {
+            return;
+        }
+
+        var panelHeight = StreamLeftGraphColumn?.ActualHeight > 1
+            ? StreamLeftGraphColumn.ActualHeight
+            : StreamGraphsRow.ActualHeight;
+        if (Math.Abs(StreamIqPanelHost.Height - panelHeight) > 0.5)
+        {
+            StreamIqPanelHost.Height = panelHeight;
+        }
+
+        var titleH = StreamIqTitle.ActualHeight;
+        if (titleH <= 0)
+        {
+            titleH = 16;
+        }
+
+        titleH += StreamIqTitle.Margin.Top + StreamIqTitle.Margin.Bottom;
+        var padH = StreamIqHost.Padding.Left + StreamIqHost.Padding.Right;
+        var padV = StreamIqHost.Padding.Top + StreamIqHost.Padding.Bottom;
+        StreamIqGroupLegend.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var legendWidth = Math.Ceiling(StreamIqGroupLegend.DesiredSize.Width)
+            + StreamIqGroupLegend.Margin.Left + StreamIqGroupLegend.Margin.Right;
+
+        // 枠高さ = パネル高さ − タイトル行。チャートは枠内の正方形。
+        var borderHeight = Math.Floor(panelHeight - titleH);
+        var chartSide = Math.Floor(borderHeight - padV);
+        chartSide = Math.Clamp(chartSide, 200, 360);
+        if (Math.Abs(RxIqChart.Width - chartSide) > 0.5 || Math.Abs(RxIqChart.Height - chartSide) > 0.5)
+        {
+            RxIqChart.Width = chartSide;
+            RxIqChart.Height = chartSide;
+        }
+
+        var hostWidth = chartSide + padH;
+        if (Math.Abs(StreamIqHost.Width - hostWidth) > 0.5
+            || Math.Abs(StreamIqHost.Height - (chartSide + padV)) > 0.5)
+        {
+            StreamIqHost.Width = hostWidth;
+            StreamIqHost.Height = chartSide + padV;
+        }
+
+        var panelWidth = hostWidth + legendWidth;
+        if (Math.Abs(StreamIqPanelHost.Width - panelWidth) > 0.5)
+        {
+            StreamIqPanelHost.Width = panelWidth;
+        }
+
+        StreamGraphsRow.ColumnDefinitions[1].Width = new GridLength(panelWidth);
+    }
+
+    /// <summary>
+    /// スタート／ストップの排他と、送信中の設定／入力ロックです。
+    /// </summary>
+    private void UpdateStartStopExclusive()
+    {
+        if (TxStartButton is null || TxStopButton is null || RxStartButton is null || RxStopButton is null)
+        {
+            return;
+        }
+
+        var txBusy = _tx.IsBusy;
+        var rxBusy = _rx.IsBusy;
+        var coverOver = _coverByteCount > StreamCoverImage.MaxBytes;
+
+        // 送信中はストップ以外（速度・入出力・曲情報）を無効化
+        if (TxSpeedHost is not null)
+        {
+            TxSpeedHost.IsEnabled = !txBusy;
+        }
+
+        if (TxIoHost is not null)
+        {
+            TxIoHost.IsEnabled = !txBusy;
+        }
+
+        if (TxMetaHost is not null)
+        {
+            TxMetaHost.IsEnabled = !txBusy;
+        }
+
+        TxStartButton.IsEnabled = !txBusy && !rxBusy && !coverOver;
+        TxStopButton.IsEnabled = txBusy;
+        RxStartButton.IsEnabled = !rxBusy && !txBusy;
+        RxStopButton.IsEnabled = rxBusy;
+    }
+
+    private static void FillDevices(ComboBox box, bool isInput)
+    {
+        box.Items.Clear();
+        if (isInput)
+        {
+            for (var i = 0; i < WaveIn.DeviceCount; i++)
+            {
+                var caps = WaveIn.GetCapabilities(i);
+                box.Items.Add($"{i}: {caps.ProductName}");
+            }
+        }
+        else
+        {
+            for (var i = 0; i < WaveOut.DeviceCount; i++)
+            {
+                var caps = WaveOut.GetCapabilities(i);
+                box.Items.Add($"{i}: {caps.ProductName}");
+            }
+        }
+
+        if (box.Items.Count > 0)
+        {
+            box.SelectedIndex = 0;
+        }
+    }
+
+    private void OnBrowseTxWav(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Filter = "音声ファイル (*.wav;*.flac;*.mp3)|*.wav;*.flac;*.mp3|WAV (*.wav)|*.wav|FLAC (*.flac)|*.flac|MP3 (*.mp3)|*.mp3|All (*.*)|*.*",
+            FileName = string.IsNullOrWhiteSpace(_txWavPath)
+                ? string.Empty
+                : System.IO.Path.GetFileName(_txWavPath),
+        };
+        if (dlg.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _txWavPath = dlg.FileName;
+        SetTxWavPathBoxes(_txWavPath);
+        TxWavRadio.IsChecked = true;
+        UpdateTxInputModeUi();
+    }
+
+    /// <summary>
+    /// 送信入力モード（WAV / 音声）の切替に合わせて下段パネルを切り替えます。
+    /// </summary>
+    private void OnTxInputModeChanged(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || TxWavInputPanel is null || TxAudioInputPanel is null)
+        {
+            return;
+        }
+
+        UpdateTxInputModeUi();
+    }
+
+    /// <summary>
+    /// 送信入力の WAV / 音声パネル表示を同期します。
+    /// </summary>
+    private void UpdateTxInputModeUi()
+    {
+        if (TxWavRadio is null || TxWavInputPanel is null || TxAudioInputPanel is null)
+        {
+            return;
+        }
+
+        var useWav = TxWavRadio.IsChecked == true;
+        TxWavInputPanel.Visibility = useWav ? Visibility.Visible : Visibility.Collapsed;
+        TxAudioInputPanel.Visibility = useWav ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>
+    /// 入力ファイルパス表示を更新します。
+    /// </summary>
+    private void SetTxWavPathBoxes(string path)
+    {
+        if (TxWavPathBox is not null)
+        {
+            TxWavPathBox.Text = path;
+        }
+    }
+
+    private void OnBrowseCover(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Filter = "Image|*.png;*.jpg;*.jpeg;*.bmp|All (*.*)|*.*",
+        };
+        if (dlg.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _coverPath = dlg.FileName;
+        TxCoverPathBox.Text = _coverPath;
+        RefreshCoverPreview();
+    }
+
+    private void OnCoverFormatChanged(object sender, RoutedEventArgs e)
+    {
+        // XAML 読込中に IsChecked 初期化で Checked が飛ぶため、名前付き要素未生成なら無視する。
+        if (!IsLoaded || CoverBytesText is null)
+        {
+            if (sender is RadioButton rb && rb.IsChecked == true)
+            {
+                _coverFormat = ResolveCoverFormat(rb);
+            }
+
+            return;
+        }
+
+        if (sender is not RadioButton radio || radio.IsChecked != true)
+        {
+            return;
+        }
+
+        _coverFormat = ResolveCoverFormat(radio);
+        RefreshCoverPreview();
+    }
+
+    private static StreamCoverFormat ResolveCoverFormat(RadioButton rb) =>
+        rb.Tag switch
+        {
+            "Color48" => StreamCoverFormat.Color48,
+            "Gray48" => StreamCoverFormat.Gray48,
+            "Gray64" => StreamCoverFormat.Gray64,
+            _ => StreamCoverFormat.Color32,
+        };
+
+    private void RefreshCoverPreview()
+    {
+        if (CoverBytesText is null || TxCoverPreview is null || CoverSizeOverText is null || TxStartButton is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_coverPath) || !File.Exists(_coverPath))
+        {
+            _coverByteCount = 0;
+            ApplyCoverByteUi(0, hasError: false);
+            TxCoverPreview.Source = null;
+            return;
+        }
+
+        try
+        {
+            var bytes = StreamCoverImage.EncodeFile(_coverPath, _coverFormat, out _coverByteCount);
+            ApplyCoverByteUi(_coverByteCount, hasError: false);
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.UriSource = new Uri(_coverPath, UriKind.Absolute);
+            bmp.DecodePixelWidth = 72;
+            bmp.EndInit();
+            bmp.Freeze();
+            TxCoverPreview.Source = bmp;
+            _ = bytes;
+        }
+        catch (Exception ex)
+        {
+            _coverByteCount = 0;
+            CoverBytesText.Text = $"エラー: {ex.Message}";
+            CoverBytesText.ClearValue(TextBlock.ForegroundProperty);
+            CoverSizeOverText.Visibility = Visibility.Collapsed;
+            UpdateStartStopExclusive();
+        }
+    }
+
+    /// <summary>
+    /// 圧縮 PNG バイト数表示と、4096 超過時の警告／スタート無効化を反映します。
+    /// </summary>
+    private void ApplyCoverByteUi(int byteCount, bool hasError)
+    {
+        CoverBytesText.Text = $"バイト数: {byteCount}";
+        var over = !hasError && byteCount > StreamCoverImage.MaxBytes;
+        if (over)
+        {
+            CoverBytesText.Foreground = System.Windows.Media.Brushes.Red;
+            CoverSizeOverText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            CoverBytesText.ClearValue(TextBlock.ForegroundProperty);
+            // Hidden: レイアウト上の高さを確保したまま非表示にする
+            CoverSizeOverText.Visibility = Visibility.Hidden;
+        }
+
+        UpdateStartStopExclusive();
+    }
+
+    private void OnTxStart(object sender, RoutedEventArgs e)
+    {
+        if (_coverByteCount > StreamCoverImage.MaxBytes)
+        {
+            TxStatusText.Text = "ジャケ写がサイズオーバーです。";
+            return;
+        }
+
+        try
+        {
+            var settings = new StreamTxSettings
+            {
+                ModeId = ReadModeId(),
+                UseWavInput = TxWavRadio.IsChecked == true,
+                WavPath = _txWavPath,
+                InputDevice = Math.Max(0, TxInputDeviceBox.SelectedIndex),
+                OutputDevice = Math.Max(0, TxOutputDeviceBox.SelectedIndex),
+                InputVolume = TxInputVolume.Value,
+                OutputVolume = TxOutputVolume.Value,
+                Title = TxTitleBox.Text ?? string.Empty,
+                Artist = TxArtistBox.Text ?? string.Empty,
+                CoverPath = _coverPath,
+                CoverFormat = _coverFormat,
+            };
+            _tx.Start(settings);
+            TxStatusText.Text = "送信中…";
+            UpdateStartStopExclusive();
+        }
+        catch (Exception ex)
+        {
+            TxStatusText.Text = ex.Message;
+        }
+    }
+
+    private void OnTxStop(object sender, RoutedEventArgs e)
+    {
+        _tx.Stop();
+        TxStatusText.Text = "停止要求";
+        UpdateStartStopExclusive();
+    }
+
+    private void OnRxStart(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var settings = new StreamRxSettings
+            {
+                InputDevice = Math.Max(0, RxInputDeviceBox.SelectedIndex),
+                InputVolume = RxInputVolume.Value,
+            };
+            _rx.Start(settings);
+            RxStatusText.Text = "受信中…";
+            UpdateStartStopExclusive();
+        }
+        catch (Exception ex)
+        {
+            RxStatusText.Text = ex.Message;
+        }
+    }
+
+    private void OnRxStop(object sender, RoutedEventArgs e)
+    {
+        _rx.Stop();
+        RxStatusText.Text = "停止要求";
+        UpdateStartStopExclusive();
+    }
+
+    private StreamModeId ReadModeId()
+    {
+        foreach (var child in FindVisualChildren<RadioButton>(this))
+        {
+            if (child.GroupName == "StreamRate" && child.IsChecked == true && child.Tag is string tag
+                && byte.TryParse(tag, out var id))
+            {
+                return (StreamModeId)id;
+            }
+        }
+
+        return StreamModeId.Rate18k;
+    }
+
+    private void OnPollTick(object? sender, EventArgs e)
+    {
+        if (_tx.TryConsumeCompletion(out var txOk, out var txMsg))
+        {
+            TxStatusText.Text = txOk ? txMsg : $"失敗: {txMsg}";
+            UpdateStartStopExclusive();
+        }
+
+        if (_rx.TryConsumeCompletion(out var rxOk, out var rxMsg))
+        {
+            RxStatusText.Text = rxOk ? rxMsg : $"失敗: {rxMsg}";
+            UpdateStartStopExclusive();
+        }
+
+        UpdateStartStopExclusive();
+
+        if (_rx.IsBusy)
+        {
+            RxTitleBox.Text = _rx.Title;
+            RxArtistBox.Text = _rx.Artist;
+            RxRateBox.Text = _rx.DisplayKbps > 0 ? $"{_rx.DisplayKbps} kbps" : "-";
+            TryUpdateCoverPreview(_rx.CoverBytes);
+        }
+
+        // 送信中は送信側ボード、それ以外は受信側（エラー率は受信のみ）
+        if (_tx.IsBusy)
+        {
+            ApplyGraphStatus(_tx.SharedStatus.Read(), includeErrorRate: false);
+        }
+        else
+        {
+            ApplyGraphStatus(_rx.SharedStatus.Read(), includeErrorRate: true);
+        }
+    }
+
+    /// <summary>
+    /// 共有ボードの FFT／I-Q（および任意でエラー率）をグラフへ反映します。
+    /// </summary>
+    private void ApplyGraphStatus(CoreExecutionStatus snap, bool includeErrorRate)
+    {
+        if (includeErrorRate && !snap.IsAnalyzing && snap.ErrorRateSamples.Count > 0)
+        {
+            foreach (var sample in snap.ErrorRateSamples)
+            {
+                _errorChart.AddSample(sample.LatestPercent, sample.DecoderKind);
+            }
+
+            _errorChart.Tick();
+        }
+
+        if (snap.FftGraph.FftSize > 0)
+        {
+            _fftChart.ReplacePoints(snap.FftGraph.LeftPoints, snap.FftGraph.RightPoints, snap.FftGraph.IsStereo);
+        }
+
+        if (snap.IqGraph.Points.Count > 0)
+        {
+            _iqChart.ReplacePoints(snap.IqGraph.Points, snap.IqGraph.ModulationScheme);
+        }
+    }
+
+    private void TryUpdateCoverPreview(byte[] cover)
+    {
+        if (RxCoverSizeText is null || RxCoverBytesText is null || RxCoverImage is null)
+        {
+            return;
+        }
+
+        if (cover.Length == 0)
+        {
+            if (_lastRxCoverLength != 0)
+            {
+                _lastRxCoverLength = 0;
+                RxCoverSizeText.Text = "サイズ: -";
+                RxCoverBytesText.Text = "バイト数: 0";
+                RxCoverImage.Source = null;
+            }
+
+            return;
+        }
+
+        if (cover.Length == _lastRxCoverLength)
+        {
+            return;
+        }
+
+        _lastRxCoverLength = cover.Length;
+        RxCoverBytesText.Text = $"バイト数: {cover.Length}";
+
+        try
+        {
+            using var ms = new MemoryStream(cover);
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.StreamSource = ms;
+            bmp.EndInit();
+            bmp.Freeze();
+            RxCoverImage.Source = bmp;
+            RxCoverSizeText.Text = $"サイズ: {bmp.PixelWidth}x{bmp.PixelHeight}";
+        }
+        catch
+        {
+            RxCoverSizeText.Text = "サイズ: -";
+            RxCoverImage.Source = null;
+        }
+    }
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        if (root is null)
+        {
+            yield break;
+        }
+
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T typed)
+            {
+                yield return typed;
+            }
+
+            foreach (var nested in FindVisualChildren<T>(child))
+            {
+                yield return nested;
+            }
+        }
+    }
+}

@@ -9,6 +9,7 @@ using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.WPF;
 using Microsoft.Win32;
 using Onta.Core;
+using Onta.Performance;
 using Onta.View.Core;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
 using NAudioWaveOut = NAudio.Wave.WaveOut;

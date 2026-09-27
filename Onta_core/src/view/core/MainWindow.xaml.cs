@@ -401,6 +401,8 @@ public partial class MainWindow : Window
             {
                 ReceivePanel.ApplySendFft(sendStatus.FftGraph);
             }
+
+            ReceivePanel.ApplySendIq(sendStatus.IqGraph);
         }
 
         if (_pollingReceive)

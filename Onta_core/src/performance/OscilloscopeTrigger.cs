@@ -1,4 +1,4 @@
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// オシロスコープの表示窓です（AUTO 起立トリガー結果）。

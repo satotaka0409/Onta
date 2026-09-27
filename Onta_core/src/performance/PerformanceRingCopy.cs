@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// リングバッファ末尾の高速コピー（剰余をサンプルごと計算しない）です。

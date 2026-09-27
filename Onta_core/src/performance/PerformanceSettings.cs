@@ -1,6 +1,6 @@
 using Onta.Core;
 
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// 性能測定画面の定数です。OFDM 本体の FFT（256）とは分離します。

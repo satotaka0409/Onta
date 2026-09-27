@@ -47,4 +47,33 @@
     <Page Remove="test_host\**" />
     <Page Remove="bench\**" />
   </ItemGroup>
+
+  <!-- native libopus（あれば出力へコピー。無くてもビルド可） -->
+  <ItemGroup>
+    <None Include="native\opus\win-x64\opus.dll"
+          Condition="Exists('native\opus\win-x64\opus.dll')">
+      <Link>opus.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <DestinationSubDirectory Condition="'$(RuntimeIdentifier)' == 'win-arm64'"></DestinationSubDirectory>
+    </None>
+    <None Include="native\opus\win-arm64\opus.dll"
+          Condition="Exists('native\opus\win-arm64\opus.dll') And '$(RuntimeIdentifier)' == 'win-arm64'">
+      <Link>opus.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- 通常ビルド（RID なし）は x64 opus を優先 -->
+  <Target Name="CopyOpusDll" AfterTargets="Build">
+    <PropertyGroup>
+      <_OpusSrc Condition="'$(RuntimeIdentifier)' == 'win-arm64'">$(MSBuildProjectDirectory)\native\opus\win-arm64\opus.dll</_OpusSrc>
+      <_OpusSrc Condition="'$(_OpusSrc)' == ''">$(MSBuildProjectDirectory)\native\opus\win-x64\opus.dll</_OpusSrc>
+    </PropertyGroup>
+    <Copy SourceFiles="$(_OpusSrc)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(_OpusSrc)')" />
+  </Target>
 </Project>

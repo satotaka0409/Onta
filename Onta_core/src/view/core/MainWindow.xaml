@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Onta.View.Core"
         xmlns:hist="clr-namespace:Onta.View.History"
+        xmlns:stream="clr-namespace:Onta.View.Stream"
         xmlns:perf="clr-namespace:Onta.View.Performance"
         Title="Onta"
         Width="1280"
@@ -63,6 +64,15 @@
                     Margin="0,8,0,0"
                     Padding="8">
                 <hist:HistoryPanel x:Name="HistoryPanel"/>
+            </Border>
+        </TabItem>
+
+        <TabItem x:Name="StreamRootTab"
+                 Header="ストリーム">
+            <Border Style="{StaticResource PanelBorder}"
+                    Margin="0,8,0,0"
+                    Padding="8">
+                <stream:StreamPanel x:Name="StreamPanel"/>
             </Border>
         </TabItem>
 

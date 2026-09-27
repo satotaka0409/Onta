@@ -1,7 +1,7 @@
 using System.Numerics;
 using Onta.Core;
 
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// 性能測定 FFT の窓関数です。

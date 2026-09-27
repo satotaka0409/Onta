@@ -1,4 +1,3 @@
-﻿using System.Collections.ObjectModel;
 using LiveChartsCore;
 using LiveChartsCore.Defaults;
 using LiveChartsCore.Drawing;
@@ -17,8 +16,6 @@ public sealed class FftChartModel
 {
     /// <summary>FFT 横軸の表示上限（Hz）。</summary>
     private const double MaxDisplayHz = 20000;
-    private readonly ObservableCollection<ObservablePoint> _leftPoints = [];
-    private readonly ObservableCollection<ObservablePoint> _rightPoints = [];
     /// <summary>L チャンネル（緑系）。</summary>
     public static readonly SKColor ChannelLeftColor = new(166, 221, 176);
     /// <summary>R チャンネル（オレンジ系。ワウ／目盛りと同じ）。</summary>
@@ -28,6 +25,9 @@ public sealed class FftChartModel
     private readonly SKColor _primaryColor;
     private readonly LineSeries<ObservablePoint> _leftSeries;
     private readonly LineSeries<ObservablePoint> _rightSeries;
+
+    /// <summary>現在の表示スタイル（null は未適用。次回必ず適用する）。</summary>
+    private bool? _stereoStyle;
 
     /// <summary>
     /// L 色で FFT チャートを初期化します。
@@ -46,22 +46,24 @@ public sealed class FftChartModel
         _primaryColor = primaryStroke;
         _leftSeries = new LineSeries<ObservablePoint>
         {
-            Values = _leftPoints,
+            Values = Array.Empty<ObservablePoint>(),
             Name = "L",
             Fill = null,
             Stroke = new SolidColorPaint(_primaryColor, 1.5f),
             GeometrySize = 0,
-            LineSmoothness = 0
+            LineSmoothness = 0,
+            AnimationsSpeed = TimeSpan.Zero
         };
 
         _rightSeries = new LineSeries<ObservablePoint>
         {
-            Values = _rightPoints,
+            Values = Array.Empty<ObservablePoint>(),
             Name = "R",
             Fill = null,
             Stroke = new SolidColorPaint(ChannelRightColor, 1.5f),
             GeometrySize = 0,
             LineSmoothness = 0,
+            AnimationsSpeed = TimeSpan.Zero,
             IsVisible = false
         };
 
@@ -168,42 +170,10 @@ public sealed class FftChartModel
         IReadOnlyList<CoreFftSample> rightSamples,
         bool isStereo)
     {
-        _leftPoints.Clear();
-        _rightPoints.Clear();
-
-        for (var i = 0; i < leftSamples.Count; i++)
-        {
-            var s = leftSamples[i];
-            if (s.FrequencyHz > MaxDisplayHz)
-            {
-                continue;
-            }
-
-            _leftPoints.Add(new ObservablePoint(s.FrequencyHz, s.MagnitudeDb));
-        }
-
-        if (isStereo)
-        {
-            for (var i = 0; i < rightSamples.Count; i++)
-            {
-                var s = rightSamples[i];
-                if (s.FrequencyHz > MaxDisplayHz)
-                {
-                    continue;
-                }
-
-                _rightPoints.Add(new ObservablePoint(s.FrequencyHz, s.MagnitudeDb));
-            }
-
-            _leftSeries.Stroke = new SolidColorPaint(ChannelLeftColor, 1.5f);
-            _rightSeries.IsVisible = true;
-        }
-        else
-        {
-            // 単系列（性能測定 L/R 分離やヘッダー）は primary 色。
-            _leftSeries.Stroke = new SolidColorPaint(_primaryColor, 1.5f);
-            _rightSeries.IsVisible = false;
-        }
+        // 系列インスタンスは固定（画面は起動時に Series を 1 回だけ束縛する）。Values の差し替えで再描画させる。
+        _leftSeries.Values = ToPoints(leftSamples);
+        _rightSeries.Values = isStereo ? ToPoints(rightSamples) : Array.Empty<ObservablePoint>();
+        ApplyStereoStyle(isStereo);
 
         XAxes[0].MinLimit = XMinLimit;
         XAxes[0].MaxLimit = XMaxLimit;
@@ -214,14 +184,61 @@ public sealed class FftChartModel
     }
 
     /// <summary>
+    /// ステレオ／単系列の表示色と R 系列の表示有無を切り替えます（変化時のみ）。
+    /// </summary>
+    /// <param name="isStereo">ステレオ表示なら true。</param>
+    private void ApplyStereoStyle(bool isStereo)
+    {
+        if (_stereoStyle == isStereo)
+        {
+            return;
+        }
+
+        _stereoStyle = isStereo;
+        _leftSeries.Stroke = new SolidColorPaint(isStereo ? ChannelLeftColor : _primaryColor, 1.5f);
+        _rightSeries.IsVisible = isStereo;
+    }
+
+    /// <summary>
+    /// FFT サンプルを表示点配列へ変換します（表示上限を超える周波数は除外）。
+    /// </summary>
+    /// <param name="samples">FFT サンプル。</param>
+    /// <returns>表示点配列。</returns>
+    private static ObservablePoint[] ToPoints(IReadOnlyList<CoreFftSample> samples)
+    {
+        var list = new List<ObservablePoint>(samples.Count);
+        for (var i = 0; i < samples.Count; i++)
+        {
+            var s = samples[i];
+            if (s.FrequencyHz > MaxDisplayHz)
+            {
+                continue;
+            }
+
+            list.Add(new ObservablePoint(s.FrequencyHz, s.MagnitudeDb));
+        }
+
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// L=緑 / R=オレンジのステレオ表示色を有効にします（ストリーム FFT 凡例用）。
+    /// </summary>
+    public void ShowStereoChannels()
+    {
+        _stereoStyle = null;
+        ApplyStereoStyle(true);
+    }
+
+    /// <summary>
     /// 点群を消し、単系列表示と軸範囲を初期状態へ戻します。
     /// </summary>
     public void Clear()
     {
-        _leftPoints.Clear();
-        _rightPoints.Clear();
-        _leftSeries.Stroke = new SolidColorPaint(_primaryColor, 1.5f);
-        _rightSeries.IsVisible = false;
+        _leftSeries.Values = Array.Empty<ObservablePoint>();
+        _rightSeries.Values = Array.Empty<ObservablePoint>();
+        _stereoStyle = null;
+        ApplyStereoStyle(false);
         XAxes[0].MinLimit = XMinLimit;
         XAxes[0].MaxLimit = XMaxLimit;
         YAxes[0].MinLimit = -100;

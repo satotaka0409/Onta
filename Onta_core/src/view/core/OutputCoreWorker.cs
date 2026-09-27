@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using Onta.Core;
+using Onta.Performance;
 
 namespace Onta.View.Core;
 
@@ -290,12 +291,16 @@ internal sealed class OutputCoreWorker
             var inputInfo = new FileInfo(settings.InputFilePath);
             var spectrumPublisher = new TxPcmSpectrumPublisher(
                 _vizBoard,
-                profile.SampleRate,
-                profile.ChannelMode == ChannelMode.Stereo);
+                profile,
+                blockCount);
             _ = codec.EncodeFileToSamples(
                 bytes,
                 inputInfo,
-                OnCoreFrameTransmitted,
+                frameKind =>
+                {
+                    spectrumPublisher.MarkFrameEnd(frameKind);
+                    OnCoreFrameTransmitted(frameKind);
+                },
                 onPcmChunk: (leftChunk, rightChunk) =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -635,7 +640,7 @@ internal sealed class OutputCoreWorker
     }
 
     /// <summary>
-    /// 送信 PCM をリングに保持し、再生ヘッド位置の FFT を間引き更新します。
+    /// 送信 PCM をリングに保持し、再生ヘッド位置の FFT / I-Q を間引き更新します。
     /// </summary>
     private sealed class TxPcmSpectrumPublisher
     {
@@ -646,36 +651,136 @@ internal sealed class OutputCoreWorker
         private const int MinPublishIntervalMs = 33;
         /// <summary>再生バッファ（3秒）＋余白を覆うリング長（秒）。</summary>
         private const double RingSeconds = 4.0;
+        /// <summary>ヘッダー（GROUP A/B）のデータキャリア数（パイロット除く 6 本 × 2 グループ）。</summary>
+        private const int HeaderDataCarrierCount = 12;
+        /// <summary>I-Q 点の最大数（L/R 各 64 SC のデータキャリア合計以上）。</summary>
+        private const int MaxIqPoints = 128;
+        /// <summary>I-Q 同期探索に使う最大サンプル数（CP=32 の 3 シンボル分）。</summary>
+        private const int IqCaptureMaxSamples = (OfdmConfig.FixedFftSize + 32) * 3;
 
         private readonly CoreExecutionStatusBoard _board;
         private readonly int _sampleRate;
         private readonly bool _stereo;
+        private readonly int _headerCp;
+        private readonly int _dataCp;
         private readonly float[] _leftRing;
         private readonly float[] _rightRing;
         private readonly int _capacity;
         private readonly Complex[] _leftWindow = new Complex[FftSize];
         private readonly Complex[] _rightWindow = new Complex[FftSize];
         private readonly Complex[] _fftWork = new Complex[FftSize];
+        private readonly double[] _iqPcmLeft = new double[IqCaptureMaxSamples];
+        private readonly double[] _iqPcmRight = new double[IqCaptureMaxSamples];
+        private readonly Complex[] _iqTime = new Complex[OfdmConfig.FixedFftSize];
+        private readonly Complex[] _iqFft = new Complex[OfdmConfig.FixedFftSize];
+        private readonly Complex[] _iqPoints = new Complex[MaxIqPoints];
+        private readonly byte[] _iqGroups = new byte[MaxIqPoints];
         private readonly object _sync = new();
+
+        /// <summary>送信順のフレーム区間変調情報（エンコーダの送出順と同じ）。</summary>
+        private readonly List<TxIqSegmentInfo> _frames;
+
+        /// <summary>送出済み区間（開始／終了サンプルと変調情報）。</summary>
+        private readonly List<(long Start, long End, TxIqSegmentInfo Info)> _closedSegments = [];
+
+        private int _frameCursor;
+        private long _openSegmentStart;
         private long _writeTotal;
         private long _lastPublishMs = -1;
         private long _lastPublishedPlayhead = -1;
+        private TxIqSegmentInfo? _lastIqInfo;
 
         /// <summary>
-        /// 再生ヘッド同期 FFT パブリッシャを初期化します。
+        /// 再生ヘッド同期 FFT / I-Q パブリッシャを初期化します。
         /// </summary>
-        /// <param name="board">FFT を書き込む共有状態ボード。</param>
-        /// <param name="sampleRate">PCM サンプルレート。</param>
-        /// <param name="stereo">ステレオ出力なら true。</param>
-        public TxPcmSpectrumPublisher(CoreExecutionStatusBoard board, int sampleRate, bool stereo)
+        /// <param name="board">FFT / I-Q を書き込む共有状態ボード。</param>
+        /// <param name="profile">送信プロファイル（SC・変調・CP・インターリーブ）。</param>
+        /// <param name="blockCount">送信ブロック数。</param>
+        public TxPcmSpectrumPublisher(CoreExecutionStatusBoard board, FileWavCodecProfile profile, int blockCount)
         {
             _board = board;
-            _sampleRate = Math.Max(1, sampleRate);
-            _stereo = stereo;
+            _sampleRate = Math.Max(1, profile.SampleRate);
+            _stereo = profile.ChannelMode == ChannelMode.Stereo;
+            _headerCp = profile.HeaderCyclicPrefixLength;
+            _dataCp = profile.DataCyclicPrefixLength;
             _capacity = Math.Max(FftSize * 2, (int)(_sampleRate * RingSeconds));
             _leftRing = new float[_capacity];
             _rightRing = new float[_capacity];
-            _board.SetFftStereoMode(stereo);
+            _frames = BuildFrameSequence(profile, Math.Max(1, blockCount));
+            _board.SetFftStereoMode(_stereo);
+        }
+
+        /// <summary>
+        /// エンコーダと同じ順序で FH / BH / BD の変調情報列を作ります。
+        /// </summary>
+        /// <param name="profile">送信プロファイル。</param>
+        /// <param name="blockCount">ブロック数。</param>
+        /// <returns>送出順のフレーム変調情報。</returns>
+        private static List<TxIqSegmentInfo> BuildFrameSequence(FileWavCodecProfile profile, int blockCount)
+        {
+            var frames = new List<TxIqSegmentInfo>((blockCount * 2 * Math.Max(1, profile.BlockInterleaveFactor)) + 4);
+            var openingHeader = TxIqSegmentInfo.Header(profile.ActiveSubcarriers);
+            frames.Add(openingHeader);
+            for (var pass = 0; pass < profile.BlockInterleaveFactor; pass++)
+            {
+                var (passSc, passMod) = FileWavCodec.ResolveInterleavePassModulation(
+                    pass,
+                    profile.ActiveSubcarriers,
+                    profile.ModulationScheme);
+                var passHeader = TxIqSegmentInfo.Header(passSc);
+                var passData = TxIqSegmentInfo.Data(passSc, passMod);
+                for (var local = 0; local < blockCount; local++)
+                {
+                    if (local > 0 && (local % FileWavCodec.FileHeaderRepeatIntervalBlocks) == 0)
+                    {
+                        frames.Add(passHeader);
+                    }
+
+                    frames.Add(passHeader);
+                    frames.Add(passData);
+                }
+            }
+
+            frames.Add(openingHeader);
+            return frames;
+        }
+
+        /// <summary>
+        /// エンコーダが 1 フレームを送出し終えた時点で呼び、直前区間の変調情報を確定します。
+        /// </summary>
+        /// <param name="frameKind">送出し終えたフレーム種別。</param>
+        public void MarkFrameEnd(TransmissionFrameKind frameKind)
+        {
+            lock (_sync)
+            {
+                if (_frameCursor >= _frames.Count)
+                {
+                    return;
+                }
+
+                var info = _frames[_frameCursor];
+                // 予測順とずれた場合は I-Q を誤表示しないよう以降を打ち切る。
+                if (info.IsHeader != (frameKind != TransmissionFrameKind.Bd))
+                {
+                    _frameCursor = _frames.Count;
+                    return;
+                }
+
+                _closedSegments.Add((_openSegmentStart, _writeTotal, info));
+                _openSegmentStart = _writeTotal;
+                _frameCursor++;
+                var oldest = _writeTotal - _capacity;
+                var drop = 0;
+                while (drop < _closedSegments.Count && _closedSegments[drop].End < oldest)
+                {
+                    drop++;
+                }
+
+                if (drop > 0)
+                {
+                    _closedSegments.RemoveRange(0, drop);
+                }
+            }
         }
 
         /// <summary>
@@ -725,6 +830,8 @@ internal sealed class OutputCoreWorker
                 return;
             }
 
+            TxIqSegmentInfo? iqInfo;
+            int iqSamples;
             lock (_sync)
             {
                 var end = Math.Min(playedSamples, _writeTotal);
@@ -755,6 +862,13 @@ internal sealed class OutputCoreWorker
                         _rightWindow[i] = new Complex(_rightRing[ringIndex], 0.0);
                     }
                 }
+
+                iqInfo = CaptureIqWindowUnlocked(end, out iqSamples);
+            }
+
+            if (iqInfo is { } info)
+            {
+                PublishIq(info, iqSamples);
             }
 
             // ヘッダーは L/R 同一波形。窓内がほぼ一致なら L のみ（緑）で表示する。
@@ -771,6 +885,138 @@ internal sealed class OutputCoreWorker
 
             _lastPublishMs = now;
             _lastPublishedPlayhead = playedSamples;
+        }
+
+        /// <summary>
+        /// 再生位置直前の I-Q 抽出用 PCM を切り出し、その区間の変調情報を返します。
+        /// </summary>
+        /// <param name="end">切り出し終端サンプル位置（排他的）。</param>
+        /// <param name="samples">切り出したサンプル数。</param>
+        /// <returns>単一区間に収まる場合はその変調情報、収まらない・不明なら null。</returns>
+        private TxIqSegmentInfo? CaptureIqWindowUnlocked(long end, out int samples)
+        {
+            samples = 0;
+            if (!TryResolveSegmentUnlocked(end - 1, out var segStart, out var info))
+            {
+                return null;
+            }
+
+            var cp = info.IsHeader ? _headerCp : _dataCp;
+            var count = Math.Min(IqCaptureMaxSamples, (OfdmConfig.FixedFftSize + cp) * 3);
+            var start = end - count;
+            // 区間境界をまたぐ窓は SC/変調が混在するので捨てる。
+            if (start < segStart || start < 0 || _writeTotal - start > _capacity)
+            {
+                return null;
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                var ringIndex = (int)((start + i) % _capacity);
+                _iqPcmLeft[i] = _leftRing[ringIndex];
+                _iqPcmRight[i] = _rightRing[ringIndex];
+            }
+
+            samples = count;
+            return info;
+        }
+
+        /// <summary>
+        /// サンプル位置が属する送出区間（確定済み、または送出中）を探します。
+        /// </summary>
+        /// <param name="position">サンプル位置。</param>
+        /// <param name="segmentStart">区間開始サンプル位置。</param>
+        /// <param name="info">区間の変調情報。</param>
+        /// <returns>見つかった場合 true。</returns>
+        private bool TryResolveSegmentUnlocked(long position, out long segmentStart, out TxIqSegmentInfo info)
+        {
+            for (var i = _closedSegments.Count - 1; i >= 0; i--)
+            {
+                var seg = _closedSegments[i];
+                if (position >= seg.Start && position < seg.End)
+                {
+                    segmentStart = seg.Start;
+                    info = seg.Info;
+                    return true;
+                }
+            }
+
+            if (position >= _openSegmentStart && _frameCursor < _frames.Count)
+            {
+                segmentStart = _openSegmentStart;
+                info = _frames[_frameCursor];
+                return true;
+            }
+
+            segmentStart = 0;
+            info = default;
+            return false;
+        }
+
+        /// <summary>
+        /// 切り出した PCM から等化後 I-Q を抽出して共有ボードへ載せます。
+        /// </summary>
+        /// <param name="info">区間の変調情報。</param>
+        /// <param name="samples">切り出しサンプル数。</param>
+        private void PublishIq(TxIqSegmentInfo info, int samples)
+        {
+            var cp = info.IsHeader ? _headerCp : _dataCp;
+            var leftLimit = info.IsHeader ? HeaderDataCarrierCount : MaxIqPoints;
+            var leftCount = PerformanceIqExtractor.ExtractEqualized(
+                _iqPcmLeft.AsSpan(0, samples),
+                info.ExtractSubcarriers,
+                useRightCarriers: false,
+                _iqTime,
+                _iqFft,
+                _iqPoints.AsSpan(0, leftLimit),
+                _iqGroups.AsSpan(0, leftLimit),
+                cp);
+            var count = leftCount;
+            // ヘッダーは L/R 同一波形のモノラル扱いなので R 搬送波は抽出しない。
+            if (_stereo && !info.IsHeader && leftCount < MaxIqPoints)
+            {
+                count += PerformanceIqExtractor.ExtractEqualized(
+                    _iqPcmRight.AsSpan(0, samples),
+                    info.ExtractSubcarriers,
+                    useRightCarriers: true,
+                    _iqTime,
+                    _iqFft,
+                    _iqPoints.AsSpan(leftCount),
+                    _iqGroups.AsSpan(leftCount),
+                    cp);
+            }
+
+            if (count <= 0 || IsUnmodulated(_iqPoints.AsSpan(0, count)))
+            {
+                return;
+            }
+
+            if (_lastIqInfo != info)
+            {
+                _board.BeginIqCapture(info.Subcarriers, info.Modulation);
+                _lastIqInfo = info;
+            }
+
+            _board.AppendIqFrame(_iqPoints.AsSpan(0, count), _iqGroups.AsSpan(0, count));
+        }
+
+        /// <summary>
+        /// 全点が無変調キャリア（パイロット比 1+0j）かを判定します（プリアンブル・ヘッダー先頭無変調区間の除外用）。
+        /// </summary>
+        /// <param name="points">等化後の点。</param>
+        /// <returns>全点が 1+0j 近傍なら true。</returns>
+        private static bool IsUnmodulated(ReadOnlySpan<Complex> points)
+        {
+            foreach (var p in points)
+            {
+                var dr = p.Real - 1.0;
+                if ((dr * dr) + (p.Imaginary * p.Imaginary) > 0.0025)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -800,6 +1046,41 @@ internal sealed class OutputCoreWorker
 
             return (sumSqDiff / sumSq) <= 1e-8;
         }
+    }
+
+    /// <summary>
+    /// 送信区間（FH/BH または BD）の I-Q 表示用変調情報です。
+    /// </summary>
+    /// <param name="Subcarriers">表示用サブキャリア数（ヘッダーは 16）。</param>
+    /// <param name="Modulation">変調方式（ヘッダーは QPSK）。</param>
+    /// <param name="IsHeader">ヘッダー区間なら true（CP=32・モノラル・GROUP A/B のみ）。</param>
+    /// <param name="ExtractSubcarriers">抽出に使う搬送波グリッドの SC 数（SC-24 族ヘッダーは 24 の先頭 2 グループを使う）。</param>
+    private readonly record struct TxIqSegmentInfo(
+        int Subcarriers,
+        ModulationScheme Modulation,
+        bool IsHeader,
+        int ExtractSubcarriers)
+    {
+        /// <summary>
+        /// データ部区間の変調情報を作ります。
+        /// </summary>
+        /// <param name="subcarriers">サブキャリア数。</param>
+        /// <param name="modulation">変調方式。</param>
+        /// <returns>データ部区間情報。</returns>
+        public static TxIqSegmentInfo Data(int subcarriers, ModulationScheme modulation) =>
+            new(subcarriers, modulation, IsHeader: false, ExtractSubcarriers: subcarriers);
+
+        /// <summary>
+        /// データ部 SC の周波数族に合わせたヘッダー区間の変調情報を作ります。
+        /// </summary>
+        /// <param name="dataSubcarriers">同じパスのデータ部 SC 数。</param>
+        /// <returns>ヘッダー区間情報。</returns>
+        public static TxIqSegmentInfo Header(int dataSubcarriers) =>
+            new(
+                16,
+                ModulationScheme.Qpsk,
+                IsHeader: true,
+                ExtractSubcarriers: OfdmConfig.ResolveCarrierGrid(dataSubcarriers) == OfdmCarrierGrid.Sc8Family ? 16 : 24);
     }
 }
 

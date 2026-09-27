@@ -1,4 +1,4 @@
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// 性能測定ワウの基準周波数です。送信側に存在する周波数の最近傍へロックします。

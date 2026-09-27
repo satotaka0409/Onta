@@ -2,7 +2,7 @@ using System.Numerics;
 using Onta.Core;
 using Onta.View.Core;
 
-namespace Onta.View.Performance;
+namespace Onta.Performance;
 
 /// <summary>
 /// 性能測定の送信（トーン／スイープ／ホワイトノイズ／OFDM）をバックグラウンドで実行します。

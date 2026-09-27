@@ -57,3 +57,14 @@ ClickOnce はアーキテクチャごとに 1 デプロイメントのため、�
 
 既定ではマニフェスト署名は **オフ**（`SignManifests=false`）です。  
 社内／本番配布で署名が必要な場合は、証明書を用意し pubxml の署名設定を有効にしてください。
+
+## Opus（ストリーム）
+
+ストリーム録音・再生には native `opus.dll` が必要です。
+
+```
+Onta_core/native/opus/win-x64/opus.dll
+Onta_core/native/opus/win-arm64/opus.dll
+```
+
+ビルド時に実行ディレクトリへコピーされます（無い場合でもビルドは成功、実行時にエラー）。

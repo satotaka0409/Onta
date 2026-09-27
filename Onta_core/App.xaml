@@ -43,6 +43,9 @@
                      Color="{StaticResource GrayFillNeg}"/>
     <SolidColorBrush x:Key="BrushFillPos"
                      Color="{StaticResource GrayFillPos}"/>
+    <!-- コンボボックスは白背景＋暗色文字（メイン画面基準） -->
+    <SolidColorBrush x:Key="BrushComboForeground"
+                     Color="#FF1E2024"/>
 
     <Style TargetType="Window">
       <Setter Property="Background"
@@ -178,6 +181,22 @@
               Value="4,3"/>
       <Setter Property="BorderThickness"
               Value="1"/>
+    </Style>
+
+    <Style TargetType="ComboBox">
+      <Setter Property="Foreground"
+              Value="{StaticResource BrushComboForeground}"/>
+      <Setter Property="Background"
+              Value="White"/>
+      <Setter Property="BorderBrush"
+              Value="{StaticResource BrushBorder}"/>
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Foreground"
+              Value="{StaticResource BrushComboForeground}"/>
+      <Setter Property="Background"
+              Value="White"/>
     </Style>
 
     <Style TargetType="Button">

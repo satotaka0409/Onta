@@ -353,7 +353,7 @@ public sealed partial class FileWavCodec
 
     private const string DataTraceEnvVar = "ONTA_TRACE_DATA_ERRORS";
 
-    private const int FileHeaderRepeatIntervalBlocks = 16;
+    internal const int FileHeaderRepeatIntervalBlocks = 16;
 
     private static readonly ConvolutionalCode.PunctureRate HeaderPunctureRate = ConvolutionalCode.PunctureRate.Rate1_2;
 

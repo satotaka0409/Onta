@@ -1,6 +1,6 @@
 using System.Text;
 using Onta.Core;
-using Onta.View.Performance;
+using Onta.Performance;
 
 namespace Onta.View.Core;
 

@@ -339,22 +339,13 @@
                   <ComboBox x:Name="OutputDeviceCombo"
                             Width="400"
                             HorizontalAlignment="Left"
-                            Foreground="#FF1E2024"
                             VerticalAlignment="Center">
                     <ComboBox.ItemTemplate>
                       <DataTemplate>
                         <TextBlock Text="{Binding Name}"
-                                   Foreground="#FF1E2024"/>
+                                   Foreground="{StaticResource BrushComboForeground}"/>
                       </DataTemplate>
                     </ComboBox.ItemTemplate>
-                    <ComboBox.ItemContainerStyle>
-                      <Style TargetType="ComboBoxItem">
-                        <Setter Property="Foreground"
-                                Value="#FF1E2024"/>
-                        <Setter Property="Background"
-                                Value="White"/>
-                      </Style>
-                    </ComboBox.ItemContainerStyle>
                   </ComboBox>
                   <StackPanel Orientation="Horizontal"
                               Margin="0,6,0,0"
@@ -499,22 +490,13 @@
                               VerticalAlignment="Center">
                     <ComboBox x:Name="InputDeviceCombo"
                               Width="220"
-                              Foreground="#FF1E2024"
                               VerticalAlignment="Center">
                       <ComboBox.ItemTemplate>
                         <DataTemplate>
                           <TextBlock Text="{Binding Name}"
-                                     Foreground="#FF1E2024"/>
+                                     Foreground="{StaticResource BrushComboForeground}"/>
                         </DataTemplate>
                       </ComboBox.ItemTemplate>
-                      <ComboBox.ItemContainerStyle>
-                        <Style TargetType="ComboBoxItem">
-                          <Setter Property="Foreground"
-                                  Value="#FF1E2024"/>
-                          <Setter Property="Background"
-                                  Value="White"/>
-                        </Style>
-                      </ComboBox.ItemContainerStyle>
                     </ComboBox>
                     <TextBlock Text="音量"
                                VerticalAlignment="Center"
@@ -659,36 +641,27 @@
                 <ComboBox x:Name="FftWindowCombo"
                           Width="120"
                           VerticalAlignment="Center"
-                          Foreground="#FF1E2024"
                           SelectionChanged="OnFftWindowSelectionChanged">
-                  <ComboBox.ItemContainerStyle>
-                    <Style TargetType="ComboBoxItem">
-                      <Setter Property="Foreground"
-                              Value="#FF1E2024"/>
-                      <Setter Property="Background"
-                              Value="White"/>
-                    </Style>
-                  </ComboBox.ItemContainerStyle>
                   <ComboBoxItem Tag="Hanning"
                                 IsSelected="True">
                     <TextBlock Text="Hanning"
-                               Foreground="#FF1E2024"/>
+                               Foreground="{StaticResource BrushComboForeground}"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="Hamming">
                     <TextBlock Text="Hamming"
-                               Foreground="#FF1E2024"/>
+                               Foreground="{StaticResource BrushComboForeground}"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="Blackman">
                     <TextBlock Text="Blackman"
-                               Foreground="#FF1E2024"/>
+                               Foreground="{StaticResource BrushComboForeground}"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="FlatTop">
                     <TextBlock Text="Flat Top"
-                               Foreground="#FF1E2024"/>
+                               Foreground="{StaticResource BrushComboForeground}"/>
                   </ComboBoxItem>
                   <ComboBoxItem Tag="Rectangular">
                     <TextBlock Text="Rectangular"
-                               Foreground="#FF1E2024"/>
+                               Foreground="{StaticResource BrushComboForeground}"/>
                   </ComboBoxItem>
                 </ComboBox>
               </StackPanel>

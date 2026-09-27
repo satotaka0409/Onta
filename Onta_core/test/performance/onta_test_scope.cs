@@ -1,4 +1,4 @@
-using Onta.View.Performance;
+using Onta.Performance;
 using Xunit;
 
 namespace Onta.Core.Tests.Performance;

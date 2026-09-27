@@ -506,6 +506,21 @@ public partial class ReceivePanel : UserControl
     }
 
     /// <summary>
+    /// 送信中の I-Q を受信パネルの I-Q グラフへ反映します。
+    /// </summary>
+    /// <param name="iq">送信側共有メモリの I-Q 情報。</param>
+    public void ApplySendIq(CoreIqGraphInfo iq)
+    {
+        if (iq.ActiveSubcarrierCount <= 0 || iq.Points.Count == 0)
+        {
+            return;
+        }
+
+        _iqChart.ReplacePoints(iq.Points, iq.ModulationScheme);
+        IqTitle.Text = $"I-Q 送信 ({iq.ModulationScheme} / SC={iq.ActiveSubcarrierCount})";
+    }
+
+    /// <summary>
     /// FFT タブを前面にします。
     /// </summary>
     public void ShowFftTab()

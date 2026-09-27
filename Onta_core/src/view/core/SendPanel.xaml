@@ -200,23 +200,14 @@
                            Margin="0,0,8,0"/>
                 <ComboBox x:Name="AudioDeviceComboBox"
                           Width="160"
-                          Foreground="#FF1E2024"
                           SelectedValuePath="DeviceNumber"
                           SelectionChanged="OnAudioDeviceSelectionChanged">
                   <ComboBox.ItemTemplate>
                     <DataTemplate>
                       <TextBlock Text="{Binding Name}"
-                                 Foreground="#FF1E2024"/>
+                                 Foreground="{StaticResource BrushComboForeground}"/>
                     </DataTemplate>
                   </ComboBox.ItemTemplate>
-                  <ComboBox.ItemContainerStyle>
-                    <Style TargetType="ComboBoxItem">
-                      <Setter Property="Foreground"
-                              Value="#FF1E2024"/>
-                      <Setter Property="Background"
-                              Value="White"/>
-                    </Style>
-                  </ComboBox.ItemContainerStyle>
                 </ComboBox>
                 <TextBlock Text="音量"
                            VerticalAlignment="Center"
