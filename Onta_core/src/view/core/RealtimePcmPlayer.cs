@@ -46,9 +46,7 @@ internal sealed class RealtimePcmPlayer : IDisposable
         _channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
         _appSampleRate = Math.Max(1, sampleRate);
         // 音量バー 0% は無音、それ以外は 0.05〜1.0 に制限する。
-        _scale = samplePeak <= 0.0
-            ? 0.0
-            : Math.Clamp(samplePeak, 0.05, 1.0);
+        _scale = NormalizeOutputScale(samplePeak);
         var deviceRate = AudioDeviceSampleRate.ResolveRender(deviceNumber, _appSampleRate);
         try
         {
@@ -65,6 +63,26 @@ internal sealed class RealtimePcmPlayer : IDisposable
             ? null
             : new StreamingPcmResampler(_appSampleRate, deviceRate, _channels);
     }
+
+    /// <summary>
+    /// 再生中の出力音量を変更します。以降に投入するサンプルから反映されます。
+    /// </summary>
+    /// <param name="samplePeak">出力振幅スケール（0 は無音、それ以外は 0.05〜1）。</param>
+    public void SetOutputVolume(double samplePeak)
+    {
+        lock (_sync)
+        {
+            _scale = NormalizeOutputScale(samplePeak);
+        }
+    }
+
+    /// <summary>
+    /// 出力音量を再生用の範囲へ収めます。
+    /// </summary>
+    /// <param name="samplePeak">指定された振幅スケール。</param>
+    /// <returns>0 はそのまま無音、それ以外は 0.05〜1。</returns>
+    private static double NormalizeOutputScale(double samplePeak) =>
+        samplePeak <= 0.0 ? 0.0 : Math.Clamp(samplePeak, 0.05, 1.0);
 
     /// <summary>
     /// WaveOut を指定周波数で開いて再生を開始します。

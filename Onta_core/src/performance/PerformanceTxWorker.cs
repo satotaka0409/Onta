@@ -142,6 +142,27 @@ internal sealed class PerformanceTxWorker : IDisposable
     }
 
     /// <summary>
+    /// 再生中の出力音量を変更します。未再生分は捨て、次のチャンクから新しい音量で出します。
+    /// </summary>
+    /// <param name="volume">出力音量（0〜1）。</param>
+    public void SetOutputVolume(double volume)
+    {
+        RealtimePcmPlayer? player;
+        lock (_sync)
+        {
+            player = _activePlayer;
+        }
+
+        if (player is null)
+        {
+            return;
+        }
+
+        player.SetOutputVolume(volume);
+        player.ClearQueuedSamples();
+    }
+
+    /// <summary>
     /// 再生中の周波数・レベル・基準／スイープを更新します（UI スレッドから呼び出し可）。
     /// 値が変わった場合は再生キューを破棄して即反映します。
     /// </summary>

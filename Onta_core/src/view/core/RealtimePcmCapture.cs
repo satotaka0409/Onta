@@ -50,7 +50,7 @@ internal sealed class RealtimePcmCapture : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         Stop();
 
-        _inputGain = inputGain <= 0.0 ? 0.0 : Math.Clamp(inputGain, 0.05, 1.0);
+        _inputGain = NormalizeInputGain(inputGain);
         _appSampleRate = Math.Max(1, sampleRate);
         var channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
         var deviceRate = AudioDeviceSampleRate.ResolveCapture(deviceNumber, _appSampleRate);
@@ -69,6 +69,23 @@ internal sealed class RealtimePcmCapture : IDisposable
             ? null
             : new StreamingPcmResampler(deviceRate, _appSampleRate, channels);
     }
+
+    /// <summary>
+    /// 取り込み中の入力ゲインを変更します。次のバッファから反映されます。
+    /// </summary>
+    /// <param name="inputGain">入力ゲイン（0 は無音、それ以外は 0.05〜1）。</param>
+    public void SetInputGain(double inputGain)
+    {
+        _inputGain = NormalizeInputGain(inputGain);
+    }
+
+    /// <summary>
+    /// 入力ゲインを取り込み用の範囲へ収めます。
+    /// </summary>
+    /// <param name="inputGain">指定されたゲイン。</param>
+    /// <returns>0 はそのまま無音、それ以外は 0.05〜1。</returns>
+    private static double NormalizeInputGain(double inputGain) =>
+        inputGain <= 0.0 ? 0.0 : Math.Clamp(inputGain, 0.05, 1.0);
 
     /// <summary>
     /// WaveIn を指定周波数で開いて録音を開始します。

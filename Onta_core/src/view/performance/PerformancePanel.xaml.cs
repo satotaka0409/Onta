@@ -1358,6 +1358,9 @@ public partial class PerformancePanel : UserControl
     private void OnRxInputVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateRxInputVolumeText();
+        _rxWorker.SetInputGain(InputGainSlider is null
+            ? 0.80
+            : Math.Clamp(InputGainSlider.Value / 100.0, 0.0, 1.0));
     }
 
     /// <summary>
@@ -2361,7 +2364,6 @@ public partial class PerformancePanel : UserControl
             WavSampleRateCombo.IsEnabled = !running;
         }
         OutputDeviceCombo.IsEnabled = !running;
-        OutputVolumeSlider.IsEnabled = !running;
         // 蜻ｨ豕｢謨ｰ繝ｩ繧ｸ繧ｪ繝ｻ菫｡蜿ｷ繝ｬ繝吶Ν縺ｯ蜀咲函荳ｭ繧ょ､画峩蜿ｯ・・CM 縺ｸ繝ｩ繧､繝門渚譏・・
         if (SignalLevelSlider is not null)
         {
@@ -2453,6 +2455,10 @@ public partial class PerformancePanel : UserControl
     private void OnOutputVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateOutputVolumeText();
+        var volume = OutputVolumeSlider is null
+            ? 0.80
+            : Math.Clamp(OutputVolumeSlider.Value / 100.0, 0.0, 1.0);
+        _txWorker.SetOutputVolume(volume);
     }
 
     /// <summary>
@@ -2495,7 +2501,6 @@ public partial class PerformancePanel : UserControl
         RxAudioInputRadio.IsEnabled = !running;
         RxBrowseWavButton.IsEnabled = !running;
         InputDeviceCombo.IsEnabled = !running;
-        InputGainSlider.IsEnabled = !running;
         if (!running)
         {
             UpdateRxInputModePanels();

@@ -148,6 +148,20 @@ internal sealed class PerformanceRxWorker : IDisposable
     }
 
     /// <summary>
+    /// 受信中の入力ゲインを変更します。音声入力の次のバッファから反映されます。
+    /// </summary>
+    /// <param name="inputGain">入力ゲイン（0〜1）。</param>
+    public void SetInputGain(double inputGain)
+    {
+        var gain = Math.Clamp(inputGain, 0.0, 1.0);
+        lock (_sync)
+        {
+            _settings = _settings with { InputGain = gain };
+            _capture?.SetInputGain(gain);
+        }
+    }
+
+    /// <summary>
     /// 受信を停止します。
     /// </summary>
     public void RequestStop()
