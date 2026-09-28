@@ -22,6 +22,11 @@ public sealed class StreamTxPipeline : IDisposable
     /// <summary>
     /// パイプラインを構築します。
     /// </summary>
+    /// <param name="modeId">ストリーム速度 ID。</param>
+    /// <param name="title">曲タイトル。</param>
+    /// <param name="artist">アーティスト。</param>
+    /// <param name="coverBytes">ジャケ写。無ければ null。</param>
+    /// <param name="sampleRate">入力 PCM のサンプリング周波数（Hz）。</param>
     public StreamTxPipeline(StreamModeId modeId, string title, string artist, byte[]? coverBytes, int sampleRate)
     {
         _codec = new StreamOfdmCodec(modeId, sampleRate);
@@ -42,6 +47,8 @@ public sealed class StreamTxPipeline : IDisposable
     /// <summary>
     /// 送信スペクトル監視を取り付けます（FFT 表示用）。
     /// </summary>
+    /// <param name="observer">L/R 周波数ビン通知。</param>
+    /// <param name="stride">何シンボルごとに通知するか（1=毎シンボル）。</param>
     public void AttachTxSpectrumObserver(OfdmGenerator.TxSpectrumHandler observer, int stride = 1) =>
         _codec.AttachTxSpectrumObserver(observer, stride);
 
@@ -53,6 +60,9 @@ public sealed class StreamTxPipeline : IDisposable
     /// <summary>
     /// PCM を取り込み、変調済み OFDM チャンクがあれば返します。
     /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <returns>変調済み OFDM チャンク。ペイロードが満杯でなければ空。</returns>
     public List<(Complex[] Left, Complex[] Right)> PushPcm(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -111,7 +121,9 @@ public sealed class StreamTxPipeline : IDisposable
         return result;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Opus エンコーダを破棄します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

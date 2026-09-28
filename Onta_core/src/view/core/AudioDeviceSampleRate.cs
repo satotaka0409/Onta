@@ -173,24 +173,44 @@ internal static class AudioDeviceSampleRate
     /// <summary>
     /// waveOutMessage でバッファサイズを問い合わせます。
     /// </summary>
+    /// <param name="device">MME デバイス番号を格納したハンドル。</param>
+    /// <param name="message">waveOutMessage のメッセージ ID。</param>
+    /// <param name="size">取得したバッファサイズ（バイト）。</param>
+    /// <param name="unused">未使用。呼び出し側は IntPtr.Zero を渡します。</param>
+    /// <returns>成功なら 0。それ以外は MMSYSERR のエラーコード。</returns>
     [DllImport("winmm.dll", EntryPoint = "waveOutMessage")]
     private static extern int WaveOutMessageSize(IntPtr device, uint message, out int size, IntPtr unused);
 
     /// <summary>
     /// waveOutMessage でエンドポイント ID 文字列を取得します。
     /// </summary>
+    /// <param name="device">MME デバイス番号を格納したハンドル。</param>
+    /// <param name="message">waveOutMessage のメッセージ ID。</param>
+    /// <param name="id">エンドポイント ID の書き込み先。</param>
+    /// <param name="sizeBytes">id バッファのサイズ（バイト）。</param>
+    /// <returns>成功なら 0。それ以外は MMSYSERR のエラーコード。</returns>
     [DllImport("winmm.dll", EntryPoint = "waveOutMessage", CharSet = CharSet.Unicode)]
     private static extern int WaveOutMessageId(IntPtr device, uint message, StringBuilder id, IntPtr sizeBytes);
 
     /// <summary>
     /// waveInMessage でバッファサイズを問い合わせます。
     /// </summary>
+    /// <param name="device">MME デバイス番号を格納したハンドル。</param>
+    /// <param name="message">waveInMessage のメッセージ ID。</param>
+    /// <param name="size">取得したバッファサイズ（バイト）。</param>
+    /// <param name="unused">未使用。呼び出し側は IntPtr.Zero を渡します。</param>
+    /// <returns>成功なら 0。それ以外は MMSYSERR のエラーコード。</returns>
     [DllImport("winmm.dll", EntryPoint = "waveInMessage")]
     private static extern int WaveInMessageSize(IntPtr device, uint message, out int size, IntPtr unused);
 
     /// <summary>
     /// waveInMessage でエンドポイント ID 文字列を取得します。
     /// </summary>
+    /// <param name="device">MME デバイス番号を格納したハンドル。</param>
+    /// <param name="message">waveInMessage のメッセージ ID。</param>
+    /// <param name="id">エンドポイント ID の書き込み先。</param>
+    /// <param name="sizeBytes">id バッファのサイズ（バイト）。</param>
+    /// <returns>成功なら 0。それ以外は MMSYSERR のエラーコード。</returns>
     [DllImport("winmm.dll", EntryPoint = "waveInMessage", CharSet = CharSet.Unicode)]
     private static extern int WaveInMessageId(IntPtr device, uint message, StringBuilder id, IntPtr sizeBytes);
 }

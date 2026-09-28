@@ -18,6 +18,9 @@ public partial class HistoryPanel : UserControl
     private readonly ObservableCollection<HistoryRow> _sendRows = [];
     private readonly ObservableCollection<UncompleteBlockRow> _uncompleteRows = [];
 
+    /// <summary>
+    /// 履歴パネルを初期化し、読込時に履歴を再読込します。
+    /// </summary>
     public HistoryPanel()
     {
         InitializeComponent();
@@ -28,11 +31,18 @@ public partial class HistoryPanel : UserControl
         UpdateButtons();
     }
 
+    /// <summary>
+    /// 履歴ファイルを読み込み、一覧へ反映します。
+    /// </summary>
     public void ReloadHistory()
     {
         ApplyEntries(HistoryService.LoadEntries(AppPaths.ReceiveHistoryFilePath));
     }
 
+    /// <summary>
+    /// 受信・送信・未完了の各一覧へ履歴エントリを振り分けます。
+    /// </summary>
+    /// <param name="entries">履歴エントリ。</param>
     internal void ApplyEntries(IReadOnlyList<ReceiveHistoryEntry> entries)
     {
         _receiveRows.Clear();
@@ -73,11 +83,21 @@ public partial class HistoryPanel : UserControl
         UpdateButtons();
     }
 
+    /// <summary>
+    /// 再読込ボタンで履歴を読み直します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnReloadClick(object sender, RoutedEventArgs e)
     {
         ReloadHistory();
     }
 
+    /// <summary>
+    /// 行のダウンロードボタンでペイロードの保存ダイアログを開きます。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。Tag に履歴エントリを持つボタン。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnRowDownloadClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: ReceiveHistoryEntry entry })
@@ -88,6 +108,11 @@ public partial class HistoryPanel : UserControl
         SavePayloadWithDialog(entry);
     }
 
+    /// <summary>
+    /// 受信日時のクリックでブロック明細の表示を切り替えます。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。明細の開閉後に処理済みにします。</param>
     private void OnReceiveTimestampClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is not DependencyObject source)
@@ -122,6 +147,11 @@ public partial class HistoryPanel : UserControl
         e.Handled = true;
     }
 
+    /// <summary>
+    /// ビジュアルツリーを遡り、指定した型の祖先を探します。
+    /// </summary>
+    /// <param name="current">探索を始める要素。</param>
+    /// <returns>見つかった祖先。無い場合は null。</returns>
     private static T? FindAncestor<T>(DependencyObject current)
         where T : DependencyObject
     {
@@ -138,6 +168,10 @@ public partial class HistoryPanel : UserControl
         return null;
     }
 
+    /// <summary>
+    /// 保存ダイアログで受信ペイロードをファイルへ書き出します。
+    /// </summary>
+    /// <param name="entry">保存する受信履歴。</param>
     private void SavePayloadWithDialog(ReceiveHistoryEntry entry)
     {
         if (!HistoryService.CanExportPayload(entry))
@@ -179,6 +213,11 @@ public partial class HistoryPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 選択中の履歴を確認のうえ削除します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnDeleteClick(object sender, RoutedEventArgs e)
     {
         var entry = GetSelectedEntry();
@@ -208,16 +247,28 @@ public partial class HistoryPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 選択変更に合わせてボタンの有効状態を更新します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateButtons();
     }
 
+    /// <summary>
+    /// 削除ボタンを、履歴が選択されているときだけ有効にします。
+    /// </summary>
     private void UpdateButtons()
     {
         DeleteButton.IsEnabled = GetSelectedEntry() is not null;
     }
 
+    /// <summary>
+    /// 表示中タブで選択されている履歴エントリを返します。
+    /// </summary>
+    /// <returns>選択中の履歴。未選択なら null。</returns>
     private ReceiveHistoryEntry? GetSelectedEntry()
     {
         if (HistoryTabs.SelectedItem == ReceiveHistoryTab)
@@ -238,6 +289,10 @@ public partial class HistoryPanel : UserControl
         return null;
     }
 
+    /// <summary>
+    /// 受信履歴の親不明ブロックを未完了一覧へ追加します。
+    /// </summary>
+    /// <param name="entry">受信履歴エントリ。</param>
     private void AddUncompleteRows(ReceiveHistoryEntry entry)
     {
         foreach (var orphan in entry.Orphans)
@@ -279,6 +334,11 @@ public partial class HistoryPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// ファイルハッシュを表示用の16進文字列にします。
+    /// </summary>
+    /// <param name="contentHashHex">ファイルハッシュの16進文字列。</param>
+    /// <returns>表示用ハッシュ。識別子でない値は "-"。</returns>
     private static string ResolveFileHashText(string? contentHashHex)
     {
         if (string.IsNullOrWhiteSpace(contentHashHex)
@@ -293,16 +353,31 @@ public partial class HistoryPanel : UserControl
         return NormalizeHex(contentHashHex);
     }
 
+    /// <summary>
+    /// 受信入力が音声か WAV かを表示文字列にします。
+    /// </summary>
+    /// <param name="entry">受信履歴エントリ。</param>
+    /// <returns>音声入力なら Audio、WAV 入力なら WAV。</returns>
     private static string ResolveInputDeviceText(ReceiveHistoryEntry entry)
     {
         return entry.InputDevice == ReceiveInputDevice.Audio ? "Audio" : "WAV";
     }
 
+    /// <summary>
+    /// 出力が音声か WAV かを表示文字列にします。
+    /// </summary>
+    /// <param name="entry">履歴エントリ。</param>
+    /// <returns>出力パスが空なら Audio、それ以外は WAV。</returns>
     private static string ResolveOutputDeviceText(ReceiveHistoryEntry entry)
     {
         return string.IsNullOrWhiteSpace(entry.OutputPath) ? "Audio" : "WAV";
     }
 
+    /// <summary>
+    /// WAV 入力時の元ファイル名を返します。
+    /// </summary>
+    /// <param name="entry">受信履歴エントリ。</param>
+    /// <returns>ファイル名。WAV 入力でない、またはパスが空なら "-"。</returns>
     private static string ResolveSourceWavFileName(ReceiveHistoryEntry entry)
     {
         if (entry.InputDevice != ReceiveInputDevice.Wav)
@@ -319,6 +394,11 @@ public partial class HistoryPanel : UserControl
         return string.IsNullOrWhiteSpace(name) ? entry.SourcePath : name;
     }
 
+    /// <summary>
+    /// WAV 出力ファイル名を返します。
+    /// </summary>
+    /// <param name="entry">履歴エントリ。</param>
+    /// <returns>ファイル名。出力パスが空なら "-"。</returns>
     private static string ResolveOutputWavFileName(ReceiveHistoryEntry entry)
     {
         if (string.IsNullOrWhiteSpace(entry.OutputPath))
@@ -330,6 +410,11 @@ public partial class HistoryPanel : UserControl
         return string.IsNullOrWhiteSpace(name) ? entry.OutputPath : name;
     }
 
+    /// <summary>
+    /// 16進文字列の前後空白を除き、大文字にします。
+    /// </summary>
+    /// <param name="value">元の16進文字列。</param>
+    /// <returns>正規化した文字列。空なら "-"。</returns>
     private static string NormalizeHex(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -340,6 +425,11 @@ public partial class HistoryPanel : UserControl
         return value.Trim().ToUpperInvariant();
     }
 
+    /// <summary>
+    /// データ部変調バイト列を、サブキャリア数・変調・チャンネルの表示へ分けます。
+    /// </summary>
+    /// <param name="dataModulation">変調方式バイト列。長さ不足時は未設定。</param>
+    /// <returns>サブキャリア数、変調方式、mono または stereo の表示。</returns>
     private static (string SubcarrierText, string ModulationText, string ChannelText) ParseDataModulation(byte[]? dataModulation)
     {
         if (dataModulation is null || dataModulation.Length < 3)
@@ -369,6 +459,11 @@ public partial class HistoryPanel : UserControl
         return (sc, modulation, channel);
     }
 
+    /// <summary>
+    /// UTC 日時をローカルの yyyy-MM-dd HH:mm:ss にします。
+    /// </summary>
+    /// <param name="value">変換する日時。</param>
+    /// <returns>ローカル日時の表示文字列。</returns>
     private static string FormatLocalDateTime(DateTime value)
     {
         return value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -376,6 +471,10 @@ public partial class HistoryPanel : UserControl
 
     private sealed class HistoryRow
     {
+        /// <summary>
+        /// 履歴行の表示値を履歴エントリから作ります。
+        /// </summary>
+        /// <param name="entry">履歴エントリ。</param>
         public HistoryRow(ReceiveHistoryEntry entry)
         {
             Entry = entry;
@@ -410,6 +509,10 @@ public partial class HistoryPanel : UserControl
 
     private sealed class ReceiveBlockRow
     {
+        /// <summary>
+        /// 受信ブロック行の表示値をブロック履歴から作ります。
+        /// </summary>
+        /// <param name="block">受信ブロック履歴。</param>
         public ReceiveBlockRow(ReceiveBlockHistory block)
         {
             SortBlockIndex = block.BlockIndex;
@@ -432,6 +535,11 @@ public partial class HistoryPanel : UserControl
         public string ChannelText { get; }
         public string BlockSizeText { get; }
 
+        /// <summary>
+        /// ブロック受信が完了し、サイズまたはデータがあるかを返します。
+        /// </summary>
+        /// <param name="block">受信ブロック履歴。</param>
+        /// <returns>正常なら true。</returns>
         private static bool IsBlockOk(ReceiveBlockHistory block)
         {
             if (!block.BlockComplete)
@@ -445,6 +553,18 @@ public partial class HistoryPanel : UserControl
 
     private sealed class UncompleteBlockRow
     {
+        /// <summary>
+        /// 未完了ブロック行の表示値を受け取ります。
+        /// </summary>
+        /// <param name="entry">親の受信履歴。</param>
+        /// <param name="resultText">結果の表示。</param>
+        /// <param name="inputDeviceText">音声または WAV の表示。</param>
+        /// <param name="subcarrierText">サブキャリア数の表示。</param>
+        /// <param name="modulationText">変調方式の表示。</param>
+        /// <param name="channelText">ステレオまたはモノラルの表示。</param>
+        /// <param name="blockPositionText">ブロック位置の表示。</param>
+        /// <param name="fileHashText">ファイルハッシュの表示。</param>
+        /// <param name="blockHashText">ブロックハッシュの表示。</param>
         public UncompleteBlockRow(
             ReceiveHistoryEntry entry,
             string resultText,

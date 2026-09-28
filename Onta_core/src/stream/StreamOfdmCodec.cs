@@ -53,6 +53,7 @@ public sealed class StreamOfdmCodec
     /// 指定モード用コーデックを構築します。
     /// </summary>
     /// <param name="modeId">ストリーム速度 ID。</param>
+    /// <param name="sampleRate">変復調のサンプリング周波数（Hz）。1 未満は 1 として扱います。</param>
     public StreamOfdmCodec(StreamModeId modeId, int sampleRate)
     {
         _sampleRate = Math.Max(1, sampleRate);
@@ -177,6 +178,7 @@ public sealed class StreamOfdmCodec
     /// <param name="packet">成功時のパケット。</param>
     /// <param name="body">曲情報／データ部をビタビ復号できた場合の訂正率（CRC 不一致でも設定）。復号前に失敗したら null。</param>
     /// <param name="onBodyIqFrame">曲情報／データ部の 1 OFDM シンボルごとの等化後シンボル・グループ・点数（配列は再利用されるため呼び出し側で複製する）。</param>
+    /// <param name="sampleCount">有効サンプル数。負なら配列長を使います。</param>
     /// <returns>パケット全体がバッファにあり、パイロット・CRC が妥当なら true。</returns>
     public bool TryDemodulatePacket(
         Complex[] left,
@@ -255,6 +257,7 @@ public sealed class StreamOfdmCodec
     /// <param name="right">R PCM。</param>
     /// <param name="packetStart">パケット先頭のサンプル位置。</param>
     /// <param name="modeId">成功時のストリーム速度 ID。</param>
+    /// <param name="sampleCount">有効サンプル数。負なら配列長を使います。</param>
     /// <returns>パイロット 3 バイトと速度 ID が妥当なら true。</returns>
     public bool TryDemodulateHeader(
         Complex[] left,
@@ -312,6 +315,7 @@ public sealed class StreamOfdmCodec
     /// <remarks>L/R に符号化ビットを前半／後半で分け、多い方のシンボル数に揃える送信側と同じ計算です。</remarks>
     /// <param name="ofdm">セクションの OFDM。</param>
     /// <param name="codedBitCount">畳み込み後のビット数。</param>
+    /// <returns>セクションのサンプル数（シンボル数 × 1 シンボルのサンプル数）。</returns>
     private static int SectionSamples(OfdmGenerator ofdm, int codedBitCount)
     {
         var mid = (codedBitCount + 1) / 2;
@@ -322,6 +326,15 @@ public sealed class StreamOfdmCodec
         return Math.Max(1, symbols) * ofdm.SamplesPerOfdmSymbol;
     }
 
+    /// <summary>
+    /// 1 セクションを畳み込み符号化し、L/R に分けて OFDM 変調します。
+    /// </summary>
+    /// <param name="payload">符号化前のバイト列。</param>
+    /// <param name="ofdm">セクションの OFDM。</param>
+    /// <param name="puncture">畳み込みのパンクチャ率。</param>
+    /// <param name="absoluteSampleOffset">変調開始の絶対サンプル位置。</param>
+    /// <param name="interleaveMap">ビットインターリーブの並び。不要なら null。</param>
+    /// <returns>変調した L/R PCM。</returns>
     private (Complex[] Left, Complex[] Right) ModulateSection(
         byte[] payload,
         OfdmGenerator ofdm,
@@ -365,6 +378,9 @@ public sealed class StreamOfdmCodec
     /// <summary>
     /// 作業配列が足りなければ取り直します。
     /// </summary>
+    /// <param name="current">現在の作業配列。</param>
+    /// <param name="needed">必要な要素数。</param>
+    /// <param name="buffer">足りるときは current、足りなければ新しい配列。</param>
     private static void Ensure<T>(T[] current, int needed, out T[] buffer)
     {
         buffer = current.Length >= needed ? current : new T[needed];
@@ -373,6 +389,11 @@ public sealed class StreamOfdmCodec
     /// <summary>
     /// 符号ビットの一部をチャネル用バッファへコピーし、余りは 0 で埋めます。
     /// </summary>
+    /// <param name="source">符号ビット列。</param>
+    /// <param name="sourceOffset">コピー開始位置。</param>
+    /// <param name="count">コピーするビット数。</param>
+    /// <param name="destination">チャネル用バッファ。</param>
+    /// <param name="aligned">シンボル境界まで揃えた長さ。余りは 0 で埋めます。</param>
     private static void CopyChannelBits(bool[] source, int sourceOffset, int count, bool[] destination, int aligned)
     {
         var n = Math.Max(0, Math.Min(count, source.Length - sourceOffset));
@@ -387,6 +408,13 @@ public sealed class StreamOfdmCodec
         }
     }
 
+    /// <summary>
+    /// ビット列をインターリーブマップの順で並べ替えます。
+    /// </summary>
+    /// <param name="source">並べ替え前のビット列。</param>
+    /// <param name="destination">並べ替え先。</param>
+    /// <param name="count">並べ替えるビット数。</param>
+    /// <param name="map">destination の位置 i に source[map[i]] を置くインデックス。</param>
     private static void InterleaveBits(bool[] source, bool[] destination, int count, int[] map)
     {
         for (var i = 0; i < count; i++)
@@ -395,6 +423,13 @@ public sealed class StreamOfdmCodec
         }
     }
 
+    /// <summary>
+    /// LLR 列をデインターリーブマップの順で元の並びに戻します。
+    /// </summary>
+    /// <param name="source">受信順の LLR。</param>
+    /// <param name="destination">復元先。</param>
+    /// <param name="count">復元する LLR 数。</param>
+    /// <param name="map">destination の位置 i に source[map[i]] を置くインデックス。</param>
     private static void DeinterleaveLlrs(ReadOnlySpan<double> source, double[] destination, int count, int[] map)
     {
         for (var i = 0; i < count; i++)
@@ -403,6 +438,12 @@ public sealed class StreamOfdmCodec
         }
     }
 
+    /// <summary>
+    /// ブロックインターリーブと逆写像のインデックスを構築します。
+    /// </summary>
+    /// <param name="bitCount">対象ビット数。</param>
+    /// <param name="rows">行列の行数。ビット数を超える場合はビット数に揃えます。</param>
+    /// <returns>送信順への並びと、受信 LLR を元の並びに戻す逆写像。</returns>
     private static (int[] InterleaveMap, int[] DeinterleaveMap) BuildBlockInterleaveMaps(int bitCount, int rows)
     {
         if (bitCount <= 0)
@@ -443,6 +484,7 @@ public sealed class StreamOfdmCodec
     /// <param name="mid">L チャネルに載せた符号ビット数。</param>
     /// <param name="payload">復号したバイト列。</param>
     /// <param name="puncture">パンクチャ率。</param>
+    /// <returns>全体・L・R の硬判定不一致率。</returns>
     private static StreamBodyDiagnostics MeasureCorrection(
         ReadOnlySpan<double> llrs,
         int mid,
@@ -461,6 +503,15 @@ public sealed class StreamOfdmCodec
             rightCount == 0 ? 0.0 : (double)rightErrors / rightCount);
     }
 
+    /// <summary>
+    /// 受信 LLR の硬判定と再符号化ビットの不一致数を L/R 別に数えます。
+    /// </summary>
+    /// <param name="llrs">符号ビット LLR（正がビット 1）。</param>
+    /// <param name="reencoded">再符号化したバイト列（MSB ファースト）。</param>
+    /// <param name="count">比較するビット数。</param>
+    /// <param name="mid">L チャネルに載せた符号ビット数。これ未満が L、以降が R。</param>
+    /// <param name="leftErrors">L 側の不一致数。</param>
+    /// <param name="rightErrors">R 側の不一致数。</param>
     private static void CountBitMismatches(
         ReadOnlySpan<double> llrs,
         ReadOnlySpan<byte> reencoded,
@@ -501,6 +552,16 @@ public sealed class StreamOfdmCodec
         }
     }
 
+    /// <summary>
+    /// AVX で 8 ビット単位に硬判定の不一致を数え、端数ビットの開始位置を返します。
+    /// </summary>
+    /// <param name="llrs">符号ビット LLR（正がビット 1）。</param>
+    /// <param name="reencoded">再符号化したバイト列（MSB ファースト）。</param>
+    /// <param name="count">比較するビット数。</param>
+    /// <param name="mid">L チャネルに載せた符号ビット数。</param>
+    /// <param name="leftErrors">L 側の不一致数（加算）。</param>
+    /// <param name="rightErrors">R 側の不一致数（加算）。</param>
+    /// <returns>バイト境界まで処理したビット数。</returns>
     private static int CountBitMismatchesAvx(
         ReadOnlySpan<double> llrs,
         ReadOnlySpan<byte> reencoded,
@@ -549,6 +610,16 @@ public sealed class StreamOfdmCodec
         return fullBytes << 3;
     }
 
+    /// <summary>
+    /// AdvSIMD で 8 ビット単位に硬判定の不一致を数え、端数ビットの開始位置を返します。
+    /// </summary>
+    /// <param name="llrs">符号ビット LLR（正がビット 1）。</param>
+    /// <param name="reencoded">再符号化したバイト列（MSB ファースト）。</param>
+    /// <param name="count">比較するビット数。</param>
+    /// <param name="mid">L チャネルに載せた符号ビット数。</param>
+    /// <param name="leftErrors">L 側の不一致数（加算）。</param>
+    /// <param name="rightErrors">R 側の不一致数（加算）。</param>
+    /// <returns>バイト境界まで処理したビット数。</returns>
     private static int CountBitMismatchesAdvSimd(
         ReadOnlySpan<double> llrs,
         ReadOnlySpan<byte> reencoded,
@@ -608,6 +679,10 @@ public sealed class StreamOfdmCodec
         return fullBytes << 3;
     }
 
+    /// <summary>
+    /// バイト内ビット順を反転する 256 エントリの参照表を構築します。
+    /// </summary>
+    /// <returns>インデックスのビットを反転した値の表。</returns>
     private static byte[] BuildReverseBitsLut()
     {
         var table = new byte[256];
@@ -619,6 +694,11 @@ public sealed class StreamOfdmCodec
         return table;
     }
 
+    /// <summary>
+    /// バイト内のビット順を反転します。
+    /// </summary>
+    /// <param name="value">反転するバイト。</param>
+    /// <returns>ビット順を反転したバイト。</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static byte ReverseBits(byte value)
     {
@@ -638,7 +718,10 @@ public sealed class StreamOfdmCodec
     /// <param name="ofdm">セクションの OFDM。</param>
     /// <param name="puncture">パンクチャ率。</param>
     /// <param name="codedBitCount">畳み込み後のビット数。</param>
+    /// <param name="deinterleaveMap">受信 LLR を元の並びに戻すインデックス。不要なら null。</param>
     /// <param name="onIqFrame">等化後シンボルのコールバック（不要なら null）。</param>
+    /// <param name="sampleLength">有効サンプル数。</param>
+    /// <param name="measureCorrection">ビタビ中間訂正率を測るとき true。</param>
     /// <param name="payload">復号したバイト列。</param>
     /// <param name="diagnostics">L/R 別のビタビ中間訂正率。</param>
     /// <returns>復号できたら true（CRC は呼び出し側で検証）。</returns>
@@ -728,6 +811,14 @@ public sealed class StreamOfdmCodec
         }
     }
 
+    /// <summary>
+    /// ストリーム用のステレオ OFDM 生成器を構築します。
+    /// </summary>
+    /// <param name="subcarriers">有効サブキャリア数。</param>
+    /// <param name="modulation">変調方式。</param>
+    /// <param name="symbolCount">OFDM シンボル数の初期値。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <returns>CP 長 16・ステレオの OFDM 生成器。</returns>
     private static OfdmGenerator CreateGenerator(int subcarriers, ModulationScheme modulation, int symbolCount, int sampleRate)
     {
         var grid = OfdmConfig.ResolveCarrierGrid(subcarriers);
@@ -750,6 +841,10 @@ public sealed class StreamOfdmCodec
     /// <summary>
     /// 復調に使う有効サンプル数を返します。左右の長さが違うときは -1 です。
     /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="sampleCount">有効サンプル数。負なら配列長を使います。</param>
+    /// <returns>左右の長さが一致するときの有効サンプル数。不一致なら -1。</returns>
     private static int SampleLength(Complex[] left, Complex[] right, int sampleCount)
     {
         if (left.Length != right.Length)

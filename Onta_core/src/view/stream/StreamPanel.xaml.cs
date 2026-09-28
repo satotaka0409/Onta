@@ -49,6 +49,11 @@ public partial class StreamPanel : UserControl
         _pollTimer.Tick += OnPollTick;
     }
 
+    /// <summary>
+    /// デバイス一覧とグラフを初期化し、状態の定期更新を始めます。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         FillDevices(TxInputDeviceBox, isInput: true);
@@ -74,6 +79,11 @@ public partial class StreamPanel : UserControl
         _pollTimer.Start();
     }
 
+    /// <summary>
+    /// 定期更新を止め、送受信を停止します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _pollTimer.Stop();
@@ -84,6 +94,8 @@ public partial class StreamPanel : UserControl
     /// <summary>
     /// エラーレート／FFT タブ切替を反映します。
     /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnStreamGraphTabChanged(object sender, RoutedEventArgs e)
     {
         UpdateStreamGraphTabVisibility();
@@ -152,6 +164,8 @@ public partial class StreamPanel : UserControl
     /// <summary>
     /// グラフ行リサイズ時に I-Q を正方形へ合わせます。
     /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnStreamGraphsRowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateStreamIqSquareSize();
@@ -334,6 +348,11 @@ public partial class StreamPanel : UserControl
     private static int ReadDeviceNumber(ComboBox box)
         => box.SelectedItem is StreamDeviceItem item ? item.DeviceNumber : -1;
 
+    /// <summary>
+    /// 送信入力の音声ファイルを選択します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnBrowseTxWav(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
@@ -434,6 +453,8 @@ public partial class StreamPanel : UserControl
     /// <summary>
     /// 送信入力モード（WAV / 音声）の切替に合わせて下段パネルを切り替えます。
     /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnTxInputModeChanged(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded || TxWavInputPanel is null || TxAudioInputPanel is null)
@@ -462,6 +483,7 @@ public partial class StreamPanel : UserControl
     /// <summary>
     /// 入力ファイルパス表示を更新します。
     /// </summary>
+    /// <param name="path">表示するファイルパス。</param>
     private void SetTxWavPathBoxes(string path)
     {
         if (TxWavPathBox is not null)
@@ -470,6 +492,11 @@ public partial class StreamPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// ジャケ写の画像ファイルを選択します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnBrowseCover(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
@@ -564,6 +591,11 @@ public partial class StreamPanel : UserControl
         return false;
     }
 
+    /// <summary>
+    /// ジャケ写の形式切替を反映し、プレビューを更新します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。形式のラジオボタン。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnCoverFormatChanged(object sender, RoutedEventArgs e)
     {
         // XAML 読込中に IsChecked 初期化で Checked が飛ぶため、名前付き要素未生成なら無視する。
@@ -586,6 +618,11 @@ public partial class StreamPanel : UserControl
         RefreshCoverPreview();
     }
 
+    /// <summary>
+    /// ラジオボタンの Tag からジャケ写形式を決めます。
+    /// </summary>
+    /// <param name="rb">形式を選ぶラジオボタン。</param>
+    /// <returns>対応するジャケ写形式。不明な Tag は 32x32 カラー。</returns>
     private static StreamCoverFormat ResolveCoverFormat(RadioButton rb) =>
         rb.Tag switch
         {
@@ -595,6 +632,9 @@ public partial class StreamPanel : UserControl
             _ => StreamCoverFormat.Color32,
         };
 
+    /// <summary>
+    /// 選択中のジャケ写を符号化し、バイト数とプレビューを更新します。
+    /// </summary>
     private void RefreshCoverPreview()
     {
         if (CoverBytesText is null || TxCoverPreview is null || CoverSizeOverText is null || TxStartButton is null)
@@ -637,6 +677,8 @@ public partial class StreamPanel : UserControl
     /// <summary>
     /// 圧縮 PNG バイト数表示と、4096 超過時の警告／スタート無効化を反映します。
     /// </summary>
+    /// <param name="byteCount">圧縮後のバイト数。</param>
+    /// <param name="hasError">符号化エラーがあるか。</param>
     private void ApplyCoverByteUi(int byteCount, bool hasError)
     {
         CoverBytesText.Text = CoreViewText.ByteCountLabel(byteCount);
@@ -656,6 +698,11 @@ public partial class StreamPanel : UserControl
         UpdateStartStopExclusive();
     }
 
+    /// <summary>
+    /// 画面の設定でストリーム送信を開始します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnTxStart(object sender, RoutedEventArgs e)
     {
         if (_coverByteCount > StreamCoverImage.MaxBytes)
@@ -690,6 +737,11 @@ public partial class StreamPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// ストリーム送信の停止を要求します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnTxStop(object sender, RoutedEventArgs e)
     {
         _tx.Stop();
@@ -697,6 +749,11 @@ public partial class StreamPanel : UserControl
         UpdateStartStopExclusive();
     }
 
+    /// <summary>
+    /// 画面の設定でストリーム受信を開始します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnRxStart(object sender, RoutedEventArgs e)
     {
         try
@@ -717,6 +774,11 @@ public partial class StreamPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// ストリーム受信の停止を要求します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnRxStop(object sender, RoutedEventArgs e)
     {
         _rx.Stop();
@@ -724,6 +786,10 @@ public partial class StreamPanel : UserControl
         UpdateStartStopExclusive();
     }
 
+    /// <summary>
+    /// 選択中のストリーム速度ラジオから変調モード ID を読みます。
+    /// </summary>
+    /// <returns>選択中のモード。未選択時は 18Kbps。</returns>
     private StreamModeId ReadModeId()
     {
         foreach (var child in FindVisualChildren<RadioButton>(this))
@@ -738,6 +804,11 @@ public partial class StreamPanel : UserControl
         return StreamModeId.Rate18k;
     }
 
+    /// <summary>
+    /// 送受信の完了と、曲情報・グラフを定期的に画面へ反映します。
+    /// </summary>
+    /// <param name="sender">イベントの発生元。</param>
+    /// <param name="e">イベントデータ。</param>
     private void OnPollTick(object? sender, EventArgs e)
     {
         if (_tx.TryConsumeCompletion(out var txOk, out var txMsg))
@@ -777,6 +848,8 @@ public partial class StreamPanel : UserControl
     /// <summary>
     /// 共有ボードの FFT／I-Q（および任意でエラー率）をグラフへ反映します。
     /// </summary>
+    /// <param name="snap">共有ボードのスナップショット。</param>
+    /// <param name="includeErrorRate">エラー率も反映するか。</param>
     private void ApplyGraphStatus(CoreExecutionStatus snap, bool includeErrorRate)
     {
         if (includeErrorRate && !snap.IsAnalyzing && snap.ErrorRateSamples.Count > 0)
@@ -800,6 +873,10 @@ public partial class StreamPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 受信ジャケ写のバイト列が変わったときだけプレビューを更新します。
+    /// </summary>
+    /// <param name="cover">受信したジャケ写バイト列。</param>
     private void TryUpdateCoverPreview(byte[] cover)
     {
         if (RxCoverSizeText is null || RxCoverBytesText is null || RxCoverImage is null)
@@ -847,6 +924,11 @@ public partial class StreamPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// ビジュアルツリー配下から指定型の要素を列挙します。
+    /// </summary>
+    /// <param name="root">探索の起点。</param>
+    /// <returns>一致した子孫要素。</returns>
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
     {

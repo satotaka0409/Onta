@@ -39,6 +39,8 @@ public static class StreamConstants
     public const double PreambleSeconds = 0.010;
 
     /// <summary>プリアンブルのサンプル数。</summary>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。1 未満は 1 として扱います。</param>
+    /// <returns>10ms に相当するサンプル数。</returns>
     public static int PreambleSamples(int sampleRate) =>
         (int)Math.Round(PreambleSeconds * Math.Max(1, sampleRate));
 

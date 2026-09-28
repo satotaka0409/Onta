@@ -93,7 +93,9 @@ public sealed class StreamAudioFilePcmReader : IDisposable
         return true;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// リサンプラと音声ファイルリーダーを破棄します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

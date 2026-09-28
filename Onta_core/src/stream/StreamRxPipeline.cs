@@ -97,6 +97,8 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>
     /// キャプチャ PCM を追加します。
     /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
     public void PushCapture(Complex[] left, Complex[] right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -266,7 +268,9 @@ public sealed class StreamRxPipeline : IDisposable
     /// <remarks>電力で候補を絞ってから、ヘッダーのパイロット 3 バイトと速度 ID で確定します。</remarks>
     /// <param name="left">L PCM。</param>
     /// <param name="right">R PCM。</param>
+    /// <param name="power">L²+R² の累積和。</param>
     /// <param name="from">探索開始位置。</param>
+    /// <param name="length">バッファのサンプル数。</param>
     /// <param name="lastCandidate">見つからなかった場合に次回の探索を始める位置。</param>
     /// <returns>見つかったパケット先頭。無ければ -1。</returns>
     private int FindPacketStart(
@@ -347,6 +351,7 @@ public sealed class StreamRxPipeline : IDisposable
     /// <param name="left">L PCM。</param>
     /// <param name="right">R PCM。</param>
     /// <param name="start">パケット先頭。</param>
+    /// <param name="length">バッファのサンプル数。</param>
     /// <param name="end">成功時のパケット末尾。</param>
     /// <param name="packet">成功時のパケット。</param>
     /// <returns>いずれかの位置で復調できたら true。</returns>
@@ -420,6 +425,8 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>
     /// L²+R² の累積和を作ります（区間電力を O(1) で求めるため）。
     /// </summary>
+    /// <param name="length">累積するサンプル数。</param>
+    /// <returns>長さ length+1 の累積和。先頭は 0。</returns>
     private double[] BuildPowerPrefix(int length)
     {
         if (_power.Length < length + 1)
@@ -442,6 +449,8 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>
     /// 速度 ID に対応するコーデックを返します（初回だけ生成してキャッシュ）。
     /// </summary>
+    /// <param name="modeId">ストリーム速度 ID。</param>
+    /// <returns>対応するコーデック。</returns>
     private StreamOfdmCodec ResolveCodec(StreamModeId modeId)
     {
         if (!_codecs.TryGetValue(modeId, out var codec))
@@ -453,7 +462,9 @@ public sealed class StreamRxPipeline : IDisposable
         return codec;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Opus デコーダを破棄します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

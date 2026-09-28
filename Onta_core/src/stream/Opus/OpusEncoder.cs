@@ -51,6 +51,9 @@ public sealed class OpusEncoder : IDisposable
     /// <summary>
     /// sampleRate 指定のステレオ PCM を追加し、完成した Opus パケットを <paramref name="packets"/> へ追加します。
     /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packets">完成した Opus パケットの追加先。</param>
     public void EncodePcm(ReadOnlySpan<double> left, ReadOnlySpan<double> right, List<byte[]> packets)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -120,13 +123,20 @@ public sealed class OpusEncoder : IDisposable
         _buffered++;
     }
 
+    /// <summary>
+    /// 実数サンプルを 16 ビット PCM へ変換します。
+    /// </summary>
+    /// <param name="sample">-1.0〜1.0 付近のサンプル。</param>
+    /// <returns>32767 倍して short 範囲へ収めた値。</returns>
     private static short ToShort(double sample)
     {
         var v = sample * 32767.0;
         return (short)Math.Clamp(v, short.MinValue, short.MaxValue);
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// libopus エンコーダを破棄します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

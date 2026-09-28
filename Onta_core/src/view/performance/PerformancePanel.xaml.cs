@@ -845,6 +845,9 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
+        /// <summary>
+        /// オシロスコープの外部 Y 目盛りをチャートの描画余白へ同期します。
+        /// </summary>
         void Sync() => SyncScopeYOverlay(chart, overlay, labelCol);
 
         chart.UpdateFinished += _ => Dispatcher.BeginInvoke(Sync, DispatcherPriority.Render);

@@ -106,6 +106,8 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// 「再読込」押下で章一覧と本文を読み直します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">ルーティングイベント引数。</param>
     private void OnReloadClick(object sender, RoutedEventArgs e)
     {
         ReloadChapters();
@@ -114,6 +116,8 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// 章の選択が変わったら、その章の Markdown を表示します。
     /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">選択変更のイベント引数。</param>
     private void OnChapterSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ChapterList.SelectedItem is ManualChapter chapter)
@@ -125,6 +129,7 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// 章ファイルを読み込み、FlowDocument に整形して表示します。
     /// </summary>
+    /// <param name="chapter">表示する章。</param>
     private void ShowChapter(ManualChapter chapter)
     {
         var directory = Path.GetDirectoryName(chapter.FilePath) ?? string.Empty;
@@ -142,6 +147,8 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// 指定フォルダーを基準にリンク・画像を解決するレンダラーを作成します。
     /// </summary>
+    /// <param name="baseDirectory">相対リンクと画像の基準フォルダー。</param>
+    /// <returns>リンククリックをこのパネルへ渡すレンダラー。</returns>
     private MarkdownFlowDocumentRenderer CreateRenderer(string baseDirectory)
     {
         return new MarkdownFlowDocumentRenderer(baseDirectory, url => OnLinkClicked(baseDirectory, url));
@@ -198,6 +205,7 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// URL またはファイルを OS の既定アプリで開きます。
     /// </summary>
+    /// <param name="target">開く URL またはファイルパス。</param>
     private void OpenWithShell(string target)
     {
         try
@@ -213,6 +221,8 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// 章ファイルの最初の H1 見出しを表示名として読み取ります。無ければファイル名を使います。
     /// </summary>
+    /// <param name="path">章ファイルのパス。</param>
+    /// <returns>最初の H1 見出し。無ければ拡張子を除いたファイル名。</returns>
     private static string ReadTitle(string path)
     {
         try
@@ -236,6 +246,8 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// 目次ファイル（00_index.md）かどうかを判定します。
     /// </summary>
+    /// <param name="path">判定するファイルパス。</param>
+    /// <returns>ファイル名が 00_index.md なら true。</returns>
     private static bool IsIndexFile(string path)
     {
         return string.Equals(Path.GetFileName(path), IndexFileName, StringComparison.OrdinalIgnoreCase);
@@ -244,6 +256,9 @@ public partial class ManualPanel : UserControl
     /// <summary>
     /// 2 つのパスが同じファイルを指すかを大文字小文字を区別せずに比較します。
     /// </summary>
+    /// <param name="left">比較するパス。</param>
+    /// <param name="right">比較するもう一方のパス。</param>
+    /// <returns>フルパスが一致すれば true。</returns>
     private static bool PathEquals(string left, string? right)
     {
         return right is not null

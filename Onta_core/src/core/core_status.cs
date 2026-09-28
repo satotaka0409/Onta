@@ -626,6 +626,9 @@ public sealed class CoreExecutionStatusBoard
     /// <summary>
     /// FFT スペクトル 1 チャネル分をボードへ書き込みます（呼び出し元が _sync を保持）。
     /// </summary>
+    /// <param name="freqBins">周波数ビン列。</param>
+    /// <param name="isRightChannel">右チャネル更新時は true。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
     private void WriteFftChannelUnlocked(ReadOnlySpan<Complex> freqBins, bool isRightChannel, int sampleRate)
     {
         var n = freqBins.Length;

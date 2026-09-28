@@ -1109,6 +1109,12 @@ public partial class ReceiveDetailPanel : UserControl
         return text.Substring(0, Math.Max(0, maxLength - 3)) + "...";
     }
 
+    /// <summary>
+    /// UI カルチャが日本語なら日本語、それ以外は英語の文言を返します。
+    /// </summary>
+    /// <param name="ja">日本語の表示文言。</param>
+    /// <param name="en">英語の表示文言。</param>
+    /// <returns>現在の UI 言語に応じた文言。</returns>
     private static string T(string ja, string en) =>
         string.Equals(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "ja", StringComparison.OrdinalIgnoreCase)
             ? ja

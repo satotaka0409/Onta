@@ -54,6 +54,9 @@ internal sealed class StreamTxWorker : IDisposable
     /// <summary>
     /// 完了結果を 1 回だけ取り出します。
     /// </summary>
+    /// <param name="success">成功なら true。</param>
+    /// <param name="message">完了メッセージ。</param>
+    /// <returns>完了が保留中で取り出せた場合 true。</returns>
     public bool TryConsumeCompletion(out bool success, out string message)
     {
         lock (_sync)
@@ -74,6 +77,7 @@ internal sealed class StreamTxWorker : IDisposable
     /// <summary>
     /// 送信を開始します。
     /// </summary>
+    /// <param name="settings">送信設定。</param>
     public void Start(StreamTxSettings settings)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -107,6 +111,11 @@ internal sealed class StreamTxWorker : IDisposable
         cts?.Cancel();
     }
 
+    /// <summary>
+    /// ファイルまたは音声入力をストリーム変調して再生し、FFT と I-Q を公開します。
+    /// </summary>
+    /// <param name="settings">送信設定。</param>
+    /// <param name="token">停止用のキャンセルトークン。</param>
     private void Run(StreamTxSettings settings, CancellationToken token)
     {
         _status.BeginRun(CoreViewText.StreamTxRunningTitle);
@@ -264,6 +273,9 @@ internal sealed class StreamTxWorker : IDisposable
     /// <summary>
     /// 送信 PCM をリングへ載せ、FFT と I-Q を共有ボードへ公開します。
     /// </summary>
+    /// <param name="left">送信した L チャネル PCM。</param>
+    /// <param name="right">送信した R チャネル PCM。</param>
+    /// <param name="mode">ストリーム変調モード。</param>
     private void PublishPcmForViz(Complex[] left, Complex[] right, StreamModeInfo mode)
     {
         var len = left.Length;
@@ -324,6 +336,7 @@ internal sealed class StreamTxWorker : IDisposable
     /// <summary>
     /// 送信 PCM 末尾から等化 I-Q を抽出し共有ボードへ載せます。
     /// </summary>
+    /// <param name="mode">ストリーム変調モード。</param>
     private void PublishIq(StreamModeInfo mode)
     {
         var sc = PerformanceSignalGenerator.ClampSubcarriers(mode.Subcarriers);
@@ -388,6 +401,11 @@ internal sealed class StreamTxWorker : IDisposable
         _status.SetIqLeftPointCount(leftCount);
     }
 
+    /// <summary>
+    /// 完了結果を、あとから一度だけ取り出せるよう格納します。
+    /// </summary>
+    /// <param name="success">成功なら true。</param>
+    /// <param name="message">完了メッセージ。</param>
     private void Complete(bool success, string message)
     {
         lock (_sync)
@@ -396,6 +414,11 @@ internal sealed class StreamTxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// 複素サンプルの実部を double 配列にします。
+    /// </summary>
+    /// <param name="samples">複素 PCM。</param>
+    /// <returns>実部の配列。</returns>
     private static double[] ToDouble(Complex[] samples)
     {
         var d = new double[samples.Length];
@@ -407,6 +430,11 @@ internal sealed class StreamTxWorker : IDisposable
         return d;
     }
 
+    /// <summary>
+    /// サンプルへ音量ゲインを掛けます。
+    /// </summary>
+    /// <param name="samples">スケールする PCM。</param>
+    /// <param name="gain">音量ゲイン。0〜1.5 に制限します。</param>
     private static void Scale(double[] samples, double gain)
     {
         var g = Math.Clamp(gain, 0.0, 1.5);
@@ -416,7 +444,9 @@ internal sealed class StreamTxWorker : IDisposable
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// 送信を停止し、ワーカーを破棄します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

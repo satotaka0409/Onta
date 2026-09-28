@@ -35,6 +35,8 @@ public sealed record SendSettingsSnapshot(
     /// <summary>
     /// WAV 出力で選べるサンプリング周波数です。
     /// </summary>
+    /// <param name="sampleRate">正規化前のサンプリング周波数（Hz）。</param>
+    /// <returns>44100、48000、96000 のいずれか。</returns>
     public static int NormalizeWavSampleRate(int sampleRate)
         => PerformanceConstants.NormalizeWavSampleRate(sampleRate);
 }

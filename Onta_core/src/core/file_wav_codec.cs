@@ -2330,6 +2330,10 @@ public sealed partial class FileWavCodec
 
         var workLeft = new Complex[dataNeedLen];
         var workRight = stereo ? new Complex[dataNeedLen] : Array.Empty<Complex>();
+        /// <summary>
+        /// 並列探索用に、スレッドローカルの L/R 作業バッファとヘッダー OFDM 生成器を作ります。
+        /// </summary>
+        /// <returns>L/R 作業バッファとヘッダー用 OFDM 生成器。</returns>
         (Complex[] Left, Complex[] Right, OfdmGenerator Ofdm) CreateWorker() =>
             (new Complex[dataNeedLen], stereo ? new Complex[dataNeedLen] : Array.Empty<Complex>(), CreateHeaderOfdm());
 
@@ -2448,6 +2452,16 @@ public sealed partial class FileWavCodec
             }
         }
 
+        /// <summary>
+        /// 指定ワウで先頭区間を補正し、ファイルヘッダー復号の平均絶対 LLR をスコアとして評価します。
+        /// </summary>
+        /// <param name="destLeft">補正結果の L バッファ。</param>
+        /// <param name="destRight">補正結果の R バッファ（モノラル時は未使用可）。</param>
+        /// <param name="ofdm">補正に使う OFDM 生成器。</param>
+        /// <param name="amount">ワウ量。</param>
+        /// <param name="wowPhase">wow 位相（ラジアン）。</param>
+        /// <param name="flutterPhase">flutter 位相（ラジアン）。</param>
+        /// <returns>ファイルヘッダー復号成功時はワウ量・位相とスコア。失敗時は null。</returns>
         (double Amount, double WowPhase, double FlutterPhase, double Score)? EvalPrefix(
             Complex[] destLeft,
             Complex[] destRight,
@@ -2477,6 +2491,17 @@ public sealed partial class FileWavCodec
             return (amount, wowPhase, flutterPhase, llr);
         }
 
+        /// <summary>
+        /// 指定ワウで冒頭を補正し、ファイルヘッダー・ブロックヘッダー（任意でデータ部）の復号スコアを評価します。
+        /// </summary>
+        /// <param name="destLeft">補正結果の L バッファ。</param>
+        /// <param name="destRight">補正結果の R バッファ（モノラル時は未使用可）。</param>
+        /// <param name="ofdm">補正に使う OFDM 生成器。</param>
+        /// <param name="amount">ワウ量。</param>
+        /// <param name="wowPhase">wow 位相（ラジアン）。</param>
+        /// <param name="flutterPhase">flutter 位相（ラジアン）。</param>
+        /// <param name="tryDataBlock">データブロックの復号まで試す場合 true。</param>
+        /// <returns>ファイルヘッダー復号成功時はワウ量・位相とスコア。失敗時は null。</returns>
         (double Amount, double WowPhase, double FlutterPhase, double Score)? EvalOpening(
             Complex[] destLeft,
             Complex[] destRight,

@@ -115,6 +115,7 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 共通の書式（フォント・色・余白）を設定した空の FlowDocument を作成します。
     /// </summary>
+    /// <returns>書式だけを設定した空の FlowDocument。</returns>
     private FlowDocument CreateDocument()
     {
         return new FlowDocument
@@ -192,6 +193,9 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 行が段落を打ち切る別ブロックの開始行かどうかを判定します。
     /// </summary>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="index">判定する行の位置。</param>
+    /// <returns>空行・フェンス・見出し・水平線・表・引用・リスト項目なら true。</returns>
     private static bool IsBlockStart(List<string> lines, int index)
     {
         var line = lines[index];
@@ -207,6 +211,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// ATX 見出し（先頭 3 スペースまで）に一致するか調べます。
     /// </summary>
+    /// <param name="line">判定する行。</param>
+    /// <returns>一致した Match。インデントが 4 以上なら Match.Empty。</returns>
     private static Match MatchHeading(string line)
     {
         return IndentOf(line) <= 3 ? HeadingRegex.Match(line.TrimStart()) : Match.Empty;
@@ -217,6 +223,7 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// </summary>
     /// <param name="level">見出しレベル（1〜6）。</param>
     /// <param name="text">見出しテキスト（インライン記法可）。</param>
+    /// <returns>見出しの Paragraph。</returns>
     private Paragraph CreateHeading(int level, string text)
     {
         var paragraph = new Paragraph
@@ -240,6 +247,7 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 水平線（下罫線だけの空段落）を作成します。
     /// </summary>
+    /// <returns>下罫線だけの空 Paragraph。</returns>
     private Paragraph CreateRule()
     {
         return new Paragraph
@@ -254,6 +262,9 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 空行または別ブロック開始までを 1 段落として追加します。
     /// </summary>
+    /// <param name="target">追加先のブロックコレクション。</param>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="start">段落開始行の位置。</param>
     /// <returns>次に処理する行番号。</returns>
     private int AddParagraph(BlockCollection target, List<string> lines, int start)
     {
@@ -290,6 +301,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 「[スクリーンショット挿入: …]」行を控えめな枠付きの注記として作成します。
     /// </summary>
+    /// <param name="parts">プレースホルダー行（トリム済み）。</param>
+    /// <returns>枠付きの注記 Paragraph。</returns>
     private Paragraph CreatePlaceholder(List<string> parts)
     {
         var paragraph = new Paragraph
@@ -317,6 +330,9 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// フェンス（``` / ~~~）で囲まれたコードブロックを等幅の枠付き段落として追加します。
     /// </summary>
+    /// <param name="target">追加先のブロックコレクション。</param>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="start">開始フェンス行の位置。</param>
     /// <returns>閉じフェンスの次の行番号。</returns>
     private int AddCodeBlock(BlockCollection target, List<string> lines, int start)
     {
@@ -362,6 +378,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 行が引用（&gt;）かどうかを判定します。
     /// </summary>
+    /// <param name="line">判定する行。</param>
+    /// <returns>インデント 3 以下で &gt; で始まれば true。</returns>
     private static bool IsQuote(string line)
     {
         return IndentOf(line) <= 3 && line.TrimStart().StartsWith('>');
@@ -370,6 +388,10 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 連続する引用行を、左罫線付きのセクションとして追加します（中身は再帰的にブロック解析）。
     /// </summary>
+    /// <param name="target">追加先のブロックコレクション。</param>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="start">引用開始行の位置。</param>
+    /// <param name="listDepth">箇条書きの入れ子の深さ（中身のマーカー切替用）。</param>
     /// <returns>引用の次の行番号。</returns>
     private int AddQuote(BlockCollection target, List<string> lines, int start, int listDepth)
     {
@@ -398,6 +420,9 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 表の開始行（パイプ行＋区切り行）かどうかを判定します。
     /// </summary>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="index">判定する行の位置。</param>
+    /// <returns>次行が区切り行なら true。</returns>
     private static bool IsTableStart(List<string> lines, int index)
     {
         return lines[index].TrimStart().StartsWith('|')
@@ -410,6 +435,9 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// パイプ区切りの表を、列幅が内容に合わせて決まる Grid として追加します。
     /// </summary>
     /// <remarks>FlowDocument の Table は列幅が等分になり短い表が間延びするため、自動幅の Grid を使います。</remarks>
+    /// <param name="target">追加先のブロックコレクション。</param>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="start">ヘッダー行の位置。</param>
     /// <returns>表の次の行番号。</returns>
     private int AddTable(BlockCollection target, List<string> lines, int start)
     {
@@ -489,6 +517,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 表の行をセル文字列に分割します。エスケープされた \| とインラインコード内の | では分割しません。
     /// </summary>
+    /// <param name="line">パイプ区切りの 1 行。</param>
+    /// <returns>トリム済みのセル文字列。</returns>
     private static List<string> SplitTableRow(string line)
     {
         var text = line.Trim();
@@ -537,6 +567,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 区切り行のセル（:--- / :---: / ---:）から文字寄せを求めます。
     /// </summary>
+    /// <param name="cell">区切り行の 1 セル。</param>
+    /// <returns>両端コロンなら中央、右端のみなら右寄せ、それ以外は左寄せ。</returns>
     private static TextAlignment ParseAlignment(string cell)
     {
         var left = cell.StartsWith(':');
@@ -548,6 +580,10 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// 同じインデント・同じ種類（箇条書き／番号付き）の項目が続く範囲を 1 つのリストとして追加します。
     /// </summary>
     /// <remarks>項目より深くインデントされた行は、その項目の子（入れ子リストや続きの段落）として再帰解析します。</remarks>
+    /// <param name="target">追加先のブロックコレクション。</param>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="start">最初の項目行の位置。</param>
+    /// <param name="listDepth">箇条書きの入れ子の深さ（マーカー形状の切替用）。</param>
     /// <returns>リストの次の行番号。</returns>
     private int AddList(BlockCollection target, List<string> lines, int start, int listDepth)
     {
@@ -637,6 +673,10 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 行が指定インデント・種類の兄弟リスト項目かどうかを判定します。
     /// </summary>
+    /// <param name="line">判定する行。</param>
+    /// <param name="indent">兄弟項目の行頭空白数。</param>
+    /// <param name="ordered">番号付きリストなら true、箇条書きなら false。</param>
+    /// <returns>インデントと種類が一致する項目なら true。</returns>
     private static bool IsSiblingItem(string line, int indent, bool ordered)
     {
         var match = ListItemRegex.Match(line);
@@ -648,6 +688,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// マーカーが番号付き（1. / 1)）かどうかを判定します。
     /// </summary>
+    /// <param name="marker">リストマーカー文字列。</param>
+    /// <returns>先頭が数字なら true。</returns>
     private static bool IsOrderedMarker(string marker)
     {
         return char.IsDigit(marker[0]);
@@ -656,6 +698,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 入れ子の深さに応じた箇条書きマーカー（● → ○ → ■）を返します。
     /// </summary>
+    /// <param name="depth">入れ子の深さ（0 が最外）。</param>
+    /// <returns>Disc、Circle、Square を深さで巡回したマーカー。</returns>
     private static TextMarkerStyle UnorderedMarker(int depth)
     {
         return (depth % 3) switch
@@ -669,6 +713,7 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// リスト項目内の段落・入れ子リストの余白を詰めます（行間の詰まったリスト表示）。
     /// </summary>
+    /// <param name="item">余白を詰めるリスト項目。</param>
     private static void TightenListItem(ListItem item)
     {
         foreach (var block in item.Blocks)
@@ -694,6 +739,9 @@ internal sealed class MarkdownFlowDocumentRenderer
         var result = new List<Inline>();
         var buffer = new StringBuilder();
 
+        /// <summary>
+        /// 蓄積したテキストを Run として結果へ追加し、バッファを空にします。
+        /// </summary>
         void Flush()
         {
             if (buffer.Length > 0)
@@ -794,6 +842,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// バックスラッシュでエスケープできる記号かどうかを判定します。
     /// </summary>
+    /// <param name="ch">判定する文字。</param>
+    /// <returns>Markdown のエスケープ対象なら true。</returns>
     private static bool IsEscapable(char ch)
     {
         return "\\`*_{}[]()#+-.!|<>~".Contains(ch);
@@ -862,6 +912,9 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// クリックでコールバックを呼ぶハイパーリンクを作成します。
     /// </summary>
+    /// <param name="label">表示ラベル（インライン記法可）。</param>
+    /// <param name="url">リンク先 URL。</param>
+    /// <returns>クリックでコールバックを呼ぶ Hyperlink。</returns>
     private Hyperlink CreateHyperlink(string label, string url)
     {
         var link = new Hyperlink
@@ -878,6 +931,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// インラインコード（等幅・背景付き）の Run を作成します。
     /// </summary>
+    /// <param name="code">コード文字列。</param>
+    /// <returns>等幅・背景付きの Run。</returns>
     private Run CreateInlineCode(string code)
     {
         return new Run(code)
@@ -893,6 +948,7 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// </summary>
     /// <param name="alt">代替テキスト。</param>
     /// <param name="source">画像パス（基準フォルダーからの相対、または絶対パス）。</param>
+    /// <returns>読み込めた画像の InlineUIContainer。失敗時は代替テキストの Run。</returns>
     private Inline CreateImage(string alt, string source)
     {
         try
@@ -927,6 +983,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 空行（空白のみを含む行）かどうかを判定します。
     /// </summary>
+    /// <param name="line">判定する行。</param>
+    /// <returns>空白のみ、または空なら true。</returns>
     private static bool IsBlank(string line)
     {
         return string.IsNullOrWhiteSpace(line);
@@ -935,6 +993,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 行頭の空白数を返します。
     /// </summary>
+    /// <param name="line">対象の行。</param>
+    /// <returns>先頭の連続した半角スペースの数。</returns>
     private static int IndentOf(string line)
     {
         var count = 0;
@@ -949,6 +1009,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 指定位置以降で最初の空行でない行番号を返します。
     /// </summary>
+    /// <param name="lines">対象の行リスト。</param>
+    /// <param name="start">探索を始める行番号（この行を含む）。</param>
     /// <returns>見つからなければ -1。</returns>
     private static int NextNonBlank(List<string> lines, int start)
     {
@@ -966,6 +1028,9 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// アプリのリソースからブラシを取得します。見つからない場合は既定色を使います。
     /// </summary>
+    /// <param name="key">リソースキー。</param>
+    /// <param name="fallback">リソースが無いときの色。</param>
+    /// <returns>リソースの Brush、または凍結した単色ブラシ。</returns>
     private static Brush ResolveBrush(string key, Color fallback)
     {
         return Application.Current?.TryFindResource(key) as Brush ?? Frozen(fallback);
@@ -974,6 +1039,8 @@ internal sealed class MarkdownFlowDocumentRenderer
     /// <summary>
     /// 凍結済みの単色ブラシを作成します。
     /// </summary>
+    /// <param name="color">ブラシの色。</param>
+    /// <returns>Freeze 済みの SolidColorBrush。</returns>
     private static SolidColorBrush Frozen(Color color)
     {
         var brush = new SolidColorBrush(color);

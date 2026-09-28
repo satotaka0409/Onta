@@ -76,7 +76,9 @@ public sealed class OpusDecoder : IDisposable
         return outCount;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// libopus デコーダを破棄します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

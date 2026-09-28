@@ -9,12 +9,17 @@ public static class StreamOpusPayload
     /// <summary>
     /// Opus フレーム列を 1024 バイトチャンクへ分割します。
     /// </summary>
+    /// <param name="opusFrames">詰める Opus フレーム列。</param>
+    /// <returns>1024 バイト単位のチャンク。フレームが無ければ 0 埋めを 1 個返します。</returns>
     public static List<byte[]> Pack(IReadOnlyList<byte[]> opusFrames)
     {
         var chunks = new List<byte[]>();
         var chunk = new byte[StreamConstants.PayloadBytes];
         var offset = 0;
 
+        /// <summary>
+        /// 書きかけのチャンクを確定し、次の 1024 バイトバッファを用意します。
+        /// </summary>
         void Flush()
         {
             if (offset == 0)

@@ -112,6 +112,10 @@ public sealed class StreamPacket
         return true;
     }
 
+    /// <summary>
+    /// ヘッダーエリア 6 バイト（パイロット・速度 ID・ストリーム ID）を書き込みます。
+    /// </summary>
+    /// <param name="header">書き込み先（6 バイト）。</param>
     private void WriteHeader(Span<byte> header)
     {
         header[0] = StreamConstants.HeaderPilot[0];
@@ -122,6 +126,10 @@ public sealed class StreamPacket
         header[5] = (byte)StreamId;
     }
 
+    /// <summary>
+    /// 曲情報エリア 21 バイトを書き、末尾に CRC-16 を付けます。
+    /// </summary>
+    /// <param name="meta">書き込み先（21 バイト）。</param>
     private void WriteMeta(Span<byte> meta)
     {
         meta.Clear();

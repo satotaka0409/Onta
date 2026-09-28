@@ -511,6 +511,11 @@ internal static class PerformanceSignalGenerator
         }
     }
 
+    /// <summary>
+    /// 位相を 0 以上 2π 未満へ折り返します。
+    /// </summary>
+    /// <param name="phase">折り返す位相（ラジアン）。</param>
+    /// <returns>0 以上 2π 未満の位相。</returns>
     private static double WrapPhase(double phase)
     {
         var twoPi = Math.PI * 2.0;

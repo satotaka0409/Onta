@@ -92,6 +92,9 @@ internal sealed class StreamRxWorker : IDisposable
     /// <summary>
     /// 完了結果を取り出します。
     /// </summary>
+    /// <param name="success">成功なら true。</param>
+    /// <param name="message">完了メッセージ。</param>
+    /// <returns>完了が保留中で取り出せた場合 true。</returns>
     public bool TryConsumeCompletion(out bool success, out string message)
     {
         lock (_sync)
@@ -112,6 +115,7 @@ internal sealed class StreamRxWorker : IDisposable
     /// <summary>
     /// 受信を開始します。
     /// </summary>
+    /// <param name="settings">受信設定。</param>
     public void Start(StreamRxSettings settings)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -152,6 +156,11 @@ internal sealed class StreamRxWorker : IDisposable
         cts?.Cancel();
     }
 
+    /// <summary>
+    /// 音声入力を受信し、FFT・パケット・曲情報を共有ボードへ公開します。
+    /// </summary>
+    /// <param name="settings">受信設定。</param>
+    /// <param name="token">停止用のキャンセルトークン。</param>
     private void Run(StreamRxSettings settings, CancellationToken token)
     {
         _status.BeginRun(CoreViewText.StreamRxRunningTitle);
@@ -298,6 +307,11 @@ internal sealed class StreamRxWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// 完了結果を、あとから一度だけ取り出せるよう格納します。
+    /// </summary>
+    /// <param name="success">成功なら true。</param>
+    /// <param name="message">完了メッセージ。</param>
     private void Complete(bool success, string message)
     {
         lock (_sync)
@@ -306,7 +320,9 @@ internal sealed class StreamRxWorker : IDisposable
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// 受信を停止し、ワーカーを破棄します。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

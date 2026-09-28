@@ -272,6 +272,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// バッファ監視と段階復号を繰り返すバックグラウンド処理です。
     /// </summary>
     /// <param name="token">停止要求トークン。</param>
+    /// <returns>停止要求まで処理を続けるタスク。</returns>
     private async Task WorkerLoop(CancellationToken token)
     {
         while (!token.IsCancellationRequested)

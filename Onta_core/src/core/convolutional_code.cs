@@ -548,6 +548,13 @@ public static class ConvolutionalCode
             CorrectionRate: bitCount == 0 ? 0.0 : (double)corrected / bitCount);
     }
 
+    /// <summary>
+    /// 受信 LLR の硬判定と期待符号ビットの不一致数を数えます。
+    /// </summary>
+    /// <param name="llrs">受信ソフト LLR。正がビット 1。</param>
+    /// <param name="expectedPacked">期待する符号ビット（MSB 先頭のパック）。</param>
+    /// <param name="bitCount">比較するビット数。</param>
+    /// <returns>不一致ビット数。</returns>
     private static int CountHardDecisionMismatches(
         ReadOnlySpan<double> llrs,
         ReadOnlySpan<byte> expectedPacked,
@@ -588,6 +595,13 @@ public static class ConvolutionalCode
         return corrected;
     }
 
+    /// <summary>
+    /// 完全バイト分の硬判定不一致をスカラで数えます。
+    /// </summary>
+    /// <param name="llrs">受信ソフト LLR。正がビット 1。</param>
+    /// <param name="expectedPacked">期待する符号ビット（MSB 先頭のパック）。</param>
+    /// <param name="fullBytes">比較する完全バイト数。</param>
+    /// <returns>不一致ビット数。</returns>
     private static int CountHardDecisionMismatchesScalarPacked(
         ReadOnlySpan<double> llrs,
         ReadOnlySpan<byte> expectedPacked,
@@ -612,6 +626,13 @@ public static class ConvolutionalCode
         return corrected;
     }
 
+    /// <summary>
+    /// 完全バイト分の硬判定不一致を AVX で数えます。
+    /// </summary>
+    /// <param name="llrs">受信ソフト LLR。正がビット 1。</param>
+    /// <param name="expectedPacked">期待する符号ビット（MSB 先頭のパック）。</param>
+    /// <param name="fullBytes">比較する完全バイト数。</param>
+    /// <returns>不一致ビット数。</returns>
     private static int CountHardDecisionMismatchesAvx(
         ReadOnlySpan<double> llrs,
         ReadOnlySpan<byte> expectedPacked,
@@ -634,6 +655,13 @@ public static class ConvolutionalCode
         return corrected;
     }
 
+    /// <summary>
+    /// 完全バイト分の硬判定不一致を Arm64 AdvSIMD で数えます。
+    /// </summary>
+    /// <param name="llrs">受信ソフト LLR。正がビット 1。</param>
+    /// <param name="expectedPacked">期待する符号ビット（MSB 先頭のパック）。</param>
+    /// <param name="fullBytes">比較する完全バイト数。</param>
+    /// <returns>不一致ビット数。</returns>
     private static int CountHardDecisionMismatchesAdvSimd(
         ReadOnlySpan<double> llrs,
         ReadOnlySpan<byte> expectedPacked,
@@ -666,6 +694,10 @@ public static class ConvolutionalCode
         return corrected;
     }
 
+    /// <summary>
+    /// バイト値 0〜255 のビット順反転テーブルを構築します。
+    /// </summary>
+    /// <returns>添字のビット順を反転した 256 バイトの表。</returns>
     private static byte[] BuildReverseBitsLut()
     {
         var table = new byte[256];
@@ -677,6 +709,11 @@ public static class ConvolutionalCode
         return table;
     }
 
+    /// <summary>
+    /// バイト内のビット順を反転します。
+    /// </summary>
+    /// <param name="value">反転するバイト。</param>
+    /// <returns>ビット順を反転したバイト。</returns>
     private static byte ReverseBits(byte value)
     {
         value = (byte)(((value & 0xAA) >> 1) | ((value & 0x55) << 1));

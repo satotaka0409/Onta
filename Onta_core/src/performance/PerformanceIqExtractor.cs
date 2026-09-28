@@ -164,6 +164,11 @@ internal static class PerformanceIqExtractor
         return best + cp;
     }
 
+    /// <summary>
+    /// SIMD ベクトルの要素を足し合わせます。
+    /// </summary>
+    /// <param name="value">加算するベクトル。</param>
+    /// <returns>要素の合計。</returns>
     private static double SumVector(Vector<double> value)
     {
         var sum = 0.0;

@@ -46,6 +46,7 @@ public sealed partial class OfdmGenerator
     /// <param name="expectedStart">期待するシンボル先頭位置。</param>
     /// <param name="searchRadius">前後の探索半径（サンプル）。</param>
     /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="sampleLimit">探索に使うサンプル数の上限。負なら配列長。</param>
     /// <returns>最良のシンボル先頭サンプル位置。</returns>
     public int FindBestSymbolStart(
         Complex[] samples,

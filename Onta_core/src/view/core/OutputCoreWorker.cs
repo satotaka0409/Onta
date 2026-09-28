@@ -312,6 +312,9 @@ internal sealed class OutputCoreWorker
                     wavWriter?.WriteChunk(leftChunk, rightChunk);
                     if (player is not null)
                     {
+                        /// <summary>
+                        /// 再生ヘッドに合わせてスペクトル表示と送信進捗を更新します。
+                        /// </summary>
                         void SyncPlayheadViz()
                         {
                             DateTime audioAnchorUtc;

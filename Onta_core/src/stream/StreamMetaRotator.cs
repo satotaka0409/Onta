@@ -48,6 +48,8 @@ public sealed class StreamMetaRotator
     /// <summary>
     /// 非空データだけスロットに登録します。
     /// </summary>
+    /// <param name="kind">曲情報の種別。</param>
+    /// <param name="raw">生バイト列。空なら登録しません。</param>
     private void TryAdd(StreamMetaKind kind, byte[] raw)
     {
         var blocks = SplitToBlocks(raw);
@@ -62,6 +64,8 @@ public sealed class StreamMetaRotator
     /// <summary>
     /// 生バイト列を 16 バイト単位ブロックへ分割します。
     /// </summary>
+    /// <param name="raw">分割する生バイト列。</param>
+    /// <returns>16 バイト単位（不足分は 0）のブロック列。空入力は空配列。最大 256 ブロック。</returns>
     private static byte[][] SplitToBlocks(byte[] raw)
     {
         if (raw.Length == 0)
@@ -88,6 +92,11 @@ public sealed class StreamMetaRotator
     /// <summary>1 種別分のブロック列と送信位置です。</summary>
     private sealed class Slot
     {
+        /// <summary>
+        /// 種別とブロック列を保持するスロットを構築します。
+        /// </summary>
+        /// <param name="kind">曲情報の種別。</param>
+        /// <param name="blocks">16 バイト単位のブロック列。</param>
         public Slot(StreamMetaKind kind, byte[][] blocks)
         {
             Kind = kind;

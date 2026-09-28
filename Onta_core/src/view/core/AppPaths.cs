@@ -107,6 +107,7 @@ internal static class AppPaths
     /// <summary>
     /// ユーザーデータ保存先を解決します（アンインストール後も保持される領域）。
     /// </summary>
+    /// <returns>LocalApplicationData 配下の Onta。取得できなければ実行フォルダー配下の data。</returns>
     private static string ResolveDataDir()
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -121,6 +122,8 @@ internal static class AppPaths
     /// <summary>
     /// 指定データファイルパスを返します。新保存先が空で旧保存先にある場合は一度だけ移行します。
     /// </summary>
+    /// <param name="fileName">データファイル名。</param>
+    /// <returns>ユーザーデータフォルダー上の絶対パス。</returns>
     private static string ResolveDataFilePath(string fileName)
     {
         Directory.CreateDirectory(DataDir);
@@ -129,6 +132,11 @@ internal static class AppPaths
         return target;
     }
 
+    /// <summary>
+    /// 新保存先にファイルが無いとき、旧ルートの同名ファイルを一度だけコピーします。
+    /// </summary>
+    /// <param name="fileName">移行するファイル名。</param>
+    /// <param name="target">コピー先の絶対パス。</param>
     private static void TryMigrateLegacyDataFile(string fileName, string target)
     {
         if (File.Exists(target))
@@ -157,6 +165,10 @@ internal static class AppPaths
         }
     }
 
+    /// <summary>
+    /// 旧データファイルを探すルート候補を返します。
+    /// </summary>
+    /// <returns>存在するディレクトリ（大文字小文字を無視して重複を除いた列）。</returns>
     private static IEnumerable<string> GetLegacyRootCandidates()
     {
         var roots = new[]

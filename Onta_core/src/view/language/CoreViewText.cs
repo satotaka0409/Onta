@@ -10,6 +10,12 @@ public static class CoreViewText
     private static bool IsJapanese =>
         string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "ja", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// UI カルチャに応じて日本語または英語の表示文言を選びます。
+    /// </summary>
+    /// <param name="ja">日本語の文言。</param>
+    /// <param name="en">英語の文言。</param>
+    /// <returns>UI カルチャが日本語なら ja、それ以外は en。</returns>
     private static string T(string ja, string en) => IsJapanese ? ja : en;
 
     public static string AppName => "Onta";
@@ -77,9 +83,21 @@ public static class CoreViewText
     public static string StartingProgress => T("開始中…", "Starting...");
 
     public static string Iq => "I-Q";
+
+    /// <summary>
+    /// I-Q 送信グラフの見出しを返します。
+    /// </summary>
+    /// <param name="modulationScheme">変調方式。</param>
+    /// <param name="subcarrierCount">サブキャリア数。</param>
+    /// <returns>表示文字列。</returns>
     public static string IqSendFormat(string modulationScheme, int subcarrierCount) =>
         T($"I-Q 送信 ({modulationScheme} / SC={subcarrierCount})", $"I-Q TX ({modulationScheme} / SC={subcarrierCount})");
 
+    /// <summary>
+    /// 音声入力デバイス名を含む入力元表示を返します。
+    /// </summary>
+    /// <param name="deviceName">入力デバイス名。</param>
+    /// <returns>表示文字列。</returns>
     public static string AudioInputSource(string deviceName) =>
         T($"(音声入力: {deviceName})", $"(Audio input: {deviceName})");
 
@@ -98,8 +116,25 @@ public static class CoreViewText
     public static string FilterWav => "WAV (*.wav)|*.wav";
     public static string FilterReceiveWav => T("WAV (*.wav)|*.wav|すべてのファイル (*.*)|*.*", "WAV (*.wav)|*.wav|All files (*.*)|*.*");
 
+    /// <summary>
+    /// 送信中エラーのメッセージを返します。
+    /// </summary>
+    /// <param name="message">エラー内容。</param>
+    /// <returns>表示文字列。</returns>
     public static string ErrorWhileSending(string message) => T($"送信中にエラーが発生しました。\n{message}", $"An error occurred during transmission.\n{message}");
+
+    /// <summary>
+    /// 受信開始失敗のメッセージを返します。
+    /// </summary>
+    /// <param name="message">エラー内容。</param>
+    /// <returns>表示文字列。</returns>
     public static string ErrorReceiveStartFailed(string message) => T($"受信開始に失敗しました。\n{message}", $"Failed to start receiving.\n{message}");
+
+    /// <summary>
+    /// 出力フォルダー作成失敗のメッセージを返します。
+    /// </summary>
+    /// <param name="message">エラー内容。</param>
+    /// <returns>表示文字列。</returns>
     public static string ErrorOutputFolderCreateFailed(string message) => T($"出力フォルダーを作成できません。\n{message}", $"Could not create output folder.\n{message}");
 
     public static string MessageSelectInputFile => T("入力ファイルを選択してください。", "Please select an input file.");
@@ -112,6 +147,12 @@ public static class CoreViewText
     public static string MessageReceiveCoreAlreadyRunning => T("受信コアは既に動作中です。", "Receive core is already running.");
     public static string MessageReceiveCoreOrAudioStartFailed => T("受信コアは既に動作中、または音声デバイスの開始に失敗しました。", "Receive core is already running, or audio device failed to start.");
 
+    /// <summary>
+    /// 受信結果と出力先をまとめたメッセージを返します。
+    /// </summary>
+    /// <param name="message">受信結果の文言。</param>
+    /// <param name="outputPath">出力先パス。未指定なら空として扱います。</param>
+    /// <returns>表示文字列。</returns>
     public static string MessageReceiveOutput(string message, string? outputPath)
     {
         var path = outputPath ?? string.Empty;
@@ -120,6 +161,19 @@ public static class CoreViewText
     public static string MessageReceiveInterrupted => T("受信を中断しました。", "Receive was cancelled.");
 
     public static string MessageTransmissionCompletedTitle => T("送信完了", "Transmission completed");
+
+    /// <summary>
+    /// 送信完了ダイアログの本文を返します。
+    /// </summary>
+    /// <param name="inputPath">入力ファイルパス。</param>
+    /// <param name="wavLine">WAV 出力の表示行。</param>
+    /// <param name="channel">チャンネル表示。</param>
+    /// <param name="subcarrier">サブキャリア表示。</param>
+    /// <param name="modulation">変調方式表示。</param>
+    /// <param name="interleave">インターリーブ回数。</param>
+    /// <param name="device">出力デバイス表示。</param>
+    /// <param name="playedRealtime">音声をリアルタイム再生したか。</param>
+    /// <returns>表示文字列。</returns>
     public static string MessageTransmissionCompleted(
         string inputPath,
         string wavLine,
@@ -156,6 +210,12 @@ public static class CoreViewText
     }
 
     public static string MessageWavDisabledLine => T("WAV: (無効)\n", "WAV: (disabled)\n");
+
+    /// <summary>
+    /// WAV 出力パスの表示行を返します。
+    /// </summary>
+    /// <param name="path">WAV ファイルパス。</param>
+    /// <returns>表示文字列。</returns>
     public static string MessageWavPathLine(string path) => $"WAV: {path}\n";
 
     public static string StageCancelRequested => T("中断要求中", "Cancelling");
@@ -189,15 +249,42 @@ public static class CoreViewText
     public static string FileHash => T("ファイルハッシュ値", "File Hash");
     public static string BlockHash => T("ブロックハッシュ値", "Block Hash");
     public static string TooltipToggleBlockDetails => T("クリックでブロック明細を開閉", "Click to toggle block details");
+
+    /// <summary>
+    /// 履歴件数のステータス文言を返します。
+    /// </summary>
+    /// <param name="receiveCount">受信件数。</param>
+    /// <param name="sendCount">送信件数。</param>
+    /// <param name="unknownCount">不明ブロック件数。</param>
+    /// <returns>表示文字列。</returns>
     public static string StatusHistorySummary(int receiveCount, int sendCount, int unknownCount) =>
         T($"受信 {receiveCount} 件 / 送信 {sendCount} 件 / 不明ブロック {unknownCount} 件",
           $"Receive {receiveCount} / Send {sendCount} / Unknown {unknownCount}");
     public static string HistoryNoExportableData => T("履歴データから復元可能なデータがありません。", "No exportable payload in history.");
     public static string SaveFileTitle => T("ファイルを保存", "Save file");
     public static string FilterAllAndBinary => T("すべてのファイル (*.*)|*.*|バイナリ (*.bin)|*.bin", "All files (*.*)|*.*|Binary (*.bin)|*.bin");
+
+    /// <summary>
+    /// 保存完了のステータス文言を返します。
+    /// </summary>
+    /// <param name="path">保存先パス。</param>
+    /// <returns>表示文字列。</returns>
     public static string StatusSaved(string path) => T($"保存: {path}", $"Saved: {path}");
     public static string StatusNoDataToSave => T("保存対象のデータがありません。", "No data to save.");
+
+    /// <summary>
+    /// 保存失敗のステータス文言を返します。
+    /// </summary>
+    /// <param name="message">失敗内容。</param>
+    /// <returns>表示文字列。</returns>
     public static string StatusSaveFailed(string message) => T($"保存失敗: {message}", $"Save failed: {message}");
+
+    /// <summary>
+    /// 履歴削除の確認文を返します。
+    /// </summary>
+    /// <param name="fileName">ファイル名。</param>
+    /// <param name="entryId">履歴エントリ ID。</param>
+    /// <returns>表示文字列。</returns>
     public static string ConfirmDeleteHistory(string fileName, string entryId) =>
         T($"履歴を削除しますか？\n{fileName}\nEntryId={entryId}", $"Delete this history entry?\n{fileName}\nEntryId={entryId}");
     public static string DeleteHistoryTitle => T("履歴削除", "Delete History");
@@ -217,25 +304,70 @@ public static class CoreViewText
     public static string CoverFmt48Gray => T("48x48白黒", "48x48 grayscale");
     public static string CoverFmt64Gray => T("64x64白黒", "64x64 grayscale");
     public static string SelectFile => T("ファイル指定", "Select File");
+
+    /// <summary>
+    /// サイズ数値の表示を返します。
+    /// </summary>
+    /// <param name="value">サイズ。</param>
+    /// <returns>表示文字列。</returns>
     public static string SizeLabel(int value) => T($"サイズ: {value}", $"Size: {value}");
+
+    /// <summary>
+    /// 幅と高さのピクセルサイズ表示を返します。
+    /// </summary>
+    /// <param name="width">幅。</param>
+    /// <param name="height">高さ。</param>
+    /// <returns>表示文字列。</returns>
     public static string SizeLabelPixels(int width, int height) => T($"サイズ: {width}x{height}", $"Size: {width}x{height}");
     public static string SizeLabelUnknown => T("サイズ: -", "Size: -");
     public static string SizeOver => T("サイズオーバー", "Size over limit");
+
+    /// <summary>
+    /// バイト数の表示を返します。
+    /// </summary>
+    /// <param name="value">バイト数。</param>
+    /// <returns>表示文字列。</returns>
     public static string ByteCountLabel(int value) => T($"バイト数: {value}", $"Bytes: {value}");
     public static string ByteCount0 => ByteCountLabel(0);
     public static string ErrorRateWithEllipse => T("エラーレート", "Error Rate");
+
+    /// <summary>
+    /// デバイス番号と名前の表示を返します。番号が負なら既定デバイスです。
+    /// </summary>
+    /// <param name="index">デバイス番号。負なら既定。</param>
+    /// <param name="name">デバイス名。</param>
+    /// <returns>表示文字列。</returns>
     public static string DefaultDeviceWithIndexName(int index, string name) =>
         index < 0 ? DefaultDevice : $"{index}: {name}";
     public static string FilterAudioFiles => T(
         "音声ファイル (*.wav;*.flac;*.mp3)|*.wav;*.flac;*.mp3|WAV (*.wav)|*.wav|FLAC (*.flac)|*.flac|MP3 (*.mp3)|*.mp3|All (*.*)|*.*",
         "Audio files (*.wav;*.flac;*.mp3)|*.wav;*.flac;*.mp3|WAV (*.wav)|*.wav|FLAC (*.flac)|*.flac|MP3 (*.mp3)|*.mp3|All (*.*)|*.*");
     public static string FilterImageFiles => "Image|*.png;*.jpg;*.jpeg;*.bmp|All (*.*)|*.*";
+
+    /// <summary>
+    /// ジャケ写処理エラーの表示を返します。
+    /// </summary>
+    /// <param name="message">エラー内容。</param>
+    /// <returns>表示文字列。</returns>
     public static string CoverByteError(string message) => T($"エラー: {message}", $"Error: {message}");
     public static string CoverSizeOverMessage => T("ジャケ写がサイズオーバーです。", "Cover art is over the size limit.");
     public static string SendingNow => T("送信中…", "Transmitting...");
     public static string StopRequested => T("停止要求", "Stop requested");
     public static string ReceivingNow => T("受信中…", "Receiving...");
+
+    /// <summary>
+    /// 失敗理由付きの表示を返します。
+    /// </summary>
+    /// <param name="message">失敗内容。</param>
+    /// <returns>表示文字列。</returns>
     public static string FailedWith(string message) => T($"失敗: {message}", $"Failed: {message}");
+
+    /// <summary>
+    /// 受信中のパケット数とエラー数の表示を返します。
+    /// </summary>
+    /// <param name="packetsReceived">受理したパケット数。</param>
+    /// <param name="packetErrors">エラーパケット数。</param>
+    /// <returns>表示文字列。</returns>
     public static string ReceivingPacketStatus(int packetsReceived, int packetErrors) =>
         T($"受信中… パケット {packetsReceived:N0}（エラー {packetErrors:N0}）",
           $"Receiving... Packets {packetsReceived:N0} (Errors {packetErrors:N0})");
@@ -251,6 +383,12 @@ public static class CoreViewText
     public static string Sweep20to20k => T("スイープ(20Hz～20KHz)", "Sweep (20Hz-20KHz)");
     public static string WhiteNoise20to20k => T("ホワイトノイズ(20Hz～20KHz)", "White Noise (20Hz-20KHz)");
     public static string Duration => T("秒数", "Duration");
+
+    /// <summary>
+    /// 秒数の表示を返します。
+    /// </summary>
+    /// <param name="sec">秒数。</param>
+    /// <returns>表示文字列。</returns>
     public static string DurationSec(int sec) => T($"{sec}秒", $"{sec}s");
     public static string Duration30Sec => DurationSec(30);
     public static string Duration60Sec => DurationSec(60);
@@ -262,6 +400,13 @@ public static class CoreViewText
     public static string FrequencyCounter => T("周波数カウンタ", "Frequency Counter");
     public static string DistortionRate => T("歪み率", "Distortion Rate");
     public static string LissajousTitleBase => T("リサージュ（アジマス）  L→X / R→Y  ・同位相で対角線", "Lissajous (Azimuth)  L->X / R->Y  - diagonal when in phase");
+
+    /// <summary>
+    /// オシロスコープの AUTO トリガー見出しを返します。
+    /// </summary>
+    /// <param name="channel">チャネル名。</param>
+    /// <param name="triggered">トリガーがかかっているか。</param>
+    /// <returns>表示文字列。</returns>
     public static string ScopeAutoTitle(string channel, bool triggered)
     {
         var suffix = triggered ? T("AUTO ↑", "AUTO ^") : "AUTO";
@@ -273,6 +418,12 @@ public static class CoreViewText
     public static string MessageSelectRxWavFile => T("WAV 入力ファイルを選択してください。", "Please select a WAV input file.");
     public static string MessageRxStartFailedWav => T("受信を開始できませんでした（WAV ファイルを確認してください）。", "Could not start receiving (check WAV file).");
     public static string MessageRxStartFailedAudio => T("受信を開始できませんでした（入力デバイスを確認してください）。", "Could not start receiving (check input device).");
+
+    /// <summary>
+    /// 送信中の経過秒表示を返します。
+    /// </summary>
+    /// <param name="seconds">経過秒。</param>
+    /// <returns>表示文字列。</returns>
     public static string TxRunningDuration(double seconds) => T($"送信中… {seconds:0}s", $"Transmitting... {seconds:0}s");
     public static string RxAnalyzingWav => T("WAV 解析中", "Analyzing WAV");
     public static string Done => T("完了", "Done");
@@ -282,5 +433,11 @@ public static class CoreViewText
     public static string LissajousHintPhaseDiffEllipse => T("位相差あり（楕円）", "Phase difference (ellipse)");
     public static string LissajousHintLargePhaseDiff => T("位相差大", "Large phase difference");
     public static string LissajousHintNearReversePhase => T("逆相寄り", "Near reverse phase");
+
+    /// <summary>
+    /// 相関の目安を付けたリサージュ見出しを返します。
+    /// </summary>
+    /// <param name="hint">位相の目安。</param>
+    /// <returns>表示文字列。</returns>
     public static string LissajousTitleWithHint(string hint) => T($"リサージュ（アジマス）  L→X / R→Y  ・{hint}", $"Lissajous (Azimuth)  L->X / R->Y  - {hint}");
 }

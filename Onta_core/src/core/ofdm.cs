@@ -4246,6 +4246,8 @@ public sealed partial class OfdmGenerator
     /// <param name="onEqualizedDataSymbolFrame">シンボル単位の等化後フレーム・コールバック。</param>
     /// <param name="onFftSymbolFrame">FFT 後ビンのコールバック。</param>
     /// <param name="onOfdmSymbolProgress">進捗コールバック。</param>
+    /// <param name="sampleCount">有効サンプル数。負なら配列長。</param>
+    /// <param name="llrDestination">十分な長さがあればここへ LLR を書く（呼び出し後に上書きされる）。</param>
     /// <returns>ビットごとのソフト LLR。</returns>
     private double[] DemodulateSoftLlrsFromStreamCore(
         Complex[] samples,

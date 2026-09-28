@@ -122,6 +122,10 @@ public sealed class ErrorRateChartModel
 
     public CoreEccDecoderKind LatestDecoderKind { get; private set; }
 
+    /// <summary>
+    /// 現在の UI カルチャが日本語かどうかを判定します。
+    /// </summary>
+    /// <returns>言語が ja なら true。</returns>
     private static bool IsJapanese() =>
         string.Equals(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "ja", StringComparison.OrdinalIgnoreCase);
 

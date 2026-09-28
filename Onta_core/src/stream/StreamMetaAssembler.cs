@@ -94,16 +94,19 @@ public sealed class StreamMetaAssembler
     /// <summary>
     /// 取得済みタイトル文字列を返します（途中でも連結）。
     /// </summary>
+    /// <returns>途中まででも連結した UTF-8 文字列。未取得なら空文字。</returns>
     public string GetTitleText() => DecodeUtf8(_title, _titleTotal);
 
     /// <summary>
     /// 取得済みアーティスト文字列を返します。
     /// </summary>
+    /// <returns>途中まででも連結した UTF-8 文字列。未取得なら空文字。</returns>
     public string GetArtistText() => DecodeUtf8(_artist, _artistTotal);
 
     /// <summary>
     /// 取得済みジャケ写バイトを返します（欠損ブロックは 0 埋め）。
     /// </summary>
+    /// <returns>ブロック順に連結したジャケ写。完全受信時は末尾の 0 を落とします。</returns>
     public byte[] GetCoverBytes()
     {
         var total = Math.Max(1, (int)_coverTotal);
@@ -134,6 +137,12 @@ public sealed class StreamMetaAssembler
         return result;
     }
 
+    /// <summary>
+    /// ブロック辞書を位置順に連結し、末尾の 0 を除いて UTF-8 文字列へ変換します。
+    /// </summary>
+    /// <param name="map">ブロック位置から 16 バイトデータへの対応。</param>
+    /// <param name="total">期待する総ブロック数。欠損位置は飛ばします。</param>
+    /// <returns>連結した文字列。空なら空文字。</returns>
     private static string DecodeUtf8(Dictionary<byte, byte[]> map, byte total)
     {
         if (map.Count == 0)

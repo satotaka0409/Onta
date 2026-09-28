@@ -51,6 +51,10 @@ public static class Crc16
     public static bool Matches(ReadOnlySpan<byte> data, ReadOnlySpan<byte> storedCrcBigEndian)
         => Compute(data) == ReadBigEndian(storedCrcBigEndian);
 
+    /// <summary>
+    /// CRC-16/CCITT-FALSE の 256 エントリ参照表を構築します。
+    /// </summary>
+    /// <returns>多項式 0x1021 の参照表。</returns>
     private static ushort[] BuildTable()
     {
         var table = new ushort[256];

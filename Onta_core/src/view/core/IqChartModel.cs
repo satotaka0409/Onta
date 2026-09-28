@@ -50,6 +50,7 @@ public sealed class IqChartModel
     /// グループ凡例項目を生成します。
     /// </summary>
     /// <param name="count">先頭から何グループまで出すか（6=A〜F、8=A〜H）。</param>
+    /// <returns>ラベルと RGB の組。</returns>
     private static IReadOnlyList<(string Label, byte R, byte G, byte B)> CreateGroupLegendItems(int count)
     {
         var items = new (string Label, byte R, byte G, byte B)[count];
