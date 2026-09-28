@@ -77,7 +77,8 @@
 			"mattpocock.ts-error-translator",
 			"usernamehw.errorlens",
 			"anysphere.csharp",
-			"ms-dotnettools.vscode-dotnet-runtime"
+			"ms-dotnettools.vscode-dotnet-runtime",
+			"stescobedo.wpf-xml-preview",
 		]
 	}
 }

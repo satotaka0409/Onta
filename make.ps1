@@ -8,6 +8,7 @@
 #   .\make.ps1 history           # test/history
 #   .\make.ps1 performance       # test/performance
 #   .\make.ps1 stream            # test/stream
+#   .\make.ps1 historyshot       # 履歴スクショ用ダミーデータ作成
 #   .\make.ps1 testdebug
 #   .\make.ps1 rebuild -Config Debug
 #   .\make.ps1 build -Dotnet "C:\Program Files\dotnet\dotnet.exe"
@@ -15,7 +16,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("all", "build", "clean", "rebuild", "test", "testdebug", "core", "history", "performance", "stream")]
+    [ValidateSet("all", "build", "clean", "rebuild", "test", "testdebug", "core", "history", "performance", "stream", "historyshot")]
     [string]$Target = "build",
 
     [string]$Config = "Release",
@@ -127,6 +128,13 @@ function Invoke-TestDebug {
     }
 }
 
+function Invoke-HistoryShot {
+    $testProject = Join-Path $PSScriptRoot "Onta_core\test\Onta_core.Tests.csproj"
+    $filter = "FullyQualifiedName~Onta.Core.Tests.History.HistoryShotDataGenerator.CreateHistoryShotData"
+    & $dotnetExe test $testProject -c Debug --filter $filter --logger "console;verbosity=minimal" --nologo
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 switch ($Target) {
     "all" { Invoke-Build }
     "build" { Invoke-Build }
@@ -141,4 +149,5 @@ switch ($Target) {
     "history" { Invoke-Test -Filter $TestFilters.history }
     "performance" { Invoke-Test -Filter $TestFilters.performance }
     "stream" { Invoke-Test -Filter $TestFilters.stream }
+    "historyshot" { Invoke-HistoryShot }
 }

@@ -39,7 +39,7 @@ public sealed class OntaTestStream
     public void AudioFileReader_SampleFiles_ReadAsSixtySecondStereo(string fileName)
     {
         var (left, right) = ReadPcm(ResolveInput(fileName), maxSeconds: 0);
-        var seconds = left.Length / (double)StreamConstants.SampleRate;
+        var seconds = left.Length / (double)StreamConstants.DefaultSampleRate;
         _output.WriteLine($"{fileName}: {seconds:F3} s, RMS L={Rms(left):F4} R={Rms(right):F4}");
 
         Assert.Equal(left.Length, right.Length);
@@ -73,7 +73,7 @@ public sealed class OntaTestStream
             Payload = payload,
         };
 
-        var codec = new StreamOfdmCodec(modeId);
+        var codec = new StreamOfdmCodec(modeId, StreamConstants.DefaultSampleRate);
         var (left, right) = codec.ModulatePacket(packet);
         var cursor = 0;
         var ok = codec.TryDemodulatePacket(left, right, ref cursor, out var decoded);
@@ -110,7 +110,7 @@ public sealed class OntaTestStream
             MetaData = new byte[StreamConstants.MetaBlockDataBytes],
             Payload = new byte[StreamConstants.PayloadBytes],
         };
-        var codec = new StreamOfdmCodec(StreamModeId.Rate18k);
+        var codec = new StreamOfdmCodec(StreamModeId.Rate18k, StreamConstants.DefaultSampleRate);
         var (left, right) = codec.ModulatePacket(packet);
         var half = left.Length / 2;
 
@@ -246,7 +246,7 @@ public sealed class OntaTestStream
     private static List<StreamRxPacketReport> CollectReports(Complex[] left, Complex[] right)
     {
         var reports = new List<StreamRxPacketReport>();
-        using var pipeline = new StreamRxPipeline { PacketReported = reports.Add };
+        using var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate) { PacketReported = reports.Add };
         for (var offset = 0; offset < left.Length; offset += ChunkFrames)
         {
             var count = Math.Min(ChunkFrames, left.Length - offset);
@@ -270,10 +270,10 @@ public sealed class OntaTestStream
         var tx = Transmit(StreamModeId.Rate18k, left, right, Title, Artist, cover: null);
 
         // パケット境界と無関係な位置（約 3.3 秒後）から再生を始める
-        var offset = (int)(StreamConstants.SampleRate * 3.3) + 123;
+        var offset = (int)(StreamConstants.DefaultSampleRate * 3.3) + 123;
         var rx = Receive(tx.Left[offset..], tx.Right[offset..]);
         // 途中から始まったパケットは捨て、次のパケット以降はすべて受かるはず
-        var expectedPackets = tx.PacketCount - (offset / new StreamOfdmCodec(StreamModeId.Rate18k).PacketSamples) - 1;
+        var expectedPackets = tx.PacketCount - (offset / new StreamOfdmCodec(StreamModeId.Rate18k, StreamConstants.DefaultSampleRate).PacketSamples) - 1;
         _output.WriteLine(
             $"offset={offset} decoded={rx.Left.Length} title='{rx.Title}' mode={rx.ModeId} "
             + $"rx={rx.Packets}/{expectedPackets} err={rx.PacketErrors}");
@@ -290,7 +290,7 @@ public sealed class OntaTestStream
     /// </summary>
     private static TxResult Transmit(StreamModeId modeId, double[] left, double[] right, string title, string artist, byte[]? cover)
     {
-        using var pipeline = new StreamTxPipeline(modeId, title, artist, cover);
+        using var pipeline = new StreamTxPipeline(modeId, title, artist, cover, StreamConstants.DefaultSampleRate);
         var packets = new List<(Complex[] Left, Complex[] Right)>();
         for (var offset = 0; offset < left.Length; offset += ChunkFrames)
         {
@@ -317,7 +317,7 @@ public sealed class OntaTestStream
     /// </summary>
     private static RxResult Receive(Complex[] left, Complex[] right)
     {
-        using var pipeline = new StreamRxPipeline();
+        using var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate);
         var outLeft = new List<double>();
         var outRight = new List<double>();
 
@@ -364,7 +364,7 @@ public sealed class OntaTestStream
     /// <param name="maxSeconds">読み込む最大秒数（0 なら全体）。</param>
     private static (double[] Left, double[] Right) ReadPcm(string path, double maxSeconds)
     {
-        var limit = maxSeconds > 0 ? (int)(maxSeconds * StreamConstants.SampleRate) : int.MaxValue;
+        var limit = maxSeconds > 0 ? (int)(maxSeconds * StreamConstants.DefaultSampleRate) : int.MaxValue;
         var left = new List<double>();
         var right = new List<double>();
         using var reader = new StreamAudioFilePcmReader(path);
