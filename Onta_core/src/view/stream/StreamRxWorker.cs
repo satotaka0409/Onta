@@ -138,6 +138,10 @@ internal sealed class StreamRxWorker : IDisposable
             _pcmWriteTotal = 0;
             _lastFftPublishMs = -1;
             _captureSampleRate = AudioDeviceSampleRate.ResolveCapture(settings.InputDevice, StreamConstants.DefaultSampleRate);
+            // 画面が次に読む前に前回の FFT / I-Q / エラー率を消す。
+            _status.BeginRun(CoreViewText.StreamRxRunningTitle);
+            _status.SetAnalyzing(false);
+            _status.SetFftStereoMode(true);
             _worker = Task.Run(() => Run(settings, token), token);
         }
     }

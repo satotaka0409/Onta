@@ -79,6 +79,7 @@
 			"anysphere.csharp",
 			"ms-dotnettools.vscode-dotnet-runtime",
 			"stescobedo.wpf-xml-preview",
+			"ms-dotnettools.csharp"
 		]
 	}
 }

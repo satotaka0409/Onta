@@ -763,8 +763,8 @@ public partial class StreamPanel : UserControl
                 InputDevice = ReadDeviceNumber(RxInputDeviceBox),
                 InputVolume = ReadVolume(RxInputVolume),
             };
-            _errorChart.Clear();
             _rx.Start(settings);
+            ResetRxGraphs();
             RxStatusText.Text = CoreViewText.ReceivingNow;
             UpdateStartStopExclusive();
         }
@@ -772,6 +772,17 @@ public partial class StreamPanel : UserControl
         {
             RxStatusText.Text = ex.Message;
         }
+    }
+
+    /// <summary>
+    /// 受信スタート時にエラー率・FFT・I-Q を空の初期状態へ戻します。
+    /// </summary>
+    private void ResetRxGraphs()
+    {
+        _errorChart.Clear();
+        _fftChart.Clear();
+        _fftChart.ShowStereoChannels();
+        _iqChart.Clear();
     }
 
     /// <summary>
