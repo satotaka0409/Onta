@@ -38,3 +38,4 @@
 ### ライセンス
 
 14. [Licence](./99_licence.md)
+15. [第三者ライセンス（Third-Party Notices）](./98_第三者ライセンス.md)

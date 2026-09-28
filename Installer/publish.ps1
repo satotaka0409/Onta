@@ -19,6 +19,7 @@ $profile = Join-Path $repoRoot "Onta_core\Properties\PublishProfiles\ClickOnceFo
 $publishRoot = Join-Path $installerRoot "publish"
 $appPublishRoot = Join-Path $installerRoot "obj\app"
 $distReadmeSrc = Join-Path $installerRoot "dist-README.txt"
+$thirdPartyNoticesSrc = Join-Path $installerRoot "THIRD-PARTY-NOTICES.txt"
 
 # ClickOnce is one architecture per deployment; ship both side by side.
 $targets = @(
@@ -154,6 +155,9 @@ $chooserPath = Join-Path $publishRoot "Install-Onta.cmd"
 
 if (Test-Path -LiteralPath $distReadmeSrc) {
     Copy-Item -LiteralPath $distReadmeSrc -Destination (Join-Path $publishRoot "README.txt") -Force
+}
+if (Test-Path -LiteralPath $thirdPartyNoticesSrc) {
+    Copy-Item -LiteralPath $thirdPartyNoticesSrc -Destination (Join-Path $publishRoot "THIRD-PARTY-NOTICES.txt") -Force
 }
 
 Write-Host ""

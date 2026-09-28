@@ -5,6 +5,8 @@
 /// </summary>
 internal static class AppPaths
 {
+    private static readonly string DataDir = ResolveDataDir();
+
     /// <summary>送信入力ファイル用フォルダーです。</summary>
     public static string InputDir => ResolveSiblingDir("in_files");
 
@@ -12,10 +14,10 @@ internal static class AppPaths
     public static string OutputDir => ResolveSiblingDir("out_files");
 
     /// <summary>受信履歴ファイルの保存先です。</summary>
-    public static string ReceiveHistoryFilePath => Path.Combine(ResolveRootDir(), "Onta_history.bin");
+    public static string ReceiveHistoryFilePath => ResolveDataFilePath("Onta_history.bin");
 
     /// <summary>メイン画面設定ファイルの保存先です。</summary>
-    public static string MainSettingsFilePath => Path.Combine(ResolveRootDir(), "Onta_setting.bin");
+    public static string MainSettingsFilePath => ResolveDataFilePath("Onta_setting.bin");
 
     /// <summary>マニュアル（Markdown）フォルダーです。</summary>
     public static string ManualDir => ResolveManualDir();
@@ -100,6 +102,75 @@ internal static class AppPaths
         var fallback = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, name));
         Directory.CreateDirectory(fallback);
         return fallback;
+    }
+
+    /// <summary>
+    /// ユーザーデータ保存先を解決します（アンインストール後も保持される領域）。
+    /// </summary>
+    private static string ResolveDataDir()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrWhiteSpace(local))
+        {
+            return Path.Combine(local, "Onta");
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "data");
+    }
+
+    /// <summary>
+    /// 指定データファイルパスを返します。新保存先が空で旧保存先にある場合は一度だけ移行します。
+    /// </summary>
+    private static string ResolveDataFilePath(string fileName)
+    {
+        Directory.CreateDirectory(DataDir);
+        var target = Path.Combine(DataDir, fileName);
+        TryMigrateLegacyDataFile(fileName, target);
+        return target;
+    }
+
+    private static void TryMigrateLegacyDataFile(string fileName, string target)
+    {
+        if (File.Exists(target))
+        {
+            return;
+        }
+
+        foreach (var legacyDir in GetLegacyRootCandidates())
+        {
+            var src = Path.Combine(legacyDir, fileName);
+            if (!File.Exists(src))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Copy(src, target, overwrite: false);
+            }
+            catch
+            {
+                // 移行失敗時は新規作成へフォールバックする。
+            }
+
+            return;
+        }
+    }
+
+    private static IEnumerable<string> GetLegacyRootCandidates()
+    {
+        var roots = new[]
+        {
+            ResolveRootDir(),
+            Path.GetFullPath(Environment.CurrentDirectory),
+            AppContext.BaseDirectory,
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..")),
+        };
+
+        return roots
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(Directory.Exists);
     }
 }
 

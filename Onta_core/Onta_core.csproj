@@ -34,6 +34,10 @@
              Link="LICENSE"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Installer\THIRD-PARTY-NOTICES.txt"
+             Link="manual\THIRD-PARTY-NOTICES.txt"
+         CopyToOutputDirectory="PreserveNewest"
+         CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\Onta_manual\*.md"
              Link="manual\%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest"

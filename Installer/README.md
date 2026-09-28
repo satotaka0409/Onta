@@ -1,7 +1,7 @@
 # 音多 ClickOnce 配布
 
-`Onta_core` を **ClickOnce** で `Installer\publish\` へ出力します。  
-**win-x64** と **win-arm64** の両方を同梱します。  
+`Onta_core` を **ClickOnce** で `Installer\publish\` へ出力します。
+**win-x64** と **win-arm64** の両方を同梱します。
 マニュアル（`Onta_manual\*.md`）とスプラッシュ画像（`onta_splash_512x256.png`）も各アーキテクチャに同梱されます。
 
 ## 前提
@@ -24,15 +24,16 @@ cd C:\proj\Onta\Installer
 
 成功すると `Installer\publish\` に次が入ります。
 
-| パス | 説明 |
-| :--- | :--- |
-| `Install-Onta.cmd` | CPU を判定して該当する `setup.exe` を起動 |
-| `x64\setup.exe` | Intel / AMD 64bit 用 ClickOnce |
-| `arm64\setup.exe` | Windows on ARM 用 ClickOnce |
-| `x64\` / `arm64\` 配下の `Onta.application` / `Application Files\` | 各アーキテクチャの実体（`manual\` 含む） |
-| `README.txt` | 配布先向けの短い説明 |
+| パス                                                               | 説明                                                            |
+| :----------------------------------------------------------------- | :-------------------------------------------------------------- |
+| `Install-Onta.cmd`                                                 | CPU を判定して該当する `setup.exe` を起動                       |
+| `x64\setup.exe`                                                    | Intel / AMD 64bit 用 ClickOnce                                  |
+| `arm64\setup.exe`                                                  | Windows on ARM 用 ClickOnce                                     |
+| `x64\` / `arm64\` 配下の `Onta.application` / `Application Files\` | 各アーキテクチャの実体（`manual\` 含む）                        |
+| `README.txt`                                                       | 配布先向けの短い説明                                            |
+| `THIRD-PARTY-NOTICES.txt`                                          | 同梱サードパーティ（libopus）の著作権表示・ライセンス本文・免責 |
 
-USB / 共有フォルダへは `publish` フォルダごとコピーして配布してください。  
+USB / 共有フォルダへは `publish` フォルダごとコピーして配布してください。
 中間出力は `Installer\obj\app\x64` / `arm64`（配布不要）。
 
 ClickOnce はアーキテクチャごとに 1 デプロイメントのため、単一の fat バイナリではなく **x64 / arm64 を並べて同梱**する形です。
@@ -41,21 +42,21 @@ ClickOnce はアーキテクチャごとに 1 デプロイメントのため、�
 
 1. `Onta_core\Onta_core.csproj` を開く
 2. 右クリック → **発行**
-3. プロファイル `ClickOnceFolder` を選択し、RID（`win-x64` / `win-arm64`）を切り替えてそれぞれ Publish  
+3. プロファイル `ClickOnceFolder` を選択し、RID（`win-x64` / `win-arm64`）を切り替えてそれぞれ Publish
    （両方まとめる場合は `publish.ps1` を推奨）
 
 ## 同梱コンテンツ
 
-| ソース | インストール先（アプリ直下） |
-| :--- | :--- |
-| `Onta_manual\*.md` | `manual\` |
+| ソース                                | インストール先（アプリ直下）     |
+| :------------------------------------ | :------------------------------- |
+| `Onta_manual\*.md`                    | `manual\`                        |
 | `Onta_manual\onta_splash_512x256.png` | `manual\onta_splash_512x256.png` |
 
 起動時にスプラッシュ画像を短時間表示します。
 
 ## 署名について
 
-既定ではマニフェスト署名は **オフ**（`SignManifests=false`）です。  
+既定ではマニフェスト署名は **オフ**（`SignManifests=false`）です。
 社内／本番配布で署名が必要な場合は、証明書を用意し pubxml の署名設定を有効にしてください。
 
 ## Opus（ストリーム）
@@ -68,3 +69,5 @@ Onta_core/native/opus/win-arm64/opus.dll
 ```
 
 ビルド時に実行ディレクトリへコピーされます（無い場合でもビルドは成功、実行時にエラー）。
+
+配布時は `THIRD-PARTY-NOTICES.txt` を同梱し、libopus の著作権表示・ライセンス本文・免責を提供します。
