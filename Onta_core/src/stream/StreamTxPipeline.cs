@@ -22,11 +22,11 @@ public sealed class StreamTxPipeline : IDisposable
     /// <summary>
     /// パイプラインを構築します。
     /// </summary>
-    public StreamTxPipeline(StreamModeId modeId, string title, string artist, byte[]? coverBytes)
+    public StreamTxPipeline(StreamModeId modeId, string title, string artist, byte[]? coverBytes, int sampleRate)
     {
-        _codec = new StreamOfdmCodec(modeId);
+        _codec = new StreamOfdmCodec(modeId, sampleRate);
         _meta = new StreamMetaRotator(title, artist, coverBytes);
-        _opus = new OpusEncoder(_codec.Mode.OpusBitrateBps);
+        _opus = new OpusEncoder(_codec.Mode.OpusBitrateBps, sampleRate);
         _streamId = (ushort)Random.Shared.Next(1, ushort.MaxValue);
     }
 
@@ -35,6 +35,9 @@ public sealed class StreamTxPipeline : IDisposable
 
     /// <summary>モード。</summary>
     public StreamModeInfo Mode => _codec.Mode;
+
+    /// <summary>変復調のサンプリング周波数（Hz）。</summary>
+    public int SampleRate => _codec.SampleRate;
 
     /// <summary>
     /// 送信スペクトル監視を取り付けます（FFT 表示用）。
@@ -53,7 +56,7 @@ public sealed class StreamTxPipeline : IDisposable
     public List<(Complex[] Left, Complex[] Right)> PushPcm(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _opus.EncodePcm44100(left, right, _opusQueue);
+        _opus.EncodePcm(left, right, _opusQueue);
         foreach (var frame in _opusQueue)
         {
             _packer.Add(frame, _payloadQueue);

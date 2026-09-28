@@ -28,15 +28,26 @@ internal static class PerformanceSignalGenerator
     {
         var amp = Math.Clamp(amplitude, 0.0, 1.0);
         var omega = 2.0 * Math.PI * Math.Clamp(frequencyHz, 1.0, SampleRate * 0.49) / SampleRate;
+        var sinStep = Math.Sin(omega);
+        var cosStep = Math.Cos(omega);
+        var sinPhase = Math.Sin(phase);
+        var cosPhase = Math.Cos(phase);
         for (var i = 0; i < destination.Length; i++)
         {
-            destination[i] = new Complex(amp * Math.Sin(phase), 0.0);
-            phase += omega;
-            if (phase > Math.PI * 2.0)
+            destination[i] = new Complex(amp * sinPhase, 0.0);
+            var nextSin = (sinPhase * cosStep) + (cosPhase * sinStep);
+            var nextCos = (cosPhase * cosStep) - (sinPhase * sinStep);
+            sinPhase = nextSin;
+            cosPhase = nextCos;
+            if ((i & 255) == 255)
             {
-                phase -= Math.PI * 2.0;
+                var invNorm = 1.0 / Math.Sqrt((sinPhase * sinPhase) + (cosPhase * cosPhase));
+                sinPhase *= invNorm;
+                cosPhase *= invNorm;
             }
         }
+
+        phase = WrapPhase(phase + (omega * destination.Length));
     }
 
     /// <summary>
@@ -126,9 +137,23 @@ internal static class PerformanceSignalGenerator
         var amp = Math.Clamp(amplitude, 0.0, 1.0);
         var omega = 2.0 * Math.PI * Math.Clamp(frequencyHz, 1.0, fs * 0.49) / fs;
         var left = new Complex[sampleCount];
+        var sinStep = Math.Sin(omega);
+        var cosStep = Math.Cos(omega);
+        var sinPhase = 0.0;
+        var cosPhase = 1.0;
         for (var i = 0; i < sampleCount; i++)
         {
-            left[i] = new Complex(amp * Math.Sin(omega * i), 0.0);
+            left[i] = new Complex(amp * sinPhase, 0.0);
+            var nextSin = (sinPhase * cosStep) + (cosPhase * sinStep);
+            var nextCos = (cosPhase * cosStep) - (sinPhase * sinStep);
+            sinPhase = nextSin;
+            cosPhase = nextCos;
+            if ((i & 255) == 255)
+            {
+                var invNorm = 1.0 / Math.Sqrt((sinPhase * sinPhase) + (cosPhase * cosPhase));
+                sinPhase *= invNorm;
+                cosPhase *= invNorm;
+            }
         }
 
         if (channelMode == ChannelMode.Mono)
@@ -484,6 +509,18 @@ internal static class PerformanceSignalGenerator
         {
             samples[i] = new Complex(samples[i].Real * scale, 0.0);
         }
+    }
+
+    private static double WrapPhase(double phase)
+    {
+        var twoPi = Math.PI * 2.0;
+        phase %= twoPi;
+        if (phase < 0.0)
+        {
+            phase += twoPi;
+        }
+
+        return phase;
     }
 }
 

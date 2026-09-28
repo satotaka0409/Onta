@@ -5,8 +5,8 @@ namespace Onta.Stream;
 /// </summary>
 public static class StreamConstants
 {
-    /// <summary>サンプルレート（Hz）。</summary>
-    public const int SampleRate = 44100;
+    /// <summary>既定サンプルレート（Hz）。</summary>
+    public const int DefaultSampleRate = 44100;
 
     /// <summary>FFT サイズ。</summary>
     public const int FftSize = 256;
@@ -39,7 +39,8 @@ public static class StreamConstants
     public const double PreambleSeconds = 0.010;
 
     /// <summary>プリアンブルのサンプル数。</summary>
-    public static int PreambleSamples => (int)Math.Round(PreambleSeconds * SampleRate);
+    public static int PreambleSamples(int sampleRate) =>
+        (int)Math.Round(PreambleSeconds * Math.Max(1, sampleRate));
 
     /// <summary>ヘッダー変調のサブキャリア数（ID=01: 48SC / 8PSK）。</summary>
     public const int HeaderSubcarriers = 48;

@@ -1,4 +1,9 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
 using Onta.Core;
 
 namespace Onta.Stream;
@@ -20,6 +25,8 @@ public readonly record struct StreamBodyDiagnostics(
 public sealed class StreamOfdmCodec
 {
     private const int BodyBytes = StreamConstants.MetaBytes + StreamConstants.PayloadBytes;
+    private const int DataBitInterleaveRows = 32;
+    private static readonly byte[] ReverseBitsLut = BuildReverseBitsLut();
 
     private readonly OfdmGenerator _headerOfdm;
     private readonly OfdmGenerator _dataOfdm;
@@ -28,24 +35,32 @@ public sealed class StreamOfdmCodec
     private readonly int _bodyCodedBits;
     private readonly int _headerSectionSamples;
     private readonly int _packetSamples;
+    private readonly int _sampleRate;
+    private readonly int _preambleSamples;
+    private readonly int[] _bodyInterleaveMap;
+    private readonly int[] _bodyDeinterleaveMap;
     private bool[] _bits = Array.Empty<bool>();
+    private bool[] _interleavedBits = Array.Empty<bool>();
     private bool[] _leftBits = Array.Empty<bool>();
     private bool[] _rightBits = Array.Empty<bool>();
     private double[] _llrL = Array.Empty<double>();
     private double[] _llrR = Array.Empty<double>();
     private double[] _llrJoined = Array.Empty<double>();
+    private double[] _llrDeinterleaved = Array.Empty<double>();
     private readonly byte[] _wire = new byte[StreamConstants.PacketBytes];
 
     /// <summary>
     /// 指定モード用コーデックを構築します。
     /// </summary>
     /// <param name="modeId">ストリーム速度 ID。</param>
-    public StreamOfdmCodec(StreamModeId modeId)
+    public StreamOfdmCodec(StreamModeId modeId, int sampleRate)
     {
+        _sampleRate = Math.Max(1, sampleRate);
+        _preambleSamples = StreamConstants.PreambleSamples(_sampleRate);
         _mode = StreamMode.Resolve(modeId);
         // ヘッダーは常に ID=01（48SC / 8PSK / ステレオ、R=2/3）
-        _headerOfdm = CreateGenerator(StreamConstants.HeaderSubcarriers, ModulationScheme.Psk8, symbolCount: 4);
-        _dataOfdm = CreateGenerator(_mode.Subcarriers, _mode.Modulation, symbolCount: 16);
+        _headerOfdm = CreateGenerator(StreamConstants.HeaderSubcarriers, ModulationScheme.Psk8, symbolCount: 4, _sampleRate);
+        _dataOfdm = CreateGenerator(_mode.Subcarriers, _mode.Modulation, symbolCount: 16, _sampleRate);
 
         _headerCodedBits = ConvolutionalCode.GetEncodedBitLength(
             StreamConstants.HeaderBytes * 8,
@@ -55,12 +70,16 @@ public sealed class StreamOfdmCodec
             BodyBytes * 8,
             terminated: true,
             ConvolutionalCode.PunctureRate.Rate2_3);
-        _headerSectionSamples = StreamConstants.PreambleSamples + SectionSamples(_headerOfdm, _headerCodedBits);
-        _packetSamples = _headerSectionSamples + StreamConstants.PreambleSamples + SectionSamples(_dataOfdm, _bodyCodedBits);
+        (_bodyInterleaveMap, _bodyDeinterleaveMap) = BuildBlockInterleaveMaps(_bodyCodedBits, DataBitInterleaveRows);
+        _headerSectionSamples = _preambleSamples + SectionSamples(_headerOfdm, _headerCodedBits);
+        _packetSamples = _headerSectionSamples + _preambleSamples + SectionSamples(_dataOfdm, _bodyCodedBits);
     }
 
     /// <summary>現在のモード情報。</summary>
     public StreamModeInfo Mode => _mode;
+
+    /// <summary>変復調のサンプルレート（Hz）。</summary>
+    public int SampleRate => _sampleRate;
 
     /// <summary>パケット先頭からヘッダー末尾までのサンプル数（プリアンブル＋ヘッダー）。全モード共通。</summary>
     public int HeaderSectionSamples => _headerSectionSamples;
@@ -108,11 +127,21 @@ public sealed class StreamOfdmCodec
         var header = wire.AsSpan(0, StreamConstants.HeaderBytes).ToArray();
         var body = wire.AsSpan(StreamConstants.HeaderBytes, BodyBytes).ToArray();
 
-        var (hL, hR) = ModulateSection(header, _headerOfdm, ConvolutionalCode.PunctureRate.Rate2_3, absoluteSampleOffset);
-        var offsetAfterHeader = absoluteSampleOffset + StreamConstants.PreambleSamples + hL.Length;
-        var (bL, bR) = ModulateSection(body, _dataOfdm, ConvolutionalCode.PunctureRate.Rate2_3, offsetAfterHeader + StreamConstants.PreambleSamples);
+        var (hL, hR) = ModulateSection(
+            header,
+            _headerOfdm,
+            ConvolutionalCode.PunctureRate.Rate2_3,
+            absoluteSampleOffset,
+            interleaveMap: null);
+        var offsetAfterHeader = absoluteSampleOffset + _preambleSamples + hL.Length;
+        var (bL, bR) = ModulateSection(
+            body,
+            _dataOfdm,
+            ConvolutionalCode.PunctureRate.Rate2_3,
+            offsetAfterHeader + _preambleSamples,
+            _bodyInterleaveMap);
 
-        var preamble = StreamConstants.PreambleSamples;
+        var preamble = _preambleSamples;
         var total = preamble + hL.Length + preamble + bL.Length;
         var left = new Complex[total];
         var right = new Complex[total];
@@ -167,7 +196,7 @@ public sealed class StreamOfdmCodec
             return false;
         }
 
-        var position = cursor + StreamConstants.PreambleSamples;
+        var position = cursor + _preambleSamples;
         if (!TryDemodulateSection(
                 left,
                 right,
@@ -176,6 +205,7 @@ public sealed class StreamOfdmCodec
                 _headerOfdm,
                 ConvolutionalCode.PunctureRate.Rate2_3,
                 _headerCodedBits,
+                deinterleaveMap: null,
                 onIqFrame: null,
                 sampleLength: length,
                 measureCorrection: false,
@@ -185,7 +215,7 @@ public sealed class StreamOfdmCodec
             return false;
         }
 
-        position += StreamConstants.PreambleSamples;
+        position += _preambleSamples;
         if (!TryDemodulateSection(
                 left,
                 right,
@@ -194,6 +224,7 @@ public sealed class StreamOfdmCodec
                 _dataOfdm,
                 ConvolutionalCode.PunctureRate.Rate2_3,
                 _bodyCodedBits,
+                _bodyDeinterleaveMap,
                 onBodyIqFrame,
                 sampleLength: length,
                 measureCorrection: true,
@@ -239,7 +270,7 @@ public sealed class StreamOfdmCodec
             return false;
         }
 
-        var position = packetStart + StreamConstants.PreambleSamples;
+        var position = packetStart + _preambleSamples;
         if (!TryDemodulateSection(
                 left,
                 right,
@@ -248,6 +279,7 @@ public sealed class StreamOfdmCodec
                 _headerOfdm,
                 ConvolutionalCode.PunctureRate.Rate2_3,
                 _headerCodedBits,
+                deinterleaveMap: null,
                 onIqFrame: null,
                 sampleLength: length,
                 measureCorrection: false,
@@ -294,7 +326,8 @@ public sealed class StreamOfdmCodec
         byte[] payload,
         OfdmGenerator ofdm,
         ConvolutionalCode.PunctureRate puncture,
-        long absoluteSampleOffset)
+        long absoluteSampleOffset,
+        int[]? interleaveMap)
     {
         var coded = ConvolutionalCode.Encode(payload, terminate: true, punctureRate: puncture);
         var exactBitCount = ConvolutionalCode.GetEncodedBitLength(
@@ -308,6 +341,14 @@ public sealed class StreamOfdmCodec
             Array.Clear(_bits, written, exactBitCount - written);
         }
 
+        var channelSource = _bits;
+        if (interleaveMap is not null)
+        {
+            Ensure(_interleavedBits, exactBitCount, out _interleavedBits);
+            InterleaveBits(_bits, _interleavedBits, exactBitCount, interleaveMap);
+            channelSource = _interleavedBits;
+        }
+
         var mid = (exactBitCount + 1) / 2;
         var bps = Math.Max(1, ofdm.BitsPerOfdmSymbol);
         var symbols = Math.Max(
@@ -316,8 +357,8 @@ public sealed class StreamOfdmCodec
         var aligned = Math.Max(1, symbols) * bps;
         Ensure(_leftBits, aligned, out _leftBits);
         Ensure(_rightBits, aligned, out _rightBits);
-        CopyChannelBits(_bits, 0, mid, _leftBits, aligned);
-        CopyChannelBits(_bits, mid, exactBitCount - mid, _rightBits, aligned);
+        CopyChannelBits(channelSource, 0, mid, _leftBits, aligned);
+        CopyChannelBits(channelSource, mid, exactBitCount - mid, _rightBits, aligned);
         return ofdm.ModulateBitStreams(_leftBits.AsSpan(0, aligned), _rightBits.AsSpan(0, aligned), absoluteSampleOffset);
     }
 
@@ -346,6 +387,54 @@ public sealed class StreamOfdmCodec
         }
     }
 
+    private static void InterleaveBits(bool[] source, bool[] destination, int count, int[] map)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            destination[i] = source[map[i]];
+        }
+    }
+
+    private static void DeinterleaveLlrs(ReadOnlySpan<double> source, double[] destination, int count, int[] map)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            destination[i] = source[map[i]];
+        }
+    }
+
+    private static (int[] InterleaveMap, int[] DeinterleaveMap) BuildBlockInterleaveMaps(int bitCount, int rows)
+    {
+        if (bitCount <= 0)
+        {
+            return (Array.Empty<int>(), Array.Empty<int>());
+        }
+
+        var effectiveRows = Math.Max(1, Math.Min(rows, bitCount));
+        var cols = (bitCount + effectiveRows - 1) / effectiveRows;
+        var interleave = new int[bitCount];
+        var index = 0;
+        for (var c = 0; c < cols; c++)
+        {
+            for (var r = 0; r < effectiveRows; r++)
+            {
+                var src = (r * cols) + c;
+                if (src < bitCount)
+                {
+                    interleave[index++] = src;
+                }
+            }
+        }
+
+        var deinterleave = new int[bitCount];
+        for (var i = 0; i < bitCount; i++)
+        {
+            deinterleave[interleave[i]] = i;
+        }
+
+        return (interleave, deinterleave);
+    }
+
     /// <summary>
     /// 復号結果を再符号化し、受信 LLR の硬判定と食い違った符号ビットの割合を L/R 別に求めます。
     /// </summary>
@@ -362,9 +451,38 @@ public sealed class StreamOfdmCodec
     {
         var reencoded = ConvolutionalCode.Encode(payload, terminate: true, punctureRate: puncture);
         var count = Math.Min(llrs.Length, reencoded.Length * 8);
-        var leftErrors = 0;
-        var rightErrors = 0;
-        for (var i = 0; i < count; i++)
+        CountBitMismatches(llrs, reencoded, count, mid, out var leftErrors, out var rightErrors);
+
+        var leftCount = Math.Min(mid, count);
+        var rightCount = count - leftCount;
+        return new StreamBodyDiagnostics(
+            count == 0 ? 0.0 : (double)(leftErrors + rightErrors) / count,
+            leftCount == 0 ? 0.0 : (double)leftErrors / leftCount,
+            rightCount == 0 ? 0.0 : (double)rightErrors / rightCount);
+    }
+
+    private static void CountBitMismatches(
+        ReadOnlySpan<double> llrs,
+        ReadOnlySpan<byte> reencoded,
+        int count,
+        int mid,
+        out int leftErrors,
+        out int rightErrors)
+    {
+        leftErrors = 0;
+        rightErrors = 0;
+
+        var i = 0;
+        if (Avx.IsSupported && count >= 8)
+        {
+            i = CountBitMismatchesAvx(llrs, reencoded, count, mid, ref leftErrors, ref rightErrors);
+        }
+        else if (AdvSimd.Arm64.IsSupported && count >= 8)
+        {
+            i = CountBitMismatchesAdvSimd(llrs, reencoded, count, mid, ref leftErrors, ref rightErrors);
+        }
+
+        for (; i < count; i++)
         {
             var sent = ((reencoded[i >> 3] >> (7 - (i & 7))) & 1) != 0;
             if ((llrs[i] >= 0.0) == sent)
@@ -381,13 +499,133 @@ public sealed class StreamOfdmCodec
                 rightErrors++;
             }
         }
+    }
 
-        var leftCount = Math.Min(mid, count);
-        var rightCount = count - leftCount;
-        return new StreamBodyDiagnostics(
-            count == 0 ? 0.0 : (double)(leftErrors + rightErrors) / count,
-            leftCount == 0 ? 0.0 : (double)leftErrors / leftCount,
-            rightCount == 0 ? 0.0 : (double)rightErrors / rightCount);
+    private static int CountBitMismatchesAvx(
+        ReadOnlySpan<double> llrs,
+        ReadOnlySpan<byte> reencoded,
+        int count,
+        int mid,
+        ref int leftErrors,
+        ref int rightErrors)
+    {
+        var fullBytes = count >> 3;
+        var zero = Vector256<double>.Zero;
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+
+        for (var b = 0; b < fullBytes; b++)
+        {
+            var bitBase = b << 3;
+            var cmp0 = Avx.CompareGreaterThanOrEqual(Vector256.LoadUnsafe(ref llrRef, (nuint)bitBase), zero);
+            var cmp1 = Avx.CompareGreaterThanOrEqual(Vector256.LoadUnsafe(ref llrRef, (nuint)(bitBase + 4)), zero);
+            var lsbPacked = (byte)(Avx.MoveMask(cmp0) | (Avx.MoveMask(cmp1) << 4));
+            var receivedMsbPacked = ReverseBitsLut[lsbPacked];
+            var mismatch = (byte)(receivedMsbPacked ^ reencoded[b]);
+
+            if (bitBase + 8 <= mid)
+            {
+                leftErrors += BitOperations.PopCount((uint)mismatch);
+                continue;
+            }
+
+            if (bitBase >= mid)
+            {
+                rightErrors += BitOperations.PopCount((uint)mismatch);
+                continue;
+            }
+
+            var leftBits = Math.Clamp(mid - bitBase, 0, 8);
+            var leftMask = leftBits switch
+            {
+                <= 0 => (byte)0,
+                >= 8 => byte.MaxValue,
+                _ => (byte)(byte.MaxValue << (8 - leftBits)),
+            };
+            var rightMask = (byte)~leftMask;
+            leftErrors += BitOperations.PopCount((uint)(mismatch & leftMask));
+            rightErrors += BitOperations.PopCount((uint)(mismatch & rightMask));
+        }
+
+        return fullBytes << 3;
+    }
+
+    private static int CountBitMismatchesAdvSimd(
+        ReadOnlySpan<double> llrs,
+        ReadOnlySpan<byte> reencoded,
+        int count,
+        int mid,
+        ref int leftErrors,
+        ref int rightErrors)
+    {
+        var fullBytes = count >> 3;
+        var zero = Vector128<double>.Zero;
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+
+        for (var b = 0; b < fullBytes; b++)
+        {
+            var bitBase = b << 3;
+            var cmp0 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)bitBase), zero).AsUInt64();
+            var cmp1 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)(bitBase + 2)), zero).AsUInt64();
+            var cmp2 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)(bitBase + 4)), zero).AsUInt64();
+            var cmp3 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)(bitBase + 6)), zero).AsUInt64();
+
+            var lsbPacked = (byte)(
+                ((((cmp0.GetElement(0) >> 63) & 1UL) << 0)
+                | (((cmp0.GetElement(1) >> 63) & 1UL) << 1)
+                | (((cmp1.GetElement(0) >> 63) & 1UL) << 2)
+                | (((cmp1.GetElement(1) >> 63) & 1UL) << 3)
+                | (((cmp2.GetElement(0) >> 63) & 1UL) << 4)
+                | (((cmp2.GetElement(1) >> 63) & 1UL) << 5)
+                | (((cmp3.GetElement(0) >> 63) & 1UL) << 6)
+                | (((cmp3.GetElement(1) >> 63) & 1UL) << 7)));
+            var receivedMsbPacked = ReverseBitsLut[lsbPacked];
+            var mismatch = (byte)(receivedMsbPacked ^ reencoded[b]);
+
+            if (bitBase + 8 <= mid)
+            {
+                leftErrors += BitOperations.PopCount((uint)mismatch);
+                continue;
+            }
+
+            if (bitBase >= mid)
+            {
+                rightErrors += BitOperations.PopCount((uint)mismatch);
+                continue;
+            }
+
+            var leftBits = Math.Clamp(mid - bitBase, 0, 8);
+            var leftMask = leftBits switch
+            {
+                <= 0 => (byte)0,
+                >= 8 => byte.MaxValue,
+                _ => (byte)(byte.MaxValue << (8 - leftBits)),
+            };
+            var rightMask = (byte)~leftMask;
+            leftErrors += BitOperations.PopCount((uint)(mismatch & leftMask));
+            rightErrors += BitOperations.PopCount((uint)(mismatch & rightMask));
+        }
+
+        return fullBytes << 3;
+    }
+
+    private static byte[] BuildReverseBitsLut()
+    {
+        var table = new byte[256];
+        for (var i = 0; i < table.Length; i++)
+        {
+            table[i] = ReverseBits((byte)i);
+        }
+
+        return table;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static byte ReverseBits(byte value)
+    {
+        value = (byte)(((value & 0xAA) >> 1) | ((value & 0x55) << 1));
+        value = (byte)(((value & 0xCC) >> 2) | ((value & 0x33) << 2));
+        value = (byte)(((value & 0xF0) >> 4) | ((value & 0x0F) << 4));
+        return value;
     }
 
     /// <summary>
@@ -412,6 +650,7 @@ public sealed class StreamOfdmCodec
         OfdmGenerator ofdm,
         ConvolutionalCode.PunctureRate puncture,
         int codedBitCount,
+        int[]? deinterleaveMap,
         Action<Complex[], byte[], int>? onIqFrame,
         int sampleLength,
         bool measureCorrection,
@@ -458,7 +697,13 @@ public sealed class StreamOfdmCodec
             Array.Clear(_llrJoined, 0, codedBitCount);
             Array.Copy(llrL, 0, _llrJoined, 0, Math.Min(mid, llrL.Length));
             Array.Copy(llrR, 0, _llrJoined, mid, Math.Min(rightBitCount, llrR.Length));
-            var llrs = _llrJoined.AsSpan(0, codedBitCount);
+            ReadOnlySpan<double> llrs = _llrJoined.AsSpan(0, codedBitCount);
+            if (deinterleaveMap is not null)
+            {
+                Ensure(_llrDeinterleaved, codedBitCount, out _llrDeinterleaved);
+                DeinterleaveLlrs(llrs, _llrDeinterleaved, codedBitCount, deinterleaveMap);
+                llrs = _llrDeinterleaved.AsSpan(0, codedBitCount);
+            }
 
             payload = ConvolutionalCode.DecodeSoft(
                 llrs,
@@ -483,7 +728,7 @@ public sealed class StreamOfdmCodec
         }
     }
 
-    private static OfdmGenerator CreateGenerator(int subcarriers, ModulationScheme modulation, int symbolCount)
+    private static OfdmGenerator CreateGenerator(int subcarriers, ModulationScheme modulation, int symbolCount, int sampleRate)
     {
         var grid = OfdmConfig.ResolveCarrierGrid(subcarriers);
         var fft = OfdmConfig.ResolveFftSize(subcarriers, ChannelMode.Stereo);
@@ -496,7 +741,7 @@ public sealed class StreamOfdmCodec
             channelMode: ChannelMode.Stereo,
             pilotSpacing: 8,
             stereoFrequencyShiftBins: 1,
-            sampleRate: StreamConstants.SampleRate,
+            sampleRate: Math.Max(1, sampleRate),
             randomSeed: 0,
             carrierGrid: grid);
         return new OfdmGenerator(config);

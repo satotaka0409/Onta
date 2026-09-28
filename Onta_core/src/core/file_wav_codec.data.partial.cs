@@ -1014,7 +1014,19 @@ public sealed partial class FileWavCodec
     /// <param name="maxAbs">絶対値の上限。</param>
     private static void ClampLlrsInPlace(double[] llrs, double maxAbs)
     {
-        for (var i = 0; i < llrs.Length; i++)
+        var n = llrs.Length;
+        var width = Vector<double>.Count;
+        var i = 0;
+        var vMax = new Vector<double>(maxAbs);
+        var vMin = new Vector<double>(-maxAbs);
+        for (; i <= n - width; i += width)
+        {
+            var v = new Vector<double>(llrs, i);
+            v = Vector.Min(vMax, Vector.Max(vMin, v));
+            v.CopyTo(llrs, i);
+        }
+
+        for (; i < n; i++)
         {
             if (llrs[i] > maxAbs)
             {
@@ -1039,13 +1051,27 @@ public sealed partial class FileWavCodec
             return 0.0;
         }
 
+        var n = llrs.Length;
+        var width = Vector<double>.Count;
+        var i = 0;
+        var sumVec = Vector<double>.Zero;
+        for (; i <= n - width; i += width)
+        {
+            sumVec += Vector.Abs(new Vector<double>(llrs.Slice(i, width)));
+        }
+
         var sum = 0.0;
-        for (var i = 0; i < llrs.Length; i++)
+        for (var lane = 0; lane < width; lane++)
+        {
+            sum += sumVec[lane];
+        }
+
+        for (; i < n; i++)
         {
             sum += Math.Abs(llrs[i]);
         }
 
-        return sum / llrs.Length;
+        return sum / n;
     }
 
     /// <summary>

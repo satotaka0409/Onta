@@ -1,4 +1,9 @@
 using System.Buffers;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
 
 namespace Onta.Core;
 
@@ -46,7 +51,10 @@ public static class ConvolutionalCode
     private static readonly byte[] Output1WhenInput0 = BuildOutputBitTable(inputBit: 0, generatorIndex: 1);
     private static readonly byte[] Output0WhenInput1 = BuildOutputBitTable(inputBit: 1, generatorIndex: 0);
     private static readonly byte[] Output1WhenInput1 = BuildOutputBitTable(inputBit: 1, generatorIndex: 1);
+    private static readonly byte[] OutputMaskWhenInput0 = BuildOutputMaskTable(inputBit: 0);
+    private static readonly byte[] OutputMaskWhenInput1 = BuildOutputMaskTable(inputBit: 1);
     private static readonly byte[] ByteToBitsLookup = BuildByteToBitsLookup();
+    private static readonly byte[] ReverseBitsLut = BuildReverseBitsLut();
     private static readonly int PunctureRate1_2Ones = CountTrue(PuncturePatternRate1_2);
     private static readonly int PunctureRate2_3Ones = CountTrue(PuncturePatternRate2_3);
     private static readonly int PunctureRate3_4Ones = CountTrue(PuncturePatternRate3_4);
@@ -366,6 +374,9 @@ public static class ConvolutionalCode
             {
                 var llr0 = fullCodeLlrs[t * 2];
                 var llr1 = fullCodeLlrs[(t * 2) + 1];
+                var metric01 = llr0;
+                var metric10 = llr1;
+                var metric11 = llr0 + llr1;
                 var rowBase = t * StateCount;
                 var nextRowBase = (t + 1) * StateCount;
                 for (var ns = 0; ns < StateCount; ns++)
@@ -382,8 +393,7 @@ public static class ConvolutionalCode
                     }
 
                     var nextState0 = NextStateWhenInput0[state];
-                    var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
-                        + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
+                    var gamma0 = SelectBranchMetric(OutputMaskWhenInput0[state], metric01, metric10, metric11);
                     var candidate0 = a + gamma0;
                     var index0 = nextRowBase + nextState0;
                     if (candidate0 > alpha[index0])
@@ -392,8 +402,7 @@ public static class ConvolutionalCode
                     }
 
                     var nextState1 = NextStateWhenInput1[state];
-                    var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
-                        + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
+                    var gamma1 = SelectBranchMetric(OutputMaskWhenInput1[state], metric01, metric10, metric11);
                     var candidate1 = a + gamma1;
                     var index1 = nextRowBase + nextState1;
                     if (candidate1 > alpha[index1])
@@ -428,16 +437,17 @@ public static class ConvolutionalCode
             {
                 var llr0 = fullCodeLlrs[t * 2];
                 var llr1 = fullCodeLlrs[(t * 2) + 1];
+                var metric01 = llr0;
+                var metric10 = llr1;
+                var metric11 = llr0 + llr1;
                 var best0 = negInf;
                 var best1 = negInf;
                 var rowBase = t * StateCount;
 
                 for (var state = 0; state < StateCount; state++)
                 {
-                    var gamma0 = (Output0WhenInput0[state] == 1 ? llr0 : 0.0)
-                        + (Output1WhenInput0[state] == 1 ? llr1 : 0.0);
-                    var gamma1 = (Output0WhenInput1[state] == 1 ? llr0 : 0.0)
-                        + (Output1WhenInput1[state] == 1 ? llr1 : 0.0);
+                    var gamma0 = SelectBranchMetric(OutputMaskWhenInput0[state], metric01, metric10, metric11);
+                    var gamma1 = SelectBranchMetric(OutputMaskWhenInput1[state], metric01, metric10, metric11);
 
                     var nextState0 = NextStateWhenInput0[state];
                     var b0 = betaNext[nextState0];
@@ -526,24 +536,153 @@ public static class ConvolutionalCode
         var bitCount = Math.Min(
             puncturedCodeLlrs.Length,
             GetEncodedBitLength(decodedInfo.Length * 8, terminated, punctureRate));
-        var reBits = UnpackBits(reencoded, bitCount);
-        var corrected = 0;
-        for (var i = 0; i < bitCount; i++)
-        {
-            // 本系のソフト LLR は正でビット1（変調: bit→+1、復調硬判定: Real>=0→1）。
-            // 標準 LLR（正=ビット0）とは逆なので、ここでは正をビット1として硬判定する。
-            var rxHard = puncturedCodeLlrs[i] >= 0.0;
-            if (rxHard != reBits[i])
-            {
-                corrected++;
-            }
-        }
+        var corrected = CountHardDecisionMismatches(
+            puncturedCodeLlrs[..bitCount],
+            reencoded,
+            bitCount);
 
         return new DecodeMetrics(
             PathHammingDistance: corrected,
             ComparedCodeBitCount: bitCount,
             CorrectedCodeBitCount: corrected,
             CorrectionRate: bitCount == 0 ? 0.0 : (double)corrected / bitCount);
+    }
+
+    private static int CountHardDecisionMismatches(
+        ReadOnlySpan<double> llrs,
+        ReadOnlySpan<byte> expectedPacked,
+        int bitCount)
+    {
+        if (bitCount <= 0)
+        {
+            return 0;
+        }
+
+        var fullBytes = bitCount >> 3;
+        var corrected = 0;
+        if (Avx.IsSupported && fullBytes > 0)
+        {
+            corrected += CountHardDecisionMismatchesAvx(llrs, expectedPacked, fullBytes);
+        }
+        else if (AdvSimd.Arm64.IsSupported && fullBytes > 0)
+        {
+            corrected += CountHardDecisionMismatchesAdvSimd(llrs, expectedPacked, fullBytes);
+        }
+        else
+        {
+            corrected += CountHardDecisionMismatchesScalarPacked(llrs, expectedPacked, fullBytes);
+        }
+
+        var tailStart = fullBytes << 3;
+        for (var i = tailStart; i < bitCount; i++)
+        {
+            // 本系のソフト LLR は正でビット1（変調: bit→+1、復調硬判定: Real>=0→1）。
+            var expected = ((expectedPacked[i >> 3] >> (7 - (i & 7))) & 1) != 0;
+            var hard = llrs[i] >= 0.0;
+            if (expected != hard)
+            {
+                corrected++;
+            }
+        }
+
+        return corrected;
+    }
+
+    private static int CountHardDecisionMismatchesScalarPacked(
+        ReadOnlySpan<double> llrs,
+        ReadOnlySpan<byte> expectedPacked,
+        int fullBytes)
+    {
+        var corrected = 0;
+        for (var i = 0; i < fullBytes; i++)
+        {
+            var baseBit = i << 3;
+            byte hardPacked = 0;
+            if (llrs[baseBit] >= 0.0) hardPacked |= 0x80;
+            if (llrs[baseBit + 1] >= 0.0) hardPacked |= 0x40;
+            if (llrs[baseBit + 2] >= 0.0) hardPacked |= 0x20;
+            if (llrs[baseBit + 3] >= 0.0) hardPacked |= 0x10;
+            if (llrs[baseBit + 4] >= 0.0) hardPacked |= 0x08;
+            if (llrs[baseBit + 5] >= 0.0) hardPacked |= 0x04;
+            if (llrs[baseBit + 6] >= 0.0) hardPacked |= 0x02;
+            if (llrs[baseBit + 7] >= 0.0) hardPacked |= 0x01;
+            corrected += BitOperations.PopCount((uint)(hardPacked ^ expectedPacked[i]));
+        }
+
+        return corrected;
+    }
+
+    private static int CountHardDecisionMismatchesAvx(
+        ReadOnlySpan<double> llrs,
+        ReadOnlySpan<byte> expectedPacked,
+        int fullBytes)
+    {
+        var zero = Vector256<double>.Zero;
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+        var corrected = 0;
+
+        for (var i = 0; i < fullBytes; i++)
+        {
+            var bitBase = i << 3;
+            var cmp0 = Avx.CompareGreaterThanOrEqual(Vector256.LoadUnsafe(ref llrRef, (nuint)bitBase), zero);
+            var cmp1 = Avx.CompareGreaterThanOrEqual(Vector256.LoadUnsafe(ref llrRef, (nuint)(bitBase + 4)), zero);
+            var lsbPacked = (byte)(Avx.MoveMask(cmp0) | (Avx.MoveMask(cmp1) << 4));
+            var hardPacked = ReverseBitsLut[lsbPacked];
+            corrected += BitOperations.PopCount((uint)(hardPacked ^ expectedPacked[i]));
+        }
+
+        return corrected;
+    }
+
+    private static int CountHardDecisionMismatchesAdvSimd(
+        ReadOnlySpan<double> llrs,
+        ReadOnlySpan<byte> expectedPacked,
+        int fullBytes)
+    {
+        var zero = Vector128<double>.Zero;
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+        var corrected = 0;
+
+        for (var i = 0; i < fullBytes; i++)
+        {
+            var bitBase = i << 3;
+            var cmp0 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)bitBase), zero).AsUInt64();
+            var cmp1 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)(bitBase + 2)), zero).AsUInt64();
+            var cmp2 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)(bitBase + 4)), zero).AsUInt64();
+            var cmp3 = AdvSimd.Arm64.CompareGreaterThanOrEqual(Vector128.LoadUnsafe(ref llrRef, (nuint)(bitBase + 6)), zero).AsUInt64();
+            var lsbPacked = (byte)(
+                ((((cmp0.GetElement(0) >> 63) & 1UL) << 0)
+                | (((cmp0.GetElement(1) >> 63) & 1UL) << 1)
+                | (((cmp1.GetElement(0) >> 63) & 1UL) << 2)
+                | (((cmp1.GetElement(1) >> 63) & 1UL) << 3)
+                | (((cmp2.GetElement(0) >> 63) & 1UL) << 4)
+                | (((cmp2.GetElement(1) >> 63) & 1UL) << 5)
+                | (((cmp3.GetElement(0) >> 63) & 1UL) << 6)
+                | (((cmp3.GetElement(1) >> 63) & 1UL) << 7)));
+            var hardPacked = ReverseBitsLut[lsbPacked];
+            corrected += BitOperations.PopCount((uint)(hardPacked ^ expectedPacked[i]));
+        }
+
+        return corrected;
+    }
+
+    private static byte[] BuildReverseBitsLut()
+    {
+        var table = new byte[256];
+        for (var i = 0; i < table.Length; i++)
+        {
+            table[i] = ReverseBits((byte)i);
+        }
+
+        return table;
+    }
+
+    private static byte ReverseBits(byte value)
+    {
+        value = (byte)(((value & 0xAA) >> 1) | ((value & 0x55) << 1));
+        value = (byte)(((value & 0xCC) >> 2) | ((value & 0x33) << 2));
+        value = (byte)(((value & 0xF0) >> 4) | ((value & 0x0F) << 4));
+        return value;
     }
 
     /// <summary>
@@ -1006,6 +1145,53 @@ public static class ConvolutionalCode
         }
 
         return table;
+    }
+
+    /// <summary>
+    /// 全状態について2出力ビットを2bitマスク化したテーブルを構築します。
+    /// bit0=generator0(bit0), bit1=generator1(bit1)
+    /// </summary>
+    /// <param name="inputBit">入力ビット（0/1）。</param>
+    /// <returns>状態→出力2bitマスクのテーブル。</returns>
+    private static byte[] BuildOutputMaskTable(int inputBit)
+    {
+        var table = new byte[StateCount];
+        for (var state = 0; state < StateCount; state++)
+        {
+            var mask = 0;
+            if (GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[0]) == 1)
+            {
+                mask |= 1;
+            }
+
+            if (GetOutputBit(state, inputBit, GeneratorPolynomialsOctal[1]) == 1)
+            {
+                mask |= 2;
+            }
+
+            table[state] = (byte)mask;
+        }
+
+        return table;
+    }
+
+    /// <summary>
+    /// 2bitマスクから枝メトリクスを引きます。
+    /// </summary>
+    /// <param name="outputMask">出力2bitマスク（0..3）。</param>
+    /// <param name="metric01">出力01に対応する値。</param>
+    /// <param name="metric10">出力10に対応する値。</param>
+    /// <param name="metric11">出力11に対応する値。</param>
+    /// <returns>枝メトリクス。</returns>
+    private static double SelectBranchMetric(byte outputMask, double metric01, double metric10, double metric11)
+    {
+        return outputMask switch
+        {
+            0 => 0.0,
+            1 => metric01,
+            2 => metric10,
+            _ => metric11,
+        };
     }
 
     /// <summary>

@@ -1,7 +1,7 @@
 namespace Onta.Stream.Opus;
 
 /// <summary>
-/// libopus エンコーダの薄いラッパです（入力 44.1 kHz → 内部 48 kHz）。
+/// libopus エンコーダの薄いラッパです（入力 sampleRate → 内部 48 kHz）。
 /// </summary>
 public sealed class OpusEncoder : IDisposable
 {
@@ -17,13 +17,15 @@ public sealed class OpusEncoder : IDisposable
     private short[] _leftBuf = new short[FrameSamplesPerChannel * 4];
     private short[] _rightBuf = new short[FrameSamplesPerChannel * 4];
     private int _buffered;
+    private readonly int _inputSampleRate;
     private bool _disposed;
 
     /// <summary>
     /// エンコーダを生成します。
     /// </summary>
     /// <param name="bitrateBps">目標ビットレート。</param>
-    public OpusEncoder(int bitrateBps)
+    /// <param name="inputSampleRate">入力PCMのサンプリング周波数。</param>
+    public OpusEncoder(int bitrateBps, int inputSampleRate)
     {
         if (!OpusNative.IsLibraryAvailable())
         {
@@ -31,6 +33,7 @@ public sealed class OpusEncoder : IDisposable
                 "opus.dll が見つかりません。Onta_core/native/opus/<rid>/opus.dll を配置してください。");
         }
 
+        _inputSampleRate = Math.Max(1, inputSampleRate);
         var bitrate = Math.Clamp(bitrateBps, 8000, 128000);
         _encoder = OpusNative.opus_encoder_create(OpusSampleRate, 2, OpusNative.ApplicationAudio, out var err);
         if (_encoder == IntPtr.Zero || err != OpusNative.Ok)
@@ -46,9 +49,9 @@ public sealed class OpusEncoder : IDisposable
     }
 
     /// <summary>
-    /// 44.1 kHz ステレオ PCM を追加し、完成した Opus パケットを <paramref name="packets"/> へ追加します。
+    /// sampleRate 指定のステレオ PCM を追加し、完成した Opus パケットを <paramref name="packets"/> へ追加します。
     /// </summary>
-    public void EncodePcm44100(ReadOnlySpan<double> left, ReadOnlySpan<double> right, List<byte[]> packets)
+    public void EncodePcm(ReadOnlySpan<double> left, ReadOnlySpan<double> right, List<byte[]> packets)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var n = Math.Min(left.Length, right.Length);
@@ -57,8 +60,8 @@ public sealed class OpusEncoder : IDisposable
             return;
         }
 
-        // 線形補間で 44.1k → 48k
-        const double ratio = 48000.0 / 44100.0;
+        // 線形補間で入力 sampleRate → 48k
+        var ratio = OpusSampleRate / (double)_inputSampleRate;
         var outCount = (int)Math.Ceiling(n * ratio);
         for (var o = 0; o < outCount; o++)
         {

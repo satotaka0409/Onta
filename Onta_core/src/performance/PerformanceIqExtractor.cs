@@ -124,12 +124,26 @@ internal static class PerformanceIqExtractor
         var searchTo = pcm.Length - symbolLength;
         var best = searchFrom;
         var bestScore = double.NegativeInfinity;
+        var lanes = Vector<double>.Count;
         for (var t = searchFrom; t <= searchTo; t++)
         {
-            var corr = 0.0;
-            var e1 = 0.0;
-            var e2 = 0.0;
-            for (var i = 0; i < cp; i++)
+            var corrVec = Vector<double>.Zero;
+            var e1Vec = Vector<double>.Zero;
+            var e2Vec = Vector<double>.Zero;
+            var i = 0;
+            for (; i <= cp - lanes; i += lanes)
+            {
+                var a = new Vector<double>(pcm.Slice(t + i, lanes));
+                var b = new Vector<double>(pcm.Slice(t + FftSize + i, lanes));
+                corrVec += a * b;
+                e1Vec += a * a;
+                e2Vec += b * b;
+            }
+
+            var corr = SumVector(corrVec);
+            var e1 = SumVector(e1Vec);
+            var e2 = SumVector(e2Vec);
+            for (; i < cp; i++)
             {
                 var a = pcm[t + i];
                 var b = pcm[t + FftSize + i];
@@ -148,6 +162,17 @@ internal static class PerformanceIqExtractor
         }
 
         return best + cp;
+    }
+
+    private static double SumVector(Vector<double> value)
+    {
+        var sum = 0.0;
+        for (var i = 0; i < Vector<double>.Count; i++)
+        {
+            sum += value[i];
+        }
+
+        return sum;
     }
 
     /// <summary>

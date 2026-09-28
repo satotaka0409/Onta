@@ -49,18 +49,35 @@ public sealed class StreamRxPipeline : IDisposable
     private const double PreamblePowerRatio = 0.25;
 
     private readonly StreamMetaAssembler _meta = new();
-    private readonly OpusDecoder _opus = new();
+    private readonly OpusDecoder _opus;
+    private readonly int _sampleRate;
+    private readonly int _preambleSamples;
     private readonly List<Complex> _iqPoints = new(DefaultIqPointsPerPacket);
     private readonly List<byte> _iqGroups = new(DefaultIqPointsPerPacket);
-    private Complex[] _leftBuf = new Complex[StreamConstants.SampleRate];
-    private Complex[] _rightBuf = new Complex[StreamConstants.SampleRate];
-    private double[] _power = new double[StreamConstants.SampleRate + 1];
+    private Complex[] _leftBuf;
+    private Complex[] _rightBuf;
+    private double[] _power;
     private int _count;
-    private readonly StreamOfdmCodec _headerCodec = new(StreamModeId.Rate18k);
+    private readonly StreamOfdmCodec _headerCodec;
     private readonly Dictionary<StreamModeId, StreamOfdmCodec> _codecs = new();
     private StreamModeId? _modeId;
     private bool _synced;
     private bool _disposed;
+
+    /// <summary>
+    /// サンプリング周波数を指定して受信パイプラインを構築します。
+    /// </summary>
+    /// <param name="sampleRate">受信PCMのサンプリング周波数。</param>
+    public StreamRxPipeline(int sampleRate)
+    {
+        _sampleRate = Math.Max(1, sampleRate);
+        _preambleSamples = StreamConstants.PreambleSamples(_sampleRate);
+        _opus = new OpusDecoder(_sampleRate);
+        _leftBuf = new Complex[_sampleRate];
+        _rightBuf = new Complex[_sampleRate];
+        _power = new double[_sampleRate + 1];
+        _headerCodec = new StreamOfdmCodec(StreamModeId.Rate18k, _sampleRate);
+    }
 
     /// <summary>メタアセンブラ。</summary>
     public StreamMetaAssembler Meta => _meta;
@@ -89,7 +106,7 @@ public sealed class StreamRxPipeline : IDisposable
         Array.Copy(right, 0, _rightBuf, _count, n);
         _count += n;
         // バッファ肥大防止（最大約 8 秒）。同期中に捨てると境界がずれるので再同期させる
-        const int max = StreamConstants.SampleRate * 8;
+        var max = _sampleRate * 8;
         if (_count > max)
         {
             Consume(_count - max);
@@ -231,7 +248,7 @@ public sealed class StreamRxPipeline : IDisposable
 
             foreach (var frame in StreamOpusPayload.Unpack(packet.Payload))
             {
-                if (_opus.DecodeToPcm44100(frame, out var l, out var r) > 0)
+                if (_opus.DecodeToPcm(frame, out var l, out var r) > 0)
                 {
                     pcmOut.Add((l, r));
                 }
@@ -260,7 +277,7 @@ public sealed class StreamRxPipeline : IDisposable
         int length,
         out int lastCandidate)
     {
-        var preamble = StreamConstants.PreambleSamples;
+        var preamble = _preambleSamples;
         var headerSpan = _headerCodec.HeaderSectionSamples - preamble;
         var end = length - _headerCodec.HeaderSectionSamples - TailMargin - RefineRadius;
         lastCandidate = Math.Max(from, end + 1);
@@ -298,7 +315,7 @@ public sealed class StreamRxPipeline : IDisposable
     /// <returns>補正後のパケット先頭。</returns>
     private int RefinePacketStart(double[] power, int start, int length)
     {
-        var preamble = StreamConstants.PreambleSamples;
+        var preamble = _preambleSamples;
         var section = _headerCodec.HeaderSectionSamples;
         var from = Math.Max(0, start - RefineRadius);
         var to = Math.Min(length - section, start + RefineRadius);
@@ -429,7 +446,7 @@ public sealed class StreamRxPipeline : IDisposable
     {
         if (!_codecs.TryGetValue(modeId, out var codec))
         {
-            codec = new StreamOfdmCodec(modeId);
+            codec = new StreamOfdmCodec(modeId, _sampleRate);
             _codecs[modeId] = codec;
         }
 

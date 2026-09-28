@@ -1,5 +1,6 @@
 ﻿using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.Arm;
@@ -952,19 +953,28 @@ public static class TurboEcc1024
     /// <returns>不一致ビット数。</returns>
     private static int CountDifferentBytesAgainstBits(ReadOnlySpan<byte> bytes, ReadOnlySpan<bool> bits)
     {
-        var different = 0;
-        var bitIndex = 0;
-        for (var i = 0; i < bytes.Length; i++)
+        if (bytes.Length == 0)
         {
-            var value = bytes[i];
-            for (var b = 0; b < 8; b++)
-            {
-                var bit = ((value >> (7 - b)) & 1) != 0;
-                if (bit != bits[bitIndex++])
-                {
-                    different++;
-                }
-            }
+            return 0;
+        }
+
+        ReadOnlySpan<byte> bitBytes = MemoryMarshal.AsBytes(bits);
+        var byteCount = Math.Min(bytes.Length, bitBytes.Length / 8);
+        const ulong laneMask = 0x0101010101010101UL;
+
+        var different = 0;
+        ref var lookupRef = ref MemoryMarshal.GetReference(ByteToBitsLookup.AsSpan());
+        ref var bitsRef = ref MemoryMarshal.GetReference(bitBytes);
+
+        for (var i = 0; i < byteCount; i++)
+        {
+            var lookupOffset = bytes[i] * 8;
+            var bitOffset = i * 8;
+            var expectedLanes = Unsafe.ReadUnaligned<ulong>(
+                ref Unsafe.Add(ref lookupRef, lookupOffset));
+            var actualLanes = Unsafe.ReadUnaligned<ulong>(
+                ref Unsafe.Add(ref bitsRef, bitOffset));
+            different += BitOperations.PopCount((expectedLanes ^ actualLanes) & laneMask);
         }
 
         return different;

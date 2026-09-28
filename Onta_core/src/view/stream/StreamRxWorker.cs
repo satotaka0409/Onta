@@ -23,6 +23,7 @@ internal sealed class StreamRxWorker : IDisposable
     private readonly double[] _pcmRight = new double[FftSize];
     private readonly Complex[] _fftLeft = new Complex[FftSize];
     private readonly Complex[] _fftRight = new Complex[FftSize];
+    private int _captureSampleRate = StreamConstants.DefaultSampleRate;
     private long _pcmWriteTotal;
     private long _lastFftPublishMs = -1;
     private int _packetsReceived;
@@ -131,6 +132,7 @@ internal sealed class StreamRxWorker : IDisposable
             _packetErrors = 0;
             _pcmWriteTotal = 0;
             _lastFftPublishMs = -1;
+            _captureSampleRate = AudioDeviceSampleRate.ResolveCapture(settings.InputDevice, StreamConstants.DefaultSampleRate);
             _worker = Task.Run(() => Run(settings, token), token);
         }
     }
@@ -158,7 +160,7 @@ internal sealed class StreamRxWorker : IDisposable
         StreamRxPipeline? pipeline = null;
         try
         {
-            pipeline = new StreamRxPipeline { PacketReported = PublishPacket };
+            pipeline = new StreamRxPipeline(_captureSampleRate) { PacketReported = PublishPacket };
 
             var queue = new Queue<(Complex[] L, Complex[] R)>();
             var gate = new object();
@@ -171,7 +173,7 @@ internal sealed class StreamRxWorker : IDisposable
                 }
             };
             capture.CaptureFailed += msg => throw new InvalidOperationException(msg);
-            capture.Start(settings.InputDevice, ChannelMode.Stereo, StreamConstants.SampleRate, settings.InputVolume);
+            capture.Start(settings.InputDevice, ChannelMode.Stereo, _captureSampleRate, settings.InputVolume);
 
             while (!token.IsCancellationRequested)
             {
@@ -270,7 +272,7 @@ internal sealed class StreamRxWorker : IDisposable
         PerformanceRingCopy.FillComplexWindow(_pcmRight, _pcmWriteTotal, _fftRight, FftSize);
         PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftLeft, PerformanceFftWindowKind.Hanning);
         PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftRight, PerformanceFftWindowKind.Hanning);
-        _status.SetFftStereoFrames(_fftLeft, _fftRight, StreamConstants.SampleRate);
+        _status.SetFftStereoFrames(_fftLeft, _fftRight, _captureSampleRate);
     }
 
     /// <summary>

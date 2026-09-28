@@ -72,10 +72,23 @@ internal static class LissajousMeterAnalyzer
     /// <returns>推定周波数（Hz）。取れなければ 0。</returns>
     private static double EstimateFrequencyHz(ReadOnlySpan<double> pcm, int sampleRate)
     {
-        double sum = 0;
-        for (var i = 0; i < pcm.Length; i++)
+        var lanes = Vector<double>.Count;
+        var sumVec = Vector<double>.Zero;
+        var index = 0;
+        for (; index <= pcm.Length - lanes; index += lanes)
         {
-            sum += pcm[i];
+            sumVec += new Vector<double>(pcm.Slice(index, lanes));
+        }
+
+        var sum = 0.0;
+        for (var lane = 0; lane < lanes; lane++)
+        {
+            sum += sumVec[lane];
+        }
+
+        for (; index < pcm.Length; index++)
+        {
+            sum += pcm[index];
         }
 
         var mean = sum / pcm.Length;

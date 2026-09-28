@@ -27,6 +27,7 @@ internal sealed class StreamTxWorker : IDisposable
 
     private readonly Complex[] _fftLeft = new Complex[FftSize];
     private readonly Complex[] _fftRight = new Complex[FftSize];
+    private int _vizSampleRate = StreamConstants.DefaultSampleRate;
     private long _pcmWriteTotal;
     private long _lastFftPublishMs = -1;
     private Task? _worker;
@@ -122,10 +123,6 @@ internal sealed class StreamTxWorker : IDisposable
             }
 
             var mode = StreamMode.Resolve(settings.ModeId);
-            pipeline = new StreamTxPipeline(settings.ModeId, settings.Title, settings.Artist, cover);
-
-            player = new RealtimePcmPlayer();
-            player.Start(settings.OutputDevice, StreamConstants.SampleRate, ChannelMode.Stereo, settings.OutputVolume);
 
             if (settings.UseWavInput)
             {
@@ -135,7 +132,14 @@ internal sealed class StreamTxWorker : IDisposable
                 }
 
                 using var reader = new StreamAudioFilePcmReader(settings.WavPath);
-                const int chunk = 4410;
+                var streamSampleRate = reader.SampleRate;
+                _vizSampleRate = streamSampleRate;
+                pipeline = new StreamTxPipeline(settings.ModeId, settings.Title, settings.Artist, cover, streamSampleRate);
+
+                player = new RealtimePcmPlayer();
+                player.Start(settings.OutputDevice, streamSampleRate, ChannelMode.Stereo, settings.OutputVolume);
+
+                var chunk = Math.Max(1, streamSampleRate / 10);
                 while (!token.IsCancellationRequested && reader.TryRead(chunk, out var leftC, out var rightC))
                 {
                     var left = ToDouble(leftC);
@@ -174,6 +178,13 @@ internal sealed class StreamTxWorker : IDisposable
             }
             else
             {
+                var streamSampleRate = AudioDeviceSampleRate.ResolveCapture(settings.InputDevice, StreamConstants.DefaultSampleRate);
+                _vizSampleRate = streamSampleRate;
+                pipeline = new StreamTxPipeline(settings.ModeId, settings.Title, settings.Artist, cover, streamSampleRate);
+
+                player = new RealtimePcmPlayer();
+                player.Start(settings.OutputDevice, streamSampleRate, ChannelMode.Stereo, settings.OutputVolume);
+
                 var queue = new Queue<(Complex[] L, Complex[] R)>();
                 var gate = new object();
                 capture = new RealtimePcmCapture();
@@ -185,7 +196,7 @@ internal sealed class StreamTxWorker : IDisposable
                     }
                 };
                 capture.CaptureFailed += msg => throw new InvalidOperationException(msg);
-                capture.Start(settings.InputDevice, ChannelMode.Stereo, StreamConstants.SampleRate, settings.InputVolume);
+                capture.Start(settings.InputDevice, ChannelMode.Stereo, streamSampleRate, settings.InputVolume);
 
                 while (!token.IsCancellationRequested)
                 {
@@ -306,7 +317,7 @@ internal sealed class StreamTxWorker : IDisposable
 
         PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftLeft, PerformanceFftWindowKind.Hanning);
         PerformanceFftAnalyzer.ComputeSpectrumInPlace(_fftRight, PerformanceFftWindowKind.Hanning);
-        _status.SetFftStereoFrames(_fftLeft, _fftRight, StreamConstants.SampleRate);
+        _status.SetFftStereoFrames(_fftLeft, _fftRight, _vizSampleRate);
     }
 
     /// <summary>
