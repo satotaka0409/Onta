@@ -1,5 +1,6 @@
 ﻿using Onta.Core;
 using Onta.History;
+using Onta.View.Language;
 
 namespace Onta.View.Core;
 
@@ -80,7 +81,7 @@ internal sealed class InputCoreWorker : IDisposable
             StopLiveLocked();
 
             var label = Path.GetFileName(wavPath);
-            var state = CreateState(string.IsNullOrWhiteSpace(label) ? "(WAV受信)" : label);
+            var state = CreateState(string.IsNullOrWhiteSpace(label) ? CoreViewText.ReceiveWavSource : label);
             state.StatusBoard.SetProgress(new CoreProgressInfo(
                 CurrentFrame: CoreFrameKind.Fh,
                 CurrentBlockIndex: -1,
@@ -147,7 +148,7 @@ internal sealed class InputCoreWorker : IDisposable
                 minAttemptSeconds: 2,
                 sharedStatus: _sharedStatus);
             var state = session.ProgressiveState;
-            state.StatusBoard.BeginRun("(音声入力)");
+            state.StatusBoard.BeginRun(CoreViewText.AudioInputSourceSimple);
             state.StatusBoard.SetProgress(new CoreProgressInfo(
                 CurrentFrame: CoreFrameKind.Fh,
                 CurrentBlockIndex: -1,
@@ -230,7 +231,7 @@ internal sealed class InputCoreWorker : IDisposable
 
             if (!_completionPending)
             {
-                _lastError = "受信を中断しました。";
+                _lastError = CoreViewText.MessageReceiveInterrupted;
                 _decodedBytes = null;
                 _lastDecodedPath = null;
                 _completionPending = true;
@@ -275,8 +276,8 @@ internal sealed class InputCoreWorker : IDisposable
             _completionPending = false;
             success = _decodedBytes is not null && _lastError is null;
             message = success
-                ? "Receive completed successfully."
-                : (_lastError ?? "Receive failed.");
+                ? CoreViewText.ReceiveCompletedSuccessfully
+                : (_lastError ?? CoreViewText.ReceiveFailed);
             outputPath = _lastDecodedPath;
             return true;
         }

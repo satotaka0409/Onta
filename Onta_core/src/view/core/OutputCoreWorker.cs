@@ -1,6 +1,7 @@
 ﻿using System.Numerics;
 using Onta.Core;
 using Onta.Performance;
+using Onta.View.Language;
 
 namespace Onta.View.Core;
 
@@ -55,7 +56,7 @@ internal sealed class OutputCoreWorker
             _cts = cts;
 
             var fileName = string.IsNullOrWhiteSpace(settings.InputFilePath)
-                ? "(未選択)"
+                ? CoreViewText.InputUnselected
                 : Path.GetFileName(settings.InputFilePath);
             _snapshot = new CoreProgressSnapshot(
                 IsRunning: true,
@@ -106,7 +107,7 @@ internal sealed class OutputCoreWorker
 
             cts = _cts;
             player = _player;
-            _snapshot = _snapshot with { Stage = "中断要求中" };
+            _snapshot = _snapshot with { Stage = CoreViewText.StageCancelRequested };
         }
 
         try
@@ -231,7 +232,7 @@ internal sealed class OutputCoreWorker
         WavWriter.StreamingPcm16Writer? wavWriter = null;
         try
         {
-            UpdateSnapshot(0, 0, 0, "入力読込中", ErrorRateFrameKind.Fh, false, false, "-", "-");
+            UpdateSnapshot(0, 0, 0, CoreViewText.StageInputLoading, ErrorRateFrameKind.Fh, false, false, "-", "-");
             cancellationToken.ThrowIfCancellationRequested();
             var bytes = File.ReadAllBytes(settings.InputFilePath);
             var blockCount = Math.Max(1, (bytes.Length + 8191) / 8192);
@@ -414,7 +415,7 @@ internal sealed class OutputCoreWorker
                         100.0 * elapsed / Math.Max(totalSeconds, 1e-9),
                         elapsed,
                         totalSeconds,
-                        "音声再生中",
+                        CoreViewText.StagePlayingAudio,
                         ErrorRateFrameKind.Bd,
                         false,
                         false,
@@ -452,14 +453,14 @@ internal sealed class OutputCoreWorker
                     : _snapshot.ElapsedAudioSeconds;
             }
 
-            UpdateSnapshot(elapsed > 0 && total > 0 ? 100.0 * elapsed / total : 0, elapsed, total, "中断", ErrorRateFrameKind.Bd, true, false, "-", "-");
+            UpdateSnapshot(elapsed > 0 && total > 0 ? 100.0 * elapsed / total : 0, elapsed, total, CoreViewText.StageCancelled, ErrorRateFrameKind.Bd, true, false, "-", "-");
             lock (_sync)
             {
                 _completion = new CoreCompletionResult(
                     IsSuccess: false,
                     Message: "Transmission cancelled.",
                     OutputWavPath: settings.WriteWav ? (outputWavPath ?? string.Empty) : string.Empty,
-                    InputFileName: string.IsNullOrWhiteSpace(settings.InputFilePath) ? "(未選択)" : Path.GetFileName(settings.InputFilePath),
+                    InputFileName: string.IsNullOrWhiteSpace(settings.InputFilePath) ? CoreViewText.InputUnselected : Path.GetFileName(settings.InputFilePath),
                     FileSizeText: "-",
                     BlockCountText: "-",
                     Settings: settings,
@@ -476,7 +477,7 @@ internal sealed class OutputCoreWorker
                     IsSuccess: false,
                     Message: ex.Message,
                     OutputWavPath: settings.WriteWav ? (outputWavPath ?? string.Empty) : string.Empty,
-                    InputFileName: string.IsNullOrWhiteSpace(settings.InputFilePath) ? "(未選択)" : Path.GetFileName(settings.InputFilePath),
+                    InputFileName: string.IsNullOrWhiteSpace(settings.InputFilePath) ? CoreViewText.InputUnselected : Path.GetFileName(settings.InputFilePath),
                     FileSizeText: "-",
                     BlockCountText: "-",
                     Settings: settings,
@@ -1114,7 +1115,7 @@ internal readonly record struct CoreProgressSnapshot(
         TotalAudioSeconds: 0,
         Stage: "Preparing",
         ErrorFrameKind: ErrorRateFrameKind.Fh,
-        InputFileName: "(未選択)",
+        InputFileName: CoreViewText.InputUnselected,
         FileSizeText: "-",
         BlockCountText: "-",
         WowLeftPercent: 0,

@@ -3,6 +3,7 @@ using Onta.Core;
 using Onta.Performance;
 using Onta.Stream;
 using Onta.View.Core;
+using Onta.View.Language;
 
 namespace Onta.View.Stream;
 
@@ -108,7 +109,7 @@ internal sealed class StreamTxWorker : IDisposable
 
     private void Run(StreamTxSettings settings, CancellationToken token)
     {
-        _status.BeginRun("ストリーム送信");
+        _status.BeginRun(CoreViewText.StreamTxRunningTitle);
         _status.SetAnalyzing(false);
         _status.SetFftStereoMode(true);
         RealtimePcmPlayer? player = null;
@@ -128,7 +129,7 @@ internal sealed class StreamTxWorker : IDisposable
             {
                 if (string.IsNullOrWhiteSpace(settings.WavPath) || !File.Exists(settings.WavPath))
                 {
-                    throw new FileNotFoundException("入力ファイルがありません。", settings.WavPath);
+                    throw new FileNotFoundException(CoreViewText.InputFileNotFound, settings.WavPath);
                 }
 
                 using var reader = new StreamAudioFilePcmReader(settings.WavPath);
@@ -240,12 +241,12 @@ internal sealed class StreamTxWorker : IDisposable
             }
 
             _status.Complete(faulted: false);
-            Complete(true, "ストリーム送信完了");
+            Complete(true, CoreViewText.StreamTxCompleted);
         }
         catch (OperationCanceledException)
         {
-            _status.Complete(faulted: true, "キャンセル");
-            Complete(false, "キャンセル");
+            _status.Complete(faulted: true, CoreViewText.Cancelled);
+            Complete(false, CoreViewText.Cancelled);
         }
         catch (Exception ex)
         {

@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using Onta.Core;
+using Onta.View.Language;
 
 namespace Onta.View.Core;
 
@@ -39,7 +40,7 @@ public partial class FileEstimatePanel : UserControl
 
         if (fileSizeBytes <= 0)
         {
-            _rows.Add(EstimateRow.Info("Input file", "Not selected", "-"));
+            _rows.Add(EstimateRow.Info(CoreViewText.InputFile, CoreViewText.InputUnselected, "-"));
             return;
         }
 
@@ -68,7 +69,7 @@ public partial class FileEstimatePanel : UserControl
         }
 
         var blockCount = Math.Max(1, (int)((fileSizeBytes + DataBlockBytes - 1) / DataBlockBytes));
-        _rows.Add(EstimateRow.Info("ブロック数", "-", blockCount.ToString()));
+        _rows.Add(EstimateRow.Info(CoreViewText.BlockCount, "-", blockCount.ToString()));
         _rows.Add(EstimateRow.Segment("Total", estimate.TotalSeconds, $"{fileSizeBytes:N0}"));
     }
 

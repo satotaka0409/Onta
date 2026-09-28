@@ -4,6 +4,7 @@ using System.Windows.Controls.Primitives;
 using Microsoft.Win32;
 using NAudioWaveOut = NAudio.Wave.WaveOut;
 using Onta.Core;
+using Onta.View.Language;
 
 namespace Onta.View.Core;
 
@@ -223,8 +224,8 @@ public partial class SendPanel : UserControl
     {
         var dlg = new OpenFileDialog
         {
-            Title = "Select input file",
-            Filter = "すべてのファイル (*.*)|*.*|PNG (*.png)|*.png",
+            Title = CoreViewText.DialogSelectInputFile,
+            Filter = $"{CoreViewText.FilterAllFiles}|{CoreViewText.FilterPng}",
             InitialDirectory = AppPaths.InputDir
         };
         if (dlg.ShowDialog() != true)
@@ -316,7 +317,7 @@ public partial class SendPanel : UserControl
     private void InitializeAudioDevices()
     {
         AudioDeviceComboBox.Items.Clear();
-        AudioDeviceComboBox.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, "既定デバイス"));
+        AudioDeviceComboBox.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, CoreViewText.DefaultDevice));
 
         try
         {
@@ -433,7 +434,7 @@ public partial class SendPanel : UserControl
     {
         return AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
             ? item.Name
-            : "既定デバイス";
+            : CoreViewText.DefaultDevice;
     }
 
     /// <summary>
@@ -445,8 +446,8 @@ public partial class SendPanel : UserControl
     {
         var dlg = new SaveFileDialog
         {
-            Title = "WAV 出力先",
-            Filter = "WAV (*.wav)|*.wav",
+            Title = CoreViewText.DialogWavOutputDestination,
+            Filter = CoreViewText.FilterWav,
             InitialDirectory = AppPaths.OutputDir,
             FileName = string.IsNullOrWhiteSpace(WavPathBox.Text) ? "onta_out.wav" : Path.GetFileName(WavPathBox.Text)
         };

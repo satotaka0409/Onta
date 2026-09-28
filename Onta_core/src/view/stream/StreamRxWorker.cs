@@ -3,6 +3,7 @@ using Onta.Core;
 using Onta.Performance;
 using Onta.Stream;
 using Onta.View.Core;
+using Onta.View.Language;
 
 namespace Onta.View.Stream;
 
@@ -153,7 +154,7 @@ internal sealed class StreamRxWorker : IDisposable
 
     private void Run(StreamRxSettings settings, CancellationToken token)
     {
-        _status.BeginRun("ストリーム受信");
+        _status.BeginRun(CoreViewText.StreamRxRunningTitle);
         _status.SetAnalyzing(false);
         _status.SetFftStereoMode(true);
         RealtimePcmCapture? capture = null;
@@ -221,12 +222,12 @@ internal sealed class StreamRxWorker : IDisposable
             }
 
             _status.Complete(faulted: false);
-            Complete(true, "ストリーム受信停止");
+            Complete(true, CoreViewText.StreamRxStopped);
         }
         catch (OperationCanceledException)
         {
-            _status.Complete(faulted: true, "キャンセル");
-            Complete(false, "キャンセル");
+            _status.Complete(faulted: true, CoreViewText.Cancelled);
+            Complete(false, CoreViewText.Cancelled);
         }
         catch (Exception ex)
         {

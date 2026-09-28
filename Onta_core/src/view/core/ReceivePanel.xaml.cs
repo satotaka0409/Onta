@@ -5,6 +5,7 @@ using System.Windows.Media;
 using Microsoft.Win32;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
 using Onta.Core;
+using Onta.View.Language;
 using Ellipse = System.Windows.Shapes.Ellipse;
 
 namespace Onta.View.Core;
@@ -84,7 +85,7 @@ public partial class ReceivePanel : UserControl
             _fftChart.Clear();
             _iqChart.Clear();
             _wowChart.Clear();
-            SetFileInfo("(未受信)", "-", "-");
+            SetFileInfo(CoreViewText.NotReceived, "-", "-");
             ProgressBox.Text = "-";
             EnsureErrorRateLegend();
             UpdateInputModePanels();
@@ -252,7 +253,7 @@ public partial class ReceivePanel : UserControl
     public string AudioDeviceName =>
         AudioDeviceComboBox.SelectedItem is AudioDeviceItem item
             ? item.Name
-            : "既定デバイス";
+            : CoreViewText.DefaultDevice;
 
     /// <summary>
     /// 音声入力の音量（0〜1）を返します。
@@ -323,12 +324,12 @@ public partial class ReceivePanel : UserControl
             }
             else
             {
-                SetFileInfo("(未受信)", "-", "-");
+                SetFileInfo(CoreViewText.NotReceived, "-", "-");
             }
         }
         else
         {
-            SetFileInfo($"(音声入力: {AudioDeviceName})", "-", "-");
+            SetFileInfo(CoreViewText.AudioInputSource(AudioDeviceName), "-", "-");
         }
     }
 
@@ -404,7 +405,7 @@ public partial class ReceivePanel : UserControl
         }
         else
         {
-            IqTitle.Text = "I-Q";
+            IqTitle.Text = CoreViewText.Iq;
         }
 
         _fftChart.ReplacePoints(
@@ -476,9 +477,9 @@ public partial class ReceivePanel : UserControl
         _lastErrorSequence = -1;
         ClearWowTracking();
         UpdateWowMeters(0, 0);
-        SetFileInfo("(未受信)", "-", "-");
+        SetFileInfo(CoreViewText.NotReceived, "-", "-");
         ProgressBox.Text = "-";
-        IqTitle.Text = "I-Q";
+        IqTitle.Text = CoreViewText.Iq;
         EnsureErrorRateLegend();
     }
 
@@ -488,7 +489,7 @@ public partial class ReceivePanel : UserControl
     public void PrepareForNewReceive()
     {
         ResetVisualization();
-        ProgressBox.Text = "開始中…";
+        ProgressBox.Text = CoreViewText.StartingProgress;
     }
 
     /// <summary>
@@ -517,7 +518,7 @@ public partial class ReceivePanel : UserControl
         }
 
         _iqChart.ReplacePoints(iq.Points, iq.ModulationScheme);
-        IqTitle.Text = $"I-Q 送信 ({iq.ModulationScheme} / SC={iq.ActiveSubcarrierCount})";
+        IqTitle.Text = CoreViewText.IqSendFormat(iq.ModulationScheme.ToString(), iq.ActiveSubcarrierCount);
     }
 
     /// <summary>
@@ -564,7 +565,7 @@ public partial class ReceivePanel : UserControl
     public void ClearIqDisplay()
     {
         _iqChart.Clear();
-        IqTitle.Text = "I-Q";
+        IqTitle.Text = CoreViewText.Iq;
     }
 
     /// <summary>
@@ -613,9 +614,9 @@ public partial class ReceivePanel : UserControl
         }
 
         ErrorLegendAColor.Background = ErrorLegendViterbiBrush;
-        ErrorLegendAText.Text = "ビタビ";
+        ErrorLegendAText.Text = CoreViewText.Viterbi;
         ErrorLegendBColor.Background = ErrorLegendOuterBrush;
-        ErrorLegendBText.Text = "RS／ターボ";
+        ErrorLegendBText.Text = CoreViewText.RsTurbo;
     }
 
     /// <summary>
@@ -722,11 +723,11 @@ public partial class ReceivePanel : UserControl
         if (UseWavInput)
         {
             // WAVモードに切替時は受信対象表示を初期化する。
-            SetFileInfo("(未受信)", "-", "-");
+            SetFileInfo(CoreViewText.NotReceived, "-", "-");
         }
         else
         {
-            SetFileInfo($"(音声入力: {AudioDeviceName})", "-", "-");
+            SetFileInfo(CoreViewText.AudioInputSource(AudioDeviceName), "-", "-");
         }
 
         ProgressBox.Text = "-";
@@ -753,7 +754,7 @@ public partial class ReceivePanel : UserControl
     private void InitializeAudioDevices()
     {
         AudioDeviceComboBox.Items.Clear();
-        AudioDeviceComboBox.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, "既定デバイス"));
+        AudioDeviceComboBox.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, CoreViewText.DefaultDevice));
 
         try
         {
@@ -798,7 +799,7 @@ public partial class ReceivePanel : UserControl
     {
         if (AudioInputRadio?.IsChecked == true)
         {
-            SetFileInfo($"(音声入力: {AudioDeviceName})", "-", "-");
+            SetFileInfo(CoreViewText.AudioInputSource(AudioDeviceName), "-", "-");
         }
     }
 
@@ -824,8 +825,8 @@ public partial class ReceivePanel : UserControl
     {
         var dlg = new OpenFileDialog
         {
-            Title = "Select receive WAV file",
-            Filter = "WAV (*.wav)|*.wav|すべてのファイル (*.*)|*.*",
+            Title = CoreViewText.DialogSelectReceiveWavFile,
+            Filter = CoreViewText.FilterReceiveWav,
             InitialDirectory = AppPaths.InputDir
         };
         if (dlg.ShowDialog() != true)
@@ -848,7 +849,7 @@ public partial class ReceivePanel : UserControl
 
         // ファイル選択後はヘッダー情報待ち状態として表示する。
         SetFileInfo(displayName, sizeText, "-");
-        ProgressBox.Text = "待機中";
+        ProgressBox.Text = CoreViewText.WaitingProgress;
     }
 
     /// <summary>
@@ -860,7 +861,7 @@ public partial class ReceivePanel : UserControl
     {
         var dlg = new OpenFolderDialog
         {
-            Title = "Select output folder for received file",
+            Title = CoreViewText.DialogSelectOutputFolder,
             InitialDirectory = Directory.Exists(_outputDir) ? _outputDir : AppPaths.OutputDir
         };
         if (dlg.ShowDialog() != true || string.IsNullOrWhiteSpace(dlg.FolderName))

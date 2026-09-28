@@ -1,6 +1,7 @@
 <UserControl x:Class="Onta.View.History.HistoryPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lang="clr-namespace:Onta.View.Language">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -11,11 +12,11 @@
                     Orientation="Horizontal"
                     Margin="0,0,0,8">
             <Button x:Name="ReloadButton"
-                    Content="再読込"
+                    Content="{x:Static lang:CoreViewText.Reload}"
                     Width="90"
                     Click="OnReloadClick"/>
             <Button x:Name="DeleteButton"
-                    Content="履歴を削除"
+                    Content="{x:Static lang:CoreViewText.DeleteHistory}"
                     Width="110"
                     Margin="8,0,0,0"
                     Click="OnDeleteClick"/>
@@ -29,7 +30,7 @@
                     SelectedIndex="0"
                     SelectionChanged="OnSelectionChanged">
             <TabItem x:Name="ReceiveHistoryTab"
-                     Header="受信履歴">
+                     Header="{x:Static lang:CoreViewText.ReceiveHistory}">
                 <DataGrid x:Name="ReceiveHistoryGrid"
                           AutoGenerateColumns="False"
                           CanUserAddRows="False"
@@ -41,7 +42,7 @@
                           RowDetailsVisibilityMode="Collapsed"
                           SelectionChanged="OnSelectionChanged">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="受信日時"
+                        <DataGridTemplateColumn Header="{x:Static lang:CoreViewText.ReceivedAt}"
                                                 Width="120">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -49,34 +50,34 @@
                                                Cursor="Hand"
                                                TextDecorations="Underline"
                                                VerticalAlignment="Center"
-                                               ToolTip="クリックでブロック明細を開閉"
+                                               ToolTip="{x:Static lang:CoreViewText.TooltipToggleBlockDetails}"
                                                PreviewMouseLeftButtonDown="OnReceiveTimestampClick"/>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="ファイル名"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileNameHeader}"
                                             Binding="{Binding FileName}"
                                             Width="3*"/>
-                        <DataGridTextColumn Header="ファイルサイズ"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileSizeHeader}"
                                             Binding="{Binding FileSizeText}"
                                             Width="80"/>
-                        <DataGridTextColumn Header="結果"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Result}"
                                             Binding="{Binding ResultText}"
                                             Width="70"/>
-                        <DataGridTextColumn Header="ブロック数"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockCount}"
                                             Binding="{Binding BlockCountText}"
                                             Width="65"/>
-                        <DataGridTextColumn Header="音声/WAV"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.AudioWav}"
                                             Binding="{Binding InputDeviceText}"
                                             Width="70"/>
-                        <DataGridTextColumn Header="WAVファイル名"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.WavFileName}"
                                             Binding="{Binding SourceWavFileName}"
                                             Width="4*"/>
-                        <DataGridTemplateColumn Header="ダウンロード"
+                        <DataGridTemplateColumn Header="{x:Static lang:CoreViewText.Download}"
                                                 Width="80">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Button Content="ダウンロード"
+                                    <Button Content="{x:Static lang:CoreViewText.Download}"
                                             Padding="8,2"
                                             HorizontalAlignment="Center"
                                             VerticalAlignment="Center"
@@ -100,10 +101,10 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="作成タイムスタンプ"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.CreatedTimestamp}"
                                             Binding="{Binding CreatedAtText}"
                                             Width="130"/>
-                        <DataGridTextColumn Header="更新タイムスタンプ"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.UpdatedTimestamp}"
                                             Binding="{Binding UpdatedAtText}"
                                             Width="130"/>
                     </DataGrid.Columns>
@@ -123,19 +124,19 @@
                                         <DataGridTextColumn Header="BLK"
                                                             Binding="{Binding BlockIndexText}"
                                                             Width="50"/>
-                                        <DataGridTextColumn Header="結果"
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Result}"
                                                             Binding="{Binding ResultText}"
                                                             Width="50"/>
-                                        <DataGridTextColumn Header="サブキャリア数"
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.GridSubcarrierCount}"
                                                             Binding="{Binding SubcarrierText}"
                                                             Width="90"/>
-                                        <DataGridTextColumn Header="変調"
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Modulation}"
                                                             Binding="{Binding ModulationText}"
                                                             Width="60"/>
                                         <DataGridTextColumn Header="Stereo/mono"
                                                             Binding="{Binding ChannelText}"
                                                             Width="90"/>
-                                        <DataGridTextColumn Header="ブロックサイズ"
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockSize}"
                                                             Binding="{Binding BlockSizeText}"
                                                             Width="90"/>
                                     </DataGrid.Columns>
@@ -147,7 +148,7 @@
             </TabItem>
 
             <TabItem x:Name="SendHistoryTab"
-                     Header="送信履歴">
+                     Header="{x:Static lang:CoreViewText.SendHistory}">
                 <DataGrid x:Name="SendHistoryGrid"
                           AutoGenerateColumns="False"
                           CanUserAddRows="False"
@@ -158,34 +159,34 @@
                           SelectionUnit="FullRow"
                           SelectionChanged="OnSelectionChanged">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="送信日時"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.SentAt}"
                                             Binding="{Binding TimestampText}"
                                             Width="130"/>
-                        <DataGridTextColumn Header="ファイル名"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileNameHeader}"
                                             Binding="{Binding FileName}"
                                             Width="3*"/>
-                        <DataGridTextColumn Header="ファイルサイズ"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileSizeHeader}"
                                             Binding="{Binding FileSizeText}"
                                             Width="80"/>
-                        <DataGridTextColumn Header="音声/WAV"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.AudioWav}"
                                             Binding="{Binding OutputDeviceText}"
                                             Width="70"/>
-                        <DataGridTextColumn Header="WAVファイル名"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.WavFileName}"
                                             Binding="{Binding OutputWavFileName}"
                                             Width="4*"/>
-                        <DataGridTextColumn Header="サブキャリア数"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.GridSubcarrierCount}"
                                             Binding="{Binding SubcarrierText}"
                                             Width="80"/>
-                        <DataGridTextColumn Header="変調"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Modulation}"
                                             Binding="{Binding ModulationText}"
                                             Width="60"/>
                         <DataGridTextColumn Header="Stereo/mono"
                                             Binding="{Binding ChannelText}"
                                             Width="90"/>
-                        <DataGridTextColumn Header="作成タイムスタンプ"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.CreatedTimestamp}"
                                             Binding="{Binding CreatedAtText}"
                                             Width="130"/>
-                        <DataGridTextColumn Header="更新タイムスタンプ"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.UpdatedTimestamp}"
                                             Binding="{Binding UpdatedAtText}"
                                             Width="130"/>
                     </DataGrid.Columns>
@@ -193,7 +194,7 @@
             </TabItem>
 
             <TabItem x:Name="UncompleteBlockTab"
-                     Header="不明ブロック">
+                     Header="{x:Static lang:CoreViewText.UnknownBlock}">
                 <DataGrid x:Name="UncompleteBlockGrid"
                           AutoGenerateColumns="False"
                           CanUserAddRows="False"
@@ -204,31 +205,31 @@
                           SelectionUnit="FullRow"
                           SelectionChanged="OnSelectionChanged">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="受信日時"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.ReceivedAt}"
                                             Binding="{Binding TimestampText}"
                                             Width="170"/>
-                        <DataGridTextColumn Header="結果"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Result}"
                                             Binding="{Binding ResultText}"
                                             Width="110"/>
-                        <DataGridTextColumn Header="音声/WAV入力"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.AudioWavInput}"
                                             Binding="{Binding InputDeviceText}"
                                             Width="110"/>
-                        <DataGridTextColumn Header="サブキャリア数"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.GridSubcarrierCount}"
                                             Binding="{Binding SubcarrierText}"
                                             Width="110"/>
-                        <DataGridTextColumn Header="変調"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Modulation}"
                                             Binding="{Binding ModulationText}"
                                             Width="100"/>
                         <DataGridTextColumn Header="Stereo/mono"
                                             Binding="{Binding ChannelText}"
                                             Width="110"/>
-                        <DataGridTextColumn Header="ブロック位置"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockPosition}"
                                             Binding="{Binding BlockPositionText}"
                                             Width="90"/>
-                        <DataGridTextColumn Header="ファイルハッシュ値"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileHash}"
                                             Binding="{Binding FileHashText}"
                                             Width="2*"/>
-                        <DataGridTextColumn Header="ブロックハッシュ値"
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockHash}"
                                             Binding="{Binding BlockHashText}"
                                             Width="2*"/>
                     </DataGrid.Columns>

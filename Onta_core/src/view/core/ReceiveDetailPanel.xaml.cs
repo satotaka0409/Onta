@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Onta.Core;
 using Onta.History;
+using Onta.View.Language;
 
 namespace Onta.View.Core;
 
@@ -148,7 +149,7 @@ public partial class ReceiveDetailPanel : UserControl
         DateTime? createdAtUtc,
         DateTime? updatedAtUtc)
     {
-        var name = string.IsNullOrWhiteSpace(fileName) ? "(不明)" : fileName;
+        var name = string.IsNullOrWhiteSpace(fileName) ? CoreViewText.Unknown : fileName;
         var size = NormalizeSizeText(fileSizeText);
         var blocks = Math.Max(0, blockCount);
         EnsureRows(name, size, blocks > 0 ? blocks.ToString() : "-", blocks);
@@ -197,8 +198,11 @@ public partial class ReceiveDetailPanel : UserControl
             return;
         }
 
-        var fileName = string.IsNullOrWhiteSpace(status.FileName) || status.FileName == "(未受信)"
-            ? "(不明)"
+        var fileName = string.IsNullOrWhiteSpace(status.FileName)
+            || string.Equals(status.FileName, CoreViewText.NotReceived, StringComparison.Ordinal)
+            || string.Equals(status.FileName, CoreViewText.NotReceived, StringComparison.Ordinal)
+            || string.Equals(status.FileName, "(未受信)", StringComparison.Ordinal)
+            ? CoreViewText.Unknown
             : status.FileName;
         var fileSize = NormalizeSizeText(status.FileSizeText);
         var blockCountText = string.IsNullOrWhiteSpace(status.BlockCountText) ? "-" : status.BlockCountText;
@@ -382,10 +386,12 @@ public partial class ReceiveDetailPanel : UserControl
         var fileName = _fileName;
         if (string.IsNullOrWhiteSpace(fileName)
             || string.Equals(fileName, "(Not received)", StringComparison.Ordinal)
+            || string.Equals(fileName, CoreViewText.NotReceived, StringComparison.Ordinal)
             || string.Equals(fileName, "(未受信)", StringComparison.Ordinal)
+            || string.Equals(fileName, CoreViewText.FhWaiting, StringComparison.Ordinal)
             || string.Equals(fileName, "(FH待ち)", StringComparison.Ordinal))
         {
-            fileName = "(未登録データ)";
+            fileName = CoreViewText.UnregisteredData;
         }
 
         var fileSizeText = _fileSizeRow?.SizeText ?? "-";
@@ -649,8 +655,8 @@ public partial class ReceiveDetailPanel : UserControl
 
         foreach (var orphan in history.Orphans)
         {
-            var detail = string.IsNullOrWhiteSpace(orphan.Detail) ? "親不明" : orphan.Detail;
-            AddOrUpdateOrphanRow(orphan.HashHex, $"親不明 / {detail} / {orphan.Payload.Length} bytes");
+            var detail = string.IsNullOrWhiteSpace(orphan.Detail) ? CoreViewText.ParentUnknown : orphan.Detail;
+            AddOrUpdateOrphanRow(orphan.HashHex, $"{CoreViewText.ParentUnknown} / {detail} / {orphan.Payload.Length} bytes");
         }
 
         if (_fhRow is not null)
@@ -678,7 +684,9 @@ public partial class ReceiveDetailPanel : UserControl
                && !string.IsNullOrWhiteSpace(status.FileSizeText)
                && status.FileSizeText != "-"
                && !string.IsNullOrWhiteSpace(status.FileName)
+               && status.FileName != CoreViewText.NotReceived
                && status.FileName != "(未受信)"
+               && status.FileName != CoreViewText.FhWaiting
                && status.FileName != "(FH待ち)";
     }
 
@@ -713,15 +721,15 @@ public partial class ReceiveDetailPanel : UserControl
         _totalRow = null;
         _builtBlockCount = totalBlocks;
 
-        _fhRow = DetailRow.Segment("ファイルヘッダ");
+        _fhRow = DetailRow.Segment(T("ファイルヘッダ", "File Header"));
         ApplyFileHeaderDefaults(_fhRow, ready: totalBlocks > 0);
         _rows.Add(_fhRow);
 
-        _fileSizeRow = DetailRow.Info("ファイルサイズ", NormalizeSizeText(fileSize));
+        _fileSizeRow = DetailRow.Info(CoreViewText.FileSize, NormalizeSizeText(fileSize));
         _rows.Add(_fileSizeRow);
 
         _blockCountRow = DetailRow.Info(
-            "ブロック数",
+            CoreViewText.BlockCount,
             totalBlocks > 0 ? totalBlocks.ToString() : blockCountText);
         _rows.Add(_blockCountRow);
 
@@ -782,8 +790,8 @@ public partial class ReceiveDetailPanel : UserControl
         }
 
         var detail = statusError.StartsWith("ORPHAN-RESOLVED", StringComparison.Ordinal)
-            ? "解決済み"
-            : "親不明";
+            ? CoreViewText.Resolved
+            : CoreViewText.ParentUnknown;
         AddOrUpdateOrphanRow(hash, detail + " / " + statusError);
     }
 
@@ -1100,6 +1108,11 @@ public partial class ReceiveDetailPanel : UserControl
 
         return text.Substring(0, Math.Max(0, maxLength - 3)) + "...";
     }
+
+    private static string T(string ja, string en) =>
+        string.Equals(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "ja", StringComparison.OrdinalIgnoreCase)
+            ? ja
+            : en;
 
     /// <summary>
     /// 詳細グリッド1行分の表示モデルです。

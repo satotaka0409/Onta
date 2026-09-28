@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -11,6 +11,7 @@ using Microsoft.Win32;
 using Onta.Core;
 using Onta.Performance;
 using Onta.View.Core;
+using Onta.View.Language;
 using NAudioWaveIn = NAudio.Wave.WaveIn;
 using NAudioWaveOut = NAudio.Wave.WaveOut;
 using Ellipse = System.Windows.Shapes.Ellipse;
@@ -20,7 +21,7 @@ using ShapeLine = System.Windows.Shapes.Line;
 namespace Onta.View.Performance;
 
 /// <summary>
-/// 性能測定画面（トーン／スイープ／OFDM 送信と FFT・オシロ・I-Q・ワウ受信可視化）です。
+/// 諤ｧ閭ｽ貂ｬ螳夂判髱｢・医ヨ繝ｼ繝ｳ・上せ繧､繝ｼ繝暦ｼ衆FDM 騾∽ｿ｡縺ｨ FFT繝ｻ繧ｪ繧ｷ繝ｭ繝ｻI-Q繝ｻ繝ｯ繧ｦ蜿嶺ｿ｡蜿ｯ隕門喧・峨〒縺吶・
 /// </summary>
 public partial class PerformancePanel : UserControl
 {
@@ -32,10 +33,10 @@ public partial class PerformancePanel : UserControl
     private readonly DispatcherTimer _pollTimer;
     private bool _runningNotified;
 
-    /// <summary>送信または受信が実行中なら true。</summary>
+    /// <summary>騾∽ｿ｡縺ｾ縺溘・蜿嶺ｿ｡縺悟ｮ溯｡御ｸｭ縺ｪ繧・true縲・/summary>
     public bool IsRunning => _txWorker.IsBusy || _rxWorker.IsBusy;
 
-    /// <summary>実行中状態が変わったときに通知します。</summary>
+    /// <summary>螳溯｡御ｸｭ迥ｶ諷九′螟峨ｏ縺｣縺溘→縺阪↓騾夂衍縺励∪縺吶・/summary>
     public event EventHandler? RunningStateChanged;
     private readonly FftChartModel _fftLeft = new(FftChartModel.ChannelLeftColor);
     private readonly FftChartModel _fftRight = new(FftChartModel.ChannelRightColor);
@@ -52,7 +53,7 @@ public partial class PerformancePanel : UserControl
     private bool _scopeRangeSyncing;
 
     /// <summary>
-    /// 性能測定パネルを初期化します。
+    /// 諤ｧ閭ｽ貂ｬ螳壹ヱ繝阪Ν繧貞・譛溷喧縺励∪縺吶・
     /// </summary>
     public PerformancePanel()
     {
@@ -79,9 +80,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 現在の UI 設定を永続化用スナップショットへまとめます。
+    /// 迴ｾ蝨ｨ縺ｮ UI 險ｭ螳壹ｒ豌ｸ邯壼喧逕ｨ繧ｹ繝翫ャ繝励す繝ｧ繝・ヨ縺ｸ縺ｾ縺ｨ繧√∪縺吶・
     /// </summary>
-    /// <returns>性能測定 UI 設定。</returns>
+    /// <returns>諤ｧ閭ｽ貂ｬ螳・UI 險ｭ螳壹・/returns>
     internal PerformanceUiSettingsSnapshot CaptureSettings()
     {
         var (mode, toneHz) = ReadSignalMode();
@@ -123,9 +124,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 保存済み設定を UI へ反映します。
+    /// 菫晏ｭ俶ｸ医∩險ｭ螳壹ｒ UI 縺ｸ蜿肴丐縺励∪縺吶・
     /// </summary>
-    /// <param name="snapshot">性能測定 UI 設定。</param>
+    /// <param name="snapshot">諤ｧ閭ｽ貂ｬ螳・UI 險ｭ螳壹・/param>
     internal void ApplySettings(PerformanceUiSettingsSnapshot snapshot)
     {
         switch (snapshot.SignalMode)
@@ -203,10 +204,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 基準信号のトーン／スイープ／ホワイトノイズ選択を反映します。
+    /// 蝓ｺ貅紋ｿ｡蜿ｷ縺ｮ繝医・繝ｳ・上せ繧､繝ｼ繝暦ｼ上・繝ｯ繧､繝医ヮ繧､繧ｺ驕ｸ謚槭ｒ蜿肴丐縺励∪縺吶・
     /// </summary>
-    /// <param name="mode">信号モード。</param>
-    /// <param name="toneHz">トーン周波数（Hz）。</param>
+    /// <param name="mode">菫｡蜿ｷ繝｢繝ｼ繝峨・/param>
+    /// <param name="toneHz">繝医・繝ｳ蜻ｨ豕｢謨ｰ・・z・峨・/param>
     private void ApplyToneSelection(PerformanceSignalMode mode, double toneHz)
     {
         if (mode == PerformanceSignalMode.Sweep)
@@ -242,11 +243,11 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 指定 GroupName のラジオを Tag で選択します。
+    /// 謖・ｮ・GroupName 縺ｮ繝ｩ繧ｸ繧ｪ繧・Tag 縺ｧ驕ｸ謚槭＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="groupName">ラジオボタングループ名。</param>
-    /// <param name="tag">選択する Tag。</param>
-    /// <param name="fallbackTag">見つからないときの代替 Tag。</param>
+    /// <param name="groupName">繝ｩ繧ｸ繧ｪ繝懊ち繝ｳ繧ｰ繝ｫ繝ｼ繝怜錐縲・/param>
+    /// <param name="tag">驕ｸ謚槭☆繧・Tag縲・/param>
+    /// <param name="fallbackTag">隕九▽縺九ｉ縺ｪ縺・→縺阪・莉｣譖ｿ Tag縲・/param>
     private void SetCheckedRadio(string groupName, string tag, string fallbackTag)
     {
         RadioButton? fallback = null;
@@ -277,10 +278,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// コンボのデバイス番号を選択します（無ければ既定）。
+    /// 繧ｳ繝ｳ繝懊・繝・ヰ繧､繧ｹ逡ｪ蜿ｷ繧帝∈謚槭＠縺ｾ縺呻ｼ育┌縺代ｌ縺ｰ譌｢螳夲ｼ峨・
     /// </summary>
-    /// <param name="combo">デバイス選択コンボ。</param>
-    /// <param name="deviceNumber">オーディオデバイス番号。</param>
+    /// <param name="combo">繝・ヰ繧､繧ｹ驕ｸ謚槭さ繝ｳ繝懊・/param>
+    /// <param name="deviceNumber">繧ｪ繝ｼ繝・ぅ繧ｪ繝・ヰ繧､繧ｹ逡ｪ蜿ｷ縲・/param>
     private static void SelectComboDevice(ComboBox combo, int deviceNumber)
     {
         if (combo is null || combo.Items.Count == 0)
@@ -301,10 +302,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// パネル Loaded 時の初期化を行います。
+    /// 繝代ロ繝ｫ Loaded 譎ゅ・蛻晄悄蛹悶ｒ陦後＞縺ｾ縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         WowLeftMeter.ChannelLabel = "L";
@@ -374,17 +375,17 @@ public partial class PerformancePanel : UserControl
         UpdateOutputModePanels();
         UpdateRxInputModePanels();
         UpdateSignalModeUi();
-        // コンストラクタで反映済みの表示を、レイアウト確定後にも再同期する。
+        // 繧ｳ繝ｳ繧ｹ繝医Λ繧ｯ繧ｿ縺ｧ蜿肴丐貂医∩縺ｮ陦ｨ遉ｺ繧偵√Ξ繧､繧｢繧ｦ繝育｢ｺ螳壼ｾ後↓繧ょ・蜷梧悄縺吶ｋ縲・
         UpdateSignalLevelText();
         UpdateOutputVolumeText();
         UpdateRxInputVolumeText();
     }
 
     /// <summary>
-    /// FFT / オシロスコープタブ切替を反映します。
+    /// FFT / 繧ｪ繧ｷ繝ｭ繧ｹ繧ｳ繝ｼ繝励ち繝門・譖ｿ繧貞渚譏縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnWaveGraphTabSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded || WaveGraphTabs is null)
@@ -396,7 +397,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 波形タブの種類です。
+    /// 豕｢蠖｢繧ｿ繝悶・遞ｮ鬘槭〒縺吶・
     /// </summary>
     private enum WaveGraphMode
     {
@@ -406,7 +407,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 現在選択中の波形タブです。
+    /// 迴ｾ蝨ｨ驕ｸ謚樔ｸｭ縺ｮ豕｢蠖｢繧ｿ繝悶〒縺吶・
     /// </summary>
     private WaveGraphMode CurrentWaveGraphMode
     {
@@ -429,17 +430,17 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// オシロスコープタブが選択中かどうかです。
+    /// 繧ｪ繧ｷ繝ｭ繧ｹ繧ｳ繝ｼ繝励ち繝悶′驕ｸ謚樔ｸｭ縺九←縺・°縺ｧ縺吶・
     /// </summary>
     private bool IsScopeWaveTabSelected => CurrentWaveGraphMode == WaveGraphMode.Scope;
 
     /// <summary>
-    /// リサージュタブが選択中かどうかです。
+    /// 繝ｪ繧ｵ繝ｼ繧ｸ繝･繧ｿ繝悶′驕ｸ謚樔ｸｭ縺九←縺・°縺ｧ縺吶・
     /// </summary>
     private bool IsLissajousTabSelected => CurrentWaveGraphMode == WaveGraphMode.Lissajous;
 
     /// <summary>
-    /// FFT / オシロ / リサージュの表示切替です。
+    /// FFT / 繧ｪ繧ｷ繝ｭ / 繝ｪ繧ｵ繝ｼ繧ｸ繝･縺ｮ陦ｨ遉ｺ蛻・崛縺ｧ縺吶・
     /// </summary>
     private void UpdateWaveGraphTabUi()
     {
@@ -470,7 +471,7 @@ public partial class PerformancePanel : UserControl
             LissajousHost.Visibility = showLiss ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        // アジマス（リサージュ）時は I-Q を隠す
+        // 繧｢繧ｸ繝槭せ・医Μ繧ｵ繝ｼ繧ｸ繝･・画凾縺ｯ I-Q 繧帝國縺・
         if (IqLeftHost is not null)
         {
             IqLeftHost.Visibility = showLiss ? Visibility.Collapsed : Visibility.Visible;
@@ -540,12 +541,12 @@ public partial class PerformancePanel : UserControl
 
         if (LeftWaveTitle is not null)
         {
-            LeftWaveTitle.Text = showScope ? "L オシロスコープ  AUTO" : "L FFT";
+            LeftWaveTitle.Text = showScope ? CoreViewText.ScopeAutoTitle("L", triggered: false) : "L FFT";
         }
 
         if (RightWaveTitle is not null)
         {
-            RightWaveTitle.Text = showScope ? "R オシロスコープ  AUTO" : "R FFT";
+            RightWaveTitle.Text = showScope ? CoreViewText.ScopeAutoTitle("R", triggered: false) : "R FFT";
         }
 
         if (showScope)
@@ -560,10 +561,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// ホストの Visibility／ヒットテストを切り替えます。
+    /// 繝帙せ繝医・ Visibility・上ヲ繝・ヨ繝・せ繝医ｒ蛻・ｊ譖ｿ縺医∪縺吶・
     /// </summary>
-    /// <param name="host">ホスト要素。</param>
-    /// <param name="visible">表示するなら true。</param>
+    /// <param name="host">繝帙せ繝郁ｦ∫ｴ縲・/param>
+    /// <param name="visible">陦ｨ遉ｺ縺吶ｋ縺ｪ繧・true縲・/param>
     private static void SetHostVisible(UIElement host, bool visible)
     {
         host.Opacity = visible ? 1 : 0;
@@ -572,10 +573,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// パネル Unloaded 時にワーカー／タイマを解放します。
+    /// 繝代ロ繝ｫ Unloaded 譎ゅ↓繝ｯ繝ｼ繧ｫ繝ｼ・上ち繧､繝槭ｒ隗｣謾ｾ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _pollTimer.Stop();
@@ -584,17 +585,17 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// L/R 波形行の高さに合わせて I-Q を正方形にします。
+    /// L/R 豕｢蠖｢陦後・鬮倥＆縺ｫ蜷医ｏ縺帙※ I-Q 繧呈ｭ｣譁ｹ蠖｢縺ｫ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnWaveRowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateIqHostSquares();
     }
 
     /// <summary>
-    /// L/R の I-Q 枠幅を、タイトル下のプロットが高さと同じ正方形になるよう合わせます。
+    /// L/R 縺ｮ I-Q 譫蟷・ｒ縲√ち繧､繝医Ν荳九・繝励Ο繝・ヨ縺碁ｫ倥＆縺ｨ蜷後§豁｣譁ｹ蠖｢縺ｫ縺ｪ繧九ｈ縺・粋繧上○縺ｾ縺吶・
     /// </summary>
     private void UpdateIqHostSquares()
     {
@@ -603,13 +604,13 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// I-Q プロットを正方形に固定し、凡例分だけホスト幅を広げます。
+    /// I-Q 繝励Ο繝・ヨ繧呈ｭ｣譁ｹ蠖｢縺ｫ蝗ｺ螳壹＠縲∝・萓句・縺縺代・繧ｹ繝亥ｹ・ｒ蠎・￡縺ｾ縺吶・
     /// </summary>
-    /// <param name="row">行 Grid。</param>
-    /// <param name="host">ホスト要素。</param>
-    /// <param name="title">タイトル TextBlock。</param>
-    /// <param name="legend">凡例パネル。</param>
-    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="row">陦・Grid縲・/param>
+    /// <param name="host">繝帙せ繝郁ｦ∫ｴ縲・/param>
+    /// <param name="title">繧ｿ繧､繝医Ν TextBlock縲・/param>
+    /// <param name="legend">蜃｡萓九ヱ繝阪Ν縲・/param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
     private static void UpdateIqHostSquare(
         Grid row,
         FrameworkElement host,
@@ -660,9 +661,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// I-Q グラフ横のグループ凡例（A〜H）を構築します。
+    /// I-Q 繧ｰ繝ｩ繝墓ｨｪ縺ｮ繧ｰ繝ｫ繝ｼ繝怜・萓具ｼ・縲廩・峨ｒ讒狗ｯ峨＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="host">ホスト要素。</param>
+    /// <param name="host">繝帙せ繝郁ｦ∫ｴ縲・/param>
     private void BuildIqGroupLegend(Panel host)
     {
         host.Children.Clear();
@@ -693,9 +694,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// I-Q プロットの余白を四辺均等にして、点が正方形に載るようにします。
+    /// I-Q 繝励Ο繝・ヨ縺ｮ菴咏區繧貞屁霎ｺ蝮・ｭ峨↓縺励※縲∫せ縺梧ｭ｣譁ｹ蠖｢縺ｫ霈峨ｋ繧医≧縺ｫ縺励∪縺吶・
     /// </summary>
-    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
     private static void ApplyIqChartLayout(CartesianChart chart)
     {
         chart.DrawMargin = new LiveChartsCore.Measure.Margin(10, 10, 10, 10);
@@ -703,12 +704,12 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// LiveCharts へ系列と軸をバインドします。
+    /// LiveCharts 縺ｸ邉ｻ蛻励→霆ｸ繧偵ヰ繧､繝ｳ繝峨＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="chart">LiveCharts チャート。</param>
-    /// <param name="series">系列コレクション。</param>
-    /// <param name="xAxes">X 軸。</param>
-    /// <param name="yAxes">Y 軸。</param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
+    /// <param name="series">邉ｻ蛻励さ繝ｬ繧ｯ繧ｷ繝ｧ繝ｳ縲・/param>
+    /// <param name="xAxes">X 霆ｸ縲・/param>
+    /// <param name="yAxes">Y 霆ｸ縲・/param>
     private static void BindChart(
         CartesianChart chart,
         ISeries[] series,
@@ -721,9 +722,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// FFT チャートの描画余白と横軸範囲を調整します。 横軸 MaxLimit は外部目盛り／縦線と同じ 0–20000 Hz（DPI 倍しない）。
+    /// FFT 繝√Ε繝ｼ繝医・謠冗判菴咏區縺ｨ讓ｪ霆ｸ遽・峇繧定ｪｿ謨ｴ縺励∪縺吶・讓ｪ霆ｸ MaxLimit 縺ｯ螟夜Κ逶ｮ逶帙ｊ・冗ｸｦ邱壹→蜷後§ 0窶・0000 Hz・・PI 蛟阪＠縺ｪ縺・ｼ峨・
     /// </summary>
-    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
     private void ApplyFftChartLayout(CartesianChart chart)
     {
         chart.DrawMargin = FftChartModel.CreateDrawMargin();
@@ -740,7 +741,7 @@ public partial class PerformancePanel : UserControl
         xAxis.MaxLimit = PerfFftXMaxHz;
         xAxis.MinStep = 2000;
         xAxis.ForceStepToMin = true;
-        // 縦線は外部 Canvas（目盛りと同じ 0〜20k・2k 刻み）。
+        // 邵ｦ邱壹・螟夜Κ Canvas・育岼逶帙ｊ縺ｨ蜷後§ 0縲・0k繝ｻ2k 蛻ｻ縺ｿ・峨・
         xAxis.CustomSeparators = null;
         xAxis.SeparatorsPaint = null;
         xAxis.SeparatorsAtCenter = false;
@@ -761,11 +762,11 @@ public partial class PerformancePanel : UserControl
         yAxis.Padding = new LiveChartsCore.Drawing.Padding(0, 0, 0, 0);
     }
 
-    /// <summary>性能測定 FFT の横軸上限（Hz）。外部 0〜20k 目盛りと一致させる。</summary>
+    /// <summary>諤ｧ閭ｽ貂ｬ螳・FFT 縺ｮ讓ｪ霆ｸ荳企剞・・z・峨ょ､夜Κ 0縲・0k 逶ｮ逶帙ｊ縺ｨ荳閾ｴ縺輔○繧九・/summary>
     private const double PerfFftXMaxHz = 20000.0;
 
     /// <summary>
-    /// ReplacePoints 後も横軸を 0–20000 Hz に固定します。
+    /// ReplacePoints 蠕後ｂ讓ｪ霆ｸ繧・0窶・0000 Hz 縺ｫ蝗ｺ螳壹＠縺ｾ縺吶・
     /// </summary>
     private void RestorePerfFftXMax()
     {
@@ -776,10 +777,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// オシロチャートの Loaded で Skia DPI 設定と軸を再適用します。
+    /// 繧ｪ繧ｷ繝ｭ繝√Ε繝ｼ繝医・ Loaded 縺ｧ Skia DPI 險ｭ螳壹→霆ｸ繧貞・驕ｩ逕ｨ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnScopeChartLoaded(object sender, RoutedEventArgs e)
     {
         if (sender is CartesianChart chart)
@@ -792,10 +793,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// オシロチャートのサイズ変化で軸・外部目盛り位置を更新します。
+    /// 繧ｪ繧ｷ繝ｭ繝√Ε繝ｼ繝医・繧ｵ繧､繧ｺ螟牙喧縺ｧ霆ｸ繝ｻ螟夜Κ逶ｮ逶帙ｊ菴咲ｽｮ繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnScopeChartSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (e.NewSize.Height <= 1 || e.NewSize.Width <= 1)
@@ -816,24 +817,24 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// オシロスコープの軸ラベル用余白を設定します。
+    /// 繧ｪ繧ｷ繝ｭ繧ｹ繧ｳ繝ｼ繝励・霆ｸ繝ｩ繝吶Ν逕ｨ菴咏區繧定ｨｭ螳壹＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
     private static void ApplyScopeChartLayout(CartesianChart chart)
     {
         chart.DrawMargin = OscilloscopeChartModel.CreateDrawMargin();
         chart.ClipToBounds = false;
         chart.ZoomMode = LiveChartsCore.Measure.ZoomAndPanMode.None;
-        // HiDPI で Skia が物理ピクセル描画し下半分が欠けるのを防ぐ。
+        // HiDPI 縺ｧ Skia 縺檎黄逅・ヴ繧ｯ繧ｻ繝ｫ謠冗判縺嶺ｸ句濠蛻・′谺縺代ｋ縺ｮ繧帝亟縺舌・
         TrySetIgnorePixelScaling(chart);
     }
 
     /// <summary>
-    /// LiveCharts の実プロット矩形へ外部 Y 目盛りを同期します。
+    /// LiveCharts 縺ｮ螳溘・繝ｭ繝・ヨ遏ｩ蠖｢縺ｸ螟夜Κ Y 逶ｮ逶帙ｊ繧貞酔譛溘＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="chart">LiveCharts チャート。</param>
-    /// <param name="overlay">オーバーレイ Canvas。</param>
-    /// <param name="labelCol">外部 Y ラベル列。</param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
+    /// <param name="overlay">繧ｪ繝ｼ繝舌・繝ｬ繧､ Canvas縲・/param>
+    /// <param name="labelCol">螟夜Κ Y 繝ｩ繝吶Ν蛻励・/param>
     private void HookScopeOverlaySync(
         CartesianChart chart,
         FrameworkElement? overlay,
@@ -854,9 +855,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 左右どちら側のオーバーレイを同期するか振り分けます。
+    /// 蟾ｦ蜿ｳ縺ｩ縺｡繧牙・縺ｮ繧ｪ繝ｼ繝舌・繝ｬ繧､繧貞酔譛溘☆繧九°謖ｯ繧雁・縺代∪縺吶・
     /// </summary>
-    /// <param name="chart">LiveCharts チャート。</param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
     private void SyncScopeOverlayFor(CartesianChart chart)
     {
         if (ReferenceEquals(chart, ScopeLeftChart))
@@ -870,11 +871,11 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// CoreChart の DrawMargin 実座標に合わせて目盛りオーバーレイを置きます。 これにより波形 y=0 と「0.0」／黄ゼロ線が一致します。
+    /// CoreChart 縺ｮ DrawMargin 螳溷ｺｧ讓吶↓蜷医ｏ縺帙※逶ｮ逶帙ｊ繧ｪ繝ｼ繝舌・繝ｬ繧､繧堤ｽｮ縺阪∪縺吶・縺薙ｌ縺ｫ繧医ｊ豕｢蠖｢ y=0 縺ｨ縲・.0縲搾ｼ城ｻ・ぞ繝ｭ邱壹′荳閾ｴ縺励∪縺吶・
     /// </summary>
-    /// <param name="chart">LiveCharts チャート。</param>
-    /// <param name="overlay">オーバーレイ Canvas。</param>
-    /// <param name="labelCol">外部 Y ラベル列。</param>
+    /// <param name="chart">LiveCharts 繝√Ε繝ｼ繝医・/param>
+    /// <param name="overlay">繧ｪ繝ｼ繝舌・繝ｬ繧､ Canvas縲・/param>
+    /// <param name="labelCol">螟夜Κ Y 繝ｩ繝吶Ν蛻励・/param>
     private static void SyncScopeYOverlay(
         CartesianChart chart,
         FrameworkElement? overlay,
@@ -895,7 +896,7 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
-        // DrawMargin が物理ピクセルのときは DIP に戻す。
+        // DrawMargin 縺檎黄逅・ヴ繧ｯ繧ｻ繝ｫ縺ｮ縺ｨ縺阪・ DIP 縺ｫ謌ｻ縺吶・
         var scaleX = 1.0;
         var scaleY = 1.0;
         if (loc.X + size.Width > chartW * 1.2 || loc.Y + size.Height > chartH * 1.2)
@@ -923,9 +924,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// SkiaSharp 要素の IgnorePixelScaling を有効化します（DIP＝描画座標にする）。
+    /// SkiaSharp 隕∫ｴ縺ｮ IgnorePixelScaling 繧呈怏蜉ｹ蛹悶＠縺ｾ縺呻ｼ・IP・晄緒逕ｻ蠎ｧ讓吶↓縺吶ｋ・峨・
     /// </summary>
-    /// <param name="root">探索ルート。</param>
+    /// <param name="root">謗｢邏｢繝ｫ繝ｼ繝医・/param>
     private static void TrySetIgnorePixelScaling(DependencyObject root)
     {
         if (root is null)
@@ -948,10 +949,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// L/R の振幅・時間レンジスライダー変更です。同期中は相手側へ同じ値を載せます。
+    /// L/R 縺ｮ謖ｯ蟷・・譎る俣繝ｬ繝ｳ繧ｸ繧ｹ繝ｩ繧､繝繝ｼ螟画峩縺ｧ縺吶ょ酔譛滉ｸｭ縺ｯ逶ｸ謇句・縺ｸ蜷後§蛟､繧定ｼ峨○縺ｾ縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnScopeRangeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (ScopeLeftAmpSlider is null || ScopeRightAmpSlider is null
@@ -985,10 +986,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// L/R 同期チェックの変更です。ON 時は L のレンジを R へコピーします。
+    /// L/R 蜷梧悄繝√ぉ繝・け縺ｮ螟画峩縺ｧ縺吶０N 譎ゅ・ L 縺ｮ繝ｬ繝ｳ繧ｸ繧・R 縺ｸ繧ｳ繝斐・縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnScopeLrSyncChanged(object sender, RoutedEventArgs e)
     {
         if (ScopeLrSyncCheck is null)
@@ -1003,9 +1004,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 同期中、動かしたスライダーの軸だけ相手チャネルへ合わせます。
+    /// 蜷梧悄荳ｭ縲∝虚縺九＠縺溘せ繝ｩ繧､繝繝ｼ縺ｮ霆ｸ縺縺醍嶌謇九メ繝｣繝阪Ν縺ｸ蜷医ｏ縺帙∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
     private void SyncScopeRangePeer(object sender)
     {
         if (ReferenceEquals(sender, ScopeLeftAmpSlider))
@@ -1027,7 +1028,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// L の振幅・時間レンジを R へコピーします。
+    /// L 縺ｮ謖ｯ蟷・・譎る俣繝ｬ繝ｳ繧ｸ繧・R 縺ｸ繧ｳ繝斐・縺励∪縺吶・
     /// </summary>
     private void CopyScopeRangeLeftToRight()
     {
@@ -1060,7 +1061,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// スライダー横のレンジ数値を更新します。
+    /// 繧ｹ繝ｩ繧､繝繝ｼ讓ｪ縺ｮ繝ｬ繝ｳ繧ｸ謨ｰ蛟､繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
     private void UpdateScopeRangeLabels()
     {
@@ -1086,7 +1087,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// スライダー値をチャート軸へ反映し、外部縦目盛り文言も更新します。
+    /// 繧ｹ繝ｩ繧､繝繝ｼ蛟､繧偵メ繝｣繝ｼ繝郁ｻｸ縺ｸ蜿肴丐縺励∝､夜Κ邵ｦ逶ｮ逶帙ｊ譁・ｨ繧よ峩譁ｰ縺励∪縺吶・
     /// </summary>
     private void ApplyScopeAxisRanges()
     {
@@ -1104,10 +1105,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// オシロ縦軸の外部ラベル（中央=0）を更新します。
+    /// 繧ｪ繧ｷ繝ｭ邵ｦ霆ｸ縺ｮ螟夜Κ繝ｩ繝吶Ν・井ｸｭ螟ｮ=0・峨ｒ譖ｴ譁ｰ縺励∪縺吶・
     /// </summary>
-    /// <param name="ampLeft">L 振幅ハーフ。</param>
-    /// <param name="ampRight">R 振幅ハーフ。</param>
+    /// <param name="ampLeft">L 謖ｯ蟷・ワ繝ｼ繝輔・/param>
+    /// <param name="ampRight">R 謖ｯ蟷・ワ繝ｼ繝輔・/param>
     private void ApplyScopeExternalYLabels(double ampLeft, double ampRight)
     {
         var left = OscilloscopeChartModel.FormatAmplitudeTickLabels(ampLeft);
@@ -1121,14 +1122,14 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 外部縦目盛り TextBlock へ文言を割り当てます。
+    /// 螟夜Κ邵ｦ逶ｮ逶帙ｊ TextBlock 縺ｸ譁・ｨ繧貞牡繧雁ｽ薙※縺ｾ縺吶・
     /// </summary>
-    /// <param name="t0">上端ラベル。</param>
-    /// <param name="t1">上中ラベル。</param>
-    /// <param name="t2">中央ラベル。</param>
-    /// <param name="t3">下中ラベル。</param>
-    /// <param name="t4">下端ラベル。</param>
-    /// <param name="labels">ラベル TextBlock 列。</param>
+    /// <param name="t0">荳顔ｫｯ繝ｩ繝吶Ν縲・/param>
+    /// <param name="t1">荳贋ｸｭ繝ｩ繝吶Ν縲・/param>
+    /// <param name="t2">荳ｭ螟ｮ繝ｩ繝吶Ν縲・/param>
+    /// <param name="t3">荳倶ｸｭ繝ｩ繝吶Ν縲・/param>
+    /// <param name="t4">荳狗ｫｯ繝ｩ繝吶Ν縲・/param>
+    /// <param name="labels">繝ｩ繝吶Ν TextBlock 蛻励・/param>
     private static void SetScopeYLabelTexts(
         TextBlock? t0, TextBlock? t1, TextBlock? t2, TextBlock? t3, TextBlock? t4,
         string[] labels)
@@ -1146,27 +1147,27 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 縦軸スライダーから片振幅レンジを読みます。
+    /// 邵ｦ霆ｸ繧ｹ繝ｩ繧､繝繝ｼ縺九ｉ迚・険蟷・Ξ繝ｳ繧ｸ繧定ｪｭ縺ｿ縺ｾ縺吶・
     /// </summary>
-    /// <param name="slider">スライダー。</param>
-    /// <returns>片振幅。</returns>
+    /// <param name="slider">繧ｹ繝ｩ繧､繝繝ｼ縲・/param>
+    /// <returns>迚・険蟷・・/returns>
     private static double ReadScopeAmp(Slider slider) =>
         OscilloscopeChartModel.AmplitudeHalfFromIndex((int)Math.Round(slider.Value));
 
     /// <summary>
-    /// 横軸スライダーから表示幅（ms）を読みます。
+    /// 讓ｪ霆ｸ繧ｹ繝ｩ繧､繝繝ｼ縺九ｉ陦ｨ遉ｺ蟷・ｼ・s・峨ｒ隱ｭ縺ｿ縺ｾ縺吶・
     /// </summary>
-    /// <param name="slider">スライダー。</param>
-    /// <returns>表示幅（ms）。</returns>
+    /// <param name="slider">繧ｹ繝ｩ繧､繝繝ｼ縲・/param>
+    /// <returns>陦ｨ遉ｺ蟷・ｼ・s・峨・/returns>
     private static double ReadScopeTimeMs(Slider slider) =>
         OscilloscopeChartModel.TimeSpanMsFromIndex((int)Math.Round(slider.Value));
 
     /// <summary>
-    /// 時間レンジをサンプル数へ変換します。
+    /// 譎る俣繝ｬ繝ｳ繧ｸ繧偵し繝ｳ繝励Ν謨ｰ縺ｸ螟画鋤縺励∪縺吶・
     /// </summary>
-    /// <param name="timeSpanMs">表示幅（ms）。</param>
-    /// <param name="sampleRate">サンプリング周波数。</param>
-    /// <returns>表示サンプル数。</returns>
+    /// <param name="timeSpanMs">陦ｨ遉ｺ蟷・ｼ・s・峨・/param>
+    /// <param name="sampleRate">繧ｵ繝ｳ繝励Μ繝ｳ繧ｰ蜻ｨ豕｢謨ｰ縲・/param>
+    /// <returns>陦ｨ遉ｺ繧ｵ繝ｳ繝励Ν謨ｰ縲・/returns>
     private static int ScopeDisplaySamples(double timeSpanMs, int sampleRate) =>
         Math.Max(16, (int)Math.Round(timeSpanMs * Math.Max(1, sampleRate) / 1000.0));
 
@@ -1178,9 +1179,9 @@ public partial class PerformancePanel : UserControl
     ];
 
     /// <summary>
-    /// 0–20 kHz を Canvas 全幅に等間隔配置します（チャート MaxLimit=20000 と一致）。
+    /// 0窶・0 kHz 繧・Canvas 蜈ｨ蟷・↓遲蛾俣髫秘・鄂ｮ縺励∪縺呻ｼ医メ繝｣繝ｼ繝・MaxLimit=20000 縺ｨ荳閾ｴ・峨・
     /// </summary>
-    /// <param name="canvas">描画 Canvas。</param>
+    /// <param name="canvas">謠冗判 Canvas縲・/param>
     private static void LayoutFftFreqLabels(Canvas canvas)
     {
         if (canvas is null)
@@ -1215,10 +1216,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// FFT 縦線 Canvas のサイズ変化で 2 kHz 間隔の縦線を引き直します。
+    /// FFT 邵ｦ邱・Canvas 縺ｮ繧ｵ繧､繧ｺ螟牙喧縺ｧ 2 kHz 髢馴囈縺ｮ邵ｦ邱壹ｒ蠑輔″逶ｴ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnFftGridLinesSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (sender is Canvas canvas)
@@ -1228,9 +1229,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 外部周波数目盛りと同じ位置（0〜20 kHz・2 kHz 刻み）に縦線を配置します。
+    /// 螟夜Κ蜻ｨ豕｢謨ｰ逶ｮ逶帙ｊ縺ｨ蜷後§菴咲ｽｮ・・縲・0 kHz繝ｻ2 kHz 蛻ｻ縺ｿ・峨↓邵ｦ邱壹ｒ驟咲ｽｮ縺励∪縺吶・
     /// </summary>
-    /// <param name="canvas">描画 Canvas。</param>
+    /// <param name="canvas">謠冗判 Canvas縲・/param>
     private static void LayoutFftFreqGridLines(Canvas? canvas)
     {
         if (canvas is null)
@@ -1252,7 +1253,7 @@ public partial class PerformancePanel : UserControl
         foreach (var (hz, _) in FftFreqTicks)
         {
             var x = width * hz / maxHz;
-            // 端は枠線と重なるのでわずかに内側へ
+            // 遶ｯ縺ｯ譫邱壹→驥阪↑繧九・縺ｧ繧上★縺九↓蜀・・縺ｸ
             if (hz <= 0)
             {
                 x = 0.5;
@@ -1276,12 +1277,12 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 出力デバイス一覧をコンボへ載せます。
+    /// 蜃ｺ蜉帙ョ繝舌う繧ｹ荳隕ｧ繧偵さ繝ｳ繝懊∈霈峨○縺ｾ縺吶・
     /// </summary>
     private void InitializeOutputDevices()
     {
         OutputDeviceCombo.Items.Clear();
-        OutputDeviceCombo.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, "既定デバイス"));
+        OutputDeviceCombo.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, CoreViewText.DefaultDevice));
         try
         {
             for (var i = 0; i < NAudioWaveOut.DeviceCount; i++)
@@ -1292,19 +1293,19 @@ public partial class PerformancePanel : UserControl
         }
         catch
         {
-            // 列挙失敗時は既定のみ
+            // 蛻玲嫌螟ｱ謨玲凾縺ｯ譌｢螳壹・縺ｿ
         }
 
         OutputDeviceCombo.SelectedIndex = 0;
     }
 
     /// <summary>
-    /// 入力デバイス一覧をコンボへ載せます。
+    /// 蜈･蜉帙ョ繝舌う繧ｹ荳隕ｧ繧偵さ繝ｳ繝懊∈霈峨○縺ｾ縺吶・
     /// </summary>
     private void InitializeInputDevices()
     {
         InputDeviceCombo.Items.Clear();
-        InputDeviceCombo.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, "既定デバイス"));
+        InputDeviceCombo.Items.Add(new AudioDeviceItem(DefaultAudioDeviceNumber, CoreViewText.DefaultDevice));
         try
         {
             for (var i = 0; i < NAudioWaveIn.DeviceCount; i++)
@@ -1315,24 +1316,24 @@ public partial class PerformancePanel : UserControl
         }
         catch
         {
-            // 列挙失敗時は既定のみ
+            // 蛻玲嫌螟ｱ謨玲凾縺ｯ譌｢螳壹・縺ｿ
         }
 
         InputDeviceCombo.SelectedIndex = 0;
     }
 
     /// <summary>
-    /// WAV入力 / 音声入力のパネル表示を切り替えます。
+    /// WAV蜈･蜉・/ 髻ｳ螢ｰ蜈･蜉帙・繝代ロ繝ｫ陦ｨ遉ｺ繧貞・繧頑崛縺医∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnRxInputModeChanged(object sender, RoutedEventArgs e)
     {
         UpdateRxInputModePanels();
     }
 
     /// <summary>
-    /// 受信入力モードに応じて WAV / 音声パネルを切り替えます。
+    /// 蜿嶺ｿ｡蜈･蜉帙Δ繝ｼ繝峨↓蠢懊§縺ｦ WAV / 髻ｳ螢ｰ繝代ロ繝ｫ繧貞・繧頑崛縺医∪縺吶・
     /// </summary>
     private void UpdateRxInputModePanels()
     {
@@ -1347,17 +1348,17 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 受信音量スライダーの表示を更新します。
+    /// 蜿嶺ｿ｡髻ｳ驥上せ繝ｩ繧､繝繝ｼ縺ｮ陦ｨ遉ｺ繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnRxInputVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateRxInputVolumeText();
     }
 
     /// <summary>
-    /// 受信音量ラベルを更新します。
+    /// 蜿嶺ｿ｡髻ｳ驥上Λ繝吶Ν繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
     private void UpdateRxInputVolumeText()
     {
@@ -1370,15 +1371,15 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 受信側 WAV 入力ファイルを選択します。
+    /// 蜿嶺ｿ｡蛛ｴ WAV 蜈･蜉帙ヵ繧｡繧､繝ｫ繧帝∈謚槭＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnBrowseRxWavClick(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
         {
-            Title = "WAV 入力ファイル",
+            Title = CoreViewText.DialogWavInputFile,
             Filter = "WAV (*.wav)|*.wav",
             CheckFileExists = true
         };
@@ -1402,7 +1403,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 既定 WAV 出力パスを確保します。
+    /// 譌｢螳・WAV 蜃ｺ蜉帙ヱ繧ｹ繧堤｢ｺ菫昴＠縺ｾ縺吶・
     /// </summary>
     private void EnsureDefaultWavPath()
     {
@@ -1417,17 +1418,17 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 基準信号 / 変調のラジオ切替を反映します。
+    /// 蝓ｺ貅紋ｿ｡蜿ｷ / 螟芽ｪｿ縺ｮ繝ｩ繧ｸ繧ｪ蛻・崛繧貞渚譏縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnSignalModeChanged(object sender, RoutedEventArgs e)
     {
         UpdateSignalModeUi();
     }
 
     /// <summary>
-    /// 基準信号パネルと変調パネルを切り替えます。
+    /// 蝓ｺ貅紋ｿ｡蜿ｷ繝代ロ繝ｫ縺ｨ螟芽ｪｿ繝代ロ繝ｫ繧貞・繧頑崛縺医∪縺吶・
     /// </summary>
     private void UpdateSignalModeUi()
     {
@@ -1443,15 +1444,15 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送信 WAV パス選択ダイアログを開きます。
+    /// 騾∽ｿ｡ WAV 繝代せ驕ｸ謚槭ム繧､繧｢繝ｭ繧ｰ繧帝幕縺阪∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnBrowseWavClick(object sender, RoutedEventArgs e)
     {
         var dlg = new SaveFileDialog
         {
-            Title = "WAV 出力先",
+            Title = CoreViewText.DialogWavOutputDestination,
             Filter = "WAV (*.wav)|*.wav",
             InitialDirectory = AppPaths.OutputDir,
             FileName = string.IsNullOrWhiteSpace(WavPathTextBox.Text)
@@ -1465,17 +1466,17 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// WAV出力 / 音声出力のパネル表示を切り替えます。
+    /// WAV蜃ｺ蜉・/ 髻ｳ螢ｰ蜃ｺ蜉帙・繝代ロ繝ｫ陦ｨ遉ｺ繧貞・繧頑崛縺医∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnOutputModeChanged(object sender, RoutedEventArgs e)
     {
         UpdateOutputModePanels();
     }
 
     /// <summary>
-    /// 出力モードに応じて WAV / 音声パネルを切り替えます。
+    /// 蜃ｺ蜉帙Δ繝ｼ繝峨↓蠢懊§縺ｦ WAV / 髻ｳ螢ｰ繝代ロ繝ｫ繧貞・繧頑崛縺医∪縺吶・
     /// </summary>
     private void UpdateOutputModePanels()
     {
@@ -1494,9 +1495,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// WAV 出力のサンプリング周波数コンボの選択値を返します。
+    /// WAV 蜃ｺ蜉帙・繧ｵ繝ｳ繝励Μ繝ｳ繧ｰ蜻ｨ豕｢謨ｰ繧ｳ繝ｳ繝懊・驕ｸ謚槫､繧定ｿ斐＠縺ｾ縺吶・
     /// </summary>
-    /// <returns>44100、48000、96000 のいずれか。未選択時は 44100。</returns>
+    /// <returns>44100縲・8000縲・6000 縺ｮ縺・★繧後°縲よ悴驕ｸ謚樊凾縺ｯ 44100縲・/returns>
     private int ReadWavSampleRate()
     {
         if (WavSampleRateCombo?.SelectedItem is ComboBoxItem item
@@ -1510,9 +1511,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// WAV 出力のサンプリング周波数コンボを指定値に合わせます。
+    /// WAV 蜃ｺ蜉帙・繧ｵ繝ｳ繝励Μ繝ｳ繧ｰ蜻ｨ豕｢謨ｰ繧ｳ繝ｳ繝懊ｒ謖・ｮ壼､縺ｫ蜷医ｏ縺帙∪縺吶・
     /// </summary>
-    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="sampleRate">繧ｵ繝ｳ繝励Μ繝ｳ繧ｰ蜻ｨ豕｢謨ｰ・・z・峨・/param>
     private void SelectWavSampleRate(int sampleRate)
     {
         if (WavSampleRateCombo is null)
@@ -1534,10 +1535,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送信を開始します。
+    /// 騾∽ｿ｡繧帝幕蟋九＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnTxStartClick(object sender, RoutedEventArgs e)
     {
         if (_txWorker.IsBusy)
@@ -1552,7 +1553,7 @@ public partial class PerformancePanel : UserControl
         {
             MessageBox.Show(
                 Window.GetWindow(this),
-                "送信を開始できませんでした。",
+                CoreViewText.MessageTxStartFailed,
                 "Onta",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -1561,23 +1562,23 @@ public partial class PerformancePanel : UserControl
 
         ResetPerformanceGraphs();
         SetTxRunning(true);
-        TxStatusText.Text = $"送信中… {settings.DurationSeconds:0}s";
+        TxStatusText.Text = CoreViewText.TxRunningDuration(settings.DurationSeconds);
         EnsurePollRunning();
     }
 
     /// <summary>
-    /// 送信を停止します。
+    /// 騾∽ｿ｡繧貞●豁｢縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnTxStopClick(object sender, RoutedEventArgs e)
     {
         _txWorker.RequestStop();
-        TxStatusText.Text = "停止要求…";
+        TxStatusText.Text = CoreViewText.StageCancelRequested;
     }
 
     /// <summary>
-    /// 送信・受信の開始時に、FFT / オシロ / リサージュ / I-Q / ワウフラッターを空へ戻します。
+    /// 騾∽ｿ｡繝ｻ蜿嶺ｿ｡縺ｮ髢句ｧ区凾縺ｫ縲：FT / 繧ｪ繧ｷ繝ｭ / 繝ｪ繧ｵ繝ｼ繧ｸ繝･ / I-Q / 繝ｯ繧ｦ繝輔Λ繝・ち繝ｼ繧堤ｩｺ縺ｸ謌ｻ縺励∪縺吶・
     /// </summary>
     private void ResetPerformanceGraphs()
     {
@@ -1592,12 +1593,12 @@ public partial class PerformancePanel : UserControl
         {
             if (LeftWaveTitle is not null)
             {
-                LeftWaveTitle.Text = "L オシロスコープ  AUTO";
+                LeftWaveTitle.Text = CoreViewText.ScopeAutoTitle("L", triggered: false);
             }
 
             if (RightWaveTitle is not null)
             {
-                RightWaveTitle.Text = "R オシロスコープ  AUTO";
+                RightWaveTitle.Text = CoreViewText.ScopeAutoTitle("R", triggered: false);
             }
         }
 
@@ -1623,7 +1624,7 @@ public partial class PerformancePanel : UserControl
         LissajousCanvas?.Children.Clear();
         if (LissajousTitle is not null)
         {
-            LissajousTitle.Text = "リサージュ（アジマス）  L→X / R→Y  ・同位相で対角線";
+            LissajousTitle.Text = CoreViewText.LissajousTitleBase;
         }
 
         if (LissFreqLeftText is not null)
@@ -1648,10 +1649,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 受信を開始します。
+    /// 蜿嶺ｿ｡繧帝幕蟋九＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnRxStartClick(object sender, RoutedEventArgs e)
     {
         if (_rxWorker.IsBusy)
@@ -1664,7 +1665,7 @@ public partial class PerformancePanel : UserControl
         {
             MessageBox.Show(
                 Window.GetWindow(this),
-                "WAV 入力ファイルを選択してください。",
+                CoreViewText.MessageSelectRxWavFile,
                 "Onta",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -1677,8 +1678,8 @@ public partial class PerformancePanel : UserControl
             MessageBox.Show(
                 Window.GetWindow(this),
                 settings.UseWavInput
-                    ? "受信を開始できませんでした（WAV ファイルを確認してください）。"
-                    : "受信を開始できませんでした（入力デバイスを確認してください）。",
+                    ? CoreViewText.MessageRxStartFailedWav
+                    : CoreViewText.MessageRxStartFailedAudio,
                 "Onta",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -1687,25 +1688,25 @@ public partial class PerformancePanel : UserControl
 
         ResetPerformanceGraphs();
         SetRxRunning(true);
-        RxStatusText.Text = settings.UseWavInput ? "WAV 解析中" : "受信中";
+        RxStatusText.Text = settings.UseWavInput ? CoreViewText.RxAnalyzingWav : CoreViewText.ReceivingNow;
         EnsurePollRunning();
     }
 
     /// <summary>
-    /// 受信を停止します。
+    /// 蜿嶺ｿ｡繧貞●豁｢縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnRxStopClick(object sender, RoutedEventArgs e)
     {
         _rxWorker.RequestStop();
         SetRxRunning(false);
-        RxStatusText.Text = "停止";
+        RxStatusText.Text = CoreViewText.Stopped;
         MaybeStopPoll();
     }
 
     /// <summary>
-    /// 共有メモリポーリングタイマを開始します。
+    /// 蜈ｱ譛峨Γ繝｢繝ｪ繝昴・繝ｪ繝ｳ繧ｰ繧ｿ繧､繝槭ｒ髢句ｧ九＠縺ｾ縺吶・
     /// </summary>
     private void EnsurePollRunning()
     {
@@ -1716,7 +1717,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送受信が止まっていればポーリングを止めます。
+    /// 騾∝女菫｡縺梧ｭ｢縺ｾ縺｣縺ｦ縺・ｌ縺ｰ繝昴・繝ｪ繝ｳ繧ｰ繧呈ｭ｢繧√∪縺吶・
     /// </summary>
     private void MaybeStopPoll()
     {
@@ -1727,10 +1728,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 共有メモリを読み UI へ反映します。
+    /// 蜈ｱ譛峨Γ繝｢繝ｪ繧定ｪｭ縺ｿ UI 縺ｸ蜿肴丐縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnPollTick(object? sender, EventArgs e)
     {
         if (_rxWorker.IsBusy)
@@ -1739,7 +1740,7 @@ public partial class PerformancePanel : UserControl
         }
         else if (RxStopButton.IsEnabled)
         {
-            // WAV 終端やキャプチャ異常終了でワーカーが落ちた場合
+            // WAV 邨らｫｯ繧・く繝｣繝励メ繝｣逡ｰ蟶ｸ邨ゆｺ・〒繝ｯ繝ｼ繧ｫ繝ｼ縺瑚誠縺｡縺溷ｴ蜷・
             var status = _rxWorker.SharedStatus.Read();
             ApplyRxStatus(status);
             SetRxRunning(false);
@@ -1749,11 +1750,11 @@ public partial class PerformancePanel : UserControl
             }
             else if (status.IsCompleted)
             {
-                RxStatusText.Text = "完了";
+                RxStatusText.Text = CoreViewText.Done;
             }
             else
             {
-                RxStatusText.Text = "停止";
+                RxStatusText.Text = CoreViewText.Stopped;
             }
 
             MaybeStopPoll();
@@ -1767,7 +1768,7 @@ public partial class PerformancePanel : UserControl
         if (_txWorker.TryConsumeCompletion(out var ok, out var message))
         {
             SetTxRunning(false);
-            TxStatusText.Text = ok ? "送信完了" : message;
+            TxStatusText.Text = ok ? CoreViewText.TxCompleted : message;
             MaybeStopPoll();
         }
 
@@ -1778,9 +1779,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 受信共有状態をグラフへ反映します。
+    /// 蜿嶺ｿ｡蜈ｱ譛臥憾諷九ｒ繧ｰ繝ｩ繝輔∈蜿肴丐縺励∪縺吶・
     /// </summary>
-    /// <param name="status">共有ボードの状態。</param>
+    /// <param name="status">蜈ｱ譛峨・繝ｼ繝峨・迥ｶ諷九・/param>
     private void ApplyRxStatus(CoreExecutionStatus status)
     {
         var mode = CurrentWaveGraphMode;
@@ -1831,9 +1832,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送信中の FFT / I-Q 可視化を反映します。
+    /// 騾∽ｿ｡荳ｭ縺ｮ FFT / I-Q 蜿ｯ隕門喧繧貞渚譏縺励∪縺吶・
     /// </summary>
-    /// <param name="status">共有ボードの状態。</param>
+    /// <param name="status">蜈ｱ譛峨・繝ｼ繝峨・迥ｶ諷九・/param>
     private void ApplyTxViz(CoreExecutionStatus status)
     {
         ApplyIqFromStatus(status);
@@ -1878,9 +1879,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 共有状態の I-Q 点を L/R チャートへ載せます。
+    /// 蜈ｱ譛臥憾諷九・ I-Q 轤ｹ繧・L/R 繝√Ε繝ｼ繝医∈霈峨○縺ｾ縺吶・
     /// </summary>
-    /// <param name="status">共有ボードの状態。</param>
+    /// <param name="status">蜈ｱ譛峨・繝ｼ繝峨・迥ｶ諷九・/param>
     private void ApplyIqFromStatus(CoreExecutionStatus status)
     {
         var iq = status.IqGraph.Points;
@@ -1916,7 +1917,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 受信（優先）または送信の PCM を AUTO トリガーしてオシロへ描きます。
+    /// 蜿嶺ｿ｡・亥━蜈茨ｼ峨∪縺溘・騾∽ｿ｡縺ｮ PCM 繧・AUTO 繝医Μ繧ｬ繝ｼ縺励※繧ｪ繧ｷ繝ｭ縺ｸ謠上″縺ｾ縺吶・
     /// </summary>
     private void ApplyScopeFromWorkers()
     {
@@ -1958,18 +1959,18 @@ public partial class PerformancePanel : UserControl
 
         if (LeftWaveTitle is not null)
         {
-            LeftWaveTitle.Text = leftCap.Triggered ? "L オシロスコープ  AUTO ↑" : "L オシロスコープ  AUTO";
+            LeftWaveTitle.Text = CoreViewText.ScopeAutoTitle("L", leftCap.Triggered);
         }
 
         if (RightWaveTitle is not null)
         {
-            RightWaveTitle.Text = rightCap.Triggered ? "R オシロスコープ  AUTO ↑" : "R オシロスコープ  AUTO";
+            RightWaveTitle.Text = CoreViewText.ScopeAutoTitle("R", rightCap.Triggered);
         }
     }
 
     /// <summary>
-    /// 受信（優先）または送信の L/R PCM をリサージュ（L→X / R→Y）へ描きます。
-    /// ステレオカセットのアジマス調整用：同位相なら対角線、位相差があると楕円になります。
+    /// 蜿嶺ｿ｡・亥━蜈茨ｼ峨∪縺溘・騾∽ｿ｡縺ｮ L/R PCM 繧偵Μ繧ｵ繝ｼ繧ｸ繝･・・竊湛 / R竊炭・峨∈謠上″縺ｾ縺吶・
+    /// 繧ｹ繝・Ξ繧ｪ繧ｫ繧ｻ繝・ヨ縺ｮ繧｢繧ｸ繝槭せ隱ｿ謨ｴ逕ｨ・壼酔菴咲嶌縺ｪ繧牙ｯｾ隗堤ｷ壹∽ｽ咲嶌蟾ｮ縺後≠繧九→讌募・縺ｫ縺ｪ繧翫∪縺吶・
     /// </summary>
     private void ApplyLissajousFromWorkers()
     {
@@ -2001,10 +2002,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 周波数カウンタ・歪み率の表示文言を更新します。
+    /// 蜻ｨ豕｢謨ｰ繧ｫ繧ｦ繝ｳ繧ｿ繝ｻ豁ｪ縺ｿ邇・・陦ｨ遉ｺ譁・ｨ繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
-    /// <param name="left">左チャネル PCM／計測。</param>
-    /// <param name="right">右チャネル PCM／計測。</param>
+    /// <param name="left">蟾ｦ繝√Ε繝阪Ν PCM・剰ｨ域ｸｬ縲・/param>
+    /// <param name="right">蜿ｳ繝√Ε繝阪Ν PCM・剰ｨ域ｸｬ縲・/param>
     private void UpdateLissajousMeterTexts(
         LissajousMeterAnalyzer.ChannelMeters left,
         LissajousMeterAnalyzer.ChannelMeters right)
@@ -2031,10 +2032,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// リサージュホストのサイズ変化で正方形を合わせます。
+    /// 繝ｪ繧ｵ繝ｼ繧ｸ繝･繝帙せ繝医・繧ｵ繧､繧ｺ螟牙喧縺ｧ豁｣譁ｹ蠖｢繧貞粋繧上○縺ｾ縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnLissajousHostSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (!IsLissajousTabSelected)
@@ -2046,10 +2047,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// リサージュ描画領域のサイズ変化です。
+    /// 繝ｪ繧ｵ繝ｼ繧ｸ繝･謠冗判鬆伜沺縺ｮ繧ｵ繧､繧ｺ螟牙喧縺ｧ縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnLissajousPlotSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateLissajousIdealDiagonal();
@@ -2060,7 +2061,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// リサージュ枠をホスト高さに合わせて正方形にします。
+    /// 繝ｪ繧ｵ繝ｼ繧ｸ繝･譫繧偵・繧ｹ繝磯ｫ倥＆縺ｫ蜷医ｏ縺帙※豁｣譁ｹ蠖｢縺ｫ縺励∪縺吶・
     /// </summary>
     private void UpdateLissajousPlotSquare()
     {
@@ -2079,7 +2080,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 同位相の理想対角線（−1,−1）→（+1,+1）を更新します。
+    /// 蜷御ｽ咲嶌縺ｮ逅・Φ蟇ｾ隗堤ｷ夲ｼ遺・1,竏・・俄・・・1,+1・峨ｒ譖ｴ譁ｰ縺励∪縺吶・
     /// </summary>
     private void UpdateLissajousIdealDiagonal()
     {
@@ -2102,10 +2103,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// L=X / R=Y の点列を Canvas に描きます（±1.0 レンジ、中央 0）。
+    /// L=X / R=Y 縺ｮ轤ｹ蛻励ｒ Canvas 縺ｫ謠上″縺ｾ縺呻ｼ按ｱ1.0 繝ｬ繝ｳ繧ｸ縲∽ｸｭ螟ｮ 0・峨・
     /// </summary>
-    /// <param name="left">左チャネル PCM／計測。</param>
-    /// <param name="right">右チャネル PCM／計測。</param>
+    /// <param name="left">蟾ｦ繝√Ε繝阪Ν PCM・剰ｨ域ｸｬ縲・/param>
+    /// <param name="right">蜿ｳ繝√Ε繝阪Ν PCM・剰ｨ域ｸｬ縲・/param>
     private void DrawLissajous(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
     {
         if (LissajousCanvas is null || LissajousPlotHost is null)
@@ -2165,22 +2166,22 @@ public partial class PerformancePanel : UserControl
         {
             var corr = EstimatePhaseCorrelation(left, right);
             var hint = corr >= 0.95
-                ? "ほぼ同位相（対角線）"
+                ? CoreViewText.LissajousHintAlmostInPhase
                 : corr >= 0.5
-                    ? "位相差あり（楕円）"
+                    ? CoreViewText.LissajousHintPhaseDiffEllipse
                     : corr >= 0
-                        ? "位相差大"
-                        : "逆相寄り";
-            LissajousTitle.Text = $"リサージュ（アジマス）  L→X / R→Y  ・{hint}";
+                        ? CoreViewText.LissajousHintLargePhaseDiff
+                        : CoreViewText.LissajousHintNearReversePhase;
+            LissajousTitle.Text = CoreViewText.LissajousTitleWithHint(hint);
         }
     }
 
     /// <summary>
-    /// L/R の正規化相関で位相同期の目安を返します（1=同位相、0=直交、-1=逆相）。
+    /// L/R 縺ｮ豁｣隕丞喧逶ｸ髢｢縺ｧ菴咲嶌蜷梧悄縺ｮ逶ｮ螳峨ｒ霑斐＠縺ｾ縺呻ｼ・=蜷御ｽ咲嶌縲・=逶ｴ莠､縲・1=騾・嶌・峨・
     /// </summary>
-    /// <param name="left">左チャネル PCM／計測。</param>
-    /// <param name="right">右チャネル PCM／計測。</param>
-    /// <returns>相関の目安（-1〜1）。</returns>
+    /// <param name="left">蟾ｦ繝√Ε繝阪Ν PCM・剰ｨ域ｸｬ縲・/param>
+    /// <param name="right">蜿ｳ繝√Ε繝阪Ν PCM・剰ｨ域ｸｬ縲・/param>
+    /// <returns>逶ｸ髢｢縺ｮ逶ｮ螳会ｼ・1縲・・峨・/returns>
     private static double EstimatePhaseCorrelation(ReadOnlySpan<double> left, ReadOnlySpan<double> right)
     {
         var n = Math.Min(left.Length, right.Length);
@@ -2223,10 +2224,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// オシロ波形 Canvas のサイズ変化で再描画します。
+    /// 繧ｪ繧ｷ繝ｭ豕｢蠖｢ Canvas 縺ｮ繧ｵ繧､繧ｺ螟牙喧縺ｧ蜀肴緒逕ｻ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnScopeWaveCanvasSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (e.NewSize.Width <= 1 || e.NewSize.Height <= 1)
@@ -2238,7 +2239,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// L/R の外部 Canvas へ波形を描き直します（目盛り 0 と対称になる座標系）。
+    /// L/R 縺ｮ螟夜Κ Canvas 縺ｸ豕｢蠖｢繧呈緒縺咲峩縺励∪縺呻ｼ育岼逶帙ｊ 0 縺ｨ蟇ｾ遘ｰ縺ｫ縺ｪ繧句ｺｧ讓咏ｳｻ・峨・
     /// </summary>
     private void RedrawScopeWaveCanvases()
     {
@@ -2259,11 +2260,11 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 1 チャネル分の波形とトリガー縦線を Canvas に描きます。 Y: +amp=上端、0=中央、−amp=下端（外部目盛りと同じ）。
+    /// 1 繝√Ε繝阪Ν蛻・・豕｢蠖｢縺ｨ繝医Μ繧ｬ繝ｼ邵ｦ邱壹ｒ Canvas 縺ｫ謠上″縺ｾ縺吶・Y: +amp=荳顔ｫｯ縲・=荳ｭ螟ｮ縲≫・amp=荳狗ｫｯ・亥､夜Κ逶ｮ逶帙ｊ縺ｨ蜷後§・峨・
     /// </summary>
-    /// <param name="canvas">描画 Canvas。</param>
-    /// <param name="model">オシロチャートモデル。</param>
-    /// <param name="stroke">線色ブラシ。</param>
+    /// <param name="canvas">謠冗判 Canvas縲・/param>
+    /// <param name="model">繧ｪ繧ｷ繝ｭ繝√Ε繝ｼ繝医Δ繝・Ν縲・/param>
+    /// <param name="stroke">邱夊牡繝悶Λ繧ｷ縲・/param>
     private static void DrawScopeWaveOnCanvas(
         Canvas? canvas,
         OscilloscopeChartModel model,
@@ -2339,14 +2340,14 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送信 UI の実行中状態を切り替えます。
+    /// 騾∽ｿ｡ UI 縺ｮ螳溯｡御ｸｭ迥ｶ諷九ｒ蛻・ｊ譖ｿ縺医∪縺吶・
     /// </summary>
-    /// <param name="running">実行中なら true。</param>
+    /// <param name="running">螳溯｡御ｸｭ縺ｪ繧・true縲・/param>
     private void SetTxRunning(bool running)
     {
         TxStartButton.IsEnabled = !running && !_rxWorker.IsBusy;
         TxStopButton.IsEnabled = running;
-        // 送信中は受信スタート不可。
+        // 騾∽ｿ｡荳ｭ縺ｯ蜿嶺ｿ｡繧ｹ繧ｿ繝ｼ繝井ｸ榊庄縲・
         RxStartButton.IsEnabled = !running && !_rxWorker.IsBusy;
         ReferenceSignalRadio.IsEnabled = !running;
         ModulatedSignalRadio.IsEnabled = !running;
@@ -2358,7 +2359,7 @@ public partial class PerformancePanel : UserControl
         }
         OutputDeviceCombo.IsEnabled = !running;
         OutputVolumeSlider.IsEnabled = !running;
-        // 周波数ラジオ・信号レベルは再生中も変更可（PCM へライブ反映）
+        // 蜻ｨ豕｢謨ｰ繝ｩ繧ｸ繧ｪ繝ｻ菫｡蜿ｷ繝ｬ繝吶Ν縺ｯ蜀咲函荳ｭ繧ょ､画峩蜿ｯ・・CM 縺ｸ繝ｩ繧､繝門渚譏・・
         if (SignalLevelSlider is not null)
         {
             SignalLevelSlider.IsEnabled = true;
@@ -2400,7 +2401,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送信中の周波数・レベルをワーカーへ反映します。
+    /// 騾∽ｿ｡荳ｭ縺ｮ蜻ｨ豕｢謨ｰ繝ｻ繝ｬ繝吶Ν繧偵Ρ繝ｼ繧ｫ繝ｼ縺ｸ蜿肴丐縺励∪縺吶・
     /// </summary>
     private void PushLiveTxSignal()
     {
@@ -2417,10 +2418,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 信号レベル変更をライブ反映し、% 表示を更新します。
+    /// 菫｡蜿ｷ繝ｬ繝吶Ν螟画峩繧偵Λ繧､繝門渚譏縺励・ 陦ｨ遉ｺ繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnSignalLevelChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateSignalLevelText();
@@ -2428,7 +2429,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 送信信号レベルの % 表示を更新します（0.10〜1.00 → 10%〜100%）。
+    /// 騾∽ｿ｡菫｡蜿ｷ繝ｬ繝吶Ν縺ｮ % 陦ｨ遉ｺ繧呈峩譁ｰ縺励∪縺呻ｼ・.10縲・.00 竊・10%縲・00%・峨・
     /// </summary>
     private void UpdateSignalLevelText()
     {
@@ -2442,17 +2443,17 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 出力音量スライダーの % 表示を更新します。
+    /// 蜃ｺ蜉幃浹驥上せ繝ｩ繧､繝繝ｼ縺ｮ % 陦ｨ遉ｺ繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnOutputVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateOutputVolumeText();
     }
 
     /// <summary>
-    /// 出力音量ラベルを更新します。
+    /// 蜃ｺ蜉幃浹驥上Λ繝吶Ν繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
     private void UpdateOutputVolumeText()
     {
@@ -2465,10 +2466,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// トーン周波数／スイープ切替をライブ反映します。
+    /// 繝医・繝ｳ蜻ｨ豕｢謨ｰ・上せ繧､繝ｼ繝怜・譖ｿ繧偵Λ繧､繝門渚譏縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnToneSelectionChanged(object sender, RoutedEventArgs e)
     {
         if (sender is RadioButton { IsChecked: true })
@@ -2478,14 +2479,14 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 受信 UI の実行中状態を切り替えます。
+    /// 蜿嶺ｿ｡ UI 縺ｮ螳溯｡御ｸｭ迥ｶ諷九ｒ蛻・ｊ譖ｿ縺医∪縺吶・
     /// </summary>
-    /// <param name="running">実行中なら true。</param>
+    /// <param name="running">螳溯｡御ｸｭ縺ｪ繧・true縲・/param>
     private void SetRxRunning(bool running)
     {
         RxStartButton.IsEnabled = !running && !_txWorker.IsBusy;
         RxStopButton.IsEnabled = running;
-        // 受信中は送信スタート不可。
+        // 蜿嶺ｿ｡荳ｭ縺ｯ騾∽ｿ｡繧ｹ繧ｿ繝ｼ繝井ｸ榊庄縲・
         TxStartButton.IsEnabled = !running && !_txWorker.IsBusy;
         RxWavInputRadio.IsEnabled = !running;
         RxAudioInputRadio.IsEnabled = !running;
@@ -2501,7 +2502,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 実行中フラグが変わったときだけ RunningStateChanged を通知します。
+    /// 螳溯｡御ｸｭ繝輔Λ繧ｰ縺悟､峨ｏ縺｣縺溘→縺阪□縺・RunningStateChanged 繧帝夂衍縺励∪縺吶・
     /// </summary>
     private void NotifyRunningStateChanged()
     {
@@ -2516,12 +2517,12 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 画面から送信設定を読み取ります。
+    /// 逕ｻ髱｢縺九ｉ騾∽ｿ｡險ｭ螳壹ｒ隱ｭ縺ｿ蜿悶ｊ縺ｾ縺吶・
     /// </summary>
-    /// <returns>送信設定スナップショット。</returns>
+    /// <returns>騾∽ｿ｡險ｭ螳壹せ繝翫ャ繝励す繝ｧ繝・ヨ縲・/returns>
     private PerformanceTxSettings ReadTxSettings()
     {
-        // 性能測定の送信は常にステレオ。
+        // 諤ｧ閭ｽ貂ｬ螳壹・騾∽ｿ｡縺ｯ蟶ｸ縺ｫ繧ｹ繝・Ξ繧ｪ縲・
         var duration = ReadSelectedDurationSeconds();
         var (mode, toneHz) = ReadSignalMode();
         var sc = ReadSubcarriers();
@@ -2553,12 +2554,12 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 画面から受信設定を読み取ります。
+    /// 逕ｻ髱｢縺九ｉ蜿嶺ｿ｡險ｭ螳壹ｒ隱ｭ縺ｿ蜿悶ｊ縺ｾ縺吶・
     /// </summary>
-    /// <returns>受信設定スナップショット。</returns>
+    /// <returns>蜿嶺ｿ｡險ｭ螳壹せ繝翫ャ繝励す繝ｧ繝・ヨ縲・/returns>
     private PerformanceRxSettings ReadRxSettings()
     {
-        // 送信が常時ステレオのため、受信解析もステレオ前提。
+        // 騾∽ｿ｡縺悟ｸｸ譎ゅせ繝・Ξ繧ｪ縺ｮ縺溘ａ縲∝女菫｡隗｣譫舌ｂ繧ｹ繝・Ξ繧ｪ蜑肴署縲・
         var useWav = RxWavInputRadio.IsChecked == true;
         var device = InputDeviceCombo.SelectedItem is AudioDeviceItem item
             ? item.DeviceNumber
@@ -2579,9 +2580,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 選択中タブとトーン設定から信号モードを解決します。
+    /// 驕ｸ謚樔ｸｭ繧ｿ繝悶→繝医・繝ｳ險ｭ螳壹°繧我ｿ｡蜿ｷ繝｢繝ｼ繝峨ｒ隗｣豎ｺ縺励∪縺吶・
     /// </summary>
-    /// <returns>信号モードとトーン周波数（Hz）。</returns>
+    /// <returns>菫｡蜿ｷ繝｢繝ｼ繝峨→繝医・繝ｳ蜻ｨ豕｢謨ｰ・・z・峨・/returns>
     private (PerformanceSignalMode Mode, double ToneHz) ReadSignalMode()
     {
         if (ModulatedSignalRadio.IsChecked == true)
@@ -2621,9 +2622,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 選択中の送信秒数を返します。
+    /// 驕ｸ謚樔ｸｭ縺ｮ騾∽ｿ｡遘呈焚繧定ｿ斐＠縺ｾ縺吶・
     /// </summary>
-    /// <returns>秒数。</returns>
+    /// <returns>遘呈焚縲・/returns>
     private double ReadSelectedDurationSeconds()
     {
         foreach (var radio in FindRadios(this))
@@ -2641,9 +2642,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 選択中のサブキャリア数を返します。
+    /// 驕ｸ謚樔ｸｭ縺ｮ繧ｵ繝悶く繝｣繝ｪ繧｢謨ｰ繧定ｿ斐＠縺ｾ縺吶・
     /// </summary>
-    /// <returns>サブキャリア数。</returns>
+    /// <returns>繧ｵ繝悶く繝｣繝ｪ繧｢謨ｰ縲・/returns>
     private int ReadSubcarriers()
     {
         foreach (var radio in FindRadios(this))
@@ -2661,9 +2662,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 選択中の変調方式を返します。
+    /// 驕ｸ謚樔ｸｭ縺ｮ螟芽ｪｿ譁ｹ蠑上ｒ霑斐＠縺ｾ縺吶・
     /// </summary>
-    /// <returns>変調方式。</returns>
+    /// <returns>螟芽ｪｿ譁ｹ蠑上・/returns>
     private ModulationScheme ReadModulation()
     {
         foreach (var radio in FindRadios(this))
@@ -2689,10 +2690,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// FFT サイズ／窓の変更を解析へ反映します。
+    /// FFT 繧ｵ繧､繧ｺ・冗ｪ薙・螟画峩繧定ｧ｣譫舌∈蜿肴丐縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnFftAnalysisSettingsChanged(object sender, RoutedEventArgs e)
     {
         if (sender is RadioButton { IsChecked: true })
@@ -2702,10 +2703,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// FFT 窓コンボの変更を解析へ反映します。
+    /// FFT 遯薙さ繝ｳ繝懊・螟画峩繧定ｧ｣譫舌∈蜿肴丐縺励∪縺吶・
     /// </summary>
-    /// <param name="sender">イベント送信元。</param>
-    /// <param name="e">イベント引数。</param>
+    /// <param name="sender">繧､繝吶Φ繝磯∽ｿ｡蜈・・/param>
+    /// <param name="e">繧､繝吶Φ繝亥ｼ墓焚縲・/param>
     private void OnFftWindowSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded)
@@ -2717,7 +2718,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 現在の FFT 解析設定を送受信ワーカーへ渡します。
+    /// 迴ｾ蝨ｨ縺ｮ FFT 隗｣譫占ｨｭ螳壹ｒ騾∝女菫｡繝ｯ繝ｼ繧ｫ繝ｼ縺ｸ貂｡縺励∪縺吶・
     /// </summary>
     private void PushFftAnalysisSettings()
     {
@@ -2728,9 +2729,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 選択中の FFT 長を返します。
+    /// 驕ｸ謚樔ｸｭ縺ｮ FFT 髟ｷ繧定ｿ斐＠縺ｾ縺吶・
     /// </summary>
-    /// <returns>FFT 長。</returns>
+    /// <returns>FFT 髟ｷ縲・/returns>
     private int ReadFftSize()
     {
         foreach (var radio in FindRadios(this))
@@ -2748,9 +2749,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 選択中の FFT 窓関数を返します。
+    /// 驕ｸ謚樔ｸｭ縺ｮ FFT 遯馴未謨ｰ繧定ｿ斐＠縺ｾ縺吶・
     /// </summary>
-    /// <returns>窓種。</returns>
+    /// <returns>遯鍋ｨｮ縲・/returns>
     private PerformanceFftWindowKind ReadFftWindowKind()
     {
         if (FftWindowCombo?.SelectedItem is ComboBoxItem { Tag: string tag })
@@ -2769,9 +2770,9 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// FFT 窓コンボを選択します。
+    /// FFT 遯薙さ繝ｳ繝懊ｒ驕ｸ謚槭＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="kind">FFT 窓種。</param>
+    /// <param name="kind">FFT 遯鍋ｨｮ縲・/param>
     private void SelectFftWindow(PerformanceFftWindowKind kind)
     {
         if (FftWindowCombo is null)
@@ -2804,10 +2805,10 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 配下の RadioButton を列挙します。
+    /// 驟堺ｸ九・ RadioButton 繧貞・謖吶＠縺ｾ縺吶・
     /// </summary>
-    /// <param name="root">探索ルート。</param>
-    /// <returns>配下の RadioButton。</returns>
+    /// <param name="root">謗｢邏｢繝ｫ繝ｼ繝医・/param>
+    /// <returns>驟堺ｸ九・ RadioButton縲・/returns>
     private static IEnumerable<RadioButton> FindRadios(DependencyObject root)
     {
         foreach (var child in LogicalTreeHelper.GetChildren(root))
@@ -2828,18 +2829,19 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 音声入出力デバイスのコンボ項目（番号と表示名）です。
+    /// 髻ｳ螢ｰ蜈･蜃ｺ蜉帙ョ繝舌う繧ｹ縺ｮ繧ｳ繝ｳ繝憺・岼・育分蜿ｷ縺ｨ陦ｨ遉ｺ蜷搾ｼ峨〒縺吶・
     /// </summary>
-    /// <param name="deviceNumber">NAudio デバイス番号（既定は -1）。</param>
-    /// <param name="name">コンボに表示するデバイス名。</param>
+    /// <param name="deviceNumber">NAudio 繝・ヰ繧､繧ｹ逡ｪ蜿ｷ・域里螳壹・ -1・峨・/param>
+    /// <param name="name">繧ｳ繝ｳ繝懊↓陦ｨ遉ｺ縺吶ｋ繝・ヰ繧､繧ｹ蜷阪・/param>
     private sealed class AudioDeviceItem(int deviceNumber, string name)
     {
         public int DeviceNumber { get; } = deviceNumber;
         public string Name { get; } = name;
         /// <summary>
-        /// 表示用デバイス名を返します。
+        /// 陦ｨ遉ｺ逕ｨ繝・ヰ繧､繧ｹ蜷阪ｒ霑斐＠縺ｾ縺吶・
         /// </summary>
-        /// <returns>表示文字列。</returns>
+        /// <returns>陦ｨ遉ｺ譁・ｭ怜・縲・/returns>
         public override string ToString() => Name;
     }
 }
+

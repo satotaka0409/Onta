@@ -6,6 +6,7 @@ using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using Onta.Core;
 using Onta.History;
+using Onta.View.Language;
 using System.Windows.Threading;
 
 namespace Onta.View.Core;
@@ -117,19 +118,19 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(snap.InputFilePath))
         {
-            MessageBox.Show(this, "Please select an input file.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, CoreViewText.MessageSelectInputFile, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (!File.Exists(snap.InputFilePath))
         {
-            MessageBox.Show(this, "Input file was not found.", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, CoreViewText.MessageInputFileNotFound, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         if (!snap.WriteWav && !snap.PlayAudio)
         {
-            MessageBox.Show(this, "Enable WAV output or realtime audio output.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, CoreViewText.MessageEnableWavOrAudio, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -143,7 +144,7 @@ public partial class MainWindow : Window
 
             if (!_coreWorker.TryStart(snap, outputWavPath))
             {
-                MessageBox.Show(this, "Core is already running. Stop current transmission first.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, CoreViewText.MessageCoreAlreadyRunning, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -180,7 +181,7 @@ public partial class MainWindow : Window
             SendPanel.SetTransmissionRunning(false);
             ReceivePanel.SetInteractionEnabled(true);
             UpdateRootTabLock();
-            MessageBox.Show(this, $"送信中にエラーが発生しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, CoreViewText.ErrorWhileSending(ex.Message), CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -252,7 +253,7 @@ public partial class MainWindow : Window
             var outputDir = ReceivePanel.SelectedOutputDir;
             if (string.IsNullOrWhiteSpace(outputDir))
             {
-                MessageBox.Show(this, "Please select an output folder.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, CoreViewText.MessageSelectOutputFolder, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -262,7 +263,7 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"出力フォルダーを作成できません。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(this, CoreViewText.ErrorOutputFolderCreateFailed(ex.Message), CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -274,13 +275,13 @@ public partial class MainWindow : Window
 
             if (string.IsNullOrWhiteSpace(ReceivePanel.SelectedWavPath))
             {
-                MessageBox.Show(this, "Please select a WAV input file.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, CoreViewText.MessageSelectWavInputFile, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             if (!File.Exists(ReceivePanel.SelectedWavPath))
             {
-                MessageBox.Show(this, "WAV input file was not found.", "Onta", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(this, CoreViewText.MessageWavInputNotFound, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -300,7 +301,7 @@ public partial class MainWindow : Window
                 ReceivePanel.SetReceiveRunning(false);
                 SendPanel.SetInteractionEnabled(true);
                 UpdateRootTabLock();
-                MessageBox.Show(this, "Receive core is already running.", "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, CoreViewText.MessageReceiveCoreAlreadyRunning, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -321,7 +322,7 @@ public partial class MainWindow : Window
             }
 
             ReceivePanel.SetFileInfo(inputDisplayName, inputSizeText, "-");
-            ReceivePanel.SetProgressText("FH 待機中...");
+            ReceivePanel.SetProgressText(CoreViewText.FhWaitingProgress);
 
             _pollingReceive = true;
             // 前回完了で止まっていても確実に再開する。
@@ -338,7 +339,7 @@ public partial class MainWindow : Window
             ReceivePanel.SetReceiveRunning(false);
             SendPanel.SetInteractionEnabled(true);
             UpdateRootTabLock();
-            MessageBox.Show(this, $"受信開始に失敗しました。\n{ex.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, CoreViewText.ErrorReceiveStartFailed(ex.Message), CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -356,7 +357,7 @@ public partial class MainWindow : Window
         // 受信中は送信側ボタン類を操作不可にする。
         SendPanel.SetInteractionEnabled(false);
         ReceiveDetailPanel.Clear();
-        ReceiveDetailPanel.SetSourcePath($"(音声入力: {ReceivePanel.AudioDeviceName})");
+        ReceiveDetailPanel.SetSourcePath(CoreViewText.AudioInputSource(ReceivePanel.AudioDeviceName));
         _receiveDetailOpened = false;
         _lastReceiveHistorySnapshotKey = string.Empty;
 
@@ -371,8 +372,8 @@ public partial class MainWindow : Window
             UpdateRootTabLock();
             MessageBox.Show(
                 this,
-                "Receive core is already running, or audio device failed to start.",
-                "Onta",
+                CoreViewText.MessageReceiveCoreOrAudioStartFailed,
+                CoreViewText.AppName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
@@ -382,8 +383,8 @@ public partial class MainWindow : Window
         BottomTabs.SelectedItem = ReceiveDetailTab;
         _receiveDetailOpened = true;
 
-        ReceivePanel.SetFileInfo($"(音声入力: {ReceivePanel.AudioDeviceName})", "-", "-");
-        ReceivePanel.SetProgressText("音声入力中 / FH 待機...");
+        ReceivePanel.SetFileInfo(CoreViewText.AudioInputSource(ReceivePanel.AudioDeviceName), "-", "-");
+        ReceivePanel.SetProgressText(CoreViewText.AudioInputFhWaitingProgress);
 
         _pollingReceive = true;
         _progressPollTimer.Stop();
@@ -469,18 +470,18 @@ public partial class MainWindow : Window
                     {
                         MessageBox.Show(
                             this,
-                            $"{completionMessage}\n出力: {completionPath}",
-                            "Onta",
+                            CoreViewText.MessageReceiveOutput(completionMessage, completionPath),
+                            CoreViewText.AppName,
                             MessageBoxButton.OK,
                             MessageBoxImage.Information);
                     }
-                    else if (string.Equals(completionMessage, "受信を中断しました。", StringComparison.Ordinal))
+                    else if (string.Equals(completionMessage, CoreViewText.MessageReceiveInterrupted, StringComparison.Ordinal))
                     {
                         // ユーザー操作による停止はエラー扱いにしない
                     }
                     else
                     {
-                        MessageBox.Show(this, completionMessage, "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+                        MessageBox.Show(this, completionMessage, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Error);
                     }
                 });
             }
@@ -522,12 +523,15 @@ public partial class MainWindow : Window
             }
 
             ReceiveDetailPanel.ApplyHistory(latest);
-            if (!string.IsNullOrWhiteSpace(latest.FileName) && latest.FileName != "(未受信)")
+            if (!string.IsNullOrWhiteSpace(latest.FileName)
+                && !string.Equals(latest.FileName, CoreViewText.NotReceived, StringComparison.Ordinal)
+                && !string.Equals(latest.FileName, "(未受信)", StringComparison.Ordinal)
+                && !string.Equals(latest.FileName, "(Not received)", StringComparison.Ordinal))
             {
                 var sizeText = latest.FileSize > 0 ? $"{latest.FileSize:N0} bytes" : "-";
                 var blockText = latest.BlockCount > 0 ? latest.BlockCount.ToString() : "-";
                 ReceivePanel.SetFileInfo(latest.FileName, sizeText, blockText);
-                ReceivePanel.SetProgressText("履歴を読み込みました");
+                ReceivePanel.SetProgressText(CoreViewText.HistoryLoadedProgress);
             }
         }
         catch
@@ -614,7 +618,7 @@ public partial class MainWindow : Window
                 completion.Settings.ActiveSubcarriers,
                 completion.Settings.ModulationScheme,
                 completion.Settings.ChannelMode,
-                "Send completed");
+                CoreViewText.SendHistoryCompleted);
         }
         catch
         {
@@ -630,7 +634,7 @@ public partial class MainWindow : Window
     {
         if (completion.WasCancelled)
         {
-            MessageBox.Show(this, completion.Message, "Onta", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, completion.Message, CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -645,26 +649,26 @@ public partial class MainWindow : Window
             }
 
             var wavLine = completion.Settings.WriteWav && !string.IsNullOrWhiteSpace(completion.OutputWavPath)
-                ? $"WAV: {completion.OutputWavPath}\n"
-                : "WAV: (disabled)\n";
+                ? CoreViewText.MessageWavPathLine(completion.OutputWavPath)
+                : CoreViewText.MessageWavDisabledLine;
             MessageBox.Show(
                 this,
-                "Transmission completed.\n\n"
-                + $"Input: {completion.Settings.InputFilePath}\n"
-                + wavLine
-                + $"Channel: {completion.Settings.ChannelMode}\n"
-                + $"Subcarrier: {completion.Settings.ActiveSubcarriers}\n"
-                + $"Modulation: {completion.Settings.ModulationScheme}\n"
-                + $"Interleave: {completion.Settings.BlockInterleaveFactor}\n"
-                + $"Device: {completion.Settings.AudioDeviceName}\n"
-                + (completion.PlayedRealtime ? "Audio: realtime playback\n" : string.Empty),
-                "Onta",
+                CoreViewText.MessageTransmissionCompleted(
+                    completion.Settings.InputFilePath ?? string.Empty,
+                    wavLine,
+                    completion.Settings.ChannelMode.ToString(),
+                    completion.Settings.ActiveSubcarriers.ToString(),
+                    completion.Settings.ModulationScheme.ToString(),
+                    completion.Settings.BlockInterleaveFactor,
+                    completion.Settings.AudioDeviceName,
+                    completion.PlayedRealtime),
+                CoreViewText.MessageTransmissionCompletedTitle,
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
         }
 
-        MessageBox.Show(this, $"送信中にエラーが発生しました。\n{completion.Message}", "Onta", MessageBoxButton.OK, MessageBoxImage.Error);
+        MessageBox.Show(this, CoreViewText.ErrorWhileSending(completion.Message), CoreViewText.AppName, MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
     /// <summary>
@@ -687,8 +691,8 @@ public partial class MainWindow : Window
         var defaultPath = BuildDefaultOutputPath(snap);
         var dlg = new SaveFileDialog
         {
-            Title = "WAV 出力ファイル",
-            Filter = "WAV (*.wav)|*.wav",
+            Title = CoreViewText.DialogWavOutputFile,
+            Filter = CoreViewText.FilterWav,
             InitialDirectory = Path.GetDirectoryName(defaultPath),
             FileName = Path.GetFileName(defaultPath),
             AddExtension = true,

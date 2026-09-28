@@ -9,6 +9,7 @@ using NAudio.Wave;
 using Onta.Core;
 using Onta.Stream;
 using Onta.View.Core;
+using Onta.View.Language;
 
 namespace Onta.View.Stream;
 
@@ -277,7 +278,7 @@ public partial class StreamPanel : UserControl
     private static void FillDevices(ComboBox box, bool isInput)
     {
         box.Items.Clear();
-        box.Items.Add(new StreamDeviceItem(-1, "既定デバイス"));
+        box.Items.Add(new StreamDeviceItem(-1, CoreViewText.DefaultDevice));
         if (isInput)
         {
             for (var i = 0; i < WaveIn.DeviceCount; i++)
@@ -337,7 +338,7 @@ public partial class StreamPanel : UserControl
     {
         var dlg = new OpenFileDialog
         {
-            Filter = "音声ファイル (*.wav;*.flac;*.mp3)|*.wav;*.flac;*.mp3|WAV (*.wav)|*.wav|FLAC (*.flac)|*.flac|MP3 (*.mp3)|*.mp3|All (*.*)|*.*",
+            Filter = CoreViewText.FilterAudioFiles,
             FileName = string.IsNullOrWhiteSpace(_txWavPath)
                 ? string.Empty
                 : System.IO.Path.GetFileName(_txWavPath),
@@ -626,7 +627,7 @@ public partial class StreamPanel : UserControl
         catch (Exception ex)
         {
             _coverByteCount = 0;
-            CoverBytesText.Text = $"エラー: {ex.Message}";
+            CoverBytesText.Text = CoreViewText.CoverByteError(ex.Message);
             CoverBytesText.ClearValue(TextBlock.ForegroundProperty);
             CoverSizeOverText.Visibility = Visibility.Collapsed;
             UpdateStartStopExclusive();
@@ -638,7 +639,7 @@ public partial class StreamPanel : UserControl
     /// </summary>
     private void ApplyCoverByteUi(int byteCount, bool hasError)
     {
-        CoverBytesText.Text = $"バイト数: {byteCount}";
+        CoverBytesText.Text = CoreViewText.ByteCountLabel(byteCount);
         var over = !hasError && byteCount > StreamCoverImage.MaxBytes;
         if (over)
         {
@@ -659,7 +660,7 @@ public partial class StreamPanel : UserControl
     {
         if (_coverByteCount > StreamCoverImage.MaxBytes)
         {
-            TxStatusText.Text = "ジャケ写がサイズオーバーです。";
+            TxStatusText.Text = CoreViewText.CoverSizeOverMessage;
             return;
         }
 
@@ -680,7 +681,7 @@ public partial class StreamPanel : UserControl
                 CoverFormat = _coverFormat,
             };
             _tx.Start(settings);
-            TxStatusText.Text = "送信中…";
+            TxStatusText.Text = CoreViewText.SendingNow;
             UpdateStartStopExclusive();
         }
         catch (Exception ex)
@@ -692,7 +693,7 @@ public partial class StreamPanel : UserControl
     private void OnTxStop(object sender, RoutedEventArgs e)
     {
         _tx.Stop();
-        TxStatusText.Text = "停止要求";
+        TxStatusText.Text = CoreViewText.StopRequested;
         UpdateStartStopExclusive();
     }
 
@@ -707,7 +708,7 @@ public partial class StreamPanel : UserControl
             };
             _errorChart.Clear();
             _rx.Start(settings);
-            RxStatusText.Text = "受信中…";
+            RxStatusText.Text = CoreViewText.ReceivingNow;
             UpdateStartStopExclusive();
         }
         catch (Exception ex)
@@ -719,7 +720,7 @@ public partial class StreamPanel : UserControl
     private void OnRxStop(object sender, RoutedEventArgs e)
     {
         _rx.Stop();
-        RxStatusText.Text = "停止要求";
+        RxStatusText.Text = CoreViewText.StopRequested;
         UpdateStartStopExclusive();
     }
 
@@ -741,13 +742,13 @@ public partial class StreamPanel : UserControl
     {
         if (_tx.TryConsumeCompletion(out var txOk, out var txMsg))
         {
-            TxStatusText.Text = txOk ? txMsg : $"失敗: {txMsg}";
+            TxStatusText.Text = txOk ? txMsg : CoreViewText.FailedWith(txMsg);
             UpdateStartStopExclusive();
         }
 
         if (_rx.TryConsumeCompletion(out var rxOk, out var rxMsg))
         {
-            RxStatusText.Text = rxOk ? rxMsg : $"失敗: {rxMsg}";
+            RxStatusText.Text = rxOk ? rxMsg : CoreViewText.FailedWith(rxMsg);
             UpdateStartStopExclusive();
         }
 
@@ -759,7 +760,7 @@ public partial class StreamPanel : UserControl
             RxArtistBox.Text = _rx.Artist;
             RxRateBox.Text = _rx.DisplayKbps > 0 ? $"{_rx.DisplayKbps} kbps" : "-";
             TryUpdateCoverPreview(_rx.CoverBytes);
-            RxStatusText.Text = $"受信中… パケット {_rx.PacketsReceived:N0}（エラー {_rx.PacketErrors:N0}）";
+            RxStatusText.Text = CoreViewText.ReceivingPacketStatus(_rx.PacketsReceived, _rx.PacketErrors);
         }
 
         // 送信中は送信側ボード、それ以外は受信側（エラー率は受信のみ）
@@ -811,8 +812,8 @@ public partial class StreamPanel : UserControl
             if (_lastRxCoverLength != 0)
             {
                 _lastRxCoverLength = 0;
-                RxCoverSizeText.Text = "サイズ: -";
-                RxCoverBytesText.Text = "バイト数: 0";
+                RxCoverSizeText.Text = CoreViewText.SizeLabelUnknown;
+                RxCoverBytesText.Text = CoreViewText.ByteCountLabel(0);
                 RxCoverImage.Source = null;
             }
 
@@ -825,7 +826,7 @@ public partial class StreamPanel : UserControl
         }
 
         _lastRxCoverLength = cover.Length;
-        RxCoverBytesText.Text = $"バイト数: {cover.Length}";
+        RxCoverBytesText.Text = CoreViewText.ByteCountLabel(cover.Length);
 
         try
         {
@@ -837,11 +838,11 @@ public partial class StreamPanel : UserControl
             bmp.EndInit();
             bmp.Freeze();
             RxCoverImage.Source = bmp;
-            RxCoverSizeText.Text = $"サイズ: {bmp.PixelWidth}x{bmp.PixelHeight}";
+            RxCoverSizeText.Text = CoreViewText.SizeLabelPixels(bmp.PixelWidth, bmp.PixelHeight);
         }
         catch
         {
-            RxCoverSizeText.Text = "サイズ: -";
+            RxCoverSizeText.Text = CoreViewText.SizeLabelUnknown;
             RxCoverImage.Source = null;
         }
     }

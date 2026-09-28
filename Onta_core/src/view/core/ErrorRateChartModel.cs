@@ -5,6 +5,7 @@ using LiveChartsCore.Defaults;
 using LiveChartsCore.SkiaSharpView;
 using LiveChartsCore.SkiaSharpView.Painting;
 using Onta.Core;
+using Onta.View.Language;
 using SkiaSharp;
 
 namespace Onta.View.Core;
@@ -52,7 +53,7 @@ public sealed class ErrorRateChartModel
             new LineSeries<ObservablePoint>
             {
                 Values = _viterbiValues,
-                Name = "ビタビ",
+                Name = CoreViewText.Viterbi,
                 Fill = null,
                 GeometrySize = 4,
                 GeometryFill = new SolidColorPaint(ViterbiColor),
@@ -64,7 +65,7 @@ public sealed class ErrorRateChartModel
             new LineSeries<ObservablePoint>
             {
                 Values = _outerValues,
-                Name = "RS/ターボ",
+                Name = CoreViewText.RsTurbo,
                 Fill = null,
                 GeometrySize = 4,
                 GeometryFill = new SolidColorPaint(OuterColor),
@@ -79,7 +80,7 @@ public sealed class ErrorRateChartModel
         [
             new Axis
             {
-                Name = "訂正率(%)",
+                Name = IsJapanese() ? "訂正率(%)" : "Correction Rate (%)",
                 MinLimit = 0,
                 MaxLimit = DefaultYMaxPercent,
                 MinStep = 2,
@@ -120,6 +121,9 @@ public sealed class ErrorRateChartModel
     public double LatestPercent { get; private set; }
 
     public CoreEccDecoderKind LatestDecoderKind { get; private set; }
+
+    private static bool IsJapanese() =>
+        string.Equals(System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "ja", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 訂正率サンプルを追加します（訂正ビット数 / 対象ビット数）。

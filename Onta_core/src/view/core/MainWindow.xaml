@@ -1,6 +1,7 @@
 ﻿<Window x:Class="Onta.View.Core.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:lang="clr-namespace:Onta.View.Language"
         xmlns:local="clr-namespace:Onta.View.Core"
         xmlns:hist="clr-namespace:Onta.View.History"
         xmlns:stream="clr-namespace:Onta.View.Stream"
@@ -16,7 +17,7 @@
     <TabControl x:Name="MainTabs"
                 Margin="10">
         <TabItem x:Name="MainTab"
-                 Header="メイン">
+                 Header="{x:Static lang:CoreViewText.MainTabMain}">
             <Grid Margin="0,8,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="160"/>
@@ -45,12 +46,12 @@
                                 BorderThickness="0"
                                 Background="Transparent">
                         <TabItem x:Name="EstimateTab"
-                                 Header="送信詳細">
+                                 Header="{x:Static lang:CoreViewText.MainTabSendDetail}">
                             <local:FileEstimatePanel x:Name="EstimatePanel"
                                                      Margin="8"/>
                         </TabItem>
                         <TabItem x:Name="ReceiveDetailTab"
-                                 Header="受信詳細">
+                                 Header="{x:Static lang:CoreViewText.MainTabReceiveDetail}">
                             <local:ReceiveDetailPanel x:Name="ReceiveDetailPanel"
                                                       Margin="8"/>
                         </TabItem>
@@ -60,7 +61,7 @@
         </TabItem>
 
         <TabItem x:Name="HistoryRootTab"
-                 Header="履歴">
+                 Header="{x:Static lang:CoreViewText.MainTabHistory}">
             <Border Style="{StaticResource PanelBorder}"
                     Margin="0,8,0,0"
                     Padding="8">
@@ -69,7 +70,7 @@
         </TabItem>
 
         <TabItem x:Name="StreamRootTab"
-                 Header="ストリーム">
+                 Header="{x:Static lang:CoreViewText.MainTabStream}">
             <Border Style="{StaticResource PanelBorder}"
                     Margin="0,8,0,0"
                     Padding="8">
@@ -78,7 +79,7 @@
         </TabItem>
 
         <TabItem x:Name="PerformanceRootTab"
-                 Header="性能測定">
+                 Header="{x:Static lang:CoreViewText.MainTabPerformance}">
             <Border Style="{StaticResource PanelBorder}"
                     Margin="0,8,0,0"
                     Padding="8">
@@ -87,7 +88,7 @@
         </TabItem>
 
         <TabItem x:Name="ManualRootTab"
-                 Header="マニュアル">
+                 Header="{x:Static lang:CoreViewText.MainTabManual}">
             <Border Style="{StaticResource PanelBorder}"
                     Margin="0,8,0,0"
                     Padding="8">
