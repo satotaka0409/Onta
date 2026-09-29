@@ -120,7 +120,10 @@ public partial class PerformancePanel : UserControl
             InputGain: inputGain,
             FftSize: ReadFftSize(),
             FftWindowKind: ReadFftWindowKind(),
-            WavSampleRate: ReadWavSampleRate());
+            WavSampleRate: ReadWavSampleRate(),
+            RxActiveSubcarriers: ReadSubcarriers("PerfRxSubcarrier"),
+            RxModulationScheme: ReadModulation("PerfRxModulation"),
+            RxModulated: RxModulatedCheckBox.IsChecked == true);
     }
 
     /// <summary>
@@ -141,15 +144,10 @@ public partial class PerformancePanel : UserControl
 
         ApplyToneSelection(snapshot.SignalMode, snapshot.ToneHz);
         SetCheckedRadio("PerfSubcarrier", snapshot.ActiveSubcarriers.ToString(), "16");
-        SetCheckedRadio("PerfModulation", snapshot.ModulationScheme switch
-        {
-            ModulationScheme.Qpsk => "Qpsk",
-            ModulationScheme.Psk8 => "Psk8",
-            ModulationScheme.Qam16 => "Qam16",
-            ModulationScheme.Qam64 => "Qam64",
-            ModulationScheme.Qam256 => "Qam256",
-            _ => "Bpsk"
-        }, "Bpsk");
+        SetCheckedRadio("PerfModulation", ToModulationTag(snapshot.ModulationScheme), "Bpsk");
+        SetCheckedRadio("PerfRxSubcarrier", snapshot.RxActiveSubcarriers.ToString(), "16");
+        SetCheckedRadio("PerfRxModulation", ToModulationTag(snapshot.RxModulationScheme), "Bpsk");
+        RxModulatedCheckBox.IsChecked = snapshot.RxModulated;
         SetCheckedRadio("PerfDuration", ((int)Math.Round(snapshot.DurationSeconds)).ToString(), "30");
 
         WriteWavRadio.IsChecked = snapshot.WriteWav;
@@ -2501,6 +2499,17 @@ public partial class PerformancePanel : UserControl
         RxAudioInputRadio.IsEnabled = !running;
         RxBrowseWavButton.IsEnabled = !running;
         InputDeviceCombo.IsEnabled = !running;
+        RxModulatedCheckBox.IsEnabled = !running;
+        // 受信側 SC／変調はスタート時に読むため、受信中は変更させない。
+        foreach (var radio in FindRadios(this))
+        {
+            if (string.Equals(radio.GroupName, "PerfRxSubcarrier", StringComparison.Ordinal)
+                || string.Equals(radio.GroupName, "PerfRxModulation", StringComparison.Ordinal))
+            {
+                radio.IsEnabled = !running;
+            }
+        }
+
         if (!running)
         {
             UpdateRxInputModePanels();
@@ -2572,7 +2581,12 @@ public partial class PerformancePanel : UserControl
         var device = InputDeviceCombo.SelectedItem is AudioDeviceItem item
             ? item.DeviceNumber
             : DefaultAudioDeviceNumber;
-        var (mode, _) = ReadSignalMode();
+        var modulated = RxModulatedCheckBox.IsChecked == true;
+        var (sendMode, _) = ReadSignalMode();
+        // 「変調」OFF のときは無変調として受ける。送信側が変調タブでもワウ基準はトーン一覧にする。
+        var mode = modulated
+            ? PerformanceSignalMode.Modulated
+            : sendMode == PerformanceSignalMode.Modulated ? PerformanceSignalMode.Tone : sendMode;
         var gain = Math.Clamp(InputGainSlider.Value / 100.0, 0.0, 1.0);
 
         return new PerformanceRxSettings(
@@ -2581,8 +2595,8 @@ public partial class PerformancePanel : UserControl
             WavPath: RxWavPathBox.Text?.Trim() ?? string.Empty,
             InputDeviceNumber: device,
             InputGain: gain,
-            ActiveSubcarriers: ReadSubcarriers(),
-            ModulationScheme: ReadModulation(),
+            ActiveSubcarriers: ReadSubcarriers("PerfRxSubcarrier"),
+            ModulationScheme: ReadModulation("PerfRxModulation"),
             CaptureConstellation: mode == PerformanceSignalMode.Modulated,
             SignalMode: mode);
     }
@@ -2653,11 +2667,12 @@ public partial class PerformancePanel : UserControl
     /// 驕ｸ謚樔ｸｭ縺ｮ繧ｵ繝悶く繝｣繝ｪ繧｢謨ｰ繧定ｿ斐＠縺ｾ縺吶・
     /// </summary>
     /// <returns>繧ｵ繝悶く繝｣繝ｪ繧｢謨ｰ縲・/returns>
-    private int ReadSubcarriers()
+    /// <param name="groupName">ラジオボタンのグループ名（送信側 PerfSubcarrier／受信側 PerfRxSubcarrier）。</param>
+    private int ReadSubcarriers(string groupName = "PerfSubcarrier")
     {
         foreach (var radio in FindRadios(this))
         {
-            if (radio.GroupName == "PerfSubcarrier"
+            if (radio.GroupName == groupName
                 && radio.IsChecked == true
                 && radio.Tag is string tag
                 && int.TryParse(tag, out var sc))
@@ -2673,11 +2688,12 @@ public partial class PerformancePanel : UserControl
     /// 驕ｸ謚樔ｸｭ縺ｮ螟芽ｪｿ譁ｹ蠑上ｒ霑斐＠縺ｾ縺吶・
     /// </summary>
     /// <returns>螟芽ｪｿ譁ｹ蠑上・/returns>
-    private ModulationScheme ReadModulation()
+    /// <param name="groupName">ラジオボタンのグループ名（送信側 PerfModulation／受信側 PerfRxModulation）。</param>
+    private ModulationScheme ReadModulation(string groupName = "PerfModulation")
     {
         foreach (var radio in FindRadios(this))
         {
-            if (radio.GroupName != "PerfModulation" || radio.IsChecked != true || radio.Tag is not string tag)
+            if (radio.GroupName != groupName || radio.IsChecked != true || radio.Tag is not string tag)
             {
                 continue;
             }
@@ -2696,6 +2712,21 @@ public partial class PerformancePanel : UserControl
 
         return ModulationScheme.Bpsk;
     }
+
+    /// <summary>
+    /// 変調方式をラジオボタンの Tag 文字列へ変換します。
+    /// </summary>
+    /// <param name="scheme">変調方式。</param>
+    /// <returns>ラジオボタンの Tag。</returns>
+    private static string ToModulationTag(ModulationScheme scheme) => scheme switch
+    {
+        ModulationScheme.Qpsk => "Qpsk",
+        ModulationScheme.Psk8 => "Psk8",
+        ModulationScheme.Qam16 => "Qam16",
+        ModulationScheme.Qam64 => "Qam64",
+        ModulationScheme.Qam256 => "Qam256",
+        _ => "Bpsk"
+    };
 
     /// <summary>
     /// FFT 繧ｵ繧､繧ｺ・冗ｪ薙・螟画峩繧定ｧ｣譫舌∈蜿肴丐縺励∪縺吶・

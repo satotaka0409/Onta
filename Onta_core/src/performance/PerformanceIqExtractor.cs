@@ -1,5 +1,6 @@
 using System.Numerics;
 using Onta.Core;
+using Onta.View.Core;
 
 namespace Onta.Performance;
 
@@ -106,6 +107,115 @@ internal static class PerformanceIqExtractor
     }
 
     /// <summary>
+    /// デバイスレートの PCM を変調クロック（44100 Hz）へ戻してから等化します。
+    /// 性能測定の音声出力は 44100 Hz で OFDM を作り、再生時だけデバイスレートへ変換します。
+    /// 受信側をデバイスレートのまま FFT すると CP 長と搬送波ビンがずれ、点が軸外へ飛んで見えなくなります。
+    /// </summary>
+    /// <param name="pcm">キャプチャ PCM。</param>
+    /// <param name="captureSampleRate">キャプチャのサンプリング周波数（Hz）。</param>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="useRightCarriers">R 搬送波を使うか。</param>
+    /// <param name="timeScratch">FFT 入力（長さ >= 256）。</param>
+    /// <param name="fftScratch">FFT 作業（長さ 256）。</param>
+    /// <param name="dest">等化後シンボル。</param>
+    /// <param name="groups">グループ ID。</param>
+    /// <param name="cyclicPrefixLength">CP 長（データ部 16、ヘッダー部 32）。</param>
+    /// <returns>有効シンボル数。</returns>
+    public static int ExtractEqualizedAtSynthesisRate(
+        ReadOnlySpan<double> pcm,
+        int captureSampleRate,
+        int activeSubcarriers,
+        bool useRightCarriers,
+        Complex[] timeScratch,
+        Complex[] fftScratch,
+        Span<Complex> dest,
+        Span<byte> groups,
+        int cyclicPrefixLength = CyclicPrefixLength)
+    {
+        var synth = PerformanceSignalGenerator.SampleRate;
+        var fs = captureSampleRate > 0 ? captureSampleRate : synth;
+        if (fs == synth)
+        {
+            return ExtractEqualized(
+                pcm,
+                activeSubcarriers,
+                useRightCarriers,
+                timeScratch,
+                fftScratch,
+                dest,
+                groups,
+                cyclicPrefixLength,
+                synth);
+        }
+
+        var aligned = AlignToSynthesisRate(pcm, fs);
+        if (aligned.Length < FftSize)
+        {
+            return 0;
+        }
+
+        return ExtractEqualized(
+            aligned,
+            activeSubcarriers,
+            useRightCarriers,
+            timeScratch,
+            fftScratch,
+            dest,
+            groups,
+            cyclicPrefixLength,
+            synth);
+    }
+
+    /// <summary>
+    /// キャプチャ PCM を変調クロック（44100 Hz）へ変換し、末尾の I-Q 窓を返します。
+    /// </summary>
+    /// <param name="pcm">キャプチャ PCM。</param>
+    /// <param name="captureSampleRate">キャプチャのサンプリング周波数（Hz）。</param>
+    /// <returns>44100 Hz の末尾サンプル。足りなければ空。</returns>
+    public static double[] AlignToSynthesisRate(ReadOnlySpan<double> pcm, int captureSampleRate) =>
+        AlignPcmToRate(pcm, captureSampleRate, PerformanceSignalGenerator.SampleRate);
+
+    /// <summary>
+    /// PCM を目標サンプリング周波数へ変換し、末尾の I-Q 窓を返します。
+    /// </summary>
+    /// <param name="pcm">入力 PCM。</param>
+    /// <param name="sourceRate">入力サンプリング周波数（Hz）。</param>
+    /// <param name="targetRate">出力サンプリング周波数（Hz）。</param>
+    /// <returns>目標レートの末尾サンプル。足りなければ空。</returns>
+    private static double[] AlignPcmToRate(ReadOnlySpan<double> pcm, int sourceRate, int targetRate)
+    {
+        if (pcm.Length < FftSize || sourceRate <= 0 || targetRate <= 0)
+        {
+            return [];
+        }
+
+        var input = new float[pcm.Length];
+        for (var i = 0; i < pcm.Length; i++)
+        {
+            input[i] = (float)pcm[i];
+        }
+
+        var resampled = new List<float>(pcm.Length);
+        var resampler = new StreamingPcmResampler(sourceRate, targetRate, channels: 1);
+        resampler.Process(input, resampled);
+        if (resampled.Count < FftSize)
+        {
+            return [];
+        }
+
+        // CP 位相の平均を効かせるため、通常より長め（8 シンボル）を残す。
+        var take = Math.Min(SymbolLength * 8, resampled.Count);
+        var start = resampled.Count - take;
+        var aligned = new double[take];
+        for (var i = 0; i < take; i++)
+        {
+            aligned[i] = resampled[start + i];
+        }
+
+        return aligned;
+    }
+
+    /// <summary>
     /// CP 相関が最大になる OFDM データ開始位置を探します。
     /// </summary>
     /// <param name="pcm">振幅 PCM。</param>
@@ -124,36 +234,24 @@ internal static class PerformanceIqExtractor
         var searchTo = pcm.Length - symbolLength;
         var best = searchFrom;
         var bestScore = double.NegativeInfinity;
-        var lanes = Vector<double>.Count;
         for (var t = searchFrom; t <= searchTo; t++)
         {
-            var corrVec = Vector<double>.Zero;
-            var e1Vec = Vector<double>.Zero;
-            var e2Vec = Vector<double>.Zero;
-            var i = 0;
-            for (; i <= cp - lanes; i += lanes)
+            // 同じシンボル位相の CP を窓内すべてで平均し、1 個の CP（16 サンプル）だけで決めない。
+            var score = 0.0;
+            var used = 0;
+            for (var s = t; s + symbolLength <= pcm.Length; s += symbolLength)
             {
-                var a = new Vector<double>(pcm.Slice(t + i, lanes));
-                var b = new Vector<double>(pcm.Slice(t + FftSize + i, lanes));
-                corrVec += a * b;
-                e1Vec += a * a;
-                e2Vec += b * b;
+                score += CpCorrelation(pcm, s, cp);
+                used++;
             }
 
-            var corr = SumVector(corrVec);
-            var e1 = SumVector(e1Vec);
-            var e2 = SumVector(e2Vec);
-            for (; i < cp; i++)
+            for (var s = t - symbolLength; s >= 0; s -= symbolLength)
             {
-                var a = pcm[t + i];
-                var b = pcm[t + FftSize + i];
-                corr += a * b;
-                e1 += a * a;
-                e2 += b * b;
+                score += CpCorrelation(pcm, s, cp);
+                used++;
             }
 
-            var denom = Math.Sqrt(e1 * e2);
-            var score = denom > 1e-12 ? corr / denom : 0.0;
+            score = used > 0 ? score / used : 0.0;
             if (score > bestScore)
             {
                 bestScore = score;
@@ -162,6 +260,45 @@ internal static class PerformanceIqExtractor
         }
 
         return best + cp;
+    }
+
+    /// <summary>
+    /// 位置 start の CP と、その FFT 長後ろのサンプルとの正規化相関を返します。
+    /// </summary>
+    /// <param name="pcm">振幅 PCM。</param>
+    /// <param name="start">CP 先頭のサンプル位置。</param>
+    /// <param name="cp">CP 長。</param>
+    /// <returns>正規化相関（−1〜1）。エネルギーがなければ 0。</returns>
+    private static double CpCorrelation(ReadOnlySpan<double> pcm, int start, int cp)
+    {
+        var lanes = Vector<double>.Count;
+        var corrVec = Vector<double>.Zero;
+        var e1Vec = Vector<double>.Zero;
+        var e2Vec = Vector<double>.Zero;
+        var i = 0;
+        for (; i <= cp - lanes; i += lanes)
+        {
+            var a = new Vector<double>(pcm.Slice(start + i, lanes));
+            var b = new Vector<double>(pcm.Slice(start + FftSize + i, lanes));
+            corrVec += a * b;
+            e1Vec += a * a;
+            e2Vec += b * b;
+        }
+
+        var corr = SumVector(corrVec);
+        var e1 = SumVector(e1Vec);
+        var e2 = SumVector(e2Vec);
+        for (; i < cp; i++)
+        {
+            var a = pcm[start + i];
+            var b = pcm[start + FftSize + i];
+            corr += a * b;
+            e1 += a * a;
+            e2 += b * b;
+        }
+
+        var denom = Math.Sqrt(e1 * e2);
+        return denom > 1e-12 ? corr / denom : 0.0;
     }
 
     /// <summary>

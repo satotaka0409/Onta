@@ -86,6 +86,8 @@ internal static class MainWindowSettingsStore
             Performance: ReadPerformance(reader));
         var sendWavSampleRate = ReadOptionalWavSampleRate(reader);
         var performanceWavSampleRate = ReadOptionalWavSampleRate(reader);
+        var (rxSubcarriers, rxModulation) = ReadOptionalPerformanceRxModulation(reader, settings.Performance);
+        var rxModulated = ReadOptionalPerformanceRxModulated(reader, settings.Performance);
         settings = settings with
         {
             Send = settings.Send with
@@ -94,10 +96,52 @@ internal static class MainWindowSettingsStore
             },
             Performance = settings.Performance with
             {
-                WavSampleRate = performanceWavSampleRate
+                WavSampleRate = performanceWavSampleRate,
+                RxActiveSubcarriers = rxSubcarriers,
+                RxModulationScheme = rxModulation,
+                RxModulated = rxModulated
             }
         };
         return true;
+    }
+
+    /// <summary>
+    /// ファイル末尾にあれば性能測定の受信側「変調」チェックを読みます。無い古い設定は送信側が変調タブかどうかで決めます。
+    /// </summary>
+    /// <param name="reader">設定バイナリの読み取り位置。</param>
+    /// <param name="performance">読み込み済みの性能測定設定（送信側の選択）。</param>
+    /// <returns>変調波として受信するとき true。</returns>
+    private static bool ReadOptionalPerformanceRxModulated(BinaryReader reader, PerformanceUiSettingsSnapshot performance)
+    {
+        if (reader.BaseStream.Position + sizeof(bool) > reader.BaseStream.Length)
+        {
+            return performance.SignalMode == PerformanceSignalMode.Modulated;
+        }
+
+        return reader.ReadBoolean();
+    }
+
+    /// <summary>
+    /// ファイル末尾にあれば性能測定の受信側 SC／変調を読みます。無い古い設定は送信側の選択を使います。
+    /// </summary>
+    /// <param name="reader">設定バイナリの読み取り位置。</param>
+    /// <param name="performance">読み込み済みの性能測定設定（送信側の選択）。</param>
+    /// <returns>受信側のサブキャリア数と変調方式。</returns>
+    private static (int Subcarriers, ModulationScheme Modulation) ReadOptionalPerformanceRxModulation(
+        BinaryReader reader,
+        PerformanceUiSettingsSnapshot performance)
+    {
+        if (reader.BaseStream.Position + sizeof(int) + sizeof(byte) > reader.BaseStream.Length)
+        {
+            return (performance.ActiveSubcarriers, performance.ModulationScheme);
+        }
+
+        var subcarriers = PerformanceSignalGenerator.ClampSubcarriers(reader.ReadInt32());
+        var modulationByte = reader.ReadByte();
+        var modulation = Enum.IsDefined(typeof(ModulationScheme), modulationByte)
+            ? (ModulationScheme)modulationByte
+            : performance.ModulationScheme;
+        return (subcarriers, modulation);
     }
 
     /// <summary>
@@ -154,6 +198,9 @@ internal static class MainWindowSettingsStore
         WritePerformance(writer, settings.Performance);
         writer.Write(SendSettingsSnapshot.NormalizeWavSampleRate(settings.Send.WavSampleRate));
         writer.Write(PerformanceConstants.NormalizeWavSampleRate(settings.Performance.WavSampleRate));
+        writer.Write(PerformanceSignalGenerator.ClampSubcarriers(settings.Performance.RxActiveSubcarriers));
+        writer.Write((byte)settings.Performance.RxModulationScheme);
+        writer.Write(settings.Performance.RxModulated);
     }
 
     /// <summary>

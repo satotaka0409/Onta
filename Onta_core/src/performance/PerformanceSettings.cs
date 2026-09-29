@@ -111,7 +111,13 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
     /// <summary>表示 FFT 窓関数。</summary>
     PerformanceFftWindowKind FftWindowKind,
     /// <summary>WAV 出力のサンプリング周波数（Hz）。</summary>
-    int WavSampleRate = 44100)
+    int WavSampleRate = 44100,
+    /// <summary>受信側で選んだサブキャリア数。</summary>
+    int RxActiveSubcarriers = 16,
+    /// <summary>受信側で選んだ変調方式。</summary>
+    ModulationScheme RxModulationScheme = ModulationScheme.Bpsk,
+    /// <summary>受信側「変調」チェック（ON のとき変調波として受信し I-Q を出す）。</summary>
+    bool RxModulated = false)
 {
     /// <summary>
     /// ファイル未作成時の既定値（音量 80%、その他は画面左上の既定選択）を返します。
@@ -135,5 +141,8 @@ internal readonly record struct PerformanceUiSettingsSnapshot(
             InputGain: 0.80,
             FftSize: PerformanceFftAnalyzer.DefaultSize,
             FftWindowKind: PerformanceFftWindowKind.Hanning,
-            WavSampleRate: PerformanceConstants.SampleRate);
+            WavSampleRate: PerformanceConstants.SampleRate,
+            RxActiveSubcarriers: 16,
+            RxModulationScheme: ModulationScheme.Bpsk,
+            RxModulated: false);
 }

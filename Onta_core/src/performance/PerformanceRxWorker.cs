@@ -18,7 +18,8 @@ internal sealed class PerformanceRxWorker : IDisposable
     private Complex[] _fftExact = new Complex[PerformanceFftAnalyzer.DefaultSize];
     private readonly Complex[] _iqScratch = new Complex[128];
     private readonly byte[] _iqGroups = new byte[128];
-    private readonly double[] _iqPcmScratch = new double[PerformanceIqExtractor.CaptureSamples];
+    private readonly double[] _iqPcmScratch = new double[PerformanceIqExtractor.SymbolLength * 8];
+    private readonly double[] _iqDeviceScratch = new double[8192];
     private readonly Complex[] _iqTimeScratch = new Complex[PerformanceIqExtractor.FftSize];
     private readonly Complex[] _iqFftScratch = new Complex[PerformanceIqExtractor.FftSize];
 
@@ -443,37 +444,41 @@ internal sealed class PerformanceRxWorker : IDisposable
     /// </summary>
     private void PublishIqFromCarriersUnlocked()
     {
+        // 音声入力は 44100 Hz 生成をデバイスレートで録る。WAV はそのファイルのレートが変調クロック。
+        var alignToSynthesis = _capture is not null
+            && _sampleRate > 0
+            && _sampleRate != PerformanceSignalGenerator.SampleRate;
+        var modulationClock = alignToSynthesis ? PerformanceSignalGenerator.SampleRate : _sampleRate;
         var sc = PerformanceSignalGenerator.ClampSubcarriers(_settings.ActiveSubcarriers);
         var mod = PerformanceSignalGenerator.ClampModulation(_settings.ModulationScheme);
-        if (!CopyRingTail(_leftRing, _iqPcmScratch, out var pcmCount) || pcmCount < PerformanceIqExtractor.FftSize)
+        if (!TryReadIqPcmUnlocked(_leftRing, alignToSynthesis, out var leftPcm))
         {
             return;
         }
 
         var leftCount = PerformanceIqExtractor.ExtractEqualized(
-            _iqPcmScratch.AsSpan(0, pcmCount),
+            leftPcm.Span,
             sc,
             useRightCarriers: false,
             _iqTimeScratch,
             _iqFftScratch,
             _iqScratch.AsSpan(),
             _iqGroups.AsSpan(),
-            sampleRate: _sampleRate);
+            sampleRate: modulationClock);
         var count = leftCount;
 
         if (_settings.ChannelMode == ChannelMode.Stereo
-            && CopyRingTail(_rightRing, _iqPcmScratch, out pcmCount)
-            && pcmCount >= PerformanceIqExtractor.FftSize)
+            && TryReadIqPcmUnlocked(_rightRing, alignToSynthesis, out var rightPcm))
         {
             var rightCount = PerformanceIqExtractor.ExtractEqualized(
-                _iqPcmScratch.AsSpan(0, pcmCount),
+                rightPcm.Span,
                 sc,
                 useRightCarriers: true,
                 _iqTimeScratch,
                 _iqFftScratch,
                 _iqScratch.AsSpan(leftCount),
                 _iqGroups.AsSpan(leftCount),
-                sampleRate: _sampleRate);
+                sampleRate: modulationClock);
             count = leftCount + rightCount;
         }
 
@@ -485,6 +490,33 @@ internal sealed class PerformanceRxWorker : IDisposable
         _status.BeginIqCapture(sc, mod);
         _status.AppendIqFrame(_iqScratch.AsSpan(0, count), _iqGroups.AsSpan(0, count));
         _status.SetIqLeftPointCount(leftCount);
+    }
+
+    /// <summary>
+    /// リング末尾を I-Q 用 PCM として取り出します。音声入力で 44100 Hz 以外なら変調クロックへ戻します。
+    /// </summary>
+    /// <param name="ring">PCM リング。</param>
+    /// <param name="alignToSynthesis">44100 Hz へ戻すか。</param>
+    /// <param name="pcm">変調クロックの PCM。</param>
+    /// <returns>1 シンボル以上取り出せたとき true。</returns>
+    private bool TryReadIqPcmUnlocked(double[] ring, bool alignToSynthesis, out ReadOnlyMemory<double> pcm)
+    {
+        pcm = ReadOnlyMemory<double>.Empty;
+        var raw = alignToSynthesis ? _iqDeviceScratch : _iqPcmScratch;
+        if (!CopyRingTail(ring, raw, out var count) || count < PerformanceIqExtractor.FftSize)
+        {
+            return false;
+        }
+
+        if (!alignToSynthesis)
+        {
+            pcm = raw.AsMemory(0, count);
+            return true;
+        }
+
+        var aligned = PerformanceIqExtractor.AlignToSynthesisRate(raw.AsSpan(0, count), _sampleRate);
+        pcm = aligned;
+        return aligned.Length >= PerformanceIqExtractor.FftSize;
     }
 
     /// <summary>

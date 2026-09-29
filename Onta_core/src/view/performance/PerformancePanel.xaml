@@ -436,24 +436,31 @@
                          MinHeight="360"/>
         </Grid.RowDefinitions>
 
-        <!-- 受信ラベル | 入力 | スタート/ストップ -->
+        <!-- 受信ラベル | サブキャリア | 変調 | 入力 | スタート/ストップ -->
         <Grid Grid.Row="0"
               Margin="0,0,0,8">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="210"/>
+            <ColumnDefinition Width="180"/>
             <ColumnDefinition Width="*"
                               MinWidth="320"/>
             <ColumnDefinition Width="Auto"/>
           </Grid.ColumnDefinitions>
 
-          <TextBlock Grid.Column="0"
-                     Text="{x:Static lang:CoreViewText.Receive}"
-                     FontSize="14"
-                     FontWeight="SemiBold"
-                     Margin="0,0,6,0"
-                     VerticalAlignment="Top"/>
+          <StackPanel Grid.Column="0"
+                      Margin="0,0,6,0"
+                      VerticalAlignment="Top">
+            <TextBlock Text="{x:Static lang:CoreViewText.Receive}"
+                       FontSize="14"
+                       FontWeight="SemiBold"/>
+            <!-- OFF のときは SC／変調を無効にし、無変調として受信する -->
+            <CheckBox x:Name="RxModulatedCheckBox"
+                      Content="{x:Static lang:CoreViewText.Modulation}"
+                      Margin="0,8,0,0"/>
+          </StackPanel>
 
-          <GroupBox Grid.Column="1"
+          <GroupBox Grid.Column="3"
                     Header="{x:Static lang:CoreViewText.Input}"
                     Margin="4,0,4,0"
                     VerticalAlignment="Top">
@@ -553,7 +560,91 @@
             </Grid>
           </GroupBox>
 
-          <StackPanel Grid.Column="2"
+          <!-- 変調波の受信に使う SC／変調（送信側と同じ選択肢）。「変調」OFF のときは無効 -->
+          <Grid Grid.Column="1"
+                Grid.ColumnSpan="2"
+                VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="210"/>
+              <ColumnDefinition Width="180"/>
+            </Grid.ColumnDefinitions>
+            <GroupBox Grid.Column="0"
+                      Header="{x:Static lang:CoreViewText.Subcarrier}"
+                      Margin="4,0,4,0"
+                      VerticalAlignment="Top"
+                      IsEnabled="{Binding IsChecked, ElementName=RxModulatedCheckBox}">
+              <UniformGrid x:Name="RxSubcarrierPanel"
+                           Columns="3"
+                           Margin="3">
+                <RadioButton Content="16-SC"
+                             Tag="16"
+                             GroupName="PerfRxSubcarrier"
+                             IsChecked="True"
+                             Margin="0,0,4,2"/>
+                <RadioButton Content="24-SC"
+                             Tag="24"
+                             GroupName="PerfRxSubcarrier"
+                             Margin="0,0,4,2"/>
+                <RadioButton Content="32-SC"
+                             Tag="32"
+                             GroupName="PerfRxSubcarrier"
+                             Margin="0,0,4,2"/>
+                <RadioButton Content="40-SC"
+                             Tag="40"
+                             GroupName="PerfRxSubcarrier"
+                             Margin="0,0,4,2"/>
+                <RadioButton Content="48-SC"
+                             Tag="48"
+                             GroupName="PerfRxSubcarrier"
+                             Margin="0,0,4,2"/>
+                <RadioButton Content="56-SC"
+                             Tag="56"
+                             GroupName="PerfRxSubcarrier"
+                             Margin="0,0,4,2"/>
+                <RadioButton Content="64-SC"
+                             Tag="64"
+                             GroupName="PerfRxSubcarrier"
+                             Margin="0,0,4,2"/>
+              </UniformGrid>
+            </GroupBox>
+            <GroupBox Grid.Column="1"
+                      Header="{x:Static lang:CoreViewText.Modulation}"
+                      Margin="4,0,4,0"
+                      VerticalAlignment="Top"
+                      IsEnabled="{Binding IsChecked, ElementName=RxModulatedCheckBox}">
+              <UniformGrid x:Name="RxModulationPanel"
+                           Columns="2"
+                           Margin="2">
+                <RadioButton Content="BPSK"
+                             Tag="Bpsk"
+                             GroupName="PerfRxModulation"
+                             IsChecked="True"
+                             Margin="0,0,6,4"/>
+                <RadioButton Content="QPSK"
+                             Tag="Qpsk"
+                             GroupName="PerfRxModulation"
+                             Margin="0,0,0,4"/>
+                <RadioButton Content="8PSK"
+                             Tag="Psk8"
+                             GroupName="PerfRxModulation"
+                             Margin="0,0,6,4"/>
+                <RadioButton Content="16QAM"
+                             Tag="Qam16"
+                             GroupName="PerfRxModulation"
+                             Margin="0,0,6,4"/>
+                <RadioButton Content="64QAM"
+                             Tag="Qam64"
+                             GroupName="PerfRxModulation"
+                             Margin="0,0,0,4"/>
+                <RadioButton Content="256QAM"
+                             Tag="Qam256"
+                             GroupName="PerfRxModulation"
+                             Margin="0,0,6,0"/>
+              </UniformGrid>
+            </GroupBox>
+          </Grid>
+
+          <StackPanel Grid.Column="4"
                       HorizontalAlignment="Left"
                       VerticalAlignment="Bottom"
                       Margin="16,0,4,4">

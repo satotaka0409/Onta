@@ -153,7 +153,45 @@ public sealed class StreamOfdmCodec
         w += hL.Length + preamble;
         Array.Copy(bL, 0, left, w, bL.Length);
         Array.Copy(bR, 0, right, w, bR.Length);
+        NormalizePeak(left, right, StreamConstants.OutputPeak);
         return (left, right);
+    }
+
+    /// <summary>
+    /// L/R 共通の倍率で、両チャネルの最大振幅が目標ピークになるよう揃えます。
+    /// IFFT の 1/N 正規化のままだとピーク約 −10 dBFS と低く、ライン出力で受信側が埋もれるため。
+    /// </summary>
+    /// <param name="left">L PCM（破壊的）。</param>
+    /// <param name="right">R PCM（破壊的）。</param>
+    /// <param name="targetPeak">目標ピーク振幅（0〜1）。</param>
+    private static void NormalizePeak(Complex[] left, Complex[] right, double targetPeak)
+    {
+        var peak = 0.0;
+        for (var i = 0; i < left.Length; i++)
+        {
+            peak = Math.Max(peak, Math.Abs(left[i].Real));
+        }
+
+        for (var i = 0; i < right.Length; i++)
+        {
+            peak = Math.Max(peak, Math.Abs(right[i].Real));
+        }
+
+        if (peak <= 1e-12)
+        {
+            return;
+        }
+
+        var scale = Math.Clamp(targetPeak, 0.0, 1.0) / peak;
+        for (var i = 0; i < left.Length; i++)
+        {
+            left[i] = new Complex(left[i].Real * scale, 0.0);
+        }
+
+        for (var i = 0; i < right.Length; i++)
+        {
+            right[i] = new Complex(right[i].Real * scale, 0.0);
+        }
     }
 
     /// <summary>
