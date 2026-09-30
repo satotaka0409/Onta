@@ -14,6 +14,12 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>カーソル後方に残すルックバック秒数。</summary>
     private const double CompactLookbackSeconds = 0.5;
 
+    /// <summary>アンカー位置合わせでずらさずに済ませる誤差（サンプル）。</summary>
+    private const int AnchorToleranceSamples = 16;
+
+    /// <summary>アンカー後、FH 変調部が揃ってからこの秒数 FH が確定しなければアンカーを捨てる。</summary>
+    private const int AnchorGiveUpSeconds = 2;
+
     private readonly FileWavCodec _codec;
     private readonly object _sync = new();
     private readonly int _sampleRate;
@@ -36,6 +42,11 @@ public sealed class RealtimeDecodeSession : IDisposable
     private long _lastPostInputCursor;
     private int _lastPostInputBuffered;
     private RealtimeDecodeSnapshot _snapshot = RealtimeDecodeSnapshot.Idle;
+    private readonly PreambleAnchorDetector _anchorDetector;
+    private readonly int _fhDataOffset;
+    private readonly int _fhModulatedSamples;
+    private bool _anchored;
+    private int _anchorPos;
 
     /// <summary>
     /// デコードセッションを初期化します。
@@ -63,6 +74,14 @@ public sealed class RealtimeDecodeSession : IDisposable
         _minAttemptSamples = _sampleRate * Math.Max(1, minAttemptSeconds);
         _stereo = channelMode == ChannelMode.Stereo;
         _progressive = new ProgressiveDecodeState(sharedStatus);
+        _fhDataOffset = codec.FileHeaderDataOffsetSamples;
+        _fhModulatedSamples = codec.FileHeaderModulatedSamples;
+        // BH の無変調（0.3 秒）はアンカーにしない。FH は冒頭 3 秒・途中 1 秒ある
+        _anchorDetector = new PreambleAnchorDetector(
+            codec.HeaderSymbolSamples,
+            (_sampleRate * 8) / 10,
+            codec.CreateHeaderUnmodulatedSymbols());
+        _anchorDetector.Reset();
     }
 
     /// <summary>
@@ -153,6 +172,7 @@ public sealed class RealtimeDecodeSession : IDisposable
             {
                 var drop = _count - (maxPre / 2);
                 DropFront(drop);
+                _anchored = false;
                 _progressive.Reset();
                 _progressive.StatusBoard.BeginRun("(リアルタイム受信 / 再同期)");
                 _lastAttemptCount = 0;
@@ -290,11 +310,18 @@ public sealed class RealtimeDecodeSession : IDisposable
                 {
                     progressive = _progressive;
                     inputDone = _inputCompleted;
+                    var waitingForAnchor = false;
+                    if (!inputDone && !progressive.HeaderReady && !progressive.Completed)
+                    {
+                        waitingForAnchor = !UpdateAnchorLocked();
+                    }
+
                     if (progressive.Completed)
                     {
                         shouldTry = false;
                     }
-                    else if (_count >= _minAttemptSamples
+                    else if (!waitingForAnchor
+                             && _count >= _minAttemptSamples
                              && _count >= _lastAttemptCount + Math.Max(1, _sampleRate / 10))
                     {
                         shouldTry = true;
@@ -479,6 +506,74 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
+    /// FH 確定前に、FH 手前の無変調区間の終端（アンカー）を探してバッファを送信先頭基準へ揃えます。
+    /// </summary>
+    /// <returns>アンカーで位置合わせ済みで復号を試せる場合 true。探索中は false。</returns>
+    /// <remarks>FH 復号はバッファ先頭からの固定オフセットを前提にするため、録音開始とテープ再生のずれをここで吸収する。</remarks>
+    private bool UpdateAnchorLocked()
+    {
+        if (_anchored)
+        {
+            if (_count <= _anchorPos + _fhModulatedSamples + (_sampleRate * AnchorGiveUpSeconds))
+            {
+                return true;
+            }
+
+            // FH 変調部が揃っても確定しなかった → このアンカーは捨て、以降から次の無変調区間を探す
+            DropFront(Math.Max(0, _anchorPos));
+            _anchored = false;
+            _progressive.Reset();
+            _progressive.StatusBoard.BeginRun("(リアルタイム受信 / 再同期)");
+            _lastAttemptCount = 0;
+        }
+
+        if (!_anchorDetector.TryAdvance(_left.AsSpan(0, _count), out var anchor))
+        {
+            return false;
+        }
+
+        var shift = anchor - _fhDataOffset;
+        if (shift > AnchorToleranceSamples)
+        {
+            DropFront(shift);
+        }
+        else if (shift < -AnchorToleranceSamples)
+        {
+            PrependSilenceLocked(-shift);
+        }
+
+        _anchorDetector.Reset();
+        _streamBase = 0;
+        _anchored = true;
+        _anchorPos = _fhDataOffset;
+        _lastAttemptCount = 0;
+        return true;
+    }
+
+    /// <summary>
+    /// バッファ先頭へ無音を挿入します（無変調区間の途中から録音が始まった場合の位置合わせ用）。
+    /// </summary>
+    /// <param name="samples">挿入する無音サンプル数。</param>
+    private void PrependSilenceLocked(int samples)
+    {
+        if (samples <= 0)
+        {
+            return;
+        }
+
+        EnsureCapacity(_count + samples);
+        Array.Copy(_left, 0, _left, samples, _count);
+        Array.Clear(_left, 0, samples);
+        if (_stereo)
+        {
+            Array.Copy(_right, 0, _right, samples, _count);
+            Array.Clear(_right, 0, samples);
+        }
+
+        _count += samples;
+    }
+
+    /// <summary>
     /// 先頭から指定サンプル数を破棄してバッファを前詰めします。
     /// </summary>
     /// <param name="drop">破棄する先頭サンプル数。</param>
@@ -502,6 +597,8 @@ public sealed class RealtimeDecodeSession : IDisposable
 
         _count = remain;
         _streamBase += drop;
+        _anchorPos -= drop;
+        _anchorDetector.OnFrontDropped(drop);
     }
 
     /// <summary>

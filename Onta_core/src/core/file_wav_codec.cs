@@ -1223,11 +1223,10 @@ public sealed partial class FileWavCodec
                     + headerOfdm.SamplesPerOfdmSymbol;
                 if (leftSamples.Length < minForFh)
                 {
-                    if (TryDecodeStandaloneBhBdWithoutFileHeader())
+                    // FH が届ききっていないだけの間は BH 総当たり（1 回で数十秒かかる）をせず、入力終端の最終試行でだけ探す
+                    if (!allowIncomplete && TryDecodeStandaloneBhBdWithoutFileHeader())
                     {
-                        return allowIncomplete
-                            ? ProgressiveDecodeStatus.NeedMoreSamples
-                            : ProgressiveDecodeStatus.Failed;
+                        return ProgressiveDecodeStatus.Failed;
                     }
 
                     return NeedMoreOrFail();
@@ -1297,18 +1296,12 @@ public sealed partial class FileWavCodec
                 catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                 {
                     // FH 無し（BH+BD only）を想定し、先頭から再スキャンする。
+                    // 総当たりは重いので、入力が続く間（allowIncomplete）は行わず最終試行でだけ行う
                     warpedCursor = 0;
                     logicalOffset = 0;
                     hasTrackedWow = false;
-                    if (TryDecodeStandaloneBhBdWithoutFileHeader())
+                    if (!allowIncomplete && TryDecodeStandaloneBhBdWithoutFileHeader())
                     {
-                        if (allowIncomplete)
-                        {
-                            state.LastError = null;
-                            PersistCursor();
-                            return ProgressiveDecodeStatus.NeedMoreSamples;
-                        }
-
                         state.LastError ??= "FH未受信。BH+BD を未完了ブロックとして保存しました。";
                         PersistCursor();
                         return ProgressiveDecodeStatus.Failed;
@@ -2316,7 +2309,7 @@ public sealed partial class FileWavCodec
             + bhSampleCount
             + (searchRadius * 4)
             + (headerOfdm.SamplesPerOfdmSymbol * 32));
-        var maxDataOfdm = CreateDataOfdm(8, ModulationScheme.Bpsk);
+        var maxDataOfdm = CreateDataOfdm(16, ModulationScheme.Bpsk);
         var maxBdSamples = DataPacketSamples(
             maxDataOfdm,
             DataBlockBytes,

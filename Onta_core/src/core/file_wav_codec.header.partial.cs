@@ -35,6 +35,39 @@ public sealed partial class FileWavCodec
     }
 
     /// <summary>
+    /// ヘッダー OFDM 1 シンボル（CP 込み）のサンプル数です。プリアンブル／ヘッダー無変調区間の繰り返し周期になります。
+    /// </summary>
+    public int HeaderSymbolSamples => CreateHeaderOfdm().SamplesPerOfdmSymbol;
+
+    /// <summary>
+    /// 送信先頭（先頭無音）から FH 変調部の先頭までのサンプル数です。
+    /// </summary>
+    public int FileHeaderDataOffsetSamples =>
+        _profile.LeadingSilenceSamples + _profile.UnmodulatedPreambleSamples + _profile.FileHeaderUnmodulatedSamples;
+
+    /// <summary>
+    /// FH パケットの変調部（無変調区間を除く）のサンプル数です。
+    /// </summary>
+    public int FileHeaderModulatedSamples => HeaderPacketSamples(CreateHeaderOfdm(), FileHeaderBytes, 0);
+
+    /// <summary>
+    /// ヘッダー無変調区間 1 周期分（CP 込み 1 シンボル）の理想波形を、SC-8 族・SC-24 族の両グリッドぶん返します。
+    /// </summary>
+    /// <returns>グリッドごとの無変調 1 シンボル波形。</returns>
+    internal Complex[][] CreateHeaderUnmodulatedSymbols()
+    {
+        var grids = new[] { OfdmCarrierGrid.Sc8Family, OfdmCarrierGrid.Sc24Family };
+        var symbols = new Complex[grids.Length][];
+        for (var i = 0; i < grids.Length; i++)
+        {
+            var ofdm = CreateHeaderOfdm(grids[i]);
+            symbols[i] = ofdm.GenerateUnmodulated(ofdm.SamplesPerOfdmSymbol).Left;
+        }
+
+        return symbols;
+    }
+
+    /// <summary>
     /// SC-8 族と SC-24 族の搬送波グリッドを互いに切り替えます。
     /// </summary>
     /// <param name="grid">現在の搬送波グリッド。</param>
