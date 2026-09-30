@@ -457,7 +457,9 @@
             <!-- OFF のときは SC／変調を無効にし、無変調として受信する -->
             <CheckBox x:Name="RxModulatedCheckBox"
                       Content="{x:Static lang:CoreViewText.Modulation}"
-                      Margin="0,8,0,0"/>
+                      Margin="0,8,0,0"
+                      Checked="OnRxDemodulationChanged"
+                      Unchecked="OnRxDemodulationChanged"/>
           </StackPanel>
 
           <GroupBox Grid.Column="3"
@@ -575,7 +577,8 @@
                       IsEnabled="{Binding IsChecked, ElementName=RxModulatedCheckBox}">
               <UniformGrid x:Name="RxSubcarrierPanel"
                            Columns="3"
-                           Margin="3">
+                           Margin="3"
+                           ToggleButton.Checked="OnRxDemodulationChanged">
                 <RadioButton Content="16-SC"
                              Tag="16"
                              GroupName="PerfRxSubcarrier"
@@ -614,7 +617,8 @@
                       IsEnabled="{Binding IsChecked, ElementName=RxModulatedCheckBox}">
               <UniformGrid x:Name="RxModulationPanel"
                            Columns="2"
-                           Margin="2">
+                           Margin="2"
+                           ToggleButton.Checked="OnRxDemodulationChanged">
                 <RadioButton Content="BPSK"
                              Tag="Bpsk"
                              GroupName="PerfRxModulation"

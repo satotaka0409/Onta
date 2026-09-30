@@ -163,6 +163,45 @@ internal sealed class PerformanceRxWorker : IDisposable
     }
 
     /// <summary>
+    /// 受信中の復調設定を変更します。次の解析から反映し、I-Q とワウはいったんリセットします。
+    /// </summary>
+    /// <param name="captureConstellation">変調波として I-Q を出すか。</param>
+    /// <param name="signalMode">ワウ基準の選び方。</param>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="modulationScheme">変調方式。</param>
+    public void UpdateDemodulation(
+        bool captureConstellation,
+        PerformanceSignalMode signalMode,
+        int activeSubcarriers,
+        ModulationScheme modulationScheme)
+    {
+        lock (_sync)
+        {
+            _settings = _settings with
+            {
+                CaptureConstellation = captureConstellation,
+                SignalMode = signalMode,
+                ActiveSubcarriers = activeSubcarriers,
+                ModulationScheme = modulationScheme
+            };
+            if (!_running)
+            {
+                return;
+            }
+
+            // 前の設定の点・ロック先が残らないようにする。
+            _wowLeftEma = 0;
+            _wowRightEma = 0;
+            _wowLeftRefHz = 0;
+            _wowRightRefHz = 0;
+            _status.SetWowFlutterPercent(0, 0);
+            _status.BeginIqCapture(
+                PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers),
+                PerformanceSignalGenerator.ClampModulation(modulationScheme));
+        }
+    }
+
+    /// <summary>
     /// 受信を停止します。
     /// </summary>
     public void RequestStop()

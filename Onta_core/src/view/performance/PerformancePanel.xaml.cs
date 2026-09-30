@@ -1362,6 +1362,27 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
+    /// 受信側「変調」チェック・SC・変調の変更を、受信中ならその場で受信ワーカーへ反映します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
+    private void OnRxDemodulationChanged(object sender, RoutedEventArgs e)
+    {
+        // 初期化中（コントロール未生成）や停止中は、スタート時に読むので何もしない。
+        if (_rxWorker is null || !_rxWorker.IsBusy)
+        {
+            return;
+        }
+
+        var settings = ReadRxSettings();
+        _rxWorker.UpdateDemodulation(
+            settings.CaptureConstellation,
+            settings.SignalMode,
+            settings.ActiveSubcarriers,
+            settings.ModulationScheme);
+    }
+
+    /// <summary>
     /// 蜿嶺ｿ｡髻ｳ驥上Λ繝吶Ν繧呈峩譁ｰ縺励∪縺吶・
     /// </summary>
     private void UpdateRxInputVolumeText()
@@ -2499,17 +2520,6 @@ public partial class PerformancePanel : UserControl
         RxAudioInputRadio.IsEnabled = !running;
         RxBrowseWavButton.IsEnabled = !running;
         InputDeviceCombo.IsEnabled = !running;
-        RxModulatedCheckBox.IsEnabled = !running;
-        // 受信側 SC／変調はスタート時に読むため、受信中は変更させない。
-        foreach (var radio in FindRadios(this))
-        {
-            if (string.Equals(radio.GroupName, "PerfRxSubcarrier", StringComparison.Ordinal)
-                || string.Equals(radio.GroupName, "PerfRxModulation", StringComparison.Ordinal))
-            {
-                radio.IsEnabled = !running;
-            }
-        }
-
         if (!running)
         {
             UpdateRxInputModePanels();

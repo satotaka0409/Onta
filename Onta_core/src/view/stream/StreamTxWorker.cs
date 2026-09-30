@@ -141,7 +141,8 @@ internal sealed class StreamTxWorker : IDisposable
                     throw new FileNotFoundException(CoreViewText.InputFileNotFound, settings.WavPath);
                 }
 
-                using var reader = new StreamAudioFilePcmReader(settings.WavPath);
+                // 受信側と OFDM シンボル長を揃えるため、ファイルのレートによらず 44.1 kHz で変調する。
+                using var reader = new StreamAudioFilePcmReader(settings.WavPath, StreamConstants.DefaultSampleRate);
                 var streamSampleRate = reader.SampleRate;
                 _vizSampleRate = streamSampleRate;
                 pipeline = new StreamTxPipeline(settings.ModeId, settings.Title, settings.Artist, cover, streamSampleRate);
@@ -188,7 +189,8 @@ internal sealed class StreamTxWorker : IDisposable
             }
             else
             {
-                var streamSampleRate = AudioDeviceSampleRate.ResolveCapture(settings.InputDevice, StreamConstants.DefaultSampleRate);
+                // デバイスは固有レートで開き、入出力の境界で 44.1 kHz と相互変換する。
+                var streamSampleRate = StreamConstants.DefaultSampleRate;
                 _vizSampleRate = streamSampleRate;
                 pipeline = new StreamTxPipeline(settings.ModeId, settings.Title, settings.Artist, cover, streamSampleRate);
 

@@ -137,7 +137,8 @@ internal sealed class StreamRxWorker : IDisposable
             _packetErrors = 0;
             _pcmWriteTotal = 0;
             _lastFftPublishMs = -1;
-            _captureSampleRate = AudioDeviceSampleRate.ResolveCapture(settings.InputDevice, StreamConstants.DefaultSampleRate);
+            // 送信側と OFDM シンボル長を揃えるため 44.1 kHz で復調する（デバイスレートからは取り込み時に変換）。
+            _captureSampleRate = StreamConstants.DefaultSampleRate;
             // 画面が次に読む前に前回の FFT / I-Q / エラー率を消す。
             _status.BeginRun(CoreViewText.StreamRxRunningTitle);
             _status.SetAnalyzing(false);

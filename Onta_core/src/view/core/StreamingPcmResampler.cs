@@ -29,7 +29,7 @@ internal sealed class StreamingPcmResampler
         _channels = channels;
         _inputRate = Math.Max(1, inputRate);
         _outputRate = Math.Max(1, outputRate);
-        _resampler.SetMode(true, 2, false);
+        _resampler.SetMode(true, 0, true, 64, 32);
         _resampler.SetFilterParms();
         _resampler.SetFeedMode(true);
         _resampler.SetRates(_inputRate, _outputRate);

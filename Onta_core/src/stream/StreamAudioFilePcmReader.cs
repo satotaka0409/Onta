@@ -4,7 +4,7 @@ using NAudio.Wave;
 namespace Onta.Stream;
 
 /// <summary>
-/// WAV / MP3 / FLAC などを PCM（元サンプリング周波数・ステレオ）へ変換しながらチャンク読み込みします。
+/// WAV / MP3 / FLAC などを PCM（指定または元サンプリング周波数・ステレオ）へ変換しながらチャンク読み込みします。
 /// </summary>
 public sealed class StreamAudioFilePcmReader : IDisposable
 {
@@ -14,18 +14,21 @@ public sealed class StreamAudioFilePcmReader : IDisposable
     private readonly float[] _buffer;
     private bool _disposed;
 
-    /// <summary>入力ファイルのサンプリング周波数（Hz）。</summary>
+    /// <summary>出力 PCM のサンプリング周波数（Hz）。</summary>
     public int SampleRate { get; }
 
     /// <summary>
-    /// 音声ファイルを開き、必要なら元サンプリング周波数のステレオへ変換するリーダーを構築します。
+    /// 音声ファイルを開き、必要なら指定サンプリング周波数のステレオへ変換するリーダーを構築します。
     /// </summary>
     /// <param name="path">入力ファイルパス。</param>
-    public StreamAudioFilePcmReader(string path)
+    /// <param name="outputSampleRate">出力サンプリング周波数。0 以下なら元ファイルのレートを使います。</param>
+    public StreamAudioFilePcmReader(string path, int outputSampleRate = 0)
     {
         _reader = new AudioFileReader(path);
         var src = _reader.WaveFormat;
-        SampleRate = src.SampleRate > 0 ? src.SampleRate : StreamConstants.DefaultSampleRate;
+        SampleRate = outputSampleRate > 0
+            ? outputSampleRate
+            : src.SampleRate > 0 ? src.SampleRate : StreamConstants.DefaultSampleRate;
         var target = WaveFormat.CreateIeeeFloatWaveFormat(SampleRate, 2);
         if (src.SampleRate != target.SampleRate
             || src.Channels != target.Channels
