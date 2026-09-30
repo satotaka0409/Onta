@@ -35,7 +35,8 @@ public partial class StreamPanel : UserControl
     private string _coverPath = string.Empty;
     private StreamCoverFormat _coverFormat = StreamCoverFormat.Color32;
     private int _coverByteCount;
-    private int _lastRxCoverLength = -1;
+    private int _lastRxCoverBlocks = -1;
+    private int _lastRxCoverTotal = -1;
 
     /// <summary>
     /// パネルを初期化します。
@@ -59,6 +60,7 @@ public partial class StreamPanel : UserControl
         FillDevices(TxInputDeviceBox, isInput: true);
         FillDevices(TxOutputDeviceBox, isInput: false);
         FillDevices(RxInputDeviceBox, isInput: true);
+        FillDevices(RxOutputDeviceBox, isInput: false);
         UpdateTxInputModeUi();
         RxErrorChart.Series = _errorChart.Series;
         RxErrorChart.XAxes = _errorChart.XAxes;
@@ -324,11 +326,17 @@ public partial class StreamPanel : UserControl
         {
             _ when ReferenceEquals(sender, TxInputVolume) => TxInputVolumeValueText,
             _ when ReferenceEquals(sender, TxOutputVolume) => TxOutputVolumeValueText,
+            _ when ReferenceEquals(sender, RxOutputVolume) => RxOutputVolumeValueText,
             _ => RxInputVolumeValueText,
         };
         if (text is not null)
         {
             text.Text = $"{(int)Math.Round(e.NewValue)}%";
+        }
+
+        if (ReferenceEquals(sender, RxOutputVolume))
+        {
+            _rx.SetOutputVolume(e.NewValue / 100.0);
         }
     }
 
@@ -762,6 +770,8 @@ public partial class StreamPanel : UserControl
             {
                 InputDevice = ReadDeviceNumber(RxInputDeviceBox),
                 InputVolume = ReadVolume(RxInputVolume),
+                OutputDevice = ReadDeviceNumber(RxOutputDeviceBox),
+                OutputVolume = ReadVolume(RxOutputVolume),
             };
             _rx.Start(settings);
             ResetRxGraphs();
@@ -841,8 +851,8 @@ public partial class StreamPanel : UserControl
             RxTitleBox.Text = _rx.Title;
             RxArtistBox.Text = _rx.Artist;
             RxRateBox.Text = _rx.DisplayKbps > 0 ? $"{_rx.DisplayKbps} kbps" : "-";
-            TryUpdateCoverPreview(_rx.CoverBytes);
-            RxStatusText.Text = CoreViewText.ReceivingPacketStatus(_rx.PacketsReceived, _rx.PacketErrors);
+            TryUpdateCoverPreview(_rx.CoverBytes, _rx.CoverReceivedBlocks, _rx.CoverTotalBlocks);
+            RxStatusText.Text = CoreViewText.ReceivingPacketStatus(_rx.PacketsReceived, _rx.PacketErrors, _rx.SpeedDeviationPercent);
         }
 
         // 送信中は送信側ボード、それ以外は受信側（エラー率は受信のみ）
@@ -885,36 +895,35 @@ public partial class StreamPanel : UserControl
     }
 
     /// <summary>
-    /// 受信ジャケ写のバイト列が変わったときだけプレビューを更新します。
+    /// 受信ジャケ写の取得ブロック数が変わったときだけ取得率とプレビューを更新します。
     /// </summary>
     /// <param name="cover">受信したジャケ写バイト列。</param>
-    private void TryUpdateCoverPreview(byte[] cover)
+    /// <param name="receivedBlocks">取得済みブロック数。</param>
+    /// <param name="totalBlocks">総ブロック数（未受信なら 0）。</param>
+    private void TryUpdateCoverPreview(byte[] cover, int receivedBlocks, int totalBlocks)
     {
-        if (RxCoverSizeText is null || RxCoverBytesText is null || RxCoverImage is null)
+        if (RxCoverSizeText is null || RxCoverBytesText is null || RxCoverRateText is null || RxCoverImage is null)
         {
             return;
         }
+
+        // 途中は欠損を 0 埋めした固定長のため、バイト数ではなくブロック数で変化を判定する。
+        if (receivedBlocks == _lastRxCoverBlocks && totalBlocks == _lastRxCoverTotal)
+        {
+            return;
+        }
+
+        _lastRxCoverBlocks = receivedBlocks;
+        _lastRxCoverTotal = totalBlocks;
+        RxCoverRateText.Text = CoreViewText.CoverRateLabel(receivedBlocks, totalBlocks);
+        RxCoverBytesText.Text = CoreViewText.ByteCountLabel(cover.Length);
 
         if (cover.Length == 0)
         {
-            if (_lastRxCoverLength != 0)
-            {
-                _lastRxCoverLength = 0;
-                RxCoverSizeText.Text = CoreViewText.SizeLabelUnknown;
-                RxCoverBytesText.Text = CoreViewText.ByteCountLabel(0);
-                RxCoverImage.Source = null;
-            }
-
+            RxCoverSizeText.Text = CoreViewText.SizeLabelUnknown;
+            RxCoverImage.Source = null;
             return;
         }
-
-        if (cover.Length == _lastRxCoverLength)
-        {
-            return;
-        }
-
-        _lastRxCoverLength = cover.Length;
-        RxCoverBytesText.Text = CoreViewText.ByteCountLabel(cover.Length);
 
         try
         {

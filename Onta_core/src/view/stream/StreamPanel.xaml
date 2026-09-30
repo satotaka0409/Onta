@@ -409,6 +409,37 @@
                          Margin="6,0,0,0"
                          VerticalAlignment="Center"
                          TextAlignment="Right"/>
+              <TextBlock Text="{x:Static lang:CoreViewText.OutputDevice}"
+                         VerticalAlignment="Center"
+                         Margin="24,0,8,0"/>
+              <ComboBox x:Name="RxOutputDeviceBox"
+                        Width="160"
+                        Margin="0,0,8,0">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Name}"
+                               Foreground="{StaticResource BrushComboForeground}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock Text="{x:Static lang:CoreViewText.Volume}"
+                         VerticalAlignment="Center"
+                         Margin="0,0,4,0"/>
+              <Slider x:Name="RxOutputVolume"
+                      Width="120"
+                      Minimum="0"
+                      Maximum="100"
+                      Value="80"
+                      TickFrequency="5"
+                      IsSnapToTickEnabled="False"
+                      VerticalAlignment="Center"
+                      ValueChanged="OnStreamVolumeChanged"/>
+              <TextBlock x:Name="RxOutputVolumeValueText"
+                         Text="80%"
+                         Width="36"
+                         Margin="6,0,0,0"
+                         VerticalAlignment="Center"
+                         TextAlignment="Right"/>
             </StackPanel>
 
             <Grid Margin="0,0,0,8">
@@ -458,6 +489,9 @@
                            Text="{x:Static lang:CoreViewText.SizeLabelUnknown}"/>
                 <TextBlock x:Name="RxCoverBytesText"
                            Text="{x:Static lang:CoreViewText.ByteCount0}"
+                           Margin="0,2,0,0"/>
+                <TextBlock x:Name="RxCoverRateText"
+                           Text="{x:Static lang:CoreViewText.CoverRateUnknown}"
                            Margin="0,2,0,0"/>
               </StackPanel>
               <Border Grid.Column="4"

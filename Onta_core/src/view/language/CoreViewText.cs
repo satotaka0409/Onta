@@ -329,6 +329,25 @@ public static class CoreViewText
     /// <returns>表示文字列。</returns>
     public static string ByteCountLabel(int value) => T($"バイト数: {value}", $"Bytes: {value}");
     public static string ByteCount0 => ByteCountLabel(0);
+
+    /// <summary>
+    /// ジャケ写の取得率（取得ブロック数／総ブロック数）の表示を返します。
+    /// </summary>
+    /// <param name="received">取得済みブロック数。</param>
+    /// <param name="total">総ブロック数。0 以下なら未受信。</param>
+    /// <returns>表示文字列。</returns>
+    public static string CoverRateLabel(int received, int total)
+    {
+        if (total <= 0)
+        {
+            return CoverRateUnknown;
+        }
+
+        var percent = Math.Min(100, received * 100 / total);
+        return T($"取得率: {percent}% ({received}/{total})", $"Received: {percent}% ({received}/{total})");
+    }
+
+    public static string CoverRateUnknown => T("取得率: -", "Received: -");
     public static string ErrorRateWithEllipse => T("エラーレート", "Error Rate");
 
     /// <summary>
@@ -368,9 +387,9 @@ public static class CoreViewText
     /// <param name="packetsReceived">受理したパケット数。</param>
     /// <param name="packetErrors">エラーパケット数。</param>
     /// <returns>表示文字列。</returns>
-    public static string ReceivingPacketStatus(int packetsReceived, int packetErrors) =>
-        T($"受信中… パケット {packetsReceived:N0}（エラー {packetErrors:N0}）",
-          $"Receiving... Packets {packetsReceived:N0} (Errors {packetErrors:N0})");
+    public static string ReceivingPacketStatus(int packetsReceived, int packetErrors, double speedDeviationPercent) =>
+        T($"受信中… パケット {packetsReceived:N0}（エラー {packetErrors:N0}）速度 {speedDeviationPercent:+0.00;-0.00;0.00}%",
+          $"Receiving... Packets {packetsReceived:N0} (Errors {packetErrors:N0}) Speed {speedDeviationPercent:+0.00;-0.00;0.00}%");
     public static string StreamRxRunningTitle => T("ストリーム受信", "Stream RX");
     public static string StreamRxStopped => T("ストリーム受信停止", "Stream RX stopped");
     public static string StreamTxRunningTitle => T("ストリーム送信", "Stream TX");

@@ -11,9 +11,9 @@ public sealed class StreamMetaAssembler
     private readonly Dictionary<byte, byte[]> _artist = new();
     private readonly Dictionary<byte, byte[]> _cover = new();
     private ushort? _streamId;
-    private byte _titleTotal = 1;
-    private byte _artistTotal = 1;
-    private byte _coverTotal = 1;
+    private int _titleTotal = 1;
+    private int _artistTotal = 1;
+    private int _coverTotal = 1;
 
     /// <summary>現在のストリーム ID。未確定時は null。</summary>
     public ushort? CurrentStreamId => _streamId;
@@ -27,12 +27,18 @@ public sealed class StreamMetaAssembler
     /// <summary>ジャケ写が揃ったか（途中でも部分表示可）。</summary>
     public bool CoverComplete => _cover.Count >= _coverTotal && _coverTotal > 0;
 
+    /// <summary>取得済みのジャケ写ブロック数。</summary>
+    public int CoverReceivedBlocks => _cover.Count;
+
+    /// <summary>ジャケ写の総ブロック数。ジャケ写ブロックを 1 つも受信していなければ 0。</summary>
+    public int CoverTotalBlocks => _cover.Count == 0 ? 0 : _coverTotal;
+
     /// <summary>
     /// メタスロットを取り込みます。StreamId が変われば全リセットします。
     /// </summary>
     /// <param name="streamId">ストリーム ID。</param>
     /// <param name="kind">種別。</param>
-    /// <param name="totalBlocks">総ブロック数。</param>
+    /// <param name="totalBlocks">総ブロック数。0 は 256 ブロック（1 バイトに収まらない最大値）として扱います。</param>
     /// <param name="blockIndex">ブロック位置。</param>
     /// <param name="data">16 バイトデータ。</param>
     /// <returns>StreamId が切り替わったとき true。</returns>
@@ -58,16 +64,22 @@ public sealed class StreamMetaAssembler
             return reset;
         }
 
+        var total = totalBlocks == 0 ? StreamConstants.MetaMaxBlocks : totalBlocks;
+        if (blockIndex >= total)
+        {
+            return reset;
+        }
+
         switch (kind)
         {
             case StreamMetaKind.Title:
-                _titleTotal = Math.Max((byte)1, totalBlocks);
+                _titleTotal = total;
                 break;
             case StreamMetaKind.Artist:
-                _artistTotal = Math.Max((byte)1, totalBlocks);
+                _artistTotal = total;
                 break;
             case StreamMetaKind.Cover:
-                _coverTotal = Math.Max((byte)1, totalBlocks);
+                _coverTotal = total;
                 break;
         }
 
@@ -106,9 +118,14 @@ public sealed class StreamMetaAssembler
     /// <summary>
     /// 取得済みジャケ写バイトを返します（欠損ブロックは 0 埋め）。
     /// </summary>
-    /// <returns>ブロック順に連結したジャケ写。完全受信時は末尾の 0 を落とします。</returns>
+    /// <returns>ブロック順に連結したジャケ写。完全受信時は末尾の 0 を落とします。未受信なら空配列。</returns>
     public byte[] GetCoverBytes()
     {
+        if (_cover.Count == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
         var total = Math.Max(1, (int)_coverTotal);
         var result = new byte[total * StreamConstants.MetaBlockDataBytes];
         for (var i = 0; i < total; i++)
@@ -143,7 +160,7 @@ public sealed class StreamMetaAssembler
     /// <param name="map">ブロック位置から 16 バイトデータへの対応。</param>
     /// <param name="total">期待する総ブロック数。欠損位置は飛ばします。</param>
     /// <returns>連結した文字列。空なら空文字。</returns>
-    private static string DecodeUtf8(Dictionary<byte, byte[]> map, byte total)
+    private static string DecodeUtf8(Dictionary<byte, byte[]> map, int total)
     {
         if (map.Count == 0)
         {

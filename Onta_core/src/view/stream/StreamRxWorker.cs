@@ -17,6 +17,11 @@ internal sealed class StreamRxWorker : IDisposable
 {
     private const int FftSize = 2048;
     private const int MinFftPublishIntervalMs = 80;
+    private const int PlaybackSampleRate = Onta.Stream.Opus.OpusEncoder.OpusSampleRate;
+    /// <summary>再生開始時・途切れそうなときに先に積む無音（パケット到着の揺らぎを吸収する）。</summary>
+    private const int PlaybackPrefillFrames = PlaybackSampleRate * 2 / 5;
+    /// <summary>この量を超えて溜まったら捨てて遅延を戻す（テープ速度差で溜まり続けるのを防ぐ）。</summary>
+    private const int PlaybackMaxBufferedFrames = PlaybackSampleRate * 3 / 2;
 
     private readonly object _sync = new();
     private readonly CoreExecutionStatusBoard _status = new();
@@ -29,13 +34,17 @@ internal sealed class StreamRxWorker : IDisposable
     private long _lastFftPublishMs = -1;
     private int _packetsReceived;
     private int _packetErrors;
+    private double _speedDeviationPercent;
     private Task? _worker;
     private CancellationTokenSource? _cts;
     private (bool Success, string Message)? _completion;
     private string _title = string.Empty;
     private string _artist = string.Empty;
     private byte[] _cover = Array.Empty<byte>();
+    private int _coverReceivedBlocks;
+    private int _coverTotalBlocks;
     private int _displayKbps;
+    private RealtimePcmPlayer? _player;
     private bool _disposed;
 
     /// <summary>共有状態。</summary>
@@ -71,6 +80,18 @@ internal sealed class StreamRxWorker : IDisposable
         get { lock (_sync) { return _cover; } }
     }
 
+    /// <summary>取得済みのジャケ写ブロック数。</summary>
+    public int CoverReceivedBlocks
+    {
+        get { lock (_sync) { return _coverReceivedBlocks; } }
+    }
+
+    /// <summary>ジャケ写の総ブロック数（未受信なら 0）。</summary>
+    public int CoverTotalBlocks
+    {
+        get { lock (_sync) { return _coverTotalBlocks; } }
+    }
+
     /// <summary>検出速度 kbps。</summary>
     public int DisplayKbps
     {
@@ -87,6 +108,12 @@ internal sealed class StreamRxWorker : IDisposable
     public int PacketErrors
     {
         get { lock (_sync) { return _packetErrors; } }
+    }
+
+    /// <summary>推定した再生速度の偏差（%。正なら録音時より速い）。</summary>
+    public double SpeedDeviationPercent
+    {
+        get { lock (_sync) { return _speedDeviationPercent; } }
     }
 
     /// <summary>
@@ -113,6 +140,18 @@ internal sealed class StreamRxWorker : IDisposable
     }
 
     /// <summary>
+    /// 受信中の復号音声の再生音量を変更します。
+    /// </summary>
+    /// <param name="volume">再生音量 0〜1。</param>
+    public void SetOutputVolume(double volume)
+    {
+        lock (_sync)
+        {
+            _player?.SetOutputVolume(volume);
+        }
+    }
+
+    /// <summary>
     /// 受信を開始します。
     /// </summary>
     /// <param name="settings">受信設定。</param>
@@ -132,9 +171,12 @@ internal sealed class StreamRxWorker : IDisposable
             _title = string.Empty;
             _artist = string.Empty;
             _cover = Array.Empty<byte>();
+            _coverReceivedBlocks = 0;
+            _coverTotalBlocks = 0;
             _displayKbps = 0;
             _packetsReceived = 0;
             _packetErrors = 0;
+            _speedDeviationPercent = 0;
             _pcmWriteTotal = 0;
             _lastFftPublishMs = -1;
             // 送信側と OFDM シンボル長を揃えるため 44.1 kHz で復調する（デバイスレートからは取り込み時に変換）。
@@ -172,10 +214,18 @@ internal sealed class StreamRxWorker : IDisposable
         _status.SetAnalyzing(false);
         _status.SetFftStereoMode(true);
         RealtimePcmCapture? capture = null;
+        RealtimePcmPlayer? player = null;
         StreamRxPipeline? pipeline = null;
         try
         {
-            pipeline = new StreamRxPipeline(_captureSampleRate) { PacketReported = PublishPacket };
+            pipeline = new StreamRxPipeline(_captureSampleRate, PlaybackSampleRate) { PacketReported = PublishPacket };
+
+            player = new RealtimePcmPlayer();
+            player.Start(settings.OutputDevice, PlaybackSampleRate, ChannelMode.Stereo, settings.OutputVolume);
+            lock (_sync)
+            {
+                _player = player;
+            }
 
             var queue = new Queue<(Complex[] L, Complex[] R)>();
             var gate = new object();
@@ -209,16 +259,19 @@ internal sealed class StreamRxWorker : IDisposable
 
                 PublishFft(item.Value.L, item.Value.R);
                 pipeline.PushCapture(item.Value.L, item.Value.R);
-                // 再生／WAV 出力は UI から削除。復号結果（曲情報・状態）のみ利用する。
-                _ = pipeline.Pump(out var statusMsg);
+                var decoded = pipeline.Pump(out var statusMsg);
+                PlayDecoded(player, decoded);
 
                 lock (_sync)
                 {
                     _title = pipeline.Meta.GetTitleText();
                     _artist = pipeline.Meta.GetArtistText();
                     _cover = pipeline.Meta.GetCoverBytes();
+                    _coverReceivedBlocks = pipeline.Meta.CoverReceivedBlocks;
+                    _coverTotalBlocks = pipeline.Meta.CoverTotalBlocks;
                     _packetsReceived = pipeline.PacketsReceived;
                     _packetErrors = pipeline.PacketErrors;
+                    _speedDeviationPercent = pipeline.SpeedDeviation * 100.0;
                     if (pipeline.DetectedModeId is { } mode)
                     {
                         _displayKbps = StreamMode.Resolve(mode).DisplayKbps;
@@ -250,9 +303,64 @@ internal sealed class StreamRxWorker : IDisposable
         }
         finally
         {
+            lock (_sync)
+            {
+                _player = null;
+            }
+
             capture?.Dispose();
+            player?.Dispose();
             pipeline?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// 復号した Opus フレームを再生キューへ積みます。受信ループを止めないよう、溜まりすぎたら捨て、途切れそうなら無音を足します。
+    /// </summary>
+    /// <param name="player">再生先。</param>
+    /// <param name="frames">復号した PCM（48 kHz ステレオ）。</param>
+    private static void PlayDecoded(RealtimePcmPlayer player, List<(double[] Left, double[] Right)> frames)
+    {
+        var total = 0;
+        foreach (var (l, _) in frames)
+        {
+            total += l.Length;
+        }
+
+        if (total == 0)
+        {
+            return;
+        }
+
+        var buffered = player.BufferedSampleFrames;
+        if (buffered > PlaybackMaxBufferedFrames)
+        {
+            player.ClearQueuedSamples();
+            buffered = 0;
+        }
+
+        if (buffered < PlaybackPrefillFrames / 4)
+        {
+            var silence = new Complex[PlaybackPrefillFrames - buffered];
+            player.AddSamples(silence, silence);
+        }
+
+        var left = new Complex[total];
+        var right = new Complex[total];
+        var offset = 0;
+        foreach (var (l, r) in frames)
+        {
+            var n = Math.Min(l.Length, r.Length);
+            for (var i = 0; i < n; i++)
+            {
+                left[offset + i] = new Complex(l[i], 0.0);
+                right[offset + i] = new Complex(r[i], 0.0);
+            }
+
+            offset += l.Length;
+        }
+
+        player.AddSamples(left, right);
     }
 
     /// <summary>

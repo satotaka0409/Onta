@@ -24,6 +24,7 @@ public sealed record StreamRxPacketReport(
 /// <remarks>
 /// パケット先頭をプリアンブル（無音）とヘッダーのパイロットで探して同期し、ヘッダーの速度 ID で
 /// データ部のコーデックを選びます。パケット全体が揃うまで復調しないため、途中から再生しても受信できます。
+/// テープ速度のずれはデータ部パイロットの位相から推定してパケットごとに補間で戻し、パケット内のワウもシンボル単位で追従します。
 /// </remarks>
 public sealed class StreamRxPipeline : IDisposable
 {
@@ -48,6 +49,37 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>プリアンブル区間の電力がヘッダー区間の何倍以下なら同期候補とするか。</summary>
     private const double PreamblePowerRatio = 0.25;
 
+    /// <summary>速度補正した信号の先頭に置く余白（サンプル）。再試行のずらしとシンボル先頭探索の後戻り用。</summary>
+    private const int WarpPad = 32;
+
+    /// <summary>受け付けるテープ速度の偏差の上限（±4%）。</summary>
+    private const double MaxSpeedDeviation = 0.04;
+
+    /// <summary>未ロック時にヘッダーで総当たりする速度偏差の範囲と刻み。</summary>
+    private const double SpeedScanRange = 0.03;
+    private const double SpeedScanStep = 0.001;
+
+    /// <summary>パケット 1 つで測った速度の残差を推定へ反映する割合。</summary>
+    private const double SpeedGain = 0.8;
+
+    /// <summary>1 パケットで測った残差がこれを超えたら推定の誤りとみなし、使わない（ヘッダーは約 1% ずれても読めるため広めに取る）。</summary>
+    private const double MaxSpeedResidual = 0.03;
+
+    /// <summary>復調に失敗したとき、残差がこれ以上なら速度を直して再試行する。</summary>
+    private const double MinRetrySpeedResidual = 5e-5;
+
+    /// <summary>速度を直して再試行する最大回数。</summary>
+    private const int MaxSpeedRetries = 3;
+
+    /// <summary>シンボル間のずれを均す片側のシンボル数。</summary>
+    private const int DriftSmoothRadius = 2;
+
+    /// <summary>データ部のシンボル先頭探索半径。速度とワウはパイロットで戻すので探索せず、先頭の揺れで等化が乱れるのを防ぐ。</summary>
+    private const int BodySymbolSearchRadius = 0;
+
+    /// <summary>連続してこの回数失敗したら速度ロックを外し、総当たりをやり直す。</summary>
+    private const int SpeedUnlockFailures = 4;
+
     private readonly StreamMetaAssembler _meta = new();
     private readonly OpusDecoder _opus;
     private readonly int _sampleRate;
@@ -62,17 +94,26 @@ public sealed class StreamRxPipeline : IDisposable
     private readonly Dictionary<StreamModeId, StreamOfdmCodec> _codecs = new();
     private StreamModeId? _modeId;
     private bool _synced;
+    private double _speed = 1.0;
+    private bool _speedLocked;
+    private int _speedFailures;
+    private Complex[] _warpL = Array.Empty<Complex>();
+    private Complex[] _warpR = Array.Empty<Complex>();
+    private double[] _drift = Array.Empty<double>();
+    private double[] _tau = Array.Empty<double>();
+    private double[] _positions = Array.Empty<double>();
     private bool _disposed;
 
     /// <summary>
     /// サンプリング周波数を指定して受信パイプラインを構築します。
     /// </summary>
     /// <param name="sampleRate">受信PCMのサンプリング周波数。</param>
-    public StreamRxPipeline(int sampleRate)
+    /// <param name="decodedSampleRate">復号音声（Opus 出力）のサンプリング周波数。0 以下なら sampleRate と同じ。</param>
+    public StreamRxPipeline(int sampleRate, int decodedSampleRate = 0)
     {
         _sampleRate = Math.Max(1, sampleRate);
         _preambleSamples = StreamConstants.PreambleSamples(_sampleRate);
-        _opus = new OpusDecoder(_sampleRate);
+        _opus = new OpusDecoder(decodedSampleRate > 0 ? decodedSampleRate : _sampleRate);
         _leftBuf = new Complex[_sampleRate];
         _rightBuf = new Complex[_sampleRate];
         _power = new double[_sampleRate + 1];
@@ -90,6 +131,9 @@ public sealed class StreamRxPipeline : IDisposable
 
     /// <summary>ヘッダーは読めたがデータ部の復調に失敗したパケット数。</summary>
     public int PacketErrors { get; private set; }
+
+    /// <summary>推定した再生速度の偏差（+0.01 なら録音時より 1% 速く再生されている）。</summary>
+    public double SpeedDeviation => (1.0 / _speed) - 1.0;
 
     /// <summary>ヘッダーが読めたパケットごとに（成否によらず）<see cref="Pump"/> のスレッドで呼ばれます。</summary>
     public Action<StreamRxPacketReport>? PacketReported { get; set; }
@@ -199,7 +243,8 @@ public sealed class StreamRxPipeline : IDisposable
                 _synced = true;
             }
 
-            if (cursor + RefineRadius + _headerCodec.HeaderSectionSamples + TailMargin > length)
+            var speed = _speed;
+            if (cursor + RefineRadius + RawSpan(_headerCodec.HeaderSectionSamples + TailMargin, speed) > length)
             {
                 break;
             }
@@ -207,30 +252,37 @@ public sealed class StreamRxPipeline : IDisposable
             // ヘッダーは数十サンプルずれても読めるが、データ部はずれに弱いのでプリアンブル終端へ合わせる
             cursor = RefinePacketStart(power, cursor, length);
 
-            if (!_headerCodec.TryDemodulateHeader(left, right, cursor, out var modeId, length))
+            if (!TryHeaderAt(left, right, cursor, speed, length, out var modeId))
             {
                 _synced = false;
                 status = "sync lost";
+                CountSpeedFailure();
                 cursor += 1;
                 continue;
             }
 
             var codec = ResolveCodec(modeId);
-            if (cursor + codec.PacketSamples + TailMargin > length)
+            var warpCount = WarpPad + codec.PacketSamples + TailMargin;
+            if (cursor + RawSpan(warpCount - WarpPad, speed) > length)
             {
                 break;
             }
 
-            if (!TryDemodulateNear(codec, left, right, cursor, length, out var next, out var packet))
+            // テープ速度のずれとパケット内のワウを戻した信号で復調する
+            var ok = DemodulateWithSpeedTracking(codec, left, right, cursor, length, warpCount, ref speed, out var next, out var tauEnd, out var packet);
+            if (!ok)
             {
                 // ヘッダーが読めていればパケット長は分かるので、境界を保ったまま次へ進む
                 PacketErrors++;
                 status = "packet error";
-                cursor += codec.PacketSamples;
+                CountSpeedFailure();
+                cursor += (int)Math.Round(codec.PacketSamples * speed);
                 continue;
             }
 
-            cursor = next;
+            _speedLocked = true;
+            _speedFailures = 0;
+            cursor += (int)Math.Round((next - WarpPad + tauEnd) * speed);
             PacketsReceived++;
             if (_modeId != packet.ModeId)
             {
@@ -283,7 +335,9 @@ public sealed class StreamRxPipeline : IDisposable
     {
         var preamble = _preambleSamples;
         var headerSpan = _headerCodec.HeaderSectionSamples - preamble;
-        var end = length - _headerCodec.HeaderSectionSamples - TailMargin - RefineRadius;
+        var end = length
+            - RawSpan(_headerCodec.HeaderSectionSamples + TailMargin, 1.0 + MaxSpeedDeviation)
+            - RefineRadius;
         lastCandidate = Math.Max(from, end + 1);
         if (end < from)
         {
@@ -291,6 +345,7 @@ public sealed class StreamRxPipeline : IDisposable
             return -1;
         }
 
+        var nextScan = from;
         for (var p = from; p <= end; p += SyncStep)
         {
             var preamblePower = (power[p + preamble] - power[p]) / preamble;
@@ -300,13 +355,281 @@ public sealed class StreamRxPipeline : IDisposable
                 continue;
             }
 
-            if (_headerCodec.TryDemodulateHeader(left, right, p, out _, length))
+            if (TryHeaderAt(left, right, p, _speed, length, out _))
             {
                 return p;
+            }
+
+            // 速度が大きくずれているとヘッダーも読めないので、パケット先頭らしい位置で速度を総当たりする
+            if (!_speedLocked && p >= nextScan)
+            {
+                var refined = RefinePacketStart(power, p, length);
+                if (TryScanSpeed(left, right, refined, length))
+                {
+                    return refined;
+                }
+
+                nextScan = refined + _headerCodec.HeaderSectionSamples;
             }
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// 速度偏差を 0 から外側へ順に変えてヘッダー復調を試し、読めた速度を採用します。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packetStart">パケット先頭の候補。</param>
+    /// <param name="length">バッファのサンプル数。</param>
+    /// <returns>いずれかの速度でヘッダーが読めたら true。</returns>
+    private bool TryScanSpeed(Complex[] left, Complex[] right, int packetStart, int length)
+    {
+        var steps = (int)Math.Round(SpeedScanRange / SpeedScanStep);
+        for (var i = 0; i <= steps; i++)
+        {
+            for (var sign = 1; sign >= -1; sign -= 2)
+            {
+                if (i == 0 && sign < 0)
+                {
+                    continue;
+                }
+
+                var candidate = 1.0 + (sign * i * SpeedScanStep);
+                if (Math.Abs(candidate - _speed) < SpeedScanStep * 0.5)
+                {
+                    continue;
+                }
+
+                if (TryHeaderAt(left, right, packetStart, candidate, length, out _))
+                {
+                    _speed = candidate;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 速度補正した信号でヘッダーを復調します。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packetStart">パケット先頭（受信サンプル位置）。</param>
+    /// <param name="speed">受信サンプル数 / 送信サンプル数。</param>
+    /// <param name="length">バッファのサンプル数。</param>
+    /// <param name="modeId">成功時のストリーム速度 ID。</param>
+    /// <returns>パイロットと速度 ID が妥当なら true。</returns>
+    private bool TryHeaderAt(Complex[] left, Complex[] right, int packetStart, double speed, int length, out StreamModeId modeId)
+    {
+        modeId = default;
+        var count = WarpPad + _headerCodec.HeaderSectionSamples + TailMargin;
+        if (packetStart + RawSpan(count - WarpPad, speed) > length)
+        {
+            return false;
+        }
+
+        WarpInto(left, right, packetStart, speed, count, length);
+        return _headerCodec.TryDemodulateHeader(_warpL, _warpR, WarpPad, out modeId, count);
+    }
+
+    /// <summary>
+    /// パケット先頭から送信時のサンプル間隔に戻した信号を <see cref="_warpL"/> / <see cref="_warpR"/> へ作ります（先頭に <see cref="WarpPad"/> の余白）。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packetStart">パケット先頭（受信サンプル位置）。</param>
+    /// <param name="speed">受信サンプル数 / 送信サンプル数。</param>
+    /// <param name="count">作るサンプル数（余白込み）。</param>
+    /// <param name="length">バッファのサンプル数。</param>
+    private void WarpInto(Complex[] left, Complex[] right, int packetStart, double speed, int count, int length)
+    {
+        if (_warpL.Length < count)
+        {
+            _warpL = new Complex[count];
+            _warpR = new Complex[count];
+        }
+
+        var start = packetStart - (WarpPad * speed);
+        StreamSpeedWarp.Warp(left, length, start, speed, _warpL, count);
+        StreamSpeedWarp.Warp(right, length, start, speed, _warpR, count);
+    }
+
+    /// <summary>
+    /// 送信時 nominal サンプル分を読むのに必要な受信サンプル数（補間の片側タップ込み）を返します。
+    /// </summary>
+    /// <param name="nominal">送信時のサンプル数。</param>
+    /// <param name="speed">受信サンプル数 / 送信サンプル数。</param>
+    /// <returns>必要な受信サンプル数。</returns>
+    private static int RawSpan(int nominal, double speed) =>
+        (int)Math.Ceiling(nominal * speed) + StreamSpeedWarp.HalfTaps;
+
+    /// <summary>
+    /// 一定速度で補正した信号のパイロットから速度推定を更新し、パケット内のずれ（ワウ）も戻した信号で復調します。
+    /// </summary>
+    /// <remarks>推定し直した速度との差が大きいのに失敗したときは、速度を直して最大 <see cref="MaxSpeedRetries"/> 回やり直します。</remarks>
+    /// <param name="codec">パケットのモードに対応するコーデック。</param>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packetStart">パケット先頭（受信サンプル位置）。</param>
+    /// <param name="length">バッファのサンプル数。</param>
+    /// <param name="warpCount">補正信号のサンプル数（余白込み）。</param>
+    /// <param name="speed">最後に使った速度（受信サンプル数 / 送信サンプル数）。</param>
+    /// <param name="end">成功時の補正信号上のパケット末尾。</param>
+    /// <param name="tauEnd">パケット末尾でのずれ（補正信号のサンプル）。受信位置へ戻すときに足す。</param>
+    /// <param name="packet">成功時のパケット。</param>
+    /// <returns>復調できたら true。</returns>
+    private bool DemodulateWithSpeedTracking(
+        StreamOfdmCodec codec,
+        Complex[] left,
+        Complex[] right,
+        int packetStart,
+        int length,
+        int warpCount,
+        ref double speed,
+        out int end,
+        out double tauEnd,
+        out StreamPacket packet)
+    {
+        if (_drift.Length < codec.DataSymbolCount)
+        {
+            _drift = new double[codec.DataSymbolCount];
+            _tau = new double[codec.DataSymbolCount + 1];
+        }
+
+        var ok = false;
+        end = WarpPad;
+        tauEnd = 0;
+        packet = null!;
+        for (var attempt = 0; attempt <= MaxSpeedRetries; attempt++)
+        {
+            speed = _speed;
+            WarpInto(left, right, packetStart, speed, warpCount, length);
+            var pairs = codec.MeasureBodyDrift(_warpL, _warpR, WarpPad, warpCount, _drift, out var meanDrift);
+            var residual = UpdateSpeed(meanDrift, codec.DataSymbolSamples);
+            tauEnd = pairs > 0
+                ? WarpTracked(left, right, packetStart, speed, warpCount, length, codec, pairs, meanDrift)
+                : 0;
+            ok = TryDemodulateNear(codec, _warpL, _warpR, WarpPad, warpCount, out end, out _, out packet);
+            if (ok || Math.Abs(residual) < MinRetrySpeedResidual)
+            {
+                break;
+            }
+        }
+
+        return ok;
+    }
+
+    /// <summary>
+    /// パイロットで測った 1 シンボルあたりのずれから、速度推定を更新します。
+    /// </summary>
+    /// <param name="meanDrift">1 シンボルあたりのずれ（NaN なら更新しない）。</param>
+    /// <param name="symbolSamples">1 シンボルのサンプル数。</param>
+    /// <returns>測った速度の残差（反映前）。使えなければ 0。</returns>
+    private double UpdateSpeed(double meanDrift, int symbolSamples)
+    {
+        if (double.IsNaN(meanDrift) || symbolSamples <= 0)
+        {
+            return 0;
+        }
+
+        // 補正後もシンボルが後ろへずれていく＝まだ速度を小さく見積もっている
+        var residual = meanDrift / symbolSamples;
+        if (Math.Abs(residual) > MaxSpeedResidual)
+        {
+            return 0;
+        }
+
+        _speed = Math.Clamp(_speed * (1.0 + (SpeedGain * residual)), 1.0 - MaxSpeedDeviation, 1.0 + MaxSpeedDeviation);
+        return residual;
+    }
+
+    /// <summary>
+    /// シンボル間のずれを積算した時間軸に沿って、パケットを補正信号へ取り出し直します（ヘッダー側は一定速度のまま）。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packetStart">パケット先頭（受信サンプル位置）。</param>
+    /// <param name="speed">一定速度の補正に使った速度。</param>
+    /// <param name="count">補正信号のサンプル数（余白込み）。</param>
+    /// <param name="length">バッファのサンプル数。</param>
+    /// <param name="codec">パケットのモードに対応するコーデック。</param>
+    /// <param name="pairs">測れたシンボル間の数。</param>
+    /// <param name="meanDrift">全体の平均のずれ（シンボル間が測れなかった所の代わり）。</param>
+    /// <returns>パケット末尾でのずれ（補正信号のサンプル）。</returns>
+    private double WarpTracked(
+        Complex[] left,
+        Complex[] right,
+        int packetStart,
+        double speed,
+        int count,
+        int length,
+        StreamOfdmCodec codec,
+        int pairs,
+        double meanDrift)
+    {
+        var fallback = double.IsNaN(meanDrift) ? 0.0 : meanDrift;
+        _tau[0] = 0;
+        for (var s = 0; s < pairs; s++)
+        {
+            // ワウは数 Hz まで、シンボルは約 160 Hz なので、前後数シンボルで均して雑音を抑える
+            double sum = 0;
+            var n = 0;
+            for (var j = Math.Max(0, s - DriftSmoothRadius); j <= Math.Min(pairs - 1, s + DriftSmoothRadius); j++)
+            {
+                sum += double.IsNaN(_drift[j]) ? fallback : _drift[j];
+                n++;
+            }
+
+            _tau[s + 1] = _tau[s] + (sum / n);
+        }
+
+        if (_positions.Length < count)
+        {
+            _positions = new double[count];
+        }
+
+        var symbolLength = codec.DataSymbolSamples;
+        var firstCenter = WarpPad + codec.BodyOffset + (symbolLength / 2.0);
+        var origin = packetStart - (WarpPad * speed);
+        for (var m = 0; m < count; m++)
+        {
+            var x = (m - firstCenter) / symbolLength;
+            double tau;
+            if (x <= 0)
+            {
+                tau = 0;
+            }
+            else if (x >= pairs)
+            {
+                tau = _tau[pairs];
+            }
+            else
+            {
+                var i = (int)x;
+                tau = _tau[i] + ((x - i) * (_tau[i + 1] - _tau[i]));
+            }
+
+            _positions[m] = origin + ((m + tau) * speed);
+        }
+
+        StreamSpeedWarp.WarpAt(left, length, _positions, _warpL, count);
+        StreamSpeedWarp.WarpAt(right, length, _positions, _warpR, count);
+        return _tau[pairs];
+    }
+
+    /// <summary>
+    /// 復調失敗を数え、続いたら速度ロックを外します。
+    /// </summary>
+    private void CountSpeedFailure()
+    {
+        if (++_speedFailures >= SpeedUnlockFailures)
+        {
+            _speedLocked = false;
+        }
     }
 
     /// <summary>
@@ -353,6 +676,7 @@ public sealed class StreamRxPipeline : IDisposable
     /// <param name="start">パケット先頭。</param>
     /// <param name="length">バッファのサンプル数。</param>
     /// <param name="end">成功時のパケット末尾。</param>
+    /// <param name="usedStart">成功時に使ったパケット先頭（失敗時は start）。</param>
     /// <param name="packet">成功時のパケット。</param>
     /// <returns>いずれかの位置で復調できたら true。</returns>
     private bool TryDemodulateNear(
@@ -362,6 +686,7 @@ public sealed class StreamRxPipeline : IDisposable
         int start,
         int length,
         out int end,
+        out int usedStart,
         out StreamPacket packet)
     {
         var report = PacketReported;
@@ -407,6 +732,7 @@ public sealed class StreamRxPipeline : IDisposable
             if (ok)
             {
                 end = cursor;
+                usedStart = start + delta;
                 packet = decoded!;
                 return true;
             }
@@ -418,6 +744,7 @@ public sealed class StreamRxPipeline : IDisposable
         }
 
         end = start;
+        usedStart = start;
         packet = null!;
         return false;
     }
@@ -455,7 +782,7 @@ public sealed class StreamRxPipeline : IDisposable
     {
         if (!_codecs.TryGetValue(modeId, out var codec))
         {
-            codec = new StreamOfdmCodec(modeId, _sampleRate);
+            codec = new StreamOfdmCodec(modeId, _sampleRate) { BodySymbolSearchRadius = BodySymbolSearchRadius };
             _codecs[modeId] = codec;
         }
 

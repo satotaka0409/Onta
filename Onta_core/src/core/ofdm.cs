@@ -625,6 +625,26 @@ public sealed partial class OfdmGenerator
     public OfdmCarrierGrid CarrierGrid => _config.CarrierGrid;
 
     /// <summary>
+    /// FFT サイズを返します。
+    /// </summary>
+    public int FftSize => _config.FftSize;
+
+    /// <summary>
+    /// CP 長（サンプル）を返します。
+    /// </summary>
+    public int CyclicPrefixLength => _config.CyclicPrefixLength;
+
+    /// <summary>
+    /// L チャネルのパイロットの FFT ビン番号を返します（全シンボル共通で <see cref="PilotSymbol"/> を載せる）。
+    /// </summary>
+    public IReadOnlyList<int> LeftPilotBins => _leftPilotBins;
+
+    /// <summary>
+    /// R チャネルのパイロットの FFT ビン番号を返します（全シンボル共通で <see cref="PilotSymbol"/> を載せる）。
+    /// </summary>
+    public IReadOnlyList<int> RightPilotBins => _rightPilotBins;
+
+    /// <summary>
     /// 無変調サブキャリアを表す単位複素数です。
     /// </summary>
     private static readonly Complex UnmodulatedCarrierSymbol = Complex.One;

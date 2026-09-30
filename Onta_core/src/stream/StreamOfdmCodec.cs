@@ -48,6 +48,11 @@ public sealed class StreamOfdmCodec
     private double[] _llrJoined = Array.Empty<double>();
     private double[] _llrDeinterleaved = Array.Empty<double>();
     private readonly byte[] _wire = new byte[StreamConstants.PacketBytes];
+    private Complex[,] _pilotL = new Complex[0, 0];
+    private Complex[,] _pilotR = new Complex[0, 0];
+    private Complex[] _pilotProducts = Array.Empty<Complex>();
+    private Complex[] _pilotProductSum = Array.Empty<Complex>();
+    private int[] _pilotProductBins = Array.Empty<int>();
 
     /// <summary>
     /// 指定モード用コーデックを構築します。
@@ -78,6 +83,100 @@ public sealed class StreamOfdmCodec
 
     /// <summary>現在のモード情報。</summary>
     public StreamModeInfo Mode => _mode;
+
+    /// <summary>OFDM シンボル先頭の探索半径の既定値（サンプル）。</summary>
+    public const int DefaultSymbolSearchRadius = 16;
+
+    /// <summary>
+    /// データ部のシンボル先頭探索半径（サンプル）。受信側で速度を補正済みなら小さくし、先頭が前後に揺れて等化が乱れるのを防ぎます。
+    /// </summary>
+    public int BodySymbolSearchRadius { get; set; } = DefaultSymbolSearchRadius;
+
+    /// <summary>データ部 1 OFDM シンボルのサンプル数（CP 込み）。</summary>
+    public int DataSymbolSamples => _dataOfdm.SamplesPerOfdmSymbol;
+
+    /// <summary>パケット先頭からデータ部先頭までのサンプル数。</summary>
+    public int BodyOffset => _headerSectionSamples + _preambleSamples;
+
+    /// <summary>データ部の OFDM シンボル数。</summary>
+    public int DataSymbolCount => (_packetSamples - BodyOffset) / _dataOfdm.SamplesPerOfdmSymbol;
+
+    /// <summary>
+    /// データ部のパイロット位相から、隣り合うシンボル間のずれ（サンプル）と全体の平均を求めます（L/R のパイロットをまとめて当てはめ）。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM。</param>
+    /// <param name="packetStart">パケット先頭（ヘッダー前プリアンブルの先頭）。</param>
+    /// <param name="sampleCount">有効サンプル数。</param>
+    /// <param name="perSymbolDrift">シンボル s→s+1 のずれの書き込み先（<see cref="DataSymbolCount"/> 以上の長さ。求められない所は NaN）。</param>
+    /// <param name="meanDrift">全シンボルを通した 1 シンボルあたりのずれ。求められなければ NaN。</param>
+    /// <returns>書き込んだシンボル間の数。</returns>
+    public int MeasureBodyDrift(
+        Complex[] left,
+        Complex[] right,
+        int packetStart,
+        int sampleCount,
+        double[] perSymbolDrift,
+        out double meanDrift)
+    {
+        meanDrift = double.NaN;
+        var symbols = DataSymbolCount;
+        var bodyStart = packetStart + BodyOffset;
+        var leftBins = _dataOfdm.LeftPilotBins;
+        var rightBins = _dataOfdm.RightPilotBins;
+        var pilotCount = leftBins.Count + rightBins.Count;
+        if (_pilotL.GetLength(0) < symbols || _pilotL.GetLength(1) < leftBins.Count || _pilotR.GetLength(1) < rightBins.Count)
+        {
+            _pilotL = new Complex[symbols, leftBins.Count];
+            _pilotR = new Complex[symbols, rightBins.Count];
+            _pilotProducts = new Complex[pilotCount];
+            _pilotProductSum = new Complex[pilotCount];
+            _pilotProductBins = new int[pilotCount];
+        }
+
+        for (var i = 0; i < leftBins.Count; i++)
+        {
+            _pilotProductBins[i] = leftBins[i];
+        }
+
+        for (var i = 0; i < rightBins.Count; i++)
+        {
+            _pilotProductBins[leftBins.Count + i] = rightBins[i];
+        }
+
+        var fft = _dataOfdm.FftSize;
+        var cp = _dataOfdm.CyclicPrefixLength;
+        var measured = Math.Min(
+            StreamTimingDrift.MeasurePilots(left, sampleCount, bodyStart, symbols, fft, cp, leftBins, _pilotL),
+            StreamTimingDrift.MeasurePilots(right, sampleCount, bodyStart, symbols, fft, cp, rightBins, _pilotR));
+        var pairs = Math.Max(0, measured - 1);
+        Array.Clear(_pilotProductSum, 0, pilotCount);
+        for (var s = 0; s < pairs; s++)
+        {
+            for (var i = 0; i < leftBins.Count; i++)
+            {
+                var p = _pilotL[s + 1, i] * Complex.Conjugate(_pilotL[s, i]);
+                _pilotProducts[i] = p;
+                _pilotProductSum[i] += p;
+            }
+
+            for (var i = 0; i < rightBins.Count; i++)
+            {
+                var p = _pilotR[s + 1, i] * Complex.Conjugate(_pilotR[s, i]);
+                _pilotProducts[leftBins.Count + i] = p;
+                _pilotProductSum[leftBins.Count + i] += p;
+            }
+
+            perSymbolDrift[s] = StreamTimingDrift.SolveDrift(_pilotProducts, _pilotProductBins, pilotCount, fft);
+        }
+
+        if (pairs > 0)
+        {
+            meanDrift = StreamTimingDrift.SolveDrift(_pilotProductSum, _pilotProductBins, pilotCount, fft);
+        }
+
+        return pairs;
+    }
 
     /// <summary>変復調のサンプルレート（Hz）。</summary>
     public int SampleRate => _sampleRate;
@@ -792,6 +891,7 @@ public sealed class StreamOfdmCodec
 
             var cursorL = cursor;
             var cursorR = cursor;
+            var searchRadius = ReferenceEquals(ofdm, _dataOfdm) ? BodySymbolSearchRadius : DefaultSymbolSearchRadius;
             Ensure(_llrL, aligned, out _llrL);
             Ensure(_llrR, aligned, out _llrR);
             var llrL = ofdm.DemodulateSoftLlrsFromStream(
@@ -800,6 +900,7 @@ public sealed class StreamOfdmCodec
                 aligned,
                 useRightChannel: false,
                 logicalSampleOffset: 0,
+                searchRadius: searchRadius,
                 onEqualizedDataSymbolFrame: onIqFrame,
                 sampleCount: sampleLength,
                 llrDestination: _llrL);
@@ -809,6 +910,7 @@ public sealed class StreamOfdmCodec
                 aligned,
                 useRightChannel: true,
                 logicalSampleOffset: 0,
+                searchRadius: searchRadius,
                 onEqualizedDataSymbolFrame: onIqFrame,
                 sampleCount: sampleLength,
                 llrDestination: _llrR);

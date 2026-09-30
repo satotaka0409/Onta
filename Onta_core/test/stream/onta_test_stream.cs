@@ -49,6 +49,34 @@ public sealed class OntaTestStream
     }
 
     [Theory]
+    [InlineData(1808)]
+    [InlineData(1800)]
+    [InlineData(StreamCoverImage.MaxBytes)]
+    public void MetaAssembler_Cover_CountsBlocksAndRestoresBytes(int coverLength)
+    {
+        var cover = new byte[coverLength];
+        new Random(coverLength).NextBytes(cover);
+        cover[^1] = 0xFF;
+        var rotator = new StreamMetaRotator(string.Empty, string.Empty, cover);
+        var assembler = new StreamMetaAssembler();
+        var total = (coverLength + StreamConstants.MetaBlockDataBytes - 1) / StreamConstants.MetaBlockDataBytes;
+
+        Assert.Equal(0, assembler.CoverTotalBlocks);
+        Assert.Empty(assembler.GetCoverBytes());
+
+        for (var i = 0; i < total; i++)
+        {
+            var (kind, totalBlocks, blockIndex, data) = rotator.Next();
+            assembler.Ingest(0x1234, kind, totalBlocks, blockIndex, data);
+            Assert.Equal(i + 1, assembler.CoverReceivedBlocks);
+            Assert.Equal(total, assembler.CoverTotalBlocks);
+        }
+
+        Assert.True(assembler.CoverComplete);
+        Assert.Equal(cover, assembler.GetCoverBytes());
+    }
+
+    [Theory]
     [InlineData(StreamModeId.Rate18k)]
     [InlineData(StreamModeId.Rate20k)]
     [InlineData(StreamModeId.Rate23k)]
@@ -286,6 +314,82 @@ public sealed class OntaTestStream
     }
 
     /// <summary>
+    /// テープ速度のずれ・ワウ・小数サンプルの遅れがあっても、速度を推定して受信できること。
+    /// </summary>
+    [Theory]
+    [InlineData(StreamModeId.Rate18k, 0.01, 0.0, 0.5)]
+    [InlineData(StreamModeId.Rate18k, -0.01, 0.002, 0.3)]
+    [InlineData(StreamModeId.Rate30k, 0.005, 0.001, 0.5)]
+    [InlineData(StreamModeId.Rate30k, -0.003, 0.001, 0.25)]
+    public void Receive_WithTapeSpeedErrorAndWow_TracksSpeed(StreamModeId modeId, double speedError, double wowDepth, double delay)
+    {
+        const double WowHz = 3.0;
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 6);
+        var tx = Transmit(modeId, left, right, Title, Artist, cover: null);
+
+        // 再生時に速度 (1 + speedError) で読み、ワウ（ピーク wowDepth / 3 Hz）を重ねる
+        var count = (int)((tx.Left.Length - delay) / (1.0 + Math.Abs(speedError) + wowDepth)) - 64;
+        var positions = new double[count];
+        var pos = delay;
+        for (var m = 0; m < count; m++)
+        {
+            positions[m] = pos;
+            pos += 1.0 + speedError + (wowDepth * Math.Sin(2 * Math.PI * WowHz * m / StreamConstants.DefaultSampleRate));
+        }
+
+        var playedLeft = new Complex[count];
+        var playedRight = new Complex[count];
+        StreamSpeedWarp.WarpAt(tx.Left, tx.Left.Length, positions, playedLeft, count);
+        StreamSpeedWarp.WarpAt(tx.Right, tx.Right.Length, positions, playedRight, count);
+
+        using var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate);
+        for (var offset = 0; offset < count; offset += ChunkFrames)
+        {
+            var n = Math.Min(ChunkFrames, count - offset);
+            pipeline.PushCapture(playedLeft[offset..(offset + n)], playedRight[offset..(offset + n)]);
+            _ = pipeline.Pump(out _);
+        }
+
+        for (var i = 0; i < 5; i++)
+        {
+            pipeline.PushCapture(new Complex[ChunkFrames], new Complex[ChunkFrames]);
+            _ = pipeline.Pump(out _);
+        }
+
+        // 再生側の速度が 1 + speedError なら、受信 1 サンプルは送信 1 + speedError サンプルに当たる
+        var expectedDeviation = speedError;
+        _output.WriteLine(
+            $"{modeId} speed={speedError:P2} wow={wowDepth:P2} delay={delay}: tx={tx.PacketCount} rx={pipeline.PacketsReceived} "
+            + $"err={pipeline.PacketErrors} est={pipeline.SpeedDeviation:P3}");
+
+        Assert.InRange(pipeline.PacketErrors, 0, 1);
+        Assert.InRange(pipeline.PacketsReceived, tx.PacketCount - 2, tx.PacketCount);
+        Assert.InRange(pipeline.SpeedDeviation, expectedDeviation - 0.0005, expectedDeviation + 0.0005);
+        Assert.Equal(Title, pipeline.Meta.GetTitleText());
+    }
+
+    /// <summary>
+    /// 44.1 kHz で復調しつつ、再生用に復号音声を Opus 本来の 48 kHz で取り出せること。
+    /// </summary>
+    [Fact]
+    public void Receive_DecodedAt48k_KeepsOpusFrameLength()
+    {
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 3);
+        var tx = Transmit(StreamModeId.Rate18k, left, right, Title, Artist, cover: null);
+
+        var rx44 = Receive(tx.Left, tx.Right);
+        var rx48 = Receive(tx.Left, tx.Right, Onta.Stream.Opus.OpusEncoder.OpusSampleRate);
+        var frames = rx44.Left.Length / DecodedFrameSamples;
+        _output.WriteLine($"frames={frames} decoded44={rx44.Left.Length} decoded48={rx48.Left.Length} rx={rx48.Packets} err={rx48.PacketErrors}");
+
+        Assert.Equal(0, rx48.PacketErrors);
+        Assert.Equal(tx.PacketCount, rx48.Packets);
+        Assert.True(frames > 0);
+        Assert.Equal(frames * Onta.Stream.Opus.OpusEncoder.FrameSamplesPerChannel, rx48.Left.Length);
+        Assert.Equal(rx48.Left.Length, rx48.Right.Length);
+    }
+
+    /// <summary>
     /// 送信パイプラインへ 0.1 秒チャンクで PCM を流し、変調済み信号を連結して返します。
     /// </summary>
     private static TxResult Transmit(StreamModeId modeId, double[] left, double[] right, string title, string artist, byte[]? cover)
@@ -315,9 +419,12 @@ public sealed class OntaTestStream
     /// <summary>
     /// 受信パイプラインへ 0.1 秒チャンクで信号を流し、復号 PCM と曲情報を集めます。
     /// </summary>
-    private static RxResult Receive(Complex[] left, Complex[] right)
+    /// <param name="left">受信する L 信号。</param>
+    /// <param name="right">受信する R 信号。</param>
+    /// <param name="decodedSampleRate">復号音声のサンプリング周波数（0 なら 44.1 kHz）。</param>
+    private static RxResult Receive(Complex[] left, Complex[] right, int decodedSampleRate = 0)
     {
-        using var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate);
+        using var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate, decodedSampleRate);
         var outLeft = new List<double>();
         var outRight = new List<double>();
 
