@@ -23,6 +23,9 @@ public sealed class OntaTestStream
     private const string Title = "音多ストリーム試験 1minute";
     private const string Artist = "Onta Project";
 
+    /// <summary>結果を再現できるよう送信側のストリーム ID を固定する。</summary>
+    private const ushort TestStreamId = 0x4F4E;
+
     private readonly ITestOutputHelper _output;
 
     /// <summary>
@@ -54,9 +57,7 @@ public sealed class OntaTestStream
     [InlineData(StreamCoverImage.MaxBytes)]
     public void MetaAssembler_Cover_CountsBlocksAndRestoresBytes(int coverLength)
     {
-        var cover = new byte[coverLength];
-        new Random(coverLength).NextBytes(cover);
-        cover[^1] = 0xFF;
+        var cover = BuildPng(coverLength);
         var rotator = new StreamMetaRotator(string.Empty, string.Empty, cover);
         var assembler = new StreamMetaAssembler();
         var total = (coverLength + StreamConstants.MetaBlockDataBytes - 1) / StreamConstants.MetaBlockDataBytes;
@@ -70,10 +71,112 @@ public sealed class OntaTestStream
             assembler.Ingest(0x1234, kind, totalBlocks, blockIndex, data);
             Assert.Equal(i + 1, assembler.CoverReceivedBlocks);
             Assert.Equal(total, assembler.CoverTotalBlocks);
+            Assert.Equal(i + 1 == total, assembler.CoverComplete);
+            Assert.Equal(i + 1 == total ? coverLength : 0, assembler.GetCoverBytes().Length);
         }
 
-        Assert.True(assembler.CoverComplete);
         Assert.Equal(cover, assembler.GetCoverBytes());
+    }
+
+    [Fact]
+    public void MetaAssembler_BrokenData_IsDiscardedAndReacquired()
+    {
+        const string title = "音多 タイトル テスト";
+        var cover = BuildPng(200);
+        var rotator = new StreamMetaRotator(title, string.Empty, cover);
+        var assembler = new StreamMetaAssembler();
+        var titleBlocks = (System.Text.Encoding.UTF8.GetByteCount(title) + 15) / 16;
+        var coverBlocks = (cover.Length + 15) / 16;
+
+        // 最初に届くタイトル先頭ブロックとジャケ写 3 ブロック目だけ中身を壊す（CRC は通った想定）
+        var titleBroken = false;
+        var coverBroken = false;
+        for (var i = 0; i < 2 * coverBlocks; i++)
+        {
+            var (kind, totalBlocks, blockIndex, data) = rotator.Next();
+            if (!titleBroken && kind == StreamMetaKind.Title && blockIndex == 0)
+            {
+                data[0] ^= 0xC0;
+                titleBroken = true;
+            }
+            else if (!coverBroken && kind == StreamMetaKind.Cover && blockIndex == 2)
+            {
+                data[0] ^= 0xC0;
+                coverBroken = true;
+            }
+
+            assembler.Ingest(0x1234, kind, totalBlocks, blockIndex, data);
+        }
+
+        Assert.False(assembler.CoverComplete);
+        Assert.Empty(assembler.GetCoverBytes());
+        Assert.Equal(2, assembler.DiscardedCount);
+
+        // 2 周目は正常に届けば表示される
+        for (var i = 0; i < 2 * Math.Max(titleBlocks, coverBlocks); i++)
+        {
+            var (kind, totalBlocks, blockIndex, data) = rotator.Next();
+            assembler.Ingest(0x1234, kind, totalBlocks, blockIndex, data);
+        }
+
+        Assert.Equal(title, assembler.GetTitleText());
+        Assert.Equal(cover, assembler.GetCoverBytes());
+    }
+
+    [Fact]
+    public void MetaAssembler_SingleCorruptStreamId_KeepsAccumulatedMeta()
+    {
+        var rotator = new StreamMetaRotator(Title, Artist, null);
+        var assembler = new StreamMetaAssembler();
+        for (var i = 0; i < 20; i++)
+        {
+            var (kind, totalBlocks, blockIndex, data) = rotator.Next();
+            assembler.Ingest(0x1234, kind, totalBlocks, blockIndex, data);
+        }
+
+        Assert.Equal(Title, assembler.GetTitleText());
+
+        // 1 パケットだけ化けた ID は無視し、蓄積も消さない
+        var glitch = rotator.Next();
+        Assert.False(assembler.Ingest(0x1235, glitch.Kind, glitch.TotalBlocks, glitch.BlockIndex, glitch.Data));
+        var next = rotator.Next();
+        Assert.False(assembler.Ingest(0x1234, next.Kind, next.TotalBlocks, next.BlockIndex, next.Data));
+        Assert.Equal(Title, assembler.GetTitleText());
+        Assert.Equal(Artist, assembler.GetArtistText());
+
+        // 同じ新 ID が 2 パケット続けば新しいストリームとして切り替える
+        var a = rotator.Next();
+        Assert.False(assembler.Ingest(0x5678, a.Kind, a.TotalBlocks, a.BlockIndex, a.Data));
+        var b = rotator.Next();
+        Assert.True(assembler.Ingest(0x5678, b.Kind, b.TotalBlocks, b.BlockIndex, b.Data));
+        Assert.Equal((ushort)0x5678, assembler.CurrentStreamId);
+    }
+
+    /// <summary>
+    /// IHDR・埋め草チャンク・IEND からなる、指定バイト数ちょうどの構造的に正しい PNG を作ります。
+    /// </summary>
+    /// <param name="length">全体のバイト数（57 以上）。</param>
+    /// <returns>PNG バイト列。</returns>
+    private static byte[] BuildPng(int length)
+    {
+        var png = new byte[length];
+        byte[] signature = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+        signature.CopyTo(png, 0);
+        var pos = signature.Length;
+        pos = WriteChunk(png, pos, "IHDR"u8, 13, new Random(length));
+        pos = WriteChunk(png, pos, "zzZz"u8, length - pos - 12 - 12, new Random(length + 1));
+        WriteChunk(png, pos, "IEND"u8, 0, new Random(0));
+        return png;
+
+        static int WriteChunk(byte[] dest, int offset, ReadOnlySpan<byte> type, int dataLength, Random random)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(dest.AsSpan(offset), (uint)dataLength);
+            type.CopyTo(dest.AsSpan(offset + 4));
+            random.NextBytes(dest.AsSpan(offset + 8, dataLength));
+            var crc = Onta.Core.Crc32.Compute(dest.AsSpan(offset + 4, 4 + dataLength));
+            Onta.Core.Crc32.WriteBigEndian(dest.AsSpan(offset + 8 + dataLength), crc);
+            return offset + 12 + dataLength;
+        }
     }
 
     [Theory]
@@ -192,7 +295,6 @@ public sealed class OntaTestStream
         // タイトル → アーティスト → ジャケ写の順に 1 パケット 1 ブロックずつ回る
         var coverBlocks = (cover.Length + StreamConstants.MetaBlockDataBytes - 1) / StreamConstants.MetaBlockDataBytes;
         var sentBlocks = Math.Min(coverBlocks, tx.PacketCount / 3);
-        var sentBytes = Math.Min(cover.Length, sentBlocks * StreamConstants.MetaBlockDataBytes);
         _output.WriteLine(
             $"packets={tx.PacketCount} cover={cover.Length} B ({coverBlocks} blocks) sent={sentBlocks} blocks "
             + $"received={rx.Cover.Length} B complete={rx.CoverComplete} rx={rx.Packets} err={rx.PacketErrors}");
@@ -203,8 +305,8 @@ public sealed class OntaTestStream
         Assert.Equal(Title, rx.Title);
         Assert.Equal(Artist, rx.Artist);
         Assert.Equal(sentBlocks == coverBlocks, rx.CoverComplete);
-        Assert.True(rx.Cover.Length >= sentBytes);
-        Assert.Equal(cover.AsSpan(0, sentBytes).ToArray(), rx.Cover.AsSpan(0, sentBytes).ToArray());
+        Assert.Equal(sentBlocks, rx.CoverBlocks);
+        Assert.Equal(sentBlocks == coverBlocks ? cover : Array.Empty<byte>(), rx.Cover);
     }
 
     [Fact]
@@ -394,7 +496,7 @@ public sealed class OntaTestStream
     /// </summary>
     private static TxResult Transmit(StreamModeId modeId, double[] left, double[] right, string title, string artist, byte[]? cover)
     {
-        using var pipeline = new StreamTxPipeline(modeId, title, artist, cover, StreamConstants.DefaultSampleRate);
+        using var pipeline = new StreamTxPipeline(modeId, title, artist, cover, StreamConstants.DefaultSampleRate, TestStreamId);
         var packets = new List<(Complex[] Left, Complex[] Right)>();
         for (var offset = 0; offset < left.Length; offset += ChunkFrames)
         {
@@ -460,6 +562,7 @@ public sealed class OntaTestStream
             pipeline.Meta.GetArtistText(),
             pipeline.Meta.GetCoverBytes(),
             pipeline.Meta.CoverComplete,
+            pipeline.Meta.CoverReceivedBlocks,
             pipeline.PacketsReceived,
             pipeline.PacketErrors);
     }
@@ -626,6 +729,7 @@ public sealed class OntaTestStream
         string Artist,
         byte[] Cover,
         bool CoverComplete,
+        int CoverBlocks,
         int Packets,
         int PacketErrors);
 }

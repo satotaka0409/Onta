@@ -27,12 +27,13 @@ public sealed class StreamTxPipeline : IDisposable
     /// <param name="artist">アーティスト。</param>
     /// <param name="coverBytes">ジャケ写。無ければ null。</param>
     /// <param name="sampleRate">入力 PCM のサンプリング周波数（Hz）。</param>
-    public StreamTxPipeline(StreamModeId modeId, string title, string artist, byte[]? coverBytes, int sampleRate)
+    /// <param name="streamId">ストリーム ID。0 なら乱数で決めます。</param>
+    public StreamTxPipeline(StreamModeId modeId, string title, string artist, byte[]? coverBytes, int sampleRate, ushort streamId = 0)
     {
         _codec = new StreamOfdmCodec(modeId, sampleRate);
         _meta = new StreamMetaRotator(title, artist, coverBytes);
         _opus = new OpusEncoder(_codec.Mode.OpusBitrateBps, sampleRate);
-        _streamId = (ushort)Random.Shared.Next(1, ushort.MaxValue);
+        _streamId = streamId != 0 ? streamId : (ushort)Random.Shared.Next(1, ushort.MaxValue);
     }
 
     /// <summary>ストリーム ID。</summary>

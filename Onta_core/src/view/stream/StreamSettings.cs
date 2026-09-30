@@ -48,7 +48,7 @@ public sealed class StreamRxSettings
     public int InputDevice { get; init; }
 
     /// <summary>入力音量。</summary>
-    public double InputVolume { get; init; } = 1.0;
+    public double InputVolume { get; init; } = 0.8;
 
     /// <summary>復号音声の再生デバイス番号。</summary>
     public int OutputDevice { get; init; }
