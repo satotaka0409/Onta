@@ -276,13 +276,17 @@ public sealed class StreamRxPipeline : IDisposable
                 PacketErrors++;
                 status = "packet error";
                 CountSpeedFailure();
-                cursor += (int)Math.Round(codec.PacketSamples * speed);
+                cursor += (int)Math.Round(codec.PacketSamples * speed) - RefineRadius;
+                _synced = false;
                 continue;
             }
 
             _speedLocked = true;
             _speedFailures = 0;
             cursor += (int)Math.Round((next - WarpPad + tauEnd) * speed);
+            // 送信側はパケット間に無音を挟んで音声の実時間に合わせるので、次の先頭は改めて探す
+            cursor = Math.Max(0, cursor - RefineRadius);
+            _synced = false;
             PacketsReceived++;
             if (_modeId != packet.ModeId)
             {
@@ -501,6 +505,7 @@ public sealed class StreamRxPipeline : IDisposable
         }
 
         var ok = false;
+        var initialSpeed = _speed;
         end = WarpPad;
         tauEnd = 0;
         packet = null!;
@@ -518,6 +523,13 @@ public sealed class StreamRxPipeline : IDisposable
             {
                 break;
             }
+        }
+
+        // 復調できなかったパケット（ドロップアウトや途中で切れた信号）の測定で速度推定を乱さない
+        if (!ok)
+        {
+            _speed = initialSpeed;
+            speed = initialSpeed;
         }
 
         return ok;

@@ -279,7 +279,10 @@ public sealed class OntaTestStream
         Assert.Equal(ExpectedDecodedSamples(left.Length), rx.Left.Length);
         Assert.Equal(Title, rx.Title);
         Assert.Equal(Artist, rx.Artist);
-        Assert.True(airRatio < 1.0, $"送出時間が実時間を超えています: {airRatio:F3}");
+        // パケット自体は運ぶ音声より短く、足した無音で送出時間が曲の実時間にそろう（最終パケットだけ超え得る）
+        var codec = new StreamOfdmCodec(modeId, StreamConstants.DefaultSampleRate);
+        Assert.True(codec.PacketSamples < tx.Left.Length / tx.PacketCount, "パケット間に無音が入っていません。");
+        Assert.InRange(tx.Left.Length, ExpectedDecodedSamples(left.Length), ExpectedDecodedSamples(left.Length) + codec.PacketSamples);
         Assert.True(correlation > 0.9, $"復号音声のエンベロープ相関が低すぎます: {correlation:F3}");
     }
 
@@ -403,7 +406,7 @@ public sealed class OntaTestStream
         var offset = (int)(StreamConstants.DefaultSampleRate * 3.3) + 123;
         var rx = Receive(tx.Left[offset..], tx.Right[offset..]);
         // 途中から始まったパケットは捨て、次のパケット以降はすべて受かるはず
-        var expectedPackets = tx.PacketCount - (offset / new StreamOfdmCodec(StreamModeId.Rate18k, StreamConstants.DefaultSampleRate).PacketSamples) - 1;
+        var expectedPackets = tx.PacketStarts.Count(start => start > offset);
         _output.WriteLine(
             $"offset={offset} decoded={rx.Left.Length} title='{rx.Title}' mode={rx.ModeId} "
             + $"rx={rx.Packets}/{expectedPackets} err={rx.PacketErrors}");
@@ -511,11 +514,18 @@ public sealed class OntaTestStream
             Assert.Equal(l.Length, r.Length);
         }
 
+        var starts = new int[packets.Count];
+        for (var i = 1; i < packets.Count; i++)
+        {
+            starts[i] = starts[i - 1] + packets[i - 1].Left.Length;
+        }
+
         return new TxResult(
             packets.SelectMany(p => p.Left).ToArray(),
             packets.SelectMany(p => p.Right).ToArray(),
             packets.Count,
-            pipeline.StreamId);
+            pipeline.StreamId,
+            starts);
     }
 
     /// <summary>
@@ -717,7 +727,7 @@ public sealed class OntaTestStream
     }
 
     /// <summary>送信結果（連結した変調済み信号）です。</summary>
-    private sealed record TxResult(Complex[] Left, Complex[] Right, int PacketCount, ushort StreamId);
+    private sealed record TxResult(Complex[] Left, Complex[] Right, int PacketCount, ushort StreamId, int[] PacketStarts);
 
     /// <summary>受信結果（復号 PCM と曲情報）です。</summary>
     private sealed record RxResult(

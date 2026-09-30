@@ -17,6 +17,7 @@ public sealed class StreamTxPipeline : IDisposable
     private readonly List<byte[]> _payloadQueue = new();
     private readonly StreamOpusPayloadPacker _packer = new();
     private long _sampleOffset;
+    private long _carriedOpusSamples;
     private bool _disposed;
 
     /// <summary>
@@ -96,12 +97,18 @@ public sealed class StreamTxPipeline : IDisposable
     /// <summary>
     /// 確定済みペイロードを曲情報と組み合わせてパケット化し、OFDM 変調します。
     /// </summary>
-    /// <returns>変調済み OFDM チャンク。</returns>
+    /// <remarks>
+    /// パケットの送出時間は運ぶ音声より短いため、パケット末尾に無音を足して累計の送出時間を音声時間へ揃える
+    /// （揃えないと受信側で音声が実時間より速く溜まり、再生が破綻する）。
+    /// </remarks>
+    /// <returns>変調済み OFDM チャンク（末尾の無音を含む）。</returns>
     private List<(Complex[] Left, Complex[] Right)> ModulateQueuedPayloads()
     {
         var result = new List<(Complex[] Left, Complex[] Right)>(_payloadQueue.Count);
         foreach (var payload in _payloadQueue)
         {
+            _carriedOpusSamples += (long)StreamOpusPayload.Unpack(payload).Count * OpusEncoder.FrameSamplesPerChannel;
+
             var (kind, total, index, data) = _meta.Next();
             var packet = new StreamPacket
             {
@@ -114,6 +121,14 @@ public sealed class StreamTxPipeline : IDisposable
                 Payload = payload,
             };
             var (l, r) = _codec.ModulatePacket(packet, _sampleOffset);
+            var carried = _carriedOpusSamples * _codec.SampleRate / OpusEncoder.OpusSampleRate;
+            var gap = carried - (_sampleOffset + l.Length);
+            if (gap > 0)
+            {
+                Array.Resize(ref l, l.Length + (int)gap);
+                Array.Resize(ref r, r.Length + (int)gap);
+            }
+
             _sampleOffset += l.Length;
             result.Add((l, r));
         }
