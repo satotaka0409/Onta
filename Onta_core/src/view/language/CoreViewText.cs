@@ -20,7 +20,7 @@ public static class CoreViewText
 
     public static string AppName => "Onta";
 
-    public static string MainTabMain => T("メイン", "Main");
+    public static string MainTabMain => T("ファイル", "File");
     public static string MainTabSendDetail => T("送信詳細", "Send Details");
     public static string MainTabReceiveDetail => T("受信詳細", "Receive Details");
     public static string MainTabHistory => T("履歴", "History");

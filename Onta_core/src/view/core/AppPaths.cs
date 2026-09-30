@@ -16,7 +16,7 @@ internal static class AppPaths
     /// <summary>受信履歴ファイルの保存先です。</summary>
     public static string ReceiveHistoryFilePath => ResolveDataFilePath("Onta_history.bin");
 
-    /// <summary>メイン画面設定ファイルの保存先です。</summary>
+    /// <summary>ファイル画面設定ファイルの保存先です。</summary>
     public static string MainSettingsFilePath => ResolveDataFilePath("Onta_setting.bin");
 
     /// <summary>マニュアル（Markdown）フォルダーです。</summary>

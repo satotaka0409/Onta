@@ -35,7 +35,7 @@ public sealed class IqChartModel
     private static readonly string[] GroupLabels = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
     /// <summary>
-    /// メイン画面の I-Q 凡例（GROUP A〜H）。
+    /// ファイル画面の I-Q 凡例（GROUP A〜H）。
     /// </summary>
     public static IReadOnlyList<(string Label, byte R, byte G, byte B)> CoreGroupLegendItems { get; } =
         CreateGroupLegendItems(8);

@@ -43,7 +43,7 @@
                      Color="{StaticResource GrayFillNeg}"/>
     <SolidColorBrush x:Key="BrushFillPos"
                      Color="{StaticResource GrayFillPos}"/>
-    <!-- コンボボックスは白背景＋暗色文字（メイン画面基準） -->
+    <!-- コンボボックスは白背景＋暗色文字（ファイル画面基準） -->
     <SolidColorBrush x:Key="BrushComboForeground"
                      Color="#FF1E2024"/>
 

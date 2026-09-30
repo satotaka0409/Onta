@@ -147,7 +147,7 @@ public sealed class FftChartModel
     public const float DrawMarginBottom = 0f;
 
     /// <summary>
-    /// メイン画面向け：軸名・目盛り分の描画余白です。
+    /// ファイル画面向け：軸名・目盛り分の描画余白です。
     /// </summary>
     /// <returns>軸ラベル分を確保した描画余白。</returns>
     public static Margin CreateDrawMarginWithFrequencyLabels() =>

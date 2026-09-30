@@ -44,7 +44,7 @@ public static class StreamConstants
     public static int PreambleSamples(int sampleRate) =>
         (int)Math.Round(PreambleSeconds * Math.Max(1, sampleRate));
 
-    /// <summary>変調後 1 パケットの L/R ピーク振幅（メイン画面の WAV 出力 SamplePeak と同じ）。</summary>
+    /// <summary>変調後 1 パケットの L/R ピーク振幅（ファイル画面の WAV 出力 SamplePeak と同じ）。</summary>
     public const double OutputPeak = 0.8;
 
     /// <summary>ヘッダー変調のサブキャリア数（ID=01: 48SC / 8PSK）。</summary>

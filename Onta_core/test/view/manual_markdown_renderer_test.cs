@@ -96,12 +96,12 @@ public sealed class ManualMarkdownRendererTest
         {
             string? clicked = null;
             var document = new MarkdownFlowDocumentRenderer(ManualDir, url => clicked = url)
-                .Render("[メイン](./02_メイン画面の説明.md)");
+                .Render("[ファイル](./02_ファイル画面の説明.md)");
             var link = ((Paragraph)document.Blocks.FirstBlock).Inlines.OfType<Hyperlink>().Single();
 
             link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent, link));
 
-            Assert.Equal("./02_メイン画面の説明.md", clicked);
+            Assert.Equal("./02_ファイル画面の説明.md", clicked);
         });
     }
 
