@@ -275,16 +275,22 @@ internal sealed class StreamTxWorker : IDisposable
     /// <summary>
     /// 送信 PCM をリングへ載せ、FFT と I-Q を共有ボードへ公開します。
     /// </summary>
+    /// <remarks>I-Q はリング末尾の数シンボルから抽出するため、パケット末尾に足した無音はリングへ載せない。</remarks>
     /// <param name="left">送信した L チャネル PCM。</param>
     /// <param name="right">送信した R チャネル PCM。</param>
     /// <param name="mode">ストリーム変調モード。</param>
     private void PublishPcmForViz(Complex[] left, Complex[] right, StreamModeInfo mode)
     {
-        var len = left.Length;
-        if (right.Length != len)
+        if (right.Length != left.Length)
         {
             throw new InvalidOperationException(
                 $"Stream TX L/R length mismatch: L={left.Length}, R={right.Length}.");
+        }
+
+        var len = left.Length;
+        while (len > 0 && left[len - 1] == Complex.Zero && right[len - 1] == Complex.Zero)
+        {
+            len--;
         }
 
         if (len <= 0)
