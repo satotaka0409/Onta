@@ -47,6 +47,8 @@ public sealed class RealtimeDecodeSession : IDisposable
     private readonly int _fhModulatedSamples;
     private bool _anchored;
     private int _anchorPos;
+    private TapeSpeedResampler? _resampler;
+    private bool _inverted;
 
     /// <summary>
     /// デコードセッションを初期化します。
@@ -76,12 +78,7 @@ public sealed class RealtimeDecodeSession : IDisposable
         _progressive = new ProgressiveDecodeState(sharedStatus);
         _fhDataOffset = codec.FileHeaderDataOffsetSamples;
         _fhModulatedSamples = codec.FileHeaderModulatedSamples;
-        // BH の無変調（0.3 秒）はアンカーにしない。FH は冒頭 3 秒・途中 1 秒ある
-        _anchorDetector = new PreambleAnchorDetector(
-            codec.HeaderSymbolSamples,
-            (_sampleRate * 8) / 10,
-            codec.CreateHeaderUnmodulatedSymbols());
-        _anchorDetector.Reset();
+        _anchorDetector = codec.CreateAnchorDetector();
     }
 
     /// <summary>
@@ -157,14 +154,29 @@ public sealed class RealtimeDecodeSession : IDisposable
                 }
             }
 
-            EnsureCapacity(_count + left.Length);
-            left.CopyTo(_left.AsSpan(_count, left.Length));
-            if (_stereo)
+            if (_resampler is not null)
             {
-                right.CopyTo(_right.AsSpan(_count, right.Length));
-            }
+                _resampler.Process(left, right, out var correctedLeft, out var correctedRight);
+                if (_inverted)
+                {
+                    NegateInPlace(correctedLeft);
+                    NegateInPlace(correctedRight);
+                }
 
-            _count += left.Length;
+                AppendBufferLocked(correctedLeft, correctedRight);
+            }
+            else if (_inverted)
+            {
+                var flippedLeft = left.ToArray();
+                var flippedRight = _stereo ? right.ToArray() : Array.Empty<Complex>();
+                NegateInPlace(flippedLeft);
+                NegateInPlace(flippedRight);
+                AppendBufferLocked(flippedLeft, flippedRight);
+            }
+            else
+            {
+                AppendBufferLocked(left, right);
+            }
 
             // FH 前の暴走蓄積を防ぐ（ライブ無信号時のみ。ファイル逐次は背圧で抑える）
             var maxPre = _sampleRate * MaxPreHeaderSeconds;
@@ -514,6 +526,11 @@ public sealed class RealtimeDecodeSession : IDisposable
     {
         if (_anchored)
         {
+            if (!IsFileHeaderBufferedLocked())
+            {
+                return false;
+            }
+
             if (_count <= _anchorPos + _fhModulatedSamples + (_sampleRate * AnchorGiveUpSeconds))
             {
                 return true;
@@ -532,6 +549,25 @@ public sealed class RealtimeDecodeSession : IDisposable
             return false;
         }
 
+        var step = _anchorDetector.LastPeriod / _anchorDetector.NominalPeriod;
+        if (Math.Abs(step - 1.0) > TapeSpeedResampler.NegligibleDeviation)
+        {
+            ApplySpeedCorrectionLocked(step);
+            anchor = (int)Math.Round(anchor / step);
+        }
+
+        if (_anchorDetector.LastPolarityInverted)
+        {
+            // 経路で極性が反転している → 以降の入力も含めて戻す
+            NegateInPlace(_left.AsSpan(0, _count));
+            if (_stereo)
+            {
+                NegateInPlace(_right.AsSpan(0, _count));
+            }
+
+            _inverted = !_inverted;
+        }
+
         var shift = anchor - _fhDataOffset;
         if (shift > AnchorToleranceSamples)
         {
@@ -547,7 +583,79 @@ public sealed class RealtimeDecodeSession : IDisposable
         _anchored = true;
         _anchorPos = _fhDataOffset;
         _lastAttemptCount = 0;
-        return true;
+        return IsFileHeaderBufferedLocked();
+    }
+
+    /// <summary>
+    /// アンカー以降に FH 変調部がすべて溜まったかを返します。
+    /// </summary>
+    /// <returns>FH 全体を復号に渡せる場合 true。</returns>
+    /// <remarks>FH が途中までの試行はワウ探索が空振りして長時間かかり、その間に入力が溜まりすぎるため待つ。</remarks>
+    private bool IsFileHeaderBufferedLocked() =>
+        _count >= _anchorPos + _fhModulatedSamples + (_sampleRate / 5);
+
+    /// <summary>
+    /// 測定したテープ速度比でバッファを公称速度へ戻し、以降の入力も同じ比で補正するようにします。
+    /// </summary>
+    /// <param name="step">公称 1 サンプルあたりの入力サンプル数（テープが速いと 1 より大きい）。</param>
+    /// <remarks>既に補正中なら、補正後バッファに残った差分だけを掛け足す。</remarks>
+    private void ApplySpeedCorrectionLocked(double step)
+    {
+        Complex[] correctedLeft;
+        Complex[] correctedRight;
+        if (_resampler is null)
+        {
+            _resampler = new TapeSpeedResampler(step, _stereo);
+            _resampler.Process(
+                _left.AsSpan(0, _count),
+                _stereo ? _right.AsSpan(0, _count) : ReadOnlySpan<Complex>.Empty,
+                out correctedLeft,
+                out correctedRight);
+        }
+        else
+        {
+            correctedLeft = TapeSpeedResampler.Resample(_left, _count, step);
+            correctedRight = _stereo ? TapeSpeedResampler.Resample(_right, _count, step) : Array.Empty<Complex>();
+            _resampler.Step *= step;
+        }
+
+        _count = 0;
+        AppendBufferLocked(correctedLeft, correctedRight);
+    }
+
+    /// <summary>
+    /// サンプルの符号を反転します（極性反転の補正用）。
+    /// </summary>
+    /// <param name="samples">反転する PCM。</param>
+    private static void NegateInPlace(Span<Complex> samples)
+    {
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = -samples[i];
+        }
+    }
+
+    /// <summary>
+    /// バッファ末尾へ PCM を追記します。
+    /// </summary>
+    /// <param name="left">L PCM。</param>
+    /// <param name="right">R PCM（モノラル時は参照しない）。</param>
+    private void AppendBufferLocked(ReadOnlySpan<Complex> left, ReadOnlySpan<Complex> right)
+    {
+        if (left.Length == 0)
+        {
+            return;
+        }
+
+        EnsureCapacity(_count + left.Length);
+        left.CopyTo(_left.AsSpan(_count, left.Length));
+        if (_stereo)
+        {
+            var n = Math.Min(left.Length, right.Length);
+            right[..n].CopyTo(_right.AsSpan(_count, n));
+        }
+
+        _count += left.Length;
     }
 
     /// <summary>

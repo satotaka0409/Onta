@@ -141,6 +141,17 @@ public sealed class ProgressiveDecodeState
     /// </summary>
     internal long StreamSampleBase;
 
+    /// <summary>
+    /// 初回 FH 復号開始時の元ストリーム上の位置です（未設定は負値）。以降の実測位置との差から時間軸のずれ率を求めます。
+    /// </summary>
+    internal long DriftOriginAbsolute = -1;
+
+    /// <summary>初回 FH 復号開始時の論理サンプル位置です。</summary>
+    internal long DriftOriginLogical;
+
+    /// <summary>ブロック復号に失敗し、次ブロックの前に BH 位置の再探索が必要なとき true です。</summary>
+    internal bool PendingBlockResync;
+
     internal byte[]?[]? OutputSlots;
 
     internal bool[]? SlotAccepted;
@@ -240,6 +251,9 @@ public sealed class ProgressiveDecodeState
         WarpedCursor = 0;
         LogicalOffset = 0;
         StreamSampleBase = 0;
+        DriftOriginAbsolute = -1;
+        DriftOriginLogical = 0;
+        PendingBlockResync = false;
         OutputSlots = null;
         SlotAccepted = null;
         TrackedWow = null;
@@ -350,6 +364,24 @@ public sealed partial class FileWavCodec
     private const int DataBlockBytes = 8192;
 
     private const int DataBlockWithCrcBytes = DataBlockBytes + CrcBytes;
+
+    /// <summary>無変調区間の読み飛ばしに持ち越す時間軸ずれ率の上限（±1%）。</summary>
+    private const double MaxDriftRate = 0.01;
+
+    /// <summary>
+    /// ブロック復号失敗後の BH 再探索の結果です。
+    /// </summary>
+    private enum BlockHeaderSeekResult
+    {
+        /// <summary>有効な BH を見つけた。</summary>
+        Found,
+
+        /// <summary>探索範囲に有効な BH がなかった。</summary>
+        NotFound,
+
+        /// <summary>探索範囲がまだ受信しきれていない。</summary>
+        NeedMoreSamples
+    }
 
     private const string DataTraceEnvVar = "ONTA_TRACE_DATA_ERRORS";
 
@@ -813,7 +845,8 @@ public sealed partial class FileWavCodec
                         useRightChannel: false)
                     : 0.0;
 
-                if (rawPreambleScore >= 0.70)
+                if (rawPreambleScore >= 0.70
+                    || CanDecodeOpeningFileHeaderAsIs(leftSamples, rightSamples, headerOfdm))
                 {
                     lockedWow = (0.0, 0.0, 0.0);
                     useSegmentCorrectModel = false;
@@ -1052,6 +1085,54 @@ public sealed partial class FileWavCodec
             return ProgressiveDecodeStatus.Failed;
         }
 
+        /// <summary>
+        /// 初回 FH 以降に実測した、公称時間軸に対する受信時間軸のずれ率を返します（正なら受信側が長い）。
+        /// </summary>
+        /// <returns>ずれ率。測定区間が短い場合は 0。</returns>
+        /// <remarks>速度推定はプリアンブル終端の瞬時速度なのでワウ分だけ平均速度からずれる。その残差を FH 以降の長い区間で測る。</remarks>
+        double MeasuredDriftRate()
+        {
+            if (state.DriftOriginAbsolute < 0)
+            {
+                return 0.0;
+            }
+
+            var elapsedLogical = logicalOffset - state.DriftOriginLogical;
+            if (elapsedLogical < _profile.SampleRate)
+            {
+                return 0.0;
+            }
+
+            var elapsedActual = state.StreamSampleBase + warpedCursor - state.DriftOriginAbsolute;
+            return Math.Clamp((elapsedActual - elapsedLogical) / (double)elapsedLogical, -MaxDriftRate, MaxDriftRate);
+        }
+
+        /// <summary>
+        /// 無変調区間の公称長を、実測したずれ率で受信時間軸の長さへ換算します。
+        /// </summary>
+        /// <param name="nominalSamples">無変調区間の公称サンプル数。</param>
+        /// <returns>読み飛ばすサンプル数。</returns>
+        /// <remarks>無変調区間ではシンボル追従が効かないため、ずれをここで持ち越さないと次ヘッダーの同期窓を外れる。</remarks>
+        int DriftAdjustedSkip(int nominalSamples) =>
+            nominalSamples + (int)Math.Round(nominalSamples * MeasuredDriftRate());
+
+        /// <summary>
+        /// ヘッダー手前の無変調区間を、ずれ率で換算した長さだけ読み飛ばします（論理位置は公称長だけ進めます）。
+        /// </summary>
+        /// <param name="nominalSamples">無変調区間の公称サンプル数。</param>
+        void SkipDriftAdjustedPreamble(int nominalSamples)
+        {
+            var skip = DriftAdjustedSkip(nominalSamples);
+            SkipHeaderUnmodulatedPreamble(
+                leftSamples,
+                ref warpedCursor,
+                ref logicalOffset,
+                skip,
+                state.StatusBoard,
+                _profile.SampleRate);
+            logicalOffset += nominalSamples - skip;
+        }
+
         var lastWowRewarpApplied = false;
 
         /// <summary>
@@ -1265,6 +1346,8 @@ public sealed partial class FileWavCodec
                     TotalBlockCount: 0,
                     ProgressPercent: 4.0));
 
+                state.DriftOriginAbsolute = state.StreamSampleBase + warpedCursor;
+                state.DriftOriginLogical = logicalOffset;
                 byte[] fileHeader;
                 try
                 {
@@ -1691,45 +1774,39 @@ public sealed partial class FileWavCodec
                     headerOfdm, BlockHeaderBytes, _profile.BlockHeaderUnmodulatedSamples);
 
                 /// <summary>
-                /// 現カーソル以降で次の有効 BH 開始位置を探索します。
+                /// 現カーソル以降で BH 手前の無変調区間の終端を探し、そこから次の有効 BH 開始位置を求めます。
                 /// </summary>
                 /// <param name="cursor">探索開始のワープカーソル。</param>
                 /// <param name="logical">探索開始の論理サンプル位置。</param>
-                /// <param name="nextCursor">見つかった BH 開始カーソル。</param>
-                /// <param name="nextLogical">見つかった BH 開始の論理位置。</param>
-                /// <returns>次 BH 開始が見つかった場合 true。</returns>
-                bool TrySeekNextBlockHeaderStart(int cursor, long logical, out int nextCursor, out long nextLogical)
+                /// <param name="nextCursor">見つかった BH の無変調区間先頭カーソル。</param>
+                /// <param name="nextLogical">見つかった BH の無変調区間先頭の論理位置。</param>
+                /// <returns>探索結果。範囲がまだ届いていなければ NeedMoreSamples。</returns>
+                /// <remarks>全位置でヘッダー復号を試すと 1 回の失敗で数十分かかるため、無変調区間の検出で候補を絞る。</remarks>
+                BlockHeaderSeekResult SeekNextBlockHeaderStart(int cursor, long logical, out int nextCursor, out long nextLogical)
                 {
                     nextCursor = cursor;
                     nextLogical = logical;
-                    var step = Math.Max(1, headerOfdm.SamplesPerOfdmSymbol / 4);
-                    var minProbe = Math.Max(0, cursor + headerOfdm.SamplesPerOfdmSymbol);
-                    var maxProbe = Math.Min(
-                        leftSamples.Length - headerOfdm.SamplesPerOfdmSymbol,
-                        cursor
-                        + passBhPacketSamples
-                        + passMaxBdSamples
-                        + passBhPacketSamples
-                        + (headerOfdm.SamplesPerOfdmSymbol * 2));
-                    if (minProbe >= maxProbe)
+                    var symbolLength = headerOfdm.SamplesPerOfdmSymbol;
+                    var scanStart = Math.Max(0, cursor + symbolLength);
+                    var nominalRange = passBhPacketSamples + passMaxBdSamples + passBhPacketSamples + (symbolLength * 2);
+                    var scanEnd = cursor + nominalRange + (int)(nominalRange * MaxDriftRate);
+                    var available = Math.Min(leftSamples.Length, scanEnd);
+                    var rangeComplete = available >= scanEnd || !allowIncomplete;
+                    if (available - scanStart < symbolLength * 8)
                     {
-                        return false;
+                        return rangeComplete ? BlockHeaderSeekResult.NotFound : BlockHeaderSeekResult.NeedMoreSamples;
                     }
 
-                    for (var probe = minProbe; probe <= maxProbe; probe += step)
+                    var detector = CreateBlockHeaderAnchorDetector();
+                    var scan = leftSamples.AsSpan(scanStart, available - scanStart);
+                    while (detector.TryAdvance(scan, out var anchor))
                     {
+                        var bhStart = scanStart + anchor;
                         var probeHeaderOfdm = headerOfdm;
-                        var probeCursor = probe;
-                        var probeLogical = logical + (probe - cursor);
+                        var probeCursor = bhStart;
+                        var probeLogical = logical + (bhStart - cursor);
                         try
                         {
-                            SkipHeaderUnmodulatedPreamble(
-                                leftSamples,
-                                ref probeCursor,
-                                ref probeLogical,
-                                _profile.BlockHeaderUnmodulatedSamples,
-                                statusBoard: null,
-                                _profile.SampleRate);
                             var probeHeader = DecodeHeaderPacketSyncedTryingGrids(
                                 ref probeHeaderOfdm,
                                 leftSamples,
@@ -1748,9 +1825,11 @@ public sealed partial class FileWavCodec
                                 continue;
                             }
 
-                            nextCursor = probe;
-                            nextLogical = logical + (probe - cursor);
-                            return true;
+                            // 呼び出し側は無変調区間をずれ率換算で読み飛ばしてから BH を復号するので、その分だけ手前を返す
+                            var skip = DriftAdjustedSkip(_profile.BlockHeaderUnmodulatedSamples);
+                            nextCursor = Math.Max(0, bhStart - skip);
+                            nextLogical = logical + (nextCursor - cursor);
+                            return BlockHeaderSeekResult.Found;
                         }
                         catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                         {
@@ -1758,7 +1837,7 @@ public sealed partial class FileWavCodec
                         }
                     }
 
-                    return false;
+                    return rangeComplete ? BlockHeaderSeekResult.NotFound : BlockHeaderSeekResult.NeedMoreSamples;
                 }
 
                 var order = GetBlockEmissionOrder(blockCountReady, pass);
@@ -1797,6 +1876,29 @@ public sealed partial class FileWavCodec
                         PublishStatus(CoreFrameKind.Bd, expectedBlockIndex);
                     }
 
+                    if (state.PendingBlockResync)
+                    {
+                        var seek = SeekNextBlockHeaderStart(warpedCursor, logicalOffset, out var seekCursor, out var seekLogical);
+                        if (seek == BlockHeaderSeekResult.NeedMoreSamples)
+                        {
+                            state.Pass = pass;
+                            state.Local = local;
+                            return NeedMoreOrFail();
+                        }
+
+                        state.PendingBlockResync = false;
+                        if (seek == BlockHeaderSeekResult.Found)
+                        {
+                            warpedCursor = seekCursor;
+                            logicalOffset = seekLogical;
+                        }
+                        else if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol <= leftSamples.Length)
+                        {
+                            warpedCursor += headerOfdm.SamplesPerOfdmSymbol;
+                            logicalOffset += headerOfdm.SamplesPerOfdmSymbol;
+                        }
+                    }
+
                     var minForBlock = passBhPacketSamples + headerOfdm.SamplesPerOfdmSymbol;
                     if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                     {
@@ -1814,13 +1916,7 @@ public sealed partial class FileWavCodec
                         if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
                         {
                             PublishStatus(CoreFrameKind.Fh, blockIndex: -1);
-                            SkipHeaderUnmodulatedPreamble(
-                                leftSamples,
-                                ref warpedCursor,
-                                ref logicalOffset,
-                                _profile.FileHeaderUnmodulatedSamples,
-                                state.StatusBoard,
-                                _profile.SampleRate);
+                            SkipDriftAdjustedPreamble(_profile.FileHeaderUnmodulatedSamples);
                             // 途中 FH はモノラル固定。ここでワウ再推定するとステレオ BD のロックが崩れる。
                             var midFh = DecodeHeaderPacketSyncedTryingGrids(
                                 ref headerOfdm,
@@ -1837,13 +1933,7 @@ public sealed partial class FileWavCodec
                             EnsureHeaderCrc(midFh, "mid file header");
                         }
 
-                        SkipHeaderUnmodulatedPreamble(
-                            leftSamples,
-                            ref warpedCursor,
-                            ref logicalOffset,
-                            _profile.BlockHeaderUnmodulatedSamples,
-                            state.StatusBoard,
-                            _profile.SampleRate);
+                        SkipDriftAdjustedPreamble(_profile.BlockHeaderUnmodulatedSamples);
                         if (!tuning.AdaptiveWowOnlyOnFileHeaderBoundaries)
                         {
                             ApplyAdaptiveWowCorrectionPair();
@@ -1851,7 +1941,6 @@ public sealed partial class FileWavCodec
 
                         // BH 復号前にメーターを正しいブロックへ（同期探索中も進捗が見えるようにする）
                         PublishStatus(CoreFrameKind.Bh, expectedBlockIndex);
-
                         var blockHeader = DecodeHeaderPacketSyncedTryingGrids(
                             ref headerOfdm,
                             leftSamples,
@@ -1924,6 +2013,12 @@ public sealed partial class FileWavCodec
                             blockSize,
                             _profile.ChannelMode,
                             blockModulation);
+                        if (allowIncomplete)
+                        {
+                            // ワウや速度の残差で BD は公称長より伸び得る。末尾が欠けたまま試すと失敗確定になるので余裕を待つ
+                            dataSamplesNeeded += (dataSamplesNeeded / 50) + (blockDataOfdm.SamplesPerOfdmSymbol * 8);
+                        }
+
                         if (leftSamples.Length - warpedCursor < dataSamplesNeeded)
                         {
                             warpedCursor = Math.Max(0, warpedCursor - passBhPacketSamples);
@@ -2057,20 +2152,8 @@ public sealed partial class FileWavCodec
                     }
                     catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
                     {
+                        state.PendingBlockResync = true;
                         MarkBlockError($"BLK-{expectedBlockIndex} デコードエラー: {ex.Message}");
-                        if (TrySeekNextBlockHeaderStart(warpedCursor, logicalOffset, out var seekCursor, out var seekLogical))
-                        {
-                            warpedCursor = seekCursor;
-                            logicalOffset = seekLogical;
-                            continue;
-                        }
-
-                        if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol <= leftSamples.Length)
-                        {
-                            warpedCursor += headerOfdm.SamplesPerOfdmSymbol;
-                            logicalOffset += headerOfdm.SamplesPerOfdmSymbol;
-                        }
-
                         continue;
                     }
                 }
@@ -2080,17 +2163,12 @@ public sealed partial class FileWavCodec
                 PersistCursor();
             }
 
+            state.PendingBlockResync = false;
             try
             {
                 if (warpedCursor + headerOfdm.SamplesPerOfdmSymbol < leftSamples.Length)
                 {
-                    SkipHeaderUnmodulatedPreamble(
-                        leftSamples,
-                        ref warpedCursor,
-                        ref logicalOffset,
-                        _profile.FileHeaderUnmodulatedSamples,
-                        state.StatusBoard,
-                        _profile.SampleRate);
+                    SkipDriftAdjustedPreamble(_profile.FileHeaderUnmodulatedSamples);
                     // 末尾 FH でもワウ再推定しない（ステレオ受信中の mono ヘッダー誤ロック防止）。
                     var endFh = DecodeHeaderPacketSyncedTryingGrids(
                         ref headerOfdm,
@@ -2257,6 +2335,64 @@ public sealed partial class FileWavCodec
             carrierGrid: grid);
 
         return new OfdmGenerator(config);
+    }
+
+    /// <summary>
+    /// ワウ補正をかけないまま、先頭 FH が想定位置で復号できるかを試します。
+    /// </summary>
+    /// <param name="leftSamples">L PCM（先頭が送信先頭に揃っていること）。</param>
+    /// <param name="rightSamples">R PCM（モノラル時は空）。</param>
+    /// <param name="headerOfdm">ヘッダー用 OFDM 生成器。</param>
+    /// <returns>FH の復号と CRC 検査に通った場合 true。</returns>
+    /// <remarks>実テープのワウは固定周波数のモデルに合わず探索が空振りするため、そのまま読めるなら高価な探索を省く。</remarks>
+    private bool CanDecodeOpeningFileHeaderAsIs(
+        Complex[] leftSamples,
+        Complex[] rightSamples,
+        OfdmGenerator headerOfdm)
+    {
+        var expectedFhStart =
+            _profile.LeadingSilenceSamples
+            + _profile.UnmodulatedPreambleSamples
+            + _profile.FileHeaderUnmodulatedSamples;
+        var rsByteLength = GetReedSolomonEncodedLength(FileHeaderBytes);
+        var bitCount = GetConvolutionalEncodedLength(rsByteLength, HeaderPunctureRate) * 8;
+        var sampleCount = headerOfdm.SampleCountForBitCount(bitCount);
+        var searchRadius = Math.Max(2, headerOfdm.SamplesPerOfdmSymbol / 8);
+        if (leftSamples.Length < expectedFhStart + sampleCount + (searchRadius * 4))
+        {
+            return false;
+        }
+
+        var stereo = rightSamples.Length >= leftSamples.Length && rightSamples.Length > 0;
+        if (!TryDecodeHeaderAt(
+                leftSamples,
+                stereo ? rightSamples : Array.Empty<Complex>(),
+                expectedFhStart,
+                logicalOffset: expectedFhStart,
+                headerOfdm,
+                bitCount,
+                bitCount,
+                sampleCount,
+                FileHeaderBytes,
+                rsByteLength,
+                FileHeaderPilot,
+                stereoSplit: false,
+                perSymbolSearchRadius: searchRadius,
+                out var payload,
+                out _))
+        {
+            return false;
+        }
+
+        try
+        {
+            EnsureHeaderCrc(payload, "file header");
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

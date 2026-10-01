@@ -723,6 +723,8 @@ internal sealed class InputCoreWorker : IDisposable
 
             var codec = new FileWavCodec(profile);
             var (leftSamples, rightSamples) = WavReader.ReadPcm16(wavPath);
+            // テープから録った WAV は先頭の余白と速度ずれがあるため、FH 手前の無変調区間で揃えてから復号する
+            ReceiveAlignment.TryAlign(codec, ref leftSamples, ref rightSamples, out _);
 
             lock (_sync)
             {

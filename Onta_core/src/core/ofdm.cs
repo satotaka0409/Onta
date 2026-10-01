@@ -4329,11 +4329,25 @@ public sealed partial class OfdmGenerator
         var secondaryFreqBins = _demodFreqBinsSecondary;
         var secondaryEqualizers = _demodEqualizersSecondary;
         var position = cursor;
+        var smoothedVariance = -1.0;
+        var timingRange = Math.Min(
+            ResolveUnambiguousLateness(primaryPilotBins),
+            secondarySamples is null ? double.MaxValue : ResolveUnambiguousLateness(secondaryPilotBins));
+        var trackTiming = searchRadius > 0 && timingRange >= MinTimingTrackingRange;
+        var timingTarget = -Math.Min(
+            Math.Min(0.5 * _config.CyclicPrefixLength, MaxTimingBackoffSamples),
+            timingRange / 3.0);
+        var timingEstimate = 0.0;
+        var timingInitialized = false;
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
-            var start = FindBestSymbolStart(samples, position, searchRadius, useRightChannel, limit);
-            if (start + symbolLength > limit)
+            var start = s == 0 && trackTiming
+                ? FindInitialSymbolStartByEvm(samples, position, searchRadius, useRightChannel, limit)
+                : s == 0 || !trackTiming
+                    ? FindBestSymbolStart(samples, position, s == 0 ? searchRadius : Math.Min(searchRadius, SymbolTrackingRadius), useRightChannel, limit)
+                    : position;
+            if (start < 0 || start + symbolLength > limit)
             {
                 throw new InvalidDataException("WAV ended while synchronizing OFDM symbol.");
             }
@@ -4347,6 +4361,17 @@ public sealed partial class OfdmGenerator
                 primaryTimeNoCp,
                 primaryFreqBins,
                 primaryEqualizers);
+            if (secondarySamples is not null)
+            {
+                PrepareSymbolFrequency(
+                    secondarySamples.AsSpan(start, symbolLength),
+                    secondaryPilotBins,
+                    secondaryUseRightChannel,
+                    secondaryAgcState,
+                    secondaryTimeNoCp,
+                    secondaryFreqBins,
+                    secondaryEqualizers);
+            }
 
             var effectiveVariance = noiseVariance;
             if (estimateNoiseFromPilots)
@@ -4362,15 +4387,6 @@ public sealed partial class OfdmGenerator
 
                 if (secondarySamples is not null)
                 {
-                    var secondarySymbol = secondarySamples.AsSpan(start, symbolLength);
-                    PrepareSymbolFrequency(
-                        secondarySymbol,
-                        secondaryPilotBins,
-                        secondaryUseRightChannel,
-                        secondaryAgcState,
-                        secondaryTimeNoCp,
-                        secondaryFreqBins,
-                        secondaryEqualizers);
                     AccumulatePilotNoiseFromPrepared(
                         secondaryFreqBins,
                         secondaryEqualizers,
@@ -4379,9 +4395,33 @@ public sealed partial class OfdmGenerator
                         ref noiseCount);
                 }
 
-                if (noiseCount > 0)
+                var pilotVariance = noiseCount > 0 ? noiseAccum / noiseCount : 0.0;
+                var decisionAccum = 0.0;
+                var decisionCount = 0;
+                AccumulateDecisionNoiseFromPrepared(
+                    primaryFreqBins,
+                    primaryEqualizers,
+                    useRightChannel,
+                    ref decisionAccum,
+                    ref decisionCount);
+                if (secondarySamples is not null)
                 {
-                    effectiveVariance = Math.Clamp(noiseAccum / noiseCount, 1e-4, 0.5);
+                    AccumulateDecisionNoiseFromPrepared(
+                        secondaryFreqBins,
+                        secondaryEqualizers,
+                        secondaryUseRightChannel,
+                        ref decisionAccum,
+                        ref decisionCount);
+                }
+
+                var decisionVariance = decisionCount > 0 ? decisionAccum / decisionCount : 0.0;
+                var symbolVariance = Math.Max(pilotVariance, decisionVariance);
+                if (noiseCount > 0 || decisionCount > 0)
+                {
+                    smoothedVariance = smoothedVariance < 0.0
+                        ? symbolVariance
+                        : (smoothedVariance * (1.0 - NoiseVarianceAlpha)) + (symbolVariance * NoiseVarianceAlpha);
+                    effectiveVariance = Math.Clamp(smoothedVariance, 1e-4, 0.5);
                 }
             }
 
@@ -4400,16 +4440,6 @@ public sealed partial class OfdmGenerator
 
             if (secondarySamples is not null)
             {
-                var secondarySymbol = secondarySamples.AsSpan(start, symbolLength);
-                PrepareSymbolFrequency(
-                    secondarySymbol,
-                    secondaryPilotBins,
-                    secondaryUseRightChannel,
-                    secondaryAgcState,
-                    secondaryTimeNoCp,
-                    secondaryFreqBins,
-                    secondaryEqualizers);
-
                 var secondaryBitIndex = symbolBitStart;
                 EmitSymbolSoftLlrsFromPrepared(
                     secondaryFreqBins,
@@ -4425,11 +4455,148 @@ public sealed partial class OfdmGenerator
             }
 
             onOfdmSymbolProgress?.Invoke(s, symbolCount, start + symbolLength);
-            position = start + symbolLength;
+            var shift = 0;
+            if (trackTiming)
+            {
+                var measured = MeasureWindowLateness(primaryFreqBins, primaryPilotBins);
+                if (secondarySamples is not null)
+                {
+                    measured = 0.5 * (measured + MeasureWindowLateness(secondaryFreqBins, secondaryPilotBins));
+                }
+
+                // 測定範囲の端は位相の折り返しで符号が反転し得るため、その測定は使わない
+                if (Math.Abs(measured) > timingRange * 0.9)
+                {
+                    measured = timingInitialized ? timingEstimate : timingTarget;
+                }
+
+                timingEstimate = timingInitialized
+                    ? timingEstimate + (TimingTrackingGain * (measured - timingEstimate))
+                    : measured;
+                timingInitialized = true;
+                var error = timingEstimate - timingTarget;
+                if (Math.Abs(error) >= 1.0)
+                {
+                    shift = -Math.Clamp((int)Math.Round(error), -MaxTimingShiftPerSymbol, MaxTimingShiftPerSymbol);
+                    timingEstimate += shift;
+                    primaryAgcState.ApplyTimingShift(primaryPilotBins, shift, _config.FftSize);
+                    secondaryAgcState.ApplyTimingShift(secondaryPilotBins, shift, _config.FftSize);
+                }
+            }
+
+            position = start + symbolLength + shift;
         }
 
-        cursor = position;
+        cursor = trackTiming && timingInitialized
+            ? position - (int)Math.Round(timingEstimate)
+            : position;
         return llrs;
+    }
+
+    /// <summary>
+    /// パイロット間の位相の傾きから、FFT 窓が本来のシンボル本体先頭より何サンプル遅れているかを求めます。
+    /// </summary>
+    /// <param name="freqBins">受信 FFT ビン列。</param>
+    /// <param name="orderedPilots">昇順のパイロットビン。</param>
+    /// <returns>窓の遅れ（サンプル。早ければ負）。</returns>
+    private double MeasureWindowLateness(Complex[] freqBins, List<int> orderedPilots) =>
+        EstimatePilotPhaseSlope(freqBins, orderedPilots) * _config.FftSize / (2.0 * Math.PI);
+
+    /// <summary>
+    /// 先頭シンボルの開始位置を、等化後データ点の判定誤差（EVM）が最小になる位置として探します。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="expectedStart">期待する先頭位置。</param>
+    /// <param name="searchRadius">探索半径（サンプル）。</param>
+    /// <param name="useRightChannel">R 搬送波レイアウトを使うか。</param>
+    /// <param name="limit">使えるサンプル数の上限。</param>
+    /// <returns>EVM 最小の先頭位置。</returns>
+    /// <remarks>
+    /// パイロット位相傾きは測定範囲を超えると折り返して偽の位置へロックするため、追従開始点は範囲外のずれでも鋭く区別できる EVM で決める。
+    /// 窓が CP 内に収まる位置はどこでも EVM が小さく、最小点は雑音で端へ寄り得るので、EVM が十分小さい区間の中央を採る。
+    /// 先頭シンボルの直前は別パケット（L/R 共通のヘッダー）で R 搬送波への混入が小さいため、次のシンボルまで含めて評価する。
+    /// </remarks>
+    private int FindInitialSymbolStartByEvm(Complex[] samples, int expectedStart, int searchRadius, bool useRightChannel, int limit)
+    {
+        var symbolLength = SamplesPerOfdmSymbol;
+        var pilotBins = useRightChannel ? _rightPilotBins : _leftPilotBins;
+        var timeNoCp = _scoreTimeNoCpScratch;
+        var freqBins = _scoreFreqBinsScratch;
+        var equalizers = new Complex[freqBins.Length];
+        var step = Math.Max(1, _config.CyclicPrefixLength / 4);
+        var fallback = Math.Clamp(expectedStart, 0, Math.Max(0, limit - symbolLength));
+        var steps = (searchRadius + step - 1) / step;
+        var offsets = new List<int>();
+        var costs = new List<double>();
+        for (var k = -steps; k <= steps; k++)
+        {
+            var offset = Math.Clamp(k * step, -searchRadius, searchRadius);
+            var start = expectedStart + offset;
+            if (start < 0 || start + (2 * symbolLength) > limit)
+            {
+                continue;
+            }
+
+            var noiseAccum = 0.0;
+            var noiseCount = 0;
+            for (var n = 0; n < 2; n++)
+            {
+                PrepareSymbolFrequency(
+                    samples.AsSpan(start + (n * symbolLength), symbolLength),
+                    pilotBins,
+                    useRightChannel,
+                    null,
+                    timeNoCp,
+                    freqBins,
+                    equalizers);
+                AccumulateDecisionNoiseFromPrepared(freqBins, equalizers, useRightChannel, ref noiseAccum, ref noiseCount);
+            }
+
+            if (noiseCount > 0)
+            {
+                offsets.Add(offset);
+                costs.Add(noiseAccum / noiseCount);
+            }
+        }
+
+        if (costs.Count == 0)
+        {
+            return fallback;
+        }
+
+        var min = costs.Min();
+        var threshold = min + (EvmRegionFraction * (costs.Max() - min));
+        var bestIndex = costs.IndexOf(min);
+        var first = bestIndex;
+        var last = bestIndex;
+        while (first > 0 && costs[first - 1] <= threshold)
+        {
+            first--;
+        }
+
+        while (last + 1 < costs.Count && costs[last + 1] <= threshold)
+        {
+            last++;
+        }
+
+        return expectedStart + ((offsets[first] + offsets[last]) / 2);
+    }
+
+    /// <summary>
+    /// パイロット間の位相差が ±180° に収まる、窓の遅れの測定範囲（片側、サンプル）を返します。
+    /// </summary>
+    /// <param name="orderedPilots">昇順のパイロットビン。</param>
+    /// <returns>測定範囲。パイロットが 2 本未満なら 0。</returns>
+    /// <remarks>パイロット間隔（ビン）はサンプルレートで変わり、低レートほど測れる範囲が狭い。</remarks>
+    private double ResolveUnambiguousLateness(List<int> orderedPilots)
+    {
+        var maxGap = 0;
+        for (var i = 0; i + 1 < orderedPilots.Count; i++)
+        {
+            maxGap = Math.Max(maxGap, orderedPilots[i + 1] - orderedPilots[i]);
+        }
+
+        return maxGap > 0 ? _config.FftSize / (2.0 * maxGap) : 0.0;
     }
 
     /// <summary>
@@ -4637,6 +4804,65 @@ public sealed partial class OfdmGenerator
         }
     }
 
+    /// <summary>2 シンボル目以降の先頭追従の探索半径（サンプル）。</summary>
+    /// <remarks>ワウによるずれは 1 シンボルあたり 1 サンプル未満。広く探すと別の位置へ跳んで確信度の高い誤りの塊になる。</remarks>
+    private const int SymbolTrackingRadius = 3;
+
+    /// <summary>ソフト LLR 用雑音分散のシンボル間平滑化係数。</summary>
+    private const double NoiseVarianceAlpha = 0.2;
+
+    /// <summary>パイロット位相傾きで測った窓の遅れを平滑化する係数。</summary>
+    private const double TimingTrackingGain = 0.25;
+
+    /// <summary>1 シンボルで窓をずらす最大サンプル数。</summary>
+    /// <remarks>ワウによるずれは 1 シンボルあたり 1 サンプル未満なので、大きく動かすのは誤推定のときだけ。</remarks>
+    private const int MaxTimingShiftPerSymbol = 2;
+
+    /// <summary>FFT 窓を CP 内へ早める目標量の上限（サンプル）。</summary>
+    /// <remarks>窓が CP 末端にあると少し遅れただけで次シンボルが混ざる。早めすぎるとパイロット間の位相差が ±180° を超えて遅れを測れない。</remarks>
+    private const double MaxTimingBackoffSamples = 8.0;
+
+    /// <summary>パイロット位相傾きで窓を追従させるのに必要な測定範囲の下限（サンプル）。これ未満は従来の先頭探索で追従する。</summary>
+    private const double MinTimingTrackingRange = 9.0;
+
+    /// <summary>先頭シンボル探索で「EVM が十分小さい」とみなす、最小値から最大値までの幅に対する割合。</summary>
+    private const double EvmRegionFraction = 0.05;
+
+    /// <summary>
+    /// データキャリアの等化後シンボルと最寄りの信号点との差から雑音電力を加算します。
+    /// </summary>
+    /// <param name="freqBins">受信FFTビン列。</param>
+    /// <param name="equalizers">推定済み等化係数。</param>
+    /// <param name="useRightChannel">右チャネルのキャリア配置を使う場合 true。</param>
+    /// <param name="noiseAccum">雑音電力の累積値（1 軸あたり）。</param>
+    /// <param name="noiseCount">累積キャリア数。</param>
+    /// <remarks>パイロットは自分自身で等化するため誤差がほぼ 0 になり、雑音を過小評価して LLR が過信になるのを補う。</remarks>
+    private void AccumulateDecisionNoiseFromPrepared(
+        Complex[] freqBins,
+        Complex[] equalizers,
+        bool useRightChannel,
+        ref double noiseAccum,
+        ref int noiseCount)
+    {
+        var dataOrder = ResolveDataCarrierOrder(useRightChannel);
+        var dataModulationByBin = useRightChannel
+            ? _rightDataCarrierModulationByBin
+            : _leftDataCarrierModulationByBin;
+        var bits = new bool[8];
+        foreach (var dataBin in dataOrder)
+        {
+            var equalized = freqBins[dataBin] * equalizers[dataBin];
+            var scheme = dataModulationByBin[dataBin];
+            var writeIndex = 0;
+            EmitSymbolBits(equalized, scheme, ref writeIndex, bits);
+            var readIndex = 0;
+            var nearest = ConsumeModulatedSymbol(scheme, ref readIndex, bits.AsSpan(0, writeIndex));
+            var err = equalized - nearest;
+            noiseAccum += 0.5 * ((err.Real * err.Real) + (err.Imaginary * err.Imaginary));
+            noiseCount++;
+        }
+    }
+
     /// <summary>
     /// パイロットビンから等化係数を推定して返します。
     /// </summary>
@@ -4687,6 +4913,7 @@ public sealed partial class OfdmGenerator
         var allCarriers = useRightChannel ? _rightAllCarrierBins : _leftAllCarrierBins;
         var noisePower = EstimateNoisePower(freqBins, orderedPilots, allCarriers);
         var regularization = Math.Max(noisePower * 0.10, 1e-4);
+        var binSlope = EstimatePilotPhaseSlope(freqBins, orderedPilots);
 
         for (var i = 0; i < orderedPilots.Count; i++)
         {
@@ -4712,9 +4939,45 @@ public sealed partial class OfdmGenerator
 
             foreach (var carrier in groupedCarriers[i])
             {
-                equalizers[carrier] = groupEq;
+                var offset = carrier - orderedPilots[i];
+                equalizers[carrier] = offset == 0
+                    ? groupEq
+                    : groupEq * Complex.FromPolarCoordinates(1.0, -binSlope * offset);
             }
         }
+    }
+
+    /// <summary>
+    /// 隣り合うパイロット間の位相差から、1 ビンあたりの位相の傾きを推定します。
+    /// </summary>
+    /// <param name="freqBins">受信 FFT ビン列。</param>
+    /// <param name="orderedPilots">昇順のパイロットビン。</param>
+    /// <returns>1 ビンあたりの位相傾き（ラジアン）。推定できなければ 0。</returns>
+    /// <remarks>ワウでシンボル先頭が数サンプルずれると周波数に比例した位相が乗るため、担当キャリアへパイロットからの距離分を補正する。</remarks>
+    private static double EstimatePilotPhaseSlope(Complex[] freqBins, List<int> orderedPilots)
+    {
+        var weightedPhase = 0.0;
+        var weightedGap = 0.0;
+        for (var i = 0; i + 1 < orderedPilots.Count; i++)
+        {
+            var gap = orderedPilots[i + 1] - orderedPilots[i];
+            if (gap <= 0)
+            {
+                continue;
+            }
+
+            var cross = freqBins[orderedPilots[i + 1]] * Complex.Conjugate(freqBins[orderedPilots[i]]);
+            var weight = cross.Magnitude;
+            if (weight < 1e-18)
+            {
+                continue;
+            }
+
+            weightedPhase += weight * cross.Phase;
+            weightedGap += weight * gap;
+        }
+
+        return weightedGap > 0.0 ? weightedPhase / weightedGap : 0.0;
     }
 
     /// <summary>
@@ -4772,9 +5035,19 @@ public sealed partial class OfdmGenerator
         return bestDist == int.MaxValue ? 0 : best;
     }
 
+    /// <summary>
+    /// パイロットグループ別のチャネル推定を、振幅と位相で別々に平滑化する状態です。
+    /// </summary>
     private sealed class PilotGroupAgcState
     {
-        private readonly Complex[] _smoothed;
+        /// <summary>振幅の平滑化係数（雑音で AGC が揺れないよう遅め）。</summary>
+        private const double MagnitudeAlpha = 0.30;
+
+        /// <summary>位相の平滑化係数（テープのワウで回る位相に遅れず追従するよう速め）。</summary>
+        private const double PhaseAlpha = 0.70;
+
+        private readonly double[] _magnitude;
+        private readonly Complex[] _phasor;
         private readonly bool[] _initialized;
 
         /// <summary>
@@ -4784,7 +5057,8 @@ public sealed partial class OfdmGenerator
         public PilotGroupAgcState(int groupCount)
         {
             var size = Math.Max(1, groupCount);
-            _smoothed = new Complex[size];
+            _magnitude = new double[size];
+            _phasor = new Complex[size];
             _initialized = new bool[size];
         }
 
@@ -4796,21 +5070,55 @@ public sealed partial class OfdmGenerator
         /// <returns>平滑化後のチャネル／AGC 係数。</returns>
         public Complex Update(int groupIndex, Complex instantaneous)
         {
-            if ((uint)groupIndex >= (uint)_smoothed.Length)
+            if ((uint)groupIndex >= (uint)_magnitude.Length)
             {
                 return instantaneous;
             }
 
+            var magnitude = instantaneous.Magnitude;
+            if (magnitude < 1e-12)
+            {
+                return _initialized[groupIndex] ? _phasor[groupIndex] * _magnitude[groupIndex] : instantaneous;
+            }
+
+            var unit = instantaneous / magnitude;
             if (!_initialized[groupIndex])
             {
-                _smoothed[groupIndex] = instantaneous;
+                _magnitude[groupIndex] = magnitude;
+                _phasor[groupIndex] = unit;
                 _initialized[groupIndex] = true;
                 return instantaneous;
             }
 
-            const double alpha = 0.30;
-            _smoothed[groupIndex] = (_smoothed[groupIndex] * (1.0 - alpha)) + (instantaneous * alpha);
-            return _smoothed[groupIndex];
+            _magnitude[groupIndex] = (_magnitude[groupIndex] * (1.0 - MagnitudeAlpha)) + (magnitude * MagnitudeAlpha);
+            var phasor = (_phasor[groupIndex] * (1.0 - PhaseAlpha)) + (unit * PhaseAlpha);
+            var phasorMagnitude = phasor.Magnitude;
+            _phasor[groupIndex] = phasorMagnitude < 1e-12 ? unit : phasor / phasorMagnitude;
+            return _phasor[groupIndex] * _magnitude[groupIndex];
+        }
+
+        /// <summary>
+        /// FFT 窓を意図的にずらした分だけ、平滑化中の位相を回して連続性を保ちます。
+        /// </summary>
+        /// <param name="orderedPilots">グループ順のパイロットビン。</param>
+        /// <param name="shiftSamples">窓を遅らせたサンプル数（早めたなら負）。</param>
+        /// <param name="fftSize">FFT 長。</param>
+        /// <remarks>窓をずらすとパイロット位相がビン番号に比例して飛び、平滑化の遅れ分だけデータ等化を誤らせるため。</remarks>
+        public void ApplyTimingShift(List<int> orderedPilots, int shiftSamples, int fftSize)
+        {
+            if (shiftSamples == 0)
+            {
+                return;
+            }
+
+            var count = Math.Min(orderedPilots.Count, _phasor.Length);
+            for (var i = 0; i < count; i++)
+            {
+                if (_initialized[i])
+                {
+                    _phasor[i] *= Complex.FromPolarCoordinates(1.0, -2.0 * Math.PI * orderedPilots[i] * shiftSamples / fftSize);
+                }
+            }
         }
     }
 

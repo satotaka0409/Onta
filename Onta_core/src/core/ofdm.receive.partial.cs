@@ -56,7 +56,8 @@ public sealed partial class OfdmGenerator
 
         for (var s = 0; s < symbolCount && bitIndex < bitCount; s++)
         {
-            var start = FindBestSymbolStart(samples, position, followRadius, useRightChannel);
+            var radius = s == 0 ? followRadius : Math.Min(followRadius, SymbolTrackingRadius);
+            var start = FindBestSymbolStart(samples, position, radius, useRightChannel);
             if (start + symbolLength > samples.Length)
             {
                 throw new InvalidDataException("WAV ended while synchronizing OFDM symbol.");

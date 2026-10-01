@@ -51,10 +51,27 @@ public sealed partial class FileWavCodec
     public int FileHeaderModulatedSamples => HeaderPacketSamples(CreateHeaderOfdm(), FileHeaderBytes, 0);
 
     /// <summary>
-    /// ヘッダー無変調区間 1 周期分（CP 込み 1 シンボル）の理想波形を、SC-8 族・SC-24 族の両グリッドぶん返します。
+    /// FH 手前の無変調区間を探すアンカー検出器を、このプロファイルの周期・区間長・理想波形で作ります。
     /// </summary>
-    /// <returns>グリッドごとの無変調 1 シンボル波形。</returns>
-    internal Complex[][] CreateHeaderUnmodulatedSymbols()
+    /// <returns>走査位置を初期化済みの検出器。</returns>
+    /// <remarks>最短区間長 0.8 秒で BH の無変調（0.3 秒）を除外する。FH は冒頭 3 秒・途中 1 秒ある。</remarks>
+    internal PreambleAnchorDetector CreateAnchorDetector() =>
+        CreateHeaderPreambleDetector((_profile.SampleRate * 8) / 10, _profile.FileHeaderUnmodulatedSamples);
+
+    /// <summary>
+    /// BH 手前の無変調区間（0.3 秒）の終端＝BH 変調部の先頭を探す検出器を生成します。
+    /// </summary>
+    /// <returns>初期化済みの検出器。FH 手前の無変調区間も検出対象に含みます。</returns>
+    private PreambleAnchorDetector CreateBlockHeaderAnchorDetector() =>
+        CreateHeaderPreambleDetector(_profile.BlockHeaderUnmodulatedSamples * 2 / 3, _profile.BlockHeaderUnmodulatedSamples);
+
+    /// <summary>
+    /// ヘッダー手前の無変調区間を検出する検出器を、両グリッドの理想波形付きで生成します。
+    /// </summary>
+    /// <param name="minRunSamples">無変調区間とみなす最短長。</param>
+    /// <param name="tailUnmodulatedSamples">終端のシンボル位相補正に使う無変調区間の公称長。</param>
+    /// <returns>初期化済みの検出器。</returns>
+    private PreambleAnchorDetector CreateHeaderPreambleDetector(int minRunSamples, int tailUnmodulatedSamples)
     {
         var grids = new[] { OfdmCarrierGrid.Sc8Family, OfdmCarrierGrid.Sc24Family };
         var symbols = new Complex[grids.Length][];
@@ -64,7 +81,15 @@ public sealed partial class FileWavCodec
             symbols[i] = ofdm.GenerateUnmodulated(ofdm.SamplesPerOfdmSymbol).Left;
         }
 
-        return symbols;
+        var headerOfdm = CreateHeaderOfdm();
+        var detector = new PreambleAnchorDetector(
+            headerOfdm.SamplesPerOfdmSymbol,
+            headerOfdm.SamplesPerOfdmSymbol - _profile.HeaderCyclicPrefixLength,
+            minRunSamples,
+            symbols,
+            tailUnmodulatedSamples);
+        detector.Reset();
+        return detector;
     }
 
     /// <summary>
@@ -708,6 +733,15 @@ public sealed partial class FileWavCodec
         Add(expectedStart);
         onProbe?.Invoke(expectedStart);
         Add(ofdm.FindBestSymbolStart(samples, expectedStart, Math.Min(searchRadius, symbolLength), useRightChannel));
+
+        // 直前が無変調区間だとロック評価がそちらへ寄るため、期待位置の近傍は評価に頼らず細かく直接試す
+        var nearStep = Math.Max(1, symbolLength / 12);
+        var nearRadius = Math.Min(searchRadius, symbolLength / 2);
+        for (var offset = nearStep; offset <= nearRadius; offset += nearStep)
+        {
+            Add(expectedStart - offset);
+            Add(expectedStart + offset);
+        }
 
         var scored = new List<(int Start, double Score)>();
         for (var radius = 0; radius <= searchRadius; radius += Math.Max(step, symbolLength / 4))
