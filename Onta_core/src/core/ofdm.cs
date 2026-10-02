@@ -1369,7 +1369,7 @@ public sealed partial class OfdmGenerator
             var bestFlutter = flutterPhase;
             var bestScore = Score(bestAmount, bestWow, bestFlutter);
 
-            var amounts = new[] { 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.011, 0.012, 0.015 };
+            var amounts = new[] { 0.002, 0.003, 0.004, WowFlutterWarp.MaxCorrectableAmount };
             // Match 残差が ~0.15 rad でも拾える幅
             const int coarseRadius = 24;
             const int fineRadius = 40;
@@ -1551,13 +1551,14 @@ public sealed partial class OfdmGenerator
         var phaseStep = Math.Max(0.01, phaseRangeRad / 6.0);
         var amountStep = Math.Max(0.0005, amountRange / 2.0);
         const int coarseStride = 8;
+        var maxAmount = Math.Min(hintAmount + amountRange, WowFlutterWarp.MaxCorrectableAmount);
 
         var coarseHits = new List<(double Score, double Amount, double Wow, double Flutter)>(64);
         for (var wow = hintWowPhase - phaseRangeRad; wow <= hintWowPhase + phaseRangeRad; wow += phaseStep)
         {
             for (var flutter = hintFlutterPhase - phaseRangeRad; flutter <= hintFlutterPhase + phaseRangeRad; flutter += phaseStep)
             {
-                for (var amount = Math.Max(0.001, hintAmount - amountRange); amount <= hintAmount + amountRange; amount += amountStep)
+                for (var amount = Math.Max(0.001, hintAmount - amountRange); amount <= maxAmount + 1e-12; amount += amountStep)
                 {
                     var score = Evaluate(amount, wow, flutter, coarseStride);
                     if (score > baseline)
@@ -1899,7 +1900,7 @@ public sealed partial class OfdmGenerator
         var sampleRate = Math.Max(1, _config.SampleRate);
         var refCorr = BuildCorrelationReferenceReals(idealReals);
         var bestScore = 0.0;
-        var bestAmount = 0.01;
+        var bestAmount = WowFlutterWarp.MaxCorrectableAmount;
         var bestWowPhase = 0.0;
         var bestFlutterPhase = 0.0;
         // 全長 scale の Correct と同じモデル。プリアンブル近傍だけ散乱するので高速。
@@ -1972,8 +1973,7 @@ public sealed partial class OfdmGenerator
 
             var coarseHits = new List<(double Score, double Wow, double Flutter)>(64);
 
-            // 粗探索: amount=0.01 は π/9 で十分広い。amount=0.005 は相関ピークが鋭く
-            // π/9 では真値近傍でも baseline を下回るため、失敗時は π/18 で再掃引する。
+            // 粗探索: 量が小さいほど相関ピークが鋭く、π/9 では真値近傍でも baseline を下回るため π/18 で掃引する。
             /// <summary>
             /// 固定ワウ量で位相平面を粗格子掃引し、有望ヒットを収集します。
             /// </summary>
@@ -2005,14 +2005,7 @@ public sealed partial class OfdmGenerator
                 }
             }
 
-            CoarsePhaseSweep(0.01, halfTurnDivisions: 9);
-            // amount=0.01 の弱い偽ピークに捕まると 0.005 真値を逃すため、
-            // 高スコア未達なら鋭峰向けの密格子を必ず追加する。
-            if (bestScore < 0.90)
-            {
-                CoarsePhaseSweep(0.005, halfTurnDivisions: 18);
-            }
-
+            CoarsePhaseSweep(WowFlutterWarp.MaxCorrectableAmount, halfTurnDivisions: 18);
             if (bestScore < 0.90)
             {
                 CoarsePhaseSweep(0.003, halfTurnDivisions: 18);
@@ -2046,12 +2039,12 @@ public sealed partial class OfdmGenerator
                 }
             }
 
-            // 以降の位相精密化は粗探索で更新された bestAmount を使う（0.01 固定だと 0.005 真値を壊す）。
+            // 以降の位相精密化は粗探索で更新された bestAmount を使う（固定量だと別の量の真値を壊す）。
             /// <summary>
-            /// 位相精密化に使うワウ量を返します（未確定時は 0.01）。
+            /// 位相精密化に使うワウ量を返します（未確定時は上限値）。
             /// </summary>
             /// <returns>位相掃引に用いるワウ量。</returns>
-            double PhaseAmount() => bestAmount > 1e-12 ? bestAmount : 0.01;
+            double PhaseAmount() => bestAmount > 1e-12 ? bestAmount : WowFlutterWarp.MaxCorrectableAmount;
 
             // π/9 粗格子の隙間（鋭いピーク）を埋める。シード周辺を密に掃引する。
             foreach (var seed in seeds)
@@ -2152,11 +2145,8 @@ public sealed partial class OfdmGenerator
                 return null;
             }
 
-            // 0.005（test7/8/9）〜 0.012（従来中心）をカバー。粗探索が拾った量の近傍も再掃引。
-            foreach (var amount in new[]
-                     {
-                         0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.011, 0.012, 0.015
-                     })
+            // 粗探索が拾った位相で、上限までの量を再掃引する。
+            foreach (var amount in new[] { 0.002, 0.003, 0.004, WowFlutterWarp.MaxCorrectableAmount })
             {
                 Evaluate(amount, bestWowPhase, bestFlutterPhase);
                 ReportProgress();

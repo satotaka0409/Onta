@@ -30,6 +30,11 @@ public static class WowFlutterWarp
     public const int DefaultOversample = 8;
 
     /// <summary>
+    /// 受信側がワウ・フラッターとして探索・補正する変調量（ピーク相対速度偏差）の上限です（0.5%）。
+    /// </summary>
+    public const double MaxCorrectableAmount = 0.005;
+
+    /// <summary>
     /// シード値から wow/flutter の初期位相を生成します。
     /// </summary>
     /// <param name="seed">乱数シード。0 の場合は非固定シード。</param>

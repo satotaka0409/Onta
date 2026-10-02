@@ -11,7 +11,7 @@ namespace Onta.Core.Tests.Core;
 public sealed class OntaTest3
 {
     private const double WhiteNoiseLevel = 0.02;
-    private const double WowFlutterAmount = 0.01;
+    private const double WowFlutterAmount = WowFlutterWarp.MaxCorrectableAmount;
     private const int ImpairmentSeed = 20260904;
 
     private static readonly FileWavCodecProfile Profile = new(

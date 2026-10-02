@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using Onta.Core;
 
 namespace Onta.View.Core;
 
@@ -8,8 +9,11 @@ namespace Onta.View.Core;
 /// </summary>
 public partial class WowFlutterMeter : UserControl
 {
+    /// <summary>既定の表示レンジ（±%）。受信側のワウ補正上限と揃えます。</summary>
+    public const double DefaultRangePercent = WowFlutterWarp.MaxCorrectableAmount * 100.0;
+
     private double _valuePercent;
-    private double _rangePercent = 5.0;
+    private double _rangePercent = DefaultRangePercent;
     private string _channelLabel = "L";
     private bool _isActive = true;
 
@@ -66,7 +70,7 @@ public partial class WowFlutterMeter : UserControl
         get => _rangePercent;
         set
         {
-            _rangePercent = Math.Max(0.1, value);
+            _rangePercent = Math.Max(0.01, value);
             UpdateVisual();
         }
     }
@@ -89,7 +93,7 @@ public partial class WowFlutterMeter : UserControl
     }
 
     /// <summary>
-    /// 直接 % 値を設定して表示を更新します。
+    /// 直接 % 値を設定して表示を更新します。レンジを超えた値はバーを端で止め、数値はそのまま表示します。
     /// </summary>
     /// <param name="valuePercent">偏差 %（中央 0）。</param>
     public void AddSample(double valuePercent)
@@ -100,13 +104,6 @@ public partial class WowFlutterMeter : UserControl
         }
 
         _valuePercent = valuePercent;
-        // 大きな偏差でも振り切れないようレンジを自動拡張
-        var abs = Math.Abs(_valuePercent);
-        if (abs > _rangePercent)
-        {
-            _rangePercent = Math.Clamp(Math.Ceiling(abs * 1.25 * 2.0) / 2.0, 5.0, 50.0);
-        }
-
         UpdateVisual();
     }
 
@@ -116,7 +113,6 @@ public partial class WowFlutterMeter : UserControl
     public void Clear()
     {
         _valuePercent = 0;
-        _rangePercent = 5.0;
         UpdateVisual();
     }
 

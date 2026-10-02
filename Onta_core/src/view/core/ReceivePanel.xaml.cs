@@ -16,8 +16,6 @@ namespace Onta.View.Core;
 public partial class ReceivePanel : UserControl
 {
     private const int DefaultAudioDeviceNumber = -1;
-    /// <summary>ワウフラッターメーターの表示感度（実偏差%に対する倍率）。</summary>
-    private const double WowFlutterDisplayGain = 2.0;
     private static readonly SolidColorBrush ErrorLegendViterbiBrush = new(Color.FromRgb(100, 170, 255));
     private static readonly SolidColorBrush ErrorLegendOuterBrush = new(Color.FromRgb(255, 150, 70));
 
@@ -674,10 +672,10 @@ public partial class ReceivePanel : UserControl
     /// <param name="rightPercent">右チャネル速度偏差（%）。</param>
     private void UpdateWowMeters(double leftPercent, double rightPercent)
     {
-        WowLeft.AddSample(leftPercent * WowFlutterDisplayGain);
+        WowLeft.AddSample(leftPercent);
         if (WowRight.IsActive)
         {
-            WowRight.AddSample(rightPercent * WowFlutterDisplayGain);
+            WowRight.AddSample(rightPercent);
         }
     }
 
@@ -691,7 +689,6 @@ public partial class ReceivePanel : UserControl
         UpdateWowMeters(leftPercent, rightPercent);
         try
         {
-            // グラフは実偏差%（±1%軸）。メーター用の表示ゲインは掛けない。
             // モノラル時は R 系列を進めず、ヘッダー mono 切替での橙ノイズを防ぐ。
             if (WowRight.IsActive)
             {

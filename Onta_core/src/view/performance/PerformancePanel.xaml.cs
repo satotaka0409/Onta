@@ -26,7 +26,6 @@ namespace Onta.View.Performance;
 public partial class PerformancePanel : UserControl
 {
     private const int DefaultAudioDeviceNumber = -1;
-    private const double WowDisplayGain = 2.0;
 
     private readonly PerformanceTxWorker _txWorker = new();
     private readonly PerformanceRxWorker _rxWorker = new();
@@ -308,8 +307,6 @@ public partial class PerformancePanel : UserControl
     {
         WowLeftMeter.ChannelLabel = "L";
         WowRightMeter.ChannelLabel = "R";
-        WowLeftMeter.RangePercent = 1.0;
-        WowRightMeter.RangePercent = 1.0;
 
         BindChart(FftLeftChart, _fftLeft.Series, _fftLeft.XAxes, _fftLeft.YAxes);
         BindChart(FftRightChart, _fftRight.Series, _fftRight.XAxes, _fftRight.YAxes);
@@ -1643,8 +1640,6 @@ public partial class PerformancePanel : UserControl
         _lastWowSampleUtc = DateTime.MinValue;
         WowLeftMeter.Clear();
         WowRightMeter.Clear();
-        WowLeftMeter.RangePercent = 1.0;
-        WowRightMeter.RangePercent = 1.0;
 
         LissajousCanvas?.Children.Clear();
         if (LissajousTitle is not null)
@@ -1836,8 +1831,8 @@ public partial class PerformancePanel : UserControl
 
         var left = status.WowLeftPercent;
         var right = status.WowRightPercent;
-        WowLeftMeter.AddSample(left * WowDisplayGain);
-        WowRightMeter.AddSample(right * WowDisplayGain);
+        WowLeftMeter.AddSample(left);
+        WowRightMeter.AddSample(right);
 
         var now = DateTime.UtcNow;
         if ((now - _lastWowSampleUtc).TotalSeconds >= 0.2)

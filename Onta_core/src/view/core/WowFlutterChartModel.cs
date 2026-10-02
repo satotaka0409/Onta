@@ -10,12 +10,12 @@ namespace Onta.View.Core;
 
 /// <summary>
 /// ワウフラッター偏差(%) の時系列グラフです（タスクマネージャ風スクロール）。
-/// 縦軸は中央 0%、上端 +1%、下端 -1%。L/R 色は FFT と同じです。
+/// 縦軸は中央 0%、上端 +0.5%、下端 -0.5%。L/R 色は FFT と同じです。
 /// </summary>
 public sealed class WowFlutterChartModel
 {
     private const double WindowSeconds = 30.0;
-    private const double YLimitPercent = 1.0;
+    private const double YLimitPercent = WowFlutterMeter.DefaultRangePercent;
     private const double MinSampleSpacingSeconds = 0.05;
     private readonly ObservableCollection<ObservablePoint> _leftValues = [];
     private readonly ObservableCollection<ObservablePoint> _rightValues = [];
@@ -69,8 +69,8 @@ public sealed class WowFlutterChartModel
                 ForceStepToMin = true,
                 Labeler = value => value switch
                 {
-                    > 0.5 => "+1",
-                    < -0.5 => "-1",
+                    > YLimitPercent / 2 => $"+{YLimitPercent:0.0}",
+                    < -YLimitPercent / 2 => $"-{YLimitPercent:0.0}",
                     _ => "0"
                 },
                 TextSize = 7,
@@ -167,7 +167,7 @@ public sealed class WowFlutterChartModel
     }
 
     /// <summary>
-    /// 古い点を捨て、横軸を現在時刻基準のウィンドウ・縦軸を ±1% に合わせます。
+    /// 古い点を捨て、横軸を現在時刻基準のウィンドウ・縦軸を ±0.5% に合わせます。
     /// </summary>
     /// <param name="t">現在の経過秒。</param>
     private void RefreshAxisAndTrim(double t)
@@ -182,7 +182,7 @@ public sealed class WowFlutterChartModel
     }
 
     /// <summary>
-    /// 偏差 % を表示レンジ（±1%）へ収めます。
+    /// 偏差 % を表示レンジ（±0.5%）へ収めます。
     /// </summary>
     /// <param name="percent">入力偏差 %。</param>
     /// <returns>クランプ後の偏差 %。</returns>

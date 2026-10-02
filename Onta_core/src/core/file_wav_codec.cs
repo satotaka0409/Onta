@@ -2898,7 +2898,7 @@ public sealed partial class FileWavCodec
             return (amount, wowPhase, flutterPhase, score);
         }
 
-        var amounts = new[] { 0.005, 0.01 };
+        var amounts = new[] { WowFlutterWarp.MaxCorrectableAmount, 0.003 };
         const int phaseSteps = 18;
         var coarseTotal = amounts.Length * phaseSteps * phaseSteps;
         var done = 0;
@@ -2976,7 +2976,7 @@ public sealed partial class FileWavCodec
                 break;
             }
 
-            if (amount == 0.005 && foundForAmount >= 3)
+            if (amount == WowFlutterWarp.MaxCorrectableAmount && foundForAmount >= 3)
             {
                 break;
             }
@@ -3018,7 +3018,7 @@ public sealed partial class FileWavCodec
         (double Amount, double WowPhase, double FlutterPhase, double Score)? bestBh = null;
         foreach (var center in centers)
         {
-            var amountA = 0.005;
+            var amountA = WowFlutterWarp.MaxCorrectableAmount;
             if (TryEvaluateBhAmount(amountA, center, ref bestBh))
             {
                 break;
@@ -3030,7 +3030,7 @@ public sealed partial class FileWavCodec
                 break;
             }
 
-            const double amountC = 0.01;
+            const double amountC = 0.003;
             if (amountC != amountA && amountC != amountB && TryEvaluateBhAmount(amountC, center, ref bestBh))
             {
                 break;
