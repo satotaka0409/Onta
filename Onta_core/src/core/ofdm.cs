@@ -5036,8 +5036,18 @@ public sealed partial class OfdmGenerator
         /// <summary>位相の平滑化係数（テープのワウで回る位相に遅れず追従するよう速め）。</summary>
         private const double PhaseAlpha = 0.70;
 
+        /// <summary>
+        /// 1 シンボルあたりの位相回転量の追従係数です。
+        /// </summary>
+        /// <remarks>テープ速度がずれると位相が毎シンボル一定量ずつ回り、平滑化だけでは常に遅れるため、回転量を推定して先回りする。</remarks>
+        private const double PhaseRateBeta = 0.20;
+
+        /// <summary>位相回転量の上限（ラジアン／シンボル）。雑音で発散しないよう抑えます。</summary>
+        private const double MaxPhaseRate = 1.0;
+
         private readonly double[] _magnitude;
         private readonly Complex[] _phasor;
+        private readonly double[] _phaseRate;
         private readonly bool[] _initialized;
 
         /// <summary>
@@ -5049,6 +5059,7 @@ public sealed partial class OfdmGenerator
             var size = Math.Max(1, groupCount);
             _magnitude = new double[size];
             _phasor = new Complex[size];
+            _phaseRate = new double[size];
             _initialized = new bool[size];
         }
 
@@ -5081,9 +5092,10 @@ public sealed partial class OfdmGenerator
             }
 
             _magnitude[groupIndex] = (_magnitude[groupIndex] * (1.0 - MagnitudeAlpha)) + (magnitude * MagnitudeAlpha);
-            var phasor = (_phasor[groupIndex] * (1.0 - PhaseAlpha)) + (unit * PhaseAlpha);
-            var phasorMagnitude = phasor.Magnitude;
-            _phasor[groupIndex] = phasorMagnitude < 1e-12 ? unit : phasor / phasorMagnitude;
+            var predicted = _phasor[groupIndex] * Complex.FromPolarCoordinates(1.0, _phaseRate[groupIndex]);
+            var error = (unit * Complex.Conjugate(predicted)).Phase;
+            _phaseRate[groupIndex] = Math.Clamp(_phaseRate[groupIndex] + (PhaseRateBeta * error), -MaxPhaseRate, MaxPhaseRate);
+            _phasor[groupIndex] = predicted * Complex.FromPolarCoordinates(1.0, PhaseAlpha * error);
             return _phasor[groupIndex] * _magnitude[groupIndex];
         }
 

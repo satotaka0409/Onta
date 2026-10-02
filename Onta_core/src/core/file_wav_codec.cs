@@ -365,6 +365,15 @@ public sealed partial class FileWavCodec
 
     private const int DataBlockWithCrcBytes = DataBlockBytes + CrcBytes;
 
+    /// <summary>
+    /// 逐次出力（音声出力・ストリーミング WAV）で変調波形に掛ける送出ゲインです（+12 dB）。
+    /// </summary>
+    /// <remarks>
+    /// 変調波形のピークは 0.1〜0.2 程度しかなく、そのままではテープへの記録レベルが低すぎてヒス・ハム・DC に埋もれる。
+    /// SC-48 / 64QAM のデータ部でもピークが 1 を超えにくい倍率にしている。
+    /// </remarks>
+    public const double TransmitOutputGain = 4.0;
+
     /// <summary>無変調区間の読み飛ばしに持ち越す時間軸ずれ率の上限（±1%）。</summary>
     private const double MaxDriftRate = 0.01;
 

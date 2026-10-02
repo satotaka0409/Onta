@@ -49,6 +49,8 @@ public sealed class RealtimeDecodeSession : IDisposable
     private int _anchorPos;
     private TapeSpeedResampler? _resampler;
     private bool _inverted;
+    private readonly InputLowCutFilter _lowCutLeft;
+    private readonly InputLowCutFilter _lowCutRight;
 
     /// <summary>
     /// デコードセッションを初期化します。
@@ -79,6 +81,8 @@ public sealed class RealtimeDecodeSession : IDisposable
         _fhDataOffset = codec.FileHeaderDataOffsetSamples;
         _fhModulatedSamples = codec.FileHeaderModulatedSamples;
         _anchorDetector = codec.CreateAnchorDetector();
+        _lowCutLeft = new InputLowCutFilter(_sampleRate);
+        _lowCutRight = new InputLowCutFilter(_sampleRate);
     }
 
     /// <summary>
@@ -154,9 +158,14 @@ public sealed class RealtimeDecodeSession : IDisposable
                 }
             }
 
+            var inputLeft = left.ToArray();
+            var inputRight = _stereo ? right.ToArray() : Array.Empty<Complex>();
+            _lowCutLeft.ProcessInPlace(inputLeft);
+            _lowCutRight.ProcessInPlace(inputRight);
+
             if (_resampler is not null)
             {
-                _resampler.Process(left, right, out var correctedLeft, out var correctedRight);
+                _resampler.Process(inputLeft, inputRight, out var correctedLeft, out var correctedRight);
                 if (_inverted)
                 {
                     NegateInPlace(correctedLeft);
@@ -165,17 +174,15 @@ public sealed class RealtimeDecodeSession : IDisposable
 
                 AppendBufferLocked(correctedLeft, correctedRight);
             }
-            else if (_inverted)
-            {
-                var flippedLeft = left.ToArray();
-                var flippedRight = _stereo ? right.ToArray() : Array.Empty<Complex>();
-                NegateInPlace(flippedLeft);
-                NegateInPlace(flippedRight);
-                AppendBufferLocked(flippedLeft, flippedRight);
-            }
             else
             {
-                AppendBufferLocked(left, right);
+                if (_inverted)
+                {
+                    NegateInPlace(inputLeft);
+                    NegateInPlace(inputRight);
+                }
+
+                AppendBufferLocked(inputLeft, inputRight);
             }
 
             // FH 前の暴走蓄積を防ぐ（ライブ無信号時のみ。ファイル逐次は背圧で抑える）

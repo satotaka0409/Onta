@@ -309,7 +309,9 @@ internal sealed class OutputCoreWorker
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     spectrumPublisher.Push(leftChunk, rightChunk);
-                    wavWriter?.WriteChunk(leftChunk, rightChunk);
+                    var outLeft = ApplyTransmitGain(leftChunk);
+                    var outRight = ApplyTransmitGain(rightChunk);
+                    wavWriter?.WriteChunk(outLeft, outRight);
                     if (player is not null)
                     {
                         /// <summary>
@@ -346,8 +348,8 @@ internal sealed class OutputCoreWorker
 
                         // キュー投入時点のサンプル数から実時間進捗を近似する。
                         player.AddSamples(
-                            leftChunk,
-                            rightChunk,
+                            outLeft,
+                            outRight,
                             onSamplesQueued: samplesQueued =>
                             {
                                 emittedSamples += samplesQueued;
@@ -503,6 +505,22 @@ internal sealed class OutputCoreWorker
 
             player?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// 変調波形チャンクへ送出ゲインを掛けたコピーを返します。
+    /// </summary>
+    /// <param name="chunk">変調波形チャンク。</param>
+    /// <returns>送出レベルへ持ち上げたサンプル列。</returns>
+    private static Complex[] ApplyTransmitGain(ReadOnlySpan<Complex> chunk)
+    {
+        var result = new Complex[chunk.Length];
+        for (var i = 0; i < chunk.Length; i++)
+        {
+            result[i] = chunk[i] * FileWavCodec.TransmitOutputGain;
+        }
+
+        return result;
     }
 
     /// <summary>
