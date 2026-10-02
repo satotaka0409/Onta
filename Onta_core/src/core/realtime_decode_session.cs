@@ -20,6 +20,15 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <summary>アンカー後、FH 変調部が揃ってからこの秒数 FH が確定しなければアンカーを捨てる。</summary>
     private const int AnchorGiveUpSeconds = 2;
 
+    /// <summary>BH アンカーの手前に残すサンプル数（BH 同期探索の幅より広くする）。</summary>
+    private const int BlockAnchorLeadSamples = 2048;
+
+    /// <summary>BH 単独復号を終えたとき、BD 末尾より手前に残すサンプル数（次の BH 手前の無変調区間を削らない）。</summary>
+    private const int BlockTailKeepSamples = 576;
+
+    /// <summary>BH アンカーで速度を測り直すときの、補正済み速度に対する残差の下限（これ未満は測定誤差とみなす）。</summary>
+    private const double BlockSpeedResidualThreshold = 0.002;
+
     private readonly FileWavCodec _codec;
     private readonly object _sync = new();
     private readonly int _sampleRate;
@@ -48,6 +57,10 @@ public sealed class RealtimeDecodeSession : IDisposable
     private bool _anchored;
     private bool _anchorAttempted;
     private int _anchorPos;
+    private readonly PreambleAnchorDetector _blockAnchorDetector;
+    private readonly int _fhMinRunSamples;
+    private bool _blockAnchored;
+    private int _blockAnchorPos;
     private TapeSpeedResampler? _resampler;
     private bool _inverted;
     private readonly InputLowCutFilter _lowCutLeft;
@@ -83,6 +96,8 @@ public sealed class RealtimeDecodeSession : IDisposable
         _fhDataOffset = codec.FileHeaderDataOffsetSamples;
         _fhModulatedSamples = codec.FileHeaderModulatedSamples;
         _anchorDetector = codec.CreateAnchorDetector();
+        _blockAnchorDetector = codec.CreateBlockHeaderAnchorDetector();
+        _fhMinRunSamples = codec.FileHeaderAnchorMinRunSamples;
         _lowCutLeft = new InputLowCutFilter(_sampleRate);
         _lowCutRight = new InputLowCutFilter(_sampleRate);
         _gapRemover = new InputSilenceGapRemover(_sampleRate, _stereo);
@@ -167,12 +182,14 @@ public sealed class RealtimeDecodeSession : IDisposable
             // FH 前の暴走蓄積を防ぐ（ライブ無信号時のみ。ファイル逐次は背圧で抑える）
             // アンカー取得後は FH 復号が長引いても捨てない（捨てると復号中の先頭 FH と進捗が消え、次の途中 FH まで受信が始まらない）
             var maxPre = _sampleRate * MaxPreHeaderSeconds;
-            if (!_inputCompleted && !_anchored && !_progressive.HeaderReady && _count > maxPre)
+            // 無変調区間をまだ探していない部分は捨てない（BH 単独受信の BD 復号中に溜まった次の BH を落とす）
+            var scanned = Math.Min(_anchorDetector.ScannedPosition, _blockAnchorDetector.ScannedPosition);
+            var preDrop = Math.Min(_count - (maxPre / 2), scanned);
+            if (!_inputCompleted && !_anchored && !_blockAnchored && !_progressive.HeaderReady
+                && _count > maxPre && preDrop > 0)
             {
-                var drop = _count - (maxPre / 2);
-                DropFront(drop);
-                _anchored = false;
-                _progressive.Reset();
+                DropFront(preDrop);
+                _progressive.ResetForResync();
                 _progressive.StatusBoard.BeginRun("(リアルタイム受信 / 再同期)");
                 _lastAttemptCount = 0;
             }
@@ -340,6 +357,8 @@ public sealed class RealtimeDecodeSession : IDisposable
                 Complex[]? left = null;
                 Complex[]? right = null;
                 var shouldTry = false;
+                var blockTry = false;
+                var blockStart = 0;
                 ProgressiveDecodeState progressive;
 
                 var inputDone = false;
@@ -354,7 +373,17 @@ public sealed class RealtimeDecodeSession : IDisposable
                         waitingForAnchor = !UpdateAnchorLocked();
                     }
 
-                    if (progressive.Completed)
+                    if (_blockAnchored && !progressive.HeaderReady && !progressive.Completed)
+                    {
+                        // FH 未受信のまま BH から受ける。BD 待ちの間は BH を再復号しない（コーデック側で保留）
+                        if (inputDone || _count >= _lastAttemptCount + Math.Max(1, _sampleRate / 10))
+                        {
+                            blockTry = true;
+                            blockStart = _blockAnchorPos;
+                            allowIncomplete = !inputDone;
+                        }
+                    }
+                    else if (progressive.Completed)
                     {
                         shouldTry = false;
                     }
@@ -382,7 +411,7 @@ public sealed class RealtimeDecodeSession : IDisposable
                         };
                     }
 
-                    if (shouldTry)
+                    if (shouldTry || blockTry)
                     {
                         left = new Complex[_count];
                         Array.Copy(_left, 0, left, 0, _count);
@@ -398,14 +427,37 @@ public sealed class RealtimeDecodeSession : IDisposable
 
                         progressive.StreamSampleBase = _streamBase;
                         _lastAttemptCount = _count;
-                        if (_anchored && !progressive.HeaderReady)
+                        if (shouldTry && _anchored && !progressive.HeaderReady)
                         {
                             _anchorAttempted = true;
                         }
                     }
                 }
 
-                if (shouldTry && left is not null && right is not null)
+                if (blockTry && left is not null && right is not null)
+                {
+                    var blockResult = _codec.DecodeStandaloneBlockProgressive(
+                        left,
+                        right,
+                        progressive,
+                        blockStart,
+                        _tuning,
+                        allowIncomplete,
+                        out var consumedEnd);
+                    lock (_sync)
+                    {
+                        _snapshot = _snapshot with
+                        {
+                            DecodeAttemptCount = _snapshot.DecodeAttemptCount + 1,
+                            BufferedSamples = _count
+                        };
+                        if (blockResult != StandaloneBlockStatus.NeedMoreSamples)
+                        {
+                            FinishBlockAnchorLocked(blockResult, consumedEnd);
+                        }
+                    }
+                }
+                else if (shouldTry && left is not null && right is not null)
                 {
                     var status = _codec.DecodePcmSamplesProgressive(
                         left,
@@ -559,6 +611,11 @@ public sealed class RealtimeDecodeSession : IDisposable
     /// <remarks>FH 復号はバッファ先頭からの固定オフセットを前提にするため、録音開始とテープ再生のずれをここで吸収する。</remarks>
     private bool UpdateAnchorLocked()
     {
+        if (_blockAnchored)
+        {
+            return false;
+        }
+
         if (_anchored)
         {
             if (!IsFileHeaderBufferedLocked())
@@ -576,13 +633,22 @@ public sealed class RealtimeDecodeSession : IDisposable
             // FH 変調部が揃っても確定しなかった → このアンカーは捨て、以降から次の無変調区間を探す
             DropFront(Math.Max(0, _anchorPos));
             _anchored = false;
-            _progressive.Reset();
+            _progressive.ResetForResync();
             _progressive.StatusBoard.BeginRun("(リアルタイム受信 / 再同期)");
             _lastAttemptCount = 0;
+            _blockAnchorDetector.Reset();
         }
 
-        if (!_anchorDetector.TryAdvance(_left.AsSpan(0, _count), out var anchor))
+        // BH と FH の無変調区間は先に来た方から受ける（バッファが溜まっていると FH 検出が先の途中 FH まで進み、手前のブロックを飛ばす）
+        var blockAnchor = FindBlockHeaderAnchorLocked();
+        var fileHeaderScanLimit = blockAnchor >= 0 ? blockAnchor : _count;
+        if (!_anchorDetector.TryAdvance(_left.AsSpan(0, fileHeaderScanLimit), out var anchor))
         {
+            if (blockAnchor >= 0)
+            {
+                AnchorBlockHeaderLocked(blockAnchor);
+            }
+
             return false;
         }
 
@@ -616,12 +682,87 @@ public sealed class RealtimeDecodeSession : IDisposable
         }
 
         _anchorDetector.Reset();
+        _blockAnchorDetector.Reset();
         _streamBase = 0;
+        // 以前の試行より短いバッファでも FH 復号側で状態を初期化させない（FH 未受信のまま受けたブロックが消える）
+        _progressive.SourceLength = 0;
         _anchored = true;
         _anchorAttempted = false;
         _anchorPos = _fhDataOffset;
         _lastAttemptCount = 0;
         return IsFileHeaderBufferedLocked();
+    }
+
+    /// <summary>
+    /// FH 未受信のまま、BH 手前の無変調区間（0.3 秒）の終端＝BH 変調部の先頭を探します。
+    /// </summary>
+    /// <returns>BH 変調部の先頭（バッファ先頭基準）。見つからなければ -1。</returns>
+    /// <remarks>受信スタートがファイルの途中（BH）からでも、FH を待たずにブロックを受けるため。FH の無変調区間（1 秒）は FH 側の検出に任せる。</remarks>
+    private int FindBlockHeaderAnchorLocked()
+    {
+        while (_blockAnchorDetector.TryAdvance(_left.AsSpan(0, _count), out var anchor))
+        {
+            if (_blockAnchorDetector.LastRunSamples < _fhMinRunSamples)
+            {
+                return anchor;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// 見つけた BH の手前までバッファを捨て、速度・極性を合わせて BH 単独受信を始めます。
+    /// </summary>
+    /// <param name="anchor">BH 変調部の先頭（バッファ先頭基準）。</param>
+    private void AnchorBlockHeaderLocked(int anchor)
+    {
+        var lead = Math.Min(anchor, BlockAnchorLeadSamples);
+        DropFront(anchor - lead);
+        anchor = lead;
+
+        var step = _blockAnchorDetector.LastPeriod / _blockAnchorDetector.NominalPeriod;
+        var deviation = Math.Abs(step - 1.0);
+        if (deviation > TapeSpeedResampler.NegligibleDeviation
+            && (_resampler is null || deviation > BlockSpeedResidualThreshold))
+        {
+            ApplySpeedCorrectionLocked(step);
+            anchor = (int)Math.Round(anchor / step);
+        }
+
+        if (_blockAnchorDetector.LastPolarityInverted)
+        {
+            NegateInPlace(_left.AsSpan(0, _count));
+            if (_stereo)
+            {
+                NegateInPlace(_right.AsSpan(0, _count));
+            }
+
+            _inverted = !_inverted;
+        }
+
+        _anchorDetector.Reset();
+        _blockAnchorDetector.Reset();
+        _blockAnchored = true;
+        _blockAnchorPos = anchor;
+        _lastAttemptCount = 0;
+    }
+
+    /// <summary>
+    /// BH 単独復号を終えたバッファを片付け、FH／BH の無変調区間の探索へ戻ります。
+    /// </summary>
+    /// <param name="result">単独復号の結果（NeedMoreSamples 以外）。</param>
+    /// <param name="consumedEnd">処理を終えた位置（バッファ先頭基準）。</param>
+    private void FinishBlockAnchorLocked(StandaloneBlockStatus result, int consumedEnd)
+    {
+        var drop = result == StandaloneBlockStatus.Decoded
+            ? consumedEnd - BlockTailKeepSamples
+            : consumedEnd;
+        DropFront(Math.Clamp(drop, 0, _count));
+        _blockAnchored = false;
+        _anchorDetector.Reset();
+        _blockAnchorDetector.Reset();
+        _lastAttemptCount = 0;
     }
 
     /// <summary>
@@ -744,7 +885,9 @@ public sealed class RealtimeDecodeSession : IDisposable
         _count = remain;
         _streamBase += drop;
         _anchorPos -= drop;
+        _blockAnchorPos -= drop;
         _anchorDetector.OnFrontDropped(drop);
+        _blockAnchorDetector.OnFrontDropped(drop);
     }
 
     /// <summary>

@@ -218,6 +218,26 @@ public sealed class ProgressiveDecodeState
     /// </summary>
     public Action<string, long, int, DateTime?, DateTime?>? FileHeaderReady;
 
+    /// <summary>
+    /// FH 未受信のまま BH を受けたとき、ファイルハッシュ（SHA-512 16 進）から受信履歴上のファイル情報を引きます。未登録なら null を返します。
+    /// </summary>
+    public Func<string, KnownReceiveFile?>? ResolveKnownFile;
+
+    /// <summary>FH 未受信時に BH のファイルハッシュから引いた既知ファイル情報（未登録なら null）。</summary>
+    internal KnownReceiveFile? StandaloneKnownFile;
+
+    /// <summary><see cref="StandaloneKnownFile"/> を引いたファイルハッシュ。</summary>
+    internal string? StandaloneKnownFileHash;
+
+    /// <summary>FH 未受信時に復号済みで BD 待ちの BH（未保留は null）。</summary>
+    internal byte[]? StandalonePendingHeader;
+
+    /// <summary>保留中 BH の変調部先頭（元ストリーム基準）。</summary>
+    internal long StandalonePendingBhStart = -1;
+
+    /// <summary>保留中 BH に続く BD の先頭（元ストリーム基準）。</summary>
+    internal long StandalonePendingDataStart;
+
     internal DateTime? SourceCreatedAtUtc;
 
     internal DateTime? SourceUpdatedAtUtc;
@@ -285,7 +305,77 @@ public sealed class ProgressiveDecodeState
         OrphanDataModulationByHash.Clear();
         DetectedDataSubcarriers = null;
         DetectedModulationScheme = null;
+        StandaloneKnownFile = null;
+        StandaloneKnownFileHash = null;
+        StandalonePendingHeader = null;
+        StandalonePendingBhStart = -1;
+        StandalonePendingDataStart = 0;
         StatusBoard.Reset();
+    }
+
+    /// <summary>
+    /// FH の再同期用に段階デコード状態を初期化します。FH 未受信のまま受けたブロック（不明ブロック・BH メタ・BD 成否）は残します。
+    /// </summary>
+    internal void ResetForResync()
+    {
+        var orphanPayloads = OrphanPayloadByHash.ToArray();
+        var orphanDetails = OrphanDetailByHash.ToArray();
+        var orphanModulations = OrphanDataModulationByHash.ToArray();
+        var modulations = BlockDataModulationByIndex.ToArray();
+        var hashes = BlockExpectedHashByIndex.ToArray();
+        var sizes = BlockSizeByIndex.ToArray();
+        var outcomes = BlockBdOutcomeByIndex.ToArray();
+        var identities = BlockHeaderIdentityByIndex.ToArray();
+        var fileHash = ReceivedFileHashHex;
+        var knownFile = StandaloneKnownFile;
+        var knownFileHash = StandaloneKnownFileHash;
+
+        Reset();
+
+        foreach (var pair in orphanPayloads)
+        {
+            OrphanPayloadByHash[pair.Key] = pair.Value;
+        }
+
+        foreach (var pair in orphanDetails)
+        {
+            OrphanDetailByHash[pair.Key] = pair.Value;
+        }
+
+        foreach (var pair in orphanModulations)
+        {
+            OrphanDataModulationByHash[pair.Key] = pair.Value;
+        }
+
+        foreach (var pair in modulations)
+        {
+            BlockDataModulationByIndex[pair.Key] = pair.Value;
+        }
+
+        foreach (var pair in hashes)
+        {
+            BlockExpectedHashByIndex[pair.Key] = pair.Value;
+        }
+
+        foreach (var pair in sizes)
+        {
+            BlockSizeByIndex[pair.Key] = pair.Value;
+        }
+
+        foreach (var pair in outcomes)
+        {
+            BlockBdOutcomeByIndex[pair.Key] = pair.Value;
+        }
+
+        foreach (var pair in identities)
+        {
+            BlockHeaderIdentityByIndex[pair.Key] = pair.Value;
+        }
+
+        ReceivedFileHashHex = fileHash;
+        StandaloneKnownFile = knownFile;
+        StandaloneKnownFileHash = knownFileHash;
+        AcceptedBlockCount = OrphanPayloadByHash.Count;
     }
 
     /// <summary>
@@ -1423,6 +1513,7 @@ public sealed partial class FileWavCodec
                 var fhFileName = ReadFileHeaderFileName(fileHeader);
                 var sourceCreatedAtUtc = ReadFileHeaderTimestampUtc(fileHeader, 840);
                 var sourceUpdatedAtUtc = ReadFileHeaderTimestampUtc(fileHeader, 847);
+                var standaloneFileHash = state.ReceivedFileHashHex;
                 state.FileSize = fileSize;
                 state.BlockCount = blockCount;
                 state.ReceivedFileName = fhFileName;
@@ -1431,6 +1522,8 @@ public sealed partial class FileWavCodec
                 state.SourceUpdatedAtUtc = sourceUpdatedAtUtc;
                 state.OutputSlots = new byte[blockCount][];
                 state.SlotAccepted = new bool[blockCount];
+                state.StandalonePendingHeader = null;
+                AdoptStandaloneBlocks(state, standaloneFileHash);
                 state.HeaderReady = true;
                 state.Pass = 0;
                 state.Local = 0;
@@ -1507,6 +1600,15 @@ public sealed partial class FileWavCodec
                     return false;
                 }
 
+                if (!state.HeaderReady)
+                {
+                    var (decodedAny, acceptedAny) = DecodeStandaloneBlocksByAnchors(leftSamples, rightSamples, state, tuning);
+                    if (decodedAny)
+                    {
+                        return acceptedAny;
+                    }
+                }
+
                 var progressed = false;
                 var headerCandidates = new[]
                 {
@@ -1563,22 +1665,8 @@ public sealed partial class FileWavCodec
                             }
 
                             var expectedHash = blockHeader.AsSpan(24, 32).ToArray();
-                            var fileHashInBlockHeader = blockHeader.AsSpan(56, 64).ToArray();
-                            if (string.IsNullOrWhiteSpace(state.ReceivedFileHashHex))
-                            {
-                                state.ReceivedFileHashHex = Convert.ToHexString(fileHashInBlockHeader);
-                            }
-
-                            var blockHeaderIdentity = BuildBlockHeaderIdentityKey(blockIndex, expectedHash, fileHashInBlockHeader);
-                            var blockDataModulation = new byte[4]
-                            {
-                                blockHeader[8],
-                                blockHeader[9],
-                                blockHeader[10],
-                                blockHeader[11]
-                            };
-
                             var (blockSc, blockModulation) = ReadBlockDataModulation(blockHeader);
+                            BeginStandaloneBlock(state, blockHeader);
                             var blockDataOfdm = ResolveDataOfdmFor(blockSc, blockModulation);
                             var blockDataPunctureRate = ResolveDataPunctureRate(blockModulation);
                             var dataCursor = bhEnd;
@@ -1606,40 +1694,8 @@ public sealed partial class FileWavCodec
 
                             var payload = new byte[blockSize];
                             Buffer.BlockCopy(padded, 0, payload, 0, blockSize);
-                            var action = "ADD";
-                            if (blockIndex >= 0 && blockIndex <= int.MaxValue)
-                            {
-                                var idx = (int)blockIndex;
-                                if (state.BlockHeaderIdentityByIndex.TryGetValue(idx, out var knownIdentity))
-                                {
-                                    if (!string.Equals(knownIdentity, blockHeaderIdentity, StringComparison.Ordinal))
-                                    {
-                                        state.LastError =
-                                            $"BH-MISMATCH index={blockIndex} (fileHash+blockHash+blockNo mismatch)";
-                                        continue;
-                                    }
-
-                                    action = state.OrphanPayloadByHash.ContainsKey(blockHeaderIdentity)
-                                        ? "UPDATE"
-                                        : "ADD";
-                                }
-
-                                state.BlockHeaderIdentityByIndex[idx] = blockHeaderIdentity;
-                                state.BlockDataModulationByIndex[idx] = blockDataModulation;
-                                state.BlockExpectedHashByIndex[idx] = expectedHash;
-                                state.BlockSizeByIndex[idx] = blockSize;
-                                state.BlockBdOutcomeByIndex[idx] = true;
-                            }
-
-                            state.OrphanPayloadByHash[blockHeaderIdentity] = payload;
-                            state.OrphanDetailByHash[blockHeaderIdentity] =
-                                $"{action} BH+BD index={blockIndex} (fileHash+blockHash+blockNo)";
-                            state.OrphanDataModulationByHash[blockHeaderIdentity] = blockDataModulation.ToArray();
                             state.DataBlocksDecoded++;
-                            state.DataBlocksAccepted++;
-                            state.AcceptedBlockCount = state.OrphanPayloadByHash.Count;
-                            state.LastError =
-                                $"BH+BD-ONLY {action} index={blockIndex} key={blockHeaderIdentity[..Math.Min(12, blockHeaderIdentity.Length)]}";
+                            RegisterStandaloneBlock(state, blockHeader, payload);
 
                             warpedCursor = dataCursor;
                             logicalOffset = dataLogical;
@@ -1952,6 +2008,14 @@ public sealed partial class FileWavCodec
                             ApplyAdaptiveWowCorrectionPair();
                         }
 
+                        // 再受信中は前回の NG を外す（BH が失敗すれば MarkBlockError で NG に戻る）
+                        var clearedNgIndex = -1;
+                        if (state.BlockBdOutcomeByIndex.TryGetValue(expectedBlockIndex, out var previousOutcome) && !previousOutcome)
+                        {
+                            state.BlockBdOutcomeByIndex.Remove(expectedBlockIndex);
+                            clearedNgIndex = expectedBlockIndex;
+                        }
+
                         // BH 復号前にメーターを正しいブロックへ（同期探索中も進捗が見えるようにする）
                         PublishStatus(CoreFrameKind.Bh, expectedBlockIndex);
                         var blockHeader = DecodeHeaderPacketSyncedTryingGrids(
@@ -2014,6 +2078,13 @@ public sealed partial class FileWavCodec
                                 local = ownerLocal;
                                 expectedBlockIndex = ownerBlockIndex;
                             }
+                        }
+
+                        if (clearedNgIndex >= 0
+                            && clearedNgIndex != expectedBlockIndex
+                            && !state.BlockBdOutcomeByIndex.ContainsKey(clearedNgIndex))
+                        {
+                            state.BlockBdOutcomeByIndex[clearedNgIndex] = false;
                         }
 
                         if (ownerKnown)

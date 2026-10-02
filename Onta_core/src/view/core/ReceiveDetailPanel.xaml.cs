@@ -34,6 +34,8 @@ public partial class ReceiveDetailPanel : UserControl
     private DateTime _sourceUpdatedAtUtc;
     private int _builtBlockCount = -1;
     private bool _awaitingProgressReset;
+    private bool _historyBound;
+    private readonly HashSet<int> _coreNgBlocks = [];
 
     /// <summary>
     /// 受信詳細パネルを初期化します。
@@ -68,6 +70,30 @@ public partial class ReceiveDetailPanel : UserControl
         _totalRow = null;
         _builtBlockCount = -1;
         _awaitingProgressReset = true;
+        _historyBound = false;
+        _coreNgBlocks.Clear();
+    }
+
+    /// <summary>
+    /// FH 未受信のまま BH から受信し始めた既知ファイルの履歴を行へ出し、以降の受信で欠けたブロックを埋めていく表示にします。
+    /// </summary>
+    /// <param name="history">BH のファイルハッシュに一致した受信履歴。</param>
+    /// <remarks>受信ソース（入力デバイス／WAV）は今回の受信のものを残す。</remarks>
+    internal void BindKnownFileHistory(ReceiveHistoryEntry history)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        if (_historyBound)
+        {
+            return;
+        }
+
+        var sourcePath = _sourcePath;
+        ApplyHistory(history);
+        _sourcePath = sourcePath;
+        _lastCompletedSuccess = false;
+        _lastCompletionMessage = string.Empty;
+        _awaitingProgressReset = false;
+        _historyBound = true;
     }
 
     /// <summary>
@@ -249,6 +275,7 @@ public partial class ReceiveDetailPanel : UserControl
 
         // OK 判定は実受信ペイロード同期（SyncCapturedBlocks）に任せ、
         // ここでのエラー率ヒューリスティックでは Accepted にしない。
+        var heuristicErrorIndex = -1;
         if (frame == CoreFrameKind.Bd
             && currentBlock >= 0
             && currentBlock < _blockRows.Count
@@ -257,21 +284,38 @@ public partial class ReceiveDetailPanel : UserControl
             && !string.IsNullOrWhiteSpace(status.LastError))
         {
             SetBlockError(currentBlock, status.LastError);
+            heuristicErrorIndex = currentBlock;
         }
 
         for (var i = 0; i < _blockRows.Count; i++)
         {
-            if (_blockStates[i] == ReceiveBlockState.Accepted
-                || _blockStates[i] == ReceiveBlockState.Error)
+            var isCurrent = status.IsRunning
+                            && i == currentBlock
+                            && frame is CoreFrameKind.Bh or CoreFrameKind.Bd;
+
+            // NG ブロックの受信が始まった（コアが前回の NG を外した）→ 受信中表示へ戻してメーターを動かす
+            if (isCurrent
+                && _blockStates[i] == ReceiveBlockState.Error
+                && i != heuristicErrorIndex
+                && !_coreNgBlocks.Contains(i))
             {
-                // BD 処理済みはメーターを完了表示のまま維持する。
+                _blockStates[i] = ReceiveBlockState.Unknown;
+                _blockErrors[i] = string.Empty;
+                _blockRows[i].SetResult("-");
+            }
+
+            if (_blockStates[i] == ReceiveBlockState.Accepted)
+            {
                 _blockRows[i].SetProgressPercent(100);
                 continue;
             }
 
-            var isCurrent = status.IsRunning
-                            && i == currentBlock
-                            && frame is CoreFrameKind.Bh or CoreFrameKind.Bd;
+            if (_blockStates[i] == ReceiveBlockState.Error)
+            {
+                // NG はデータが無いのでメーターは 0%
+                _blockRows[i].SetProgressPercent(0);
+                continue;
+            }
 
             if (isCurrent)
             {
@@ -294,8 +338,10 @@ public partial class ReceiveDetailPanel : UserControl
             }
 
             // 送信順で現在より前のブロックは通過済み。ポーリング間隔で取りこぼしてもメーターを消さない。
+            // 履歴から行を出した再受信（FH 未受信）は途中から受けるので、送信順の前後で通過済みにしない。
             var ordinal = emissionOrder.Length > 0 ? Array.IndexOf(emissionOrder, i) : i;
             if (status.IsRunning
+                && !_historyBound
                 && currentOrdinal >= 0
                 && ordinal >= 0
                 && ordinal < currentOrdinal)
@@ -309,7 +355,8 @@ public partial class ReceiveDetailPanel : UserControl
             }
 
             // BH 受信済み（サイズが埋まっている）ブロックは進捗を 0 に戻さない。
-            if (!string.IsNullOrWhiteSpace(_blockRows[i].SizeText)
+            if (!_historyBound
+                && !string.IsNullOrWhiteSpace(_blockRows[i].SizeText)
                 && _blockRows[i].SizeText != "-")
             {
                 if (_blockRows[i].ProgressPercent < 20.0)
@@ -345,6 +392,12 @@ public partial class ReceiveDetailPanel : UserControl
             {
                 _totalRow.SetResult("NG");
                 _totalRow.SetProgressPercent(Math.Clamp(status.Progress.ProgressPercent, 0.0, 100.0));
+            }
+            else if (_historyBound && _blockStates.Length > 0)
+            {
+                // 履歴の受信済みブロックも含めた取得率
+                var accepted = _blockStates.Count(x => x == ReceiveBlockState.Accepted);
+                _totalRow.SetProgressPercent(100.0 * accepted / _blockStates.Length);
             }
             else
             {
@@ -974,6 +1027,7 @@ public partial class ReceiveDetailPanel : UserControl
     /// <param name="outcomes">ブロック番号 → true=OK / false=NG。</param>
     internal void SyncBlockBdOutcomes(IReadOnlyDictionary<int, bool>? outcomes)
     {
+        _coreNgBlocks.Clear();
         if (outcomes is null || outcomes.Count == 0 || _blockRows.Count == 0)
         {
             return;
@@ -994,8 +1048,9 @@ public partial class ReceiveDetailPanel : UserControl
             }
             else
             {
+                _coreNgBlocks.Add(index);
                 SetBlockError(index, "NG");
-                _blockRows[index].SetProgressPercent(100);
+                _blockRows[index].SetProgressPercent(0);
             }
         }
     }

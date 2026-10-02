@@ -10,6 +10,8 @@ namespace Onta.Core.Tests.Core;
 /// 1. 先頭から受信すると途中 FH 直後のブロックも含めて全ブロックを復元できる
 /// 2. 途中 FH から受信すると、そこから後ろのブロックだけを OK にし、未受信ブロックを NG にしない
 /// 3. FH 復号中に入力が大量に溜まっても先頭 FH を捨てずに全ブロックを復元できる
+/// 4. BH から受信を始めても FH を待たずにブロックを受け、途中 FH の確定時に取り込む
+/// 5. FH が来ないまま BH から受けたブロックは不明ブロックとして残り、既知ファイルなら画面用の進捗を出す
 /// </summary>
 [Collection(RealtimeTestCollection.Name)]
 public sealed class OntaTest16
@@ -80,6 +82,97 @@ public sealed class OntaTest16
     }
 
     /// <summary>
+    /// 4. FH を待たずに BLK-4 の BH から受信し、BLK-4〜15 を FH 無しで受け、途中 FH 確定時に取り込んで BLK-4〜17 を OK にすること。
+    /// 既知ファイルの照会は BH のファイルハッシュで呼ばれること。
+    /// </summary>
+    [Fact]
+    public void Live_FromBlockHeader_ReceivesBeforeFileHeader()
+    {
+        var codec = new FileWavCodec(Profile);
+        var payload = BuildPayload();
+        var (left, right, events) = Encode(codec, payload);
+        var start = FindBlockHeaderStart(events, blockOrdinal: 4);
+        var resolvedHashes = new List<string>();
+
+        var (decoded, state, stopped) = RunLive(
+            codec,
+            left,
+            right,
+            start,
+            configure: s => s.ResolveKnownFile = hash =>
+            {
+                resolvedHashes.Add(hash);
+                return new KnownReceiveFile("known.bin", payload.Length, 18);
+            });
+
+        Assert.True(stopped, "入力終了後もセッションが止まらない");
+        Assert.Null(decoded);
+        Assert.True(state.HeaderReady, "途中 FH が確定していない");
+        Assert.Equal(
+            Enumerable.Range(4, 14).Select(i => (i, true)).ToArray(),
+            state.BlockBdOutcomeByIndex.OrderBy(x => x.Key).Select(x => (x.Key, x.Value)).ToArray());
+        Assert.Equal(14, state.AcceptedBlockCount);
+        Assert.Empty(state.OrphanPayloadByHash);
+        var fileHash = Convert.ToHexString(Hash.ComputeSha512(payload));
+        Assert.Equal(new[] { fileHash }, resolvedHashes.Distinct().ToArray());
+    }
+
+    /// <summary>
+    /// 5. 途中 FH より後ろの BLK-17 の BH から受信すると、FH が来なくても BLK-17 を不明ブロックとして受け、画面用にファイル情報と BLK-17 の進捗を出すこと。
+    /// </summary>
+    [Fact]
+    public void Live_FromLastBlockHeader_RegistersUnknownBlockAndPublishesKnownFile()
+    {
+        var codec = new FileWavCodec(Profile);
+        var payload = BuildPayload();
+        var (left, right, events) = Encode(codec, payload);
+        var start = FindBlockHeaderStart(events, blockOrdinal: 17);
+        var lastFileHeader = events.FindLastIndex(x => x.Kind == TransmissionFrameKind.Fh);
+        var end = (int)events[lastFileHeader - 1].End;
+
+        var (decoded, state, _) = RunLive(
+            codec,
+            left,
+            right,
+            start,
+            configure: s => s.ResolveKnownFile = _ => new KnownReceiveFile("known.bin", payload.Length, 18),
+            stopBeforeTail: true,
+            end: end);
+
+        Assert.Null(decoded);
+        Assert.False(state.HeaderReady);
+        Assert.Equal(new[] { (17, true) }, state.BlockBdOutcomeByIndex.Select(x => (x.Key, x.Value)).ToArray());
+        var orphan = Assert.Single(state.OrphanPayloadByHash);
+        Assert.StartsWith("17:", orphan.Key, StringComparison.Ordinal);
+        Assert.Equal(payload.AsSpan(8192 * 17).ToArray(), orphan.Value);
+
+        var status = state.ReadExecutionStatus();
+        Assert.False(status.IsAnalyzing);
+        Assert.Equal("known.bin", status.FileName);
+        Assert.Equal(18, status.Progress.TotalBlockCount);
+        Assert.Equal(17, status.Progress.CurrentBlockIndex);
+    }
+
+    /// <summary>
+    /// 指定した送信順のブロックの BH 手前（直前フレームの終端）のサンプル位置を返します。
+    /// </summary>
+    /// <param name="events">送信フレームの種別と終端位置。</param>
+    /// <param name="blockOrdinal">何番目（0 始まり）の BH か。</param>
+    private static int FindBlockHeaderStart(List<(TransmissionFrameKind Kind, long End)> events, int blockOrdinal)
+    {
+        var count = 0;
+        for (var i = 1; i < events.Count; i++)
+        {
+            if (events[i].Kind == TransmissionFrameKind.Bh && count++ == blockOrdinal)
+            {
+                return (int)events[i - 1].End;
+            }
+        }
+
+        throw new InvalidOperationException($"BH #{blockOrdinal} が見つかりません。");
+    }
+
+    /// <summary>
     /// 17 ブロック＋端数（計 18 ブロック）の乱数ペイロードを作ります。
     /// </summary>
     private static byte[] BuildPayload()
@@ -138,6 +231,9 @@ public sealed class OntaTest16
     /// <param name="start">送信波形のうち受信を始めるサンプル位置。</param>
     /// <param name="burstFromSeconds">一度に流し込みを始める入力上の秒数。</param>
     /// <param name="burstSeconds">待たずに一度に流し込む秒数（受信処理の遅れの再現用）。0 なら常に一定速度。</param>
+    /// <param name="configure">開始前に段階デコード状態へ設定を加える処理（既知ファイル照会など）。</param>
+    /// <param name="stopBeforeTail">true なら入力終了を通知せず、流し終えて受信処理が落ち着いた時点で返す（ライブ受信の途中状態を見る）。</param>
+    /// <param name="end">送信波形のうち受信を終えるサンプル位置（負なら末尾まで）。指定時は後ろに 1 秒の雑音を足す。</param>
     /// <returns>復元できたファイル（未完了なら null）、最終の進捗状態、セッションが停止したか。</returns>
     private static (byte[]? Decoded, ProgressiveDecodeState State, bool Stopped) RunLive(
         FileWavCodec codec,
@@ -145,18 +241,22 @@ public sealed class OntaTest16
         Complex[] right,
         int start,
         int burstFromSeconds = 0,
-        int burstSeconds = 0)
+        int burstSeconds = 0,
+        Action<ProgressiveDecodeState>? configure = null,
+        bool stopBeforeTail = false,
+        int end = -1)
     {
         var rng = new Random(2);
         var lead = SampleRate;
-        var total = lead + left.Length - start;
+        var srcEnd = end < 0 ? left.Length : Math.Min(end, left.Length);
+        var total = lead + srcEnd - start + (end < 0 ? 0 : SampleRate);
         var inLeft = new Complex[total];
         var inRight = new Complex[total];
         for (var i = 0; i < total; i++)
         {
             var src = i - lead + start;
-            var l = src >= start && src < left.Length ? left[src].Real * 4 : 0.0;
-            var r = src >= start && src < right.Length ? right[src].Real * 4 : 0.0;
+            var l = src >= start && src < srcEnd ? left[src].Real * 4 : 0.0;
+            var r = src >= start && src < srcEnd ? right[src].Real * 4 : 0.0;
             inLeft[i] = new Complex(l + ((rng.NextDouble() - 0.5) * 0.001), 0);
             inRight[i] = new Complex(r + ((rng.NextDouble() - 0.5) * 0.001), 0);
         }
@@ -168,6 +268,7 @@ public sealed class OntaTest16
             DecodeRuntimeTuning.Default,
             pollInterval: TimeSpan.FromMilliseconds(100),
             minAttemptSeconds: 2);
+        configure?.Invoke(session.ProgressiveState);
         session.Start();
         var stopwatch = Stopwatch.StartNew();
         var burstBegin = burstFromSeconds * SampleRate;
@@ -197,6 +298,20 @@ public sealed class OntaTest16
             {
                 decoded = d;
             }
+        }
+
+        if (stopBeforeTail)
+        {
+            // 末尾は無音と雑音のみ。BD の復号を待ってから止める
+            var settle = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < settle && session.ProgressiveState.OrphanPayloadByHash.Count == 0)
+            {
+                Thread.Sleep(100);
+            }
+
+            Thread.Sleep(500);
+            session.Stop();
+            return (decoded, session.ProgressiveState, true);
         }
 
         session.NotifyInputCompleted();

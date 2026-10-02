@@ -68,6 +68,16 @@ internal sealed class PreambleAnchorDetector
     public bool LastPolarityInverted { get; private set; }
 
     /// <summary>
+    /// 直近に検出したアンカー直前の無変調区間の長さ（サンプル、概算）です。FH（1 秒）と BH（0.3 秒）の区別に使います。
+    /// </summary>
+    public int LastRunSamples { get; private set; }
+
+    /// <summary>
+    /// 走査済みとみなせる位置（バッファ先頭基準）です。追跡中の無変調区間があればその先頭までです。
+    /// </summary>
+    public int ScannedPosition => _runStart >= 0 ? Math.Min(_runStart, _scanPos) : _scanPos;
+
+    /// <summary>
     /// 検出器を初期化します。
     /// </summary>
     /// <param name="symbolSamples">無変調区間の繰り返し周期（ヘッダー OFDM 1 シンボル、CP 込み）。</param>
@@ -187,6 +197,7 @@ internal sealed class PreambleAnchorDetector
                     {
                         LastPeriod = period;
                         LastPolarityInverted = inverted;
+                        LastRunSamples = runLength;
                         anchor = SnapToSymbolPhase(end, symbolStart, period);
                         _scanPos += _hop;
                         return true;

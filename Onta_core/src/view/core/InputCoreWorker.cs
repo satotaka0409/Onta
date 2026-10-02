@@ -43,6 +43,11 @@ internal sealed class InputCoreWorker : IDisposable
     public event Action<string, string, int, DateTime?, DateTime?>? FileHeaderReady;
 
     /// <summary>
+    /// FH 未受信のまま受けた BH のファイルハッシュが受信履歴に一致したとき、その履歴を通知します（デコードスレッドから呼ばれます）。
+    /// </summary>
+    public event Action<ReceiveHistoryEntry>? KnownFileResolved;
+
+    /// <summary>
     /// 現在デコード実行中かどうかを返します。
     /// </summary>
     public bool IsRunning
@@ -169,6 +174,7 @@ internal sealed class InputCoreWorker : IDisposable
             {
                 FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount, createdAtUtc, updatedAtUtc);
             };
+            state.ResolveKnownFile = ResolveKnownReceiveFile;
 
             StartInputRecorderLocked(outDir, profile);
             var capture = new RealtimePcmCapture();
@@ -516,7 +522,46 @@ internal sealed class InputCoreWorker : IDisposable
         {
             FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount, createdAtUtc, updatedAtUtc);
         };
+        state.ResolveKnownFile = ResolveKnownReceiveFile;
         return state;
+    }
+
+    /// <summary>
+    /// ファイルハッシュに一致する受信履歴を探し、見つかれば <see cref="KnownFileResolved"/> で通知してファイル情報を返します。
+    /// </summary>
+    /// <param name="fileHashHex">BH のファイルハッシュ（SHA-512 16 進）。</param>
+    /// <returns>履歴上のファイル情報。未登録・読み込み失敗時は null。</returns>
+    private KnownReceiveFile? ResolveKnownReceiveFile(string fileHashHex)
+    {
+        ReceiveHistoryEntry? entry;
+        try
+        {
+            entry = HistoryService.LoadEntries(AppPaths.ReceiveHistoryFilePath)
+                .Where(e => e.Kind == HistoryEntryKind.Receive
+                            && e.BlockCount > 0
+                            && string.Equals(e.ContentHashHex, fileHashHex, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(e => e.ReceivedAtUtc)
+                .FirstOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (entry is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            KnownFileResolved?.Invoke(entry);
+        }
+        catch
+        {
+        }
+
+        return new KnownReceiveFile(entry.FileName, entry.FileSize, entry.BlockCount);
     }
 
     /// <summary>

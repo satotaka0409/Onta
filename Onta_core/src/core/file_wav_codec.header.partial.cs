@@ -57,13 +57,18 @@ public sealed partial class FileWavCodec
     /// <returns>走査位置を初期化済みの検出器。</returns>
     /// <remarks>最短区間長 0.8 秒で BH の無変調（0.3 秒）を除外する。FH は冒頭 3 秒・途中 1 秒ある。</remarks>
     internal PreambleAnchorDetector CreateAnchorDetector() =>
-        CreateHeaderPreambleDetector((_profile.SampleRate * 8) / 10, _profile.FileHeaderUnmodulatedSamples);
+        CreateHeaderPreambleDetector(FileHeaderAnchorMinRunSamples, _profile.FileHeaderUnmodulatedSamples);
+
+    /// <summary>
+    /// FH 手前の無変調区間（1 秒）とみなす最短長（サンプル）です。これより短い区間は BH 手前の無変調区間です。
+    /// </summary>
+    internal int FileHeaderAnchorMinRunSamples => (_profile.SampleRate * 8) / 10;
 
     /// <summary>
     /// BH 手前の無変調区間（0.3 秒）の終端＝BH 変調部の先頭を探す検出器を生成します。
     /// </summary>
     /// <returns>初期化済みの検出器。FH 手前の無変調区間も検出対象に含みます。</returns>
-    private PreambleAnchorDetector CreateBlockHeaderAnchorDetector() =>
+    internal PreambleAnchorDetector CreateBlockHeaderAnchorDetector() =>
         CreateHeaderPreambleDetector(_profile.BlockHeaderUnmodulatedSamples * 2 / 3, _profile.BlockHeaderUnmodulatedSamples);
 
     /// <summary>

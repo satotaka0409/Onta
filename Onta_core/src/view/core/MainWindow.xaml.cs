@@ -39,12 +39,14 @@ public partial class MainWindow : Window
         StreamPanel.RunningStateChanged += (_, _) => UpdateRootTabLock();
         PerformancePanel.RunningStateChanged += (_, _) => UpdateRootTabLock();
         _inputCoreWorker.FileHeaderReady += OnReceiveFileHeaderReady;
+        _inputCoreWorker.KnownFileResolved += OnReceiveKnownFileResolved;
         _progressPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _progressPollTimer.Tick += OnProgressPollTick;
         Closed += (_, _) =>
         {
             SaveMainSettings();
             _inputCoreWorker.FileHeaderReady -= OnReceiveFileHeaderReady;
+            _inputCoreWorker.KnownFileResolved -= OnReceiveKnownFileResolved;
             _inputCoreWorker.Dispose();
             StopAudioPlayback();
         };
@@ -233,6 +235,30 @@ public partial class MainWindow : Window
             ReceivePanel.SetFileInfo(fileName, fileSizeText, blockCount.ToString());
             ReceiveDetailPanel.ApplyFileHeader(fileName, fileSizeText, blockCount, createdAtUtc, updatedAtUtc);
             SaveReceiveHistoryIfChanged(force: false);
+            if (!_receiveDetailOpened)
+            {
+                _receiveDetailOpened = true;
+                BottomTabs.SelectedItem = ReceiveDetailTab;
+            }
+        });
+    }
+
+    /// <summary>
+    /// FH 未受信のまま受けた BH が受信履歴のファイルだったとき、履歴の受信詳細を出して欠けブロックの受信を表示できるようにします。
+    /// </summary>
+    /// <param name="history">ファイルハッシュが一致した受信履歴。</param>
+    private void OnReceiveKnownFileResolved(ReceiveHistoryEntry history)
+    {
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (_coreWorker.GetProgress().IsRunning || !_pollingReceive)
+            {
+                return;
+            }
+
+            var sizeText = history.FileSize > 0 ? $"{history.FileSize:N0} bytes" : "-";
+            ReceivePanel.SetFileInfo(history.FileName, sizeText, history.BlockCount.ToString());
+            ReceiveDetailPanel.BindKnownFileHistory(history);
             if (!_receiveDetailOpened)
             {
                 _receiveDetailOpened = true;
