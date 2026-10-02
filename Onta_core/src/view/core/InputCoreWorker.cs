@@ -33,6 +33,11 @@ internal sealed class InputCoreWorker : IDisposable
     public CoreExecutionStatusBoard SharedStatus => _sharedStatus;
 
     /// <summary>
+    /// 直近の <see cref="TryStartAudioDecode"/> で音声デバイスを開けなかったときの例外内容です（受信コア動作中や成功時は null）。
+    /// </summary>
+    public string? LastAudioStartError { get; private set; }
+
+    /// <summary>
     /// ファイルヘッダー（名前/サイズ/ブロック数）確定時に通知します。
     /// </summary>
     public event Action<string, string, int, DateTime?, DateTime?>? FileHeaderReady;
@@ -134,6 +139,7 @@ internal sealed class InputCoreWorker : IDisposable
 
         lock (_sync)
         {
+            LastAudioStartError = null;
             if (IsBusyLocked())
             {
                 return false;
@@ -200,6 +206,7 @@ internal sealed class InputCoreWorker : IDisposable
                 StopLiveLocked();
                 _liveMode = false;
                 _lastError = ex.Message;
+                LastAudioStartError = $"{ex.GetType().Name}: {ex.Message}";
                 _completionPending = true;
                 return false;
             }
@@ -798,6 +805,7 @@ internal sealed class InputCoreWorker : IDisposable
 
             var codec = new FileWavCodec(profile);
             var (leftSamples, rightSamples) = WavReader.ReadPcm16(wavPath);
+            (leftSamples, rightSamples, _) = InputSilenceGapRemover.RemoveGaps(leftSamples, rightSamples, profile.SampleRate);
             InputLowCutFilter.ApplyInPlace(leftSamples, profile.SampleRate);
             InputLowCutFilter.ApplyInPlace(rightSamples, profile.SampleRate);
             // テープから録った WAV は先頭の余白と速度ずれがあるため、FH 手前の無変調区間で揃えてから復号する

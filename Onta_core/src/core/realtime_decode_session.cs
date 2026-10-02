@@ -51,6 +51,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     private bool _inverted;
     private readonly InputLowCutFilter _lowCutLeft;
     private readonly InputLowCutFilter _lowCutRight;
+    private readonly InputSilenceGapRemover _gapRemover;
 
     /// <summary>
     /// デコードセッションを初期化します。
@@ -83,6 +84,7 @@ public sealed class RealtimeDecodeSession : IDisposable
         _anchorDetector = codec.CreateAnchorDetector();
         _lowCutLeft = new InputLowCutFilter(_sampleRate);
         _lowCutRight = new InputLowCutFilter(_sampleRate);
+        _gapRemover = new InputSilenceGapRemover(_sampleRate, _stereo);
     }
 
     /// <summary>
@@ -158,32 +160,8 @@ public sealed class RealtimeDecodeSession : IDisposable
                 }
             }
 
-            var inputLeft = left.ToArray();
-            var inputRight = _stereo ? right.ToArray() : Array.Empty<Complex>();
-            _lowCutLeft.ProcessInPlace(inputLeft);
-            _lowCutRight.ProcessInPlace(inputRight);
-
-            if (_resampler is not null)
-            {
-                _resampler.Process(inputLeft, inputRight, out var correctedLeft, out var correctedRight);
-                if (_inverted)
-                {
-                    NegateInPlace(correctedLeft);
-                    NegateInPlace(correctedRight);
-                }
-
-                AppendBufferLocked(correctedLeft, correctedRight);
-            }
-            else
-            {
-                if (_inverted)
-                {
-                    NegateInPlace(inputLeft);
-                    NegateInPlace(inputRight);
-                }
-
-                AppendBufferLocked(inputLeft, inputRight);
-            }
+            _gapRemover.Process(left, right, out var inputLeft, out var inputRight);
+            AppendFilteredLocked(inputLeft, inputRight);
 
             // FH 前の暴走蓄積を防ぐ（ライブ無信号時のみ。ファイル逐次は背圧で抑える）
             var maxPre = _sampleRate * MaxPreHeaderSeconds;
@@ -206,6 +184,43 @@ public sealed class RealtimeDecodeSession : IDisposable
     }
 
     /// <summary>
+    /// 無音を詰めた入力にローカット・速度補正・極性補正を掛けてバッファへ追記します（ロック保持中に呼びます）。
+    /// </summary>
+    /// <param name="inputLeft">L チャネルのサンプル列（その場で書き換えます）。</param>
+    /// <param name="inputRight">R チャネルのサンプル列（モノラル時は空。その場で書き換えます）。</param>
+    private void AppendFilteredLocked(Complex[] inputLeft, Complex[] inputRight)
+    {
+        if (inputLeft.Length == 0)
+        {
+            return;
+        }
+
+        _lowCutLeft.ProcessInPlace(inputLeft);
+        _lowCutRight.ProcessInPlace(inputRight);
+
+        if (_resampler is not null)
+        {
+            _resampler.Process(inputLeft, inputRight, out var correctedLeft, out var correctedRight);
+            if (_inverted)
+            {
+                NegateInPlace(correctedLeft);
+                NegateInPlace(correctedRight);
+            }
+
+            AppendBufferLocked(correctedLeft, correctedRight);
+            return;
+        }
+
+        if (_inverted)
+        {
+            NegateInPlace(inputLeft);
+            NegateInPlace(inputRight);
+        }
+
+        AppendBufferLocked(inputLeft, inputRight);
+    }
+
+    /// <summary>
     /// 入力側の供給が終了したことを通知します（WAV EOF 等）。
     /// </summary>
     public void NotifyInputCompleted()
@@ -213,6 +228,8 @@ public sealed class RealtimeDecodeSession : IDisposable
         ThrowIfDisposed();
         lock (_sync)
         {
+            _gapRemover.Flush(out var tailLeft, out var tailRight);
+            AppendFilteredLocked(tailLeft, tailRight);
             _inputCompleted = true;
             _postInputStallCount = 0;
             _lastPostInputCursor = _progressive.WarpedCursor;

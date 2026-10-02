@@ -131,6 +131,16 @@ public static class CoreViewText
     public static string ErrorReceiveStartFailed(string message) => T($"受信開始に失敗しました。\n{message}", $"Failed to start receiving.\n{message}");
 
     /// <summary>
+    /// 音声入力デバイスを開けなかったときのメッセージです。
+    /// </summary>
+    /// <param name="deviceName">入力デバイス名。</param>
+    /// <param name="message">例外内容。</param>
+    /// <returns>表示文字列。</returns>
+    public static string ErrorAudioInputStartFailed(string deviceName, string message) => T(
+        $"音声入力デバイス「{deviceName}」を開けませんでした。\n他のアプリ（録音ソフトなど）がデバイスを使用していないか確認してください。\n\n{message}",
+        $"Failed to open audio input device \"{deviceName}\".\nCheck that no other application (such as a recorder) is using the device.\n\n{message}");
+
+    /// <summary>
     /// 出力フォルダー作成失敗のメッセージを返します。
     /// </summary>
     /// <param name="message">エラー内容。</param>
@@ -145,8 +155,6 @@ public static class CoreViewText
     public static string MessageSelectWavInputFile => T("WAV入力ファイルを選択してください。", "Please select a WAV input file.");
     public static string MessageWavInputNotFound => T("WAV入力ファイルが見つかりません。", "WAV input file was not found.");
     public static string MessageReceiveCoreAlreadyRunning => T("受信コアは既に動作中です。", "Receive core is already running.");
-    public static string MessageReceiveCoreOrAudioStartFailed => T("受信コアは既に動作中、または音声デバイスの開始に失敗しました。", "Receive core is already running, or audio device failed to start.");
-
     /// <summary>
     /// 受信結果と出力先をまとめたメッセージを返します。
     /// </summary>

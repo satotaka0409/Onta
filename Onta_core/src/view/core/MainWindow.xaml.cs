@@ -370,12 +370,15 @@ public partial class MainWindow : Window
             ReceivePanel.SetReceiveRunning(false);
             SendPanel.SetInteractionEnabled(true);
             UpdateRootTabLock();
+            var startError = _inputCoreWorker.LastAudioStartError;
             MessageBox.Show(
                 this,
-                CoreViewText.MessageReceiveCoreOrAudioStartFailed,
+                startError is null
+                    ? CoreViewText.MessageReceiveCoreAlreadyRunning
+                    : CoreViewText.ErrorAudioInputStartFailed(ReceivePanel.AudioDeviceName, startError),
                 CoreViewText.AppName,
                 MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                startError is null ? MessageBoxImage.Information : MessageBoxImage.Error);
             return;
         }
 

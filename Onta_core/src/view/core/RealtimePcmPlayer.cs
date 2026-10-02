@@ -102,7 +102,9 @@ internal sealed class RealtimePcmPlayer : IDisposable
         _waveOut = new WaveOutEvent
         {
             DeviceNumber = deviceNumber,
-            DesiredLatency = 100
+            // 1 バッファ 100 ms × 4。短いと送信 PC の負荷で再生スレッドが遅れたとき 10 ms 単位の無音が挟まり、ファイル受信のブロックが崩れる
+            DesiredLatency = 400,
+            NumberOfBuffers = 4
         };
         _waveOut.Init(_buffer);
         _waveOut.Play();
