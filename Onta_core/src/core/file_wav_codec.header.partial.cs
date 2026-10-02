@@ -1,6 +1,7 @@
 ﻿using System.Buffers.Binary;
 using System.IO;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Onta.Core;
@@ -576,6 +577,17 @@ public sealed partial class FileWavCodec
             return false;
         }
 
+        // 候補位置を総当たりするため、I-Q は一旦ためて復号に成功した試行の分だけ画面へ出す
+        List<Complex>? iqPoints = statusBoard is null ? null : [];
+        List<byte>? iqGroups = statusBoard is null ? null : [];
+        Action<Complex[], byte[], int>? iqSink = iqPoints is null
+            ? null
+            : (symbols, groups, count) =>
+            {
+                iqPoints.AddRange(symbols.AsSpan(0, count));
+                iqGroups!.AddRange(groups.AsSpan(0, count));
+            };
+
         try
         {
             double[] llrs;
@@ -596,7 +608,8 @@ public sealed partial class FileWavCodec
                     ModulationScheme.Qpsk,
                     statusBoard,
                     onBlockProgress: null,
-                    captureIq: false);
+                    captureIq: false,
+                    iqSink: iqSink);
                 endCursor = cursor;
             }
             else
@@ -616,7 +629,8 @@ public sealed partial class FileWavCodec
                     ModulationScheme.Qpsk,
                     statusBoard,
                     onBlockProgress: null,
-                    captureIq: false);
+                    captureIq: false,
+                    iqSink: iqSink);
                 endCursor = cursor;
             }
 
@@ -647,12 +661,37 @@ public sealed partial class FileWavCodec
                 rsMetrics.PayloadCorrectionRate * 100.0,
                 frameKind,
                 CoreEccDecoderKind.ReedSolomon);
+            if (statusBoard is not null)
+            {
+                PublishHeaderIq(statusBoard, ofdm.ActiveSubcarriers, iqPoints!, iqGroups!);
+            }
+
             return true;
         }
         catch (Exception)
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// 復号に成功したヘッダーの等化後シンボルを I-Q 表示へ反映します（QPSK・直近のリング容量分）。
+    /// </summary>
+    /// <param name="statusBoard">I-Q の書き込み先。</param>
+    /// <param name="activeSubcarriers">ヘッダー部の有効サブキャリア数。</param>
+    /// <param name="points">等化後シンボル列。</param>
+    /// <param name="groups">各シンボルのサブキャリアグループ。</param>
+    private static void PublishHeaderIq(
+        CoreExecutionStatusBoard statusBoard,
+        int activeSubcarriers,
+        List<Complex> points,
+        List<byte> groups)
+    {
+        var skip = Math.Max(0, points.Count - CoreExecutionStatusBoard.DefaultIqCapacity);
+        statusBoard.BeginIqCapture(activeSubcarriers, ModulationScheme.Qpsk);
+        statusBoard.AppendIqFrame(
+            CollectionsMarshal.AsSpan(points)[skip..],
+            CollectionsMarshal.AsSpan(groups)[skip..]);
     }
 
     /// <summary>

@@ -1920,6 +1920,10 @@ public sealed partial class FileWavCodec
                         state.Local = local;
                         return NeedMoreOrFail();
                     }
+                    // BD 待ちで戻すときは、途中 FH を含むこのブロックの先頭まで戻す（BH 分だけでは途中 FH の途中から読み直して失敗する）
+                    var blockStartCursor = warpedCursor;
+                    var blockStartLogical = logicalOffset;
+                    var blockStartLocal = local;
                     try
                     {
                         if (local > 0 && (local % FileHeaderRepeatIntervalBlocks) == 0)
@@ -2001,6 +2005,17 @@ public sealed partial class FileWavCodec
                             }
                         }
 
+                        if (ownerKnown && ownerBlockIndex != expectedBlockIndex)
+                        {
+                            // 途中 FH から読み始めた／ブロックを丸ごと失った場合は、送信順の位置を BH の番号へ合わせる（未受信分を NG にしない・途中 FH の位置を保つ）
+                            var ownerLocal = Array.IndexOf(order, ownerBlockIndex);
+                            if (ownerLocal > local)
+                            {
+                                local = ownerLocal;
+                                expectedBlockIndex = ownerBlockIndex;
+                            }
+                        }
+
                         if (ownerKnown)
                         {
                             RegisterHashOwner(ownerBlockIndex, expectedHash);
@@ -2030,10 +2045,10 @@ public sealed partial class FileWavCodec
 
                         if (leftSamples.Length - warpedCursor < dataSamplesNeeded)
                         {
-                            warpedCursor = Math.Max(0, warpedCursor - passBhPacketSamples);
-                            logicalOffset = Math.Max(0, logicalOffset - passBhPacketSamples);
+                            warpedCursor = blockStartCursor;
+                            logicalOffset = blockStartLogical;
                             state.Pass = pass;
-                            state.Local = local;
+                            state.Local = blockStartLocal;
                             return NeedMoreOrFail();
                         }
 

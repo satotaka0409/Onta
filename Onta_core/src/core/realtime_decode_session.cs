@@ -46,6 +46,7 @@ public sealed class RealtimeDecodeSession : IDisposable
     private readonly int _fhDataOffset;
     private readonly int _fhModulatedSamples;
     private bool _anchored;
+    private bool _anchorAttempted;
     private int _anchorPos;
     private TapeSpeedResampler? _resampler;
     private bool _inverted;
@@ -164,8 +165,9 @@ public sealed class RealtimeDecodeSession : IDisposable
             AppendFilteredLocked(inputLeft, inputRight);
 
             // FH 前の暴走蓄積を防ぐ（ライブ無信号時のみ。ファイル逐次は背圧で抑える）
+            // アンカー取得後は FH 復号が長引いても捨てない（捨てると復号中の先頭 FH と進捗が消え、次の途中 FH まで受信が始まらない）
             var maxPre = _sampleRate * MaxPreHeaderSeconds;
-            if (!_inputCompleted && !_progressive.HeaderReady && _count > maxPre)
+            if (!_inputCompleted && !_anchored && !_progressive.HeaderReady && _count > maxPre)
             {
                 var drop = _count - (maxPre / 2);
                 DropFront(drop);
@@ -396,6 +398,10 @@ public sealed class RealtimeDecodeSession : IDisposable
 
                         progressive.StreamSampleBase = _streamBase;
                         _lastAttemptCount = _count;
+                        if (_anchored && !progressive.HeaderReady)
+                        {
+                            _anchorAttempted = true;
+                        }
                     }
                 }
 
@@ -442,6 +448,11 @@ public sealed class RealtimeDecodeSession : IDisposable
                             else if (progressive.HeaderReady && !inputDone)
                             {
                                 CompactLocked();
+                            }
+                            else if (inputDone)
+                            {
+                                // 入力終了後に失敗が続くときも最終試行へ進めて止める（途中 FH からの受信は末尾まで読んでも欠けが残る）
+                                _postInputStallCount++;
                             }
                         }
                         else
@@ -555,7 +566,9 @@ public sealed class RealtimeDecodeSession : IDisposable
                 return false;
             }
 
-            if (_count <= _anchorPos + _fhModulatedSamples + (_sampleRate * AnchorGiveUpSeconds))
+            // 一度も試さずに捨てない（受信処理が遅れて入力がまとめて届くと、試行前に猶予を超える）
+            if (!_anchorAttempted
+                || _count <= _anchorPos + _fhModulatedSamples + (_sampleRate * AnchorGiveUpSeconds))
             {
                 return true;
             }
@@ -605,6 +618,7 @@ public sealed class RealtimeDecodeSession : IDisposable
         _anchorDetector.Reset();
         _streamBase = 0;
         _anchored = true;
+        _anchorAttempted = false;
         _anchorPos = _fhDataOffset;
         _lastAttemptCount = 0;
         return IsFileHeaderBufferedLocked();

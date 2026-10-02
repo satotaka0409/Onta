@@ -544,7 +544,11 @@ internal static class ReceiveHistoryStore
             Blocks = blocks,
             Orphans = orphans
         };
-        return AdoptMatchingOrphans(merged);
+        merged = AdoptMatchingOrphans(merged);
+        // 再読み込みで欠けていたブロックだけ受信した場合も、統合後に全ブロックが揃えば完了にする
+        return merged.IsSuccess || merged.Kind != HistoryEntryKind.Receive
+            ? merged
+            : merged with { IsSuccess = HasAllBlocks(merged.Blocks, merged.BlockCount, merged.FileSize) };
     }
 
     /// <summary>

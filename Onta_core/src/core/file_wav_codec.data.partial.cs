@@ -803,6 +803,7 @@ public sealed partial class FileWavCodec
     /// <param name="statusBoard">IQ/FFT 可視化と進捗通知の出力先。</param>
     /// <param name="onBlockProgress">ブロック復調進捗通知コールバック。</param>
     /// <param name="captureIq">I-Q 可視化用に等化後シンボルを取り込むか。</param>
+    /// <param name="iqSink">等化後シンボルの受け取り先。指定時はステータスボードへ直接書かずこちらへ渡します。</param>
     /// <returns>復調したソフト LLR 列。</returns>
     private static double[] DemodulateDataSoftLlrsFromStream(
         OfdmGenerator ofdm,
@@ -818,18 +819,19 @@ public sealed partial class FileWavCodec
         ModulationScheme modulationScheme,
         CoreExecutionStatusBoard? statusBoard = null,
         Action<double>? onBlockProgress = null,
-        bool captureIq = true)
+        bool captureIq = true,
+        Action<Complex[], byte[], int>? iqSink = null)
     {
         statusBoard?.SetFftStereoMode(stereoSplit);
-        if (captureIq)
+        if (captureIq && iqSink is null)
         {
             statusBoard?.BeginIqCapture(ofdm.ActiveSubcarriers, modulationScheme);
         }
 
-        Action<Complex[], byte[], int>? onIqFrame = statusBoard is null || !captureIq
+        Action<Complex[], byte[], int>? onIqFrame = iqSink ?? (statusBoard is null || !captureIq
             ? null
             : (symbols, groups, count) =>
-                statusBoard.AppendIqFrame(symbols.AsSpan(0, count), groups.AsSpan(0, count));
+                statusBoard.AppendIqFrame(symbols.AsSpan(0, count), groups.AsSpan(0, count)));
 
         // 送信側と同じ実 PCM スペクトル（Hann+2048）で可視化する。
         Complex[]? fftWindow = null;

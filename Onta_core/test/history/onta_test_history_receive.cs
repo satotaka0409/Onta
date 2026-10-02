@@ -214,6 +214,7 @@ public sealed class OntaTestHistoryReceive
         Assert.True((bool)(ReadProperty(kept, "BlockComplete") ?? false), "完了済みブロックは後からのエラーで消えないこと");
         Assert.Equal(chunks[0], (byte[])ReadProperty(kept, "BlockData")!);
 
+        // 再読み込みで欠けていた BLK-1 だけを受信（単独では未完了）
         InvokeSaveReceive(
             scope.HistoryPath,
             CreateReceiveEntry(
@@ -223,9 +224,9 @@ public sealed class OntaTestHistoryReceive
                 fileName: "Sample2.txt",
                 fileSize: payload.Length,
                 blockCount: chunks.Length,
-                isSuccess: true,
+                isSuccess: false,
                 outputPath: string.Empty,
-                completionMessage: "受信完了",
+                completionMessage: "未完了",
                 blocks: [CreateCompleteBlock(1, chunks[1])],
                 orphans: Array.Empty<object>(),
                 receivedAtUtc: DateTime.UtcNow));
