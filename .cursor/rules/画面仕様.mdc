@@ -223,4 +223,5 @@ alwaysApply: true
 - 入力側は、ワウフラッター(左右)、エラー率グラフも進捗状況に加える
 - エラー率グラフに、誤り訂正の中間訂正率（ビタビ＝畳み込み / RS・ターボ）を色分けして表示する。値は訂正過程の訂正ビット数から求める（訂正後の残差 BER ではない）。
 - 解析中（FH ワウ推定などヘッダー確定前）はエラー率グラフの更新を止める。
+- ファイル画面の音声入力受信中は、キャプチャした入力（44.1 kHz・ローカット前）を出力フォルダーへ `Onta_input_yyyyMMdd_HHmmss.wav` として保存する（受信不良の解析用。スタートから停止／完了まで）
 - API: `CoreExecutionStatusBoard.Read()` / `InputCoreWorker.SharedStatus` / `OutputCoreWorker.SharedProgress`

@@ -16,6 +16,9 @@ internal sealed class InputCoreWorker : IDisposable
     private Task? _worker;
     private RealtimeDecodeSession? _liveSession;
     private RealtimePcmCapture? _capture;
+    /// <summary>音声入力の受信音声を保存する WAV ライター（キャプチャスレッドから書き込むため専用ロックで保護）。</summary>
+    private WavWriter.StreamingPcm16Writer? _inputRecorder;
+    private readonly object _inputRecorderSync = new();
     private string? _lastDecodedPath;
     private byte[]? _decodedBytes;
     private bool _completionPending;
@@ -161,11 +164,13 @@ internal sealed class InputCoreWorker : IDisposable
                 FileHeaderReady?.Invoke(fileName, $"{fileSize:N0} bytes", blockCount, createdAtUtc, updatedAtUtc);
             };
 
+            StartInputRecorderLocked(outDir, profile);
             var capture = new RealtimePcmCapture();
             capture.SamplesAvailable += (left, right) =>
             {
                 try
                 {
+                    WriteInputRecorder(left, right);
                     session.AppendSamples(left, right);
                 }
                 catch (Exception ex)
@@ -548,6 +553,76 @@ internal sealed class InputCoreWorker : IDisposable
 
         _capture = null;
         _liveSession = null;
+        StopInputRecorder();
+    }
+
+    /// <summary>
+    /// 音声入力の受信音声を出力フォルダへ WAV で保存し始めます（受信不良の解析用）。
+    /// </summary>
+    /// <param name="outputDirectory">保存先フォルダ。</param>
+    /// <param name="profile">サンプリング周波数とチャンネル構成の取得元。</param>
+    private void StartInputRecorderLocked(string outputDirectory, FileWavCodecProfile profile)
+    {
+        StopInputRecorder();
+        var path = Path.Combine(outputDirectory, $"Onta_input_{DateTime.Now:yyyyMMdd_HHmmss}.wav");
+        try
+        {
+            var recorder = WavWriter.CreateStreamingPcm16(path, profile.SampleRate, 1.0, profile.ChannelMode);
+            lock (_inputRecorderSync)
+            {
+                _inputRecorder = recorder;
+            }
+        }
+        catch
+        {
+            // 保存できなくても受信は続ける
+        }
+    }
+
+    /// <summary>
+    /// キャプチャしたサンプルを受信音声 WAV へ追記します。
+    /// </summary>
+    /// <param name="left">左チャネルのサンプル列。</param>
+    /// <param name="right">右チャネルのサンプル列（モノラルデバイスでは空）。</param>
+    private void WriteInputRecorder(System.Numerics.Complex[] left, System.Numerics.Complex[] right)
+    {
+        lock (_inputRecorderSync)
+        {
+            if (_inputRecorder is null)
+            {
+                return;
+            }
+
+            try
+            {
+                _inputRecorder.WriteChunk(left, right.Length == left.Length ? right : left);
+            }
+            catch
+            {
+                _inputRecorder.Dispose();
+                _inputRecorder = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 受信音声 WAV のヘッダーを確定して閉じます。
+    /// </summary>
+    private void StopInputRecorder()
+    {
+        lock (_inputRecorderSync)
+        {
+            try
+            {
+                _inputRecorder?.Dispose();
+            }
+            catch
+            {
+                // ignore
+            }
+
+            _inputRecorder = null;
+        }
     }
 
     /// <summary>
