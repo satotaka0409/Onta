@@ -409,15 +409,37 @@ public partial class StreamPanel : UserControl
     }
 
     /// <summary>
-    /// 入力ファイルパスを表示し、ファイル入力モードに切り替えます。
+    /// 入力ファイルパスを表示し、ファイル入力モードに切り替えます。曲タイトルには拡張子を除いたファイル名を入れます。
     /// </summary>
     /// <param name="path">WAV / FLAC / MP3 のパス。</param>
     private void ApplyTxWavFile(string path)
     {
         _txWavPath = path;
         SetTxWavPathBoxes(_txWavPath);
+        ApplyTitleFromFileName(path);
         TxWavRadio.IsChecked = true;
         UpdateTxInputModeUi();
+    }
+
+    /// <summary>
+    /// 曲タイトル欄へ、入力ファイル名から拡張子を除いた部分を入れます。
+    /// </summary>
+    /// <param name="path">入力ファイルのパス。</param>
+    private void ApplyTitleFromFileName(string path)
+    {
+        var title = System.IO.Path.GetFileNameWithoutExtension(path);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return;
+        }
+
+        // MaxLength は手入力にしか効かないので、コードから入れるときは自分で切る
+        if (TxTitleBox.MaxLength > 0 && title.Length > TxTitleBox.MaxLength)
+        {
+            title = title[..TxTitleBox.MaxLength];
+        }
+
+        TxTitleBox.Text = title;
     }
 
     /// <summary>

@@ -6,22 +6,34 @@ using Xunit;
 namespace Onta.Core.Tests.History;
 
 /// <summary>
-/// 履歴画面スクリーンショット用のダミーデータを Onta_history.bin に作成します。
+/// 履歴画面スクリーンショット用のダミーデータを作成します。
 /// </summary>
+/// <remarks>
+/// 通常のテスト実行では一時フォルダーへ作成し、アプリの Onta_history.bin には触れません。
+/// 環境変数 <c>ONTA_HISTORY_SHOT=1</c> のときだけ、アプリの Onta_history.bin をダミーデータで置き換えます（バックアップは作りません）。
+/// </remarks>
 public sealed class HistoryShotDataGenerator
 {
+    /// <summary>アプリの履歴ファイルへ書き込むときに立てる環境変数。</summary>
+    private const string WriteAppHistoryVariable = "ONTA_HISTORY_SHOT";
+
+    /// <summary>
+    /// 送信 2 件・受信 3 件（完了・未完了・不明ブロック）のダミー履歴を作成します。
+    /// </summary>
     [Fact]
     public void CreateHistoryShotData()
     {
         var root = ResolveRepoRoot();
-        var historyPath = Path.Combine(root, "Onta_history.bin");
-        var outDir = Path.Combine(root, "out_files");
+        var writeAppHistory = Environment.GetEnvironmentVariable(WriteAppHistoryVariable) == "1";
+        var historyDir = writeAppHistory
+            ? root
+            : Path.Combine(Path.GetTempPath(), "onta_history_shot", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(historyDir);
+        var historyPath = Path.Combine(historyDir, "Onta_history.bin");
+        var outDir = Path.Combine(historyDir, "out_files");
         Directory.CreateDirectory(outDir);
-
         if (File.Exists(historyPath))
         {
-            var backup = Path.Combine(root, $"Onta_history.backup_{DateTime.Now:yyyyMMdd_HHmmss}.bin");
-            File.Copy(historyPath, backup, overwrite: false);
             File.Delete(historyPath);
         }
 
@@ -86,6 +98,10 @@ public sealed class HistoryShotDataGenerator
 
         Assert.True(File.Exists(historyPath));
         Assert.True(HistoryService.LoadEntries(historyPath).Count >= 5);
+        if (!writeAppHistory)
+        {
+            Directory.Delete(historyDir, recursive: true);
+        }
     }
 
     private static ReceiveHistoryEntry ReceiveEntry(
