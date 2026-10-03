@@ -12,6 +12,7 @@ namespace Onta.View.Stream;
 /// </summary>
 /// <remarks>
 /// 受信 PCM の FFT、復調したパケットの I-Q とビタビ中間訂正率を共有ボード（<see cref="SharedStatus"/>）へ書き込みます。
+/// 復調はこのワーカーのスレッド、Opus 復号と再生は <see cref="StreamPlaybackWorker"/> のスレッドで行い、復調の遅れが音切れに直結しないようにします。
 /// </remarks>
 internal sealed class StreamRxWorker : IDisposable
 {
@@ -24,7 +25,7 @@ internal sealed class StreamRxWorker : IDisposable
     private const int PlaybackToleranceFrames = PlaybackSampleRate / 5;
     /// <summary>この量（6 秒）を超えて溜まったら届いた音声を捨てる（微調整が追いつかないほど溜まったときの保険）。</summary>
     private const int PlaybackMaxBufferedFrames = PlaybackSampleRate * 6;
-    /// <summary>再生キューの容量。上限まで溜まった状態で無音の先積みと 1 回分の復号音声を足しても、受信ループが空き待ちで止まらない大きさ。</summary>
+    /// <summary>再生キューの容量。上限まで溜まった状態で無音の先積みと 1 回分の復号音声を足しても、再生スレッドが空き待ちで止まらない大きさ。</summary>
     private static readonly TimeSpan PlaybackQueueDuration = TimeSpan.FromSeconds(10);
 
     private readonly object _sync = new();
@@ -219,6 +220,7 @@ internal sealed class StreamRxWorker : IDisposable
         _status.SetFftStereoMode(true);
         RealtimePcmCapture? capture = null;
         RealtimePcmPlayer? player = null;
+        StreamPlaybackWorker? playback = null;
         StreamRxPipeline? pipeline = null;
         try
         {
@@ -226,10 +228,8 @@ internal sealed class StreamRxWorker : IDisposable
 
             player = new RealtimePcmPlayer();
             player.Start(settings.OutputDevice, PlaybackSampleRate, ChannelMode.Stereo, settings.OutputVolume, PlaybackQueueDuration);
-            var playing = player;
-            pipeline.Playout.BufferedFrames = () => playing.BufferedSampleFrames;
-            pipeline.Playout.TargetFrames = PlaybackTargetFrames;
-            pipeline.Playout.ToleranceFrames = PlaybackToleranceFrames;
+            playback = new StreamPlaybackWorker(player, PlaybackSampleRate, PlaybackTargetFrames, PlaybackToleranceFrames, PlaybackMaxBufferedFrames);
+            playback.Start();
             lock (_sync)
             {
                 _player = player;
@@ -267,8 +267,11 @@ internal sealed class StreamRxWorker : IDisposable
 
                 PublishFft(item.Value.L, item.Value.R);
                 pipeline.PushCapture(item.Value.L, item.Value.R);
-                var decoded = pipeline.Pump(out var statusMsg);
-                PlayDecoded(player, decoded);
+                playback.Enqueue(pipeline.PumpPackets(out var statusMsg));
+                if (playback.Fault is { } fault)
+                {
+                    throw new InvalidOperationException(fault.Message, fault);
+                }
 
                 lock (_sync)
                 {
@@ -317,53 +320,10 @@ internal sealed class StreamRxWorker : IDisposable
             }
 
             capture?.Dispose();
+            playback?.Dispose();
             player?.Dispose();
             pipeline?.Dispose();
         }
-    }
-
-    /// <summary>
-    /// 復号した Opus フレームを再生キューへ積みます。充填量の微調整はパイプラインの <see cref="StreamPlayoutRegulator"/> が済ませており、
-    /// ここでは受信ループを止めないよう、それでも溜まりすぎたときだけ届いた分を捨てます。
-    /// </summary>
-    /// <param name="player">再生先。</param>
-    /// <param name="frames">復号した PCM（48 kHz ステレオ）。</param>
-    private static void PlayDecoded(RealtimePcmPlayer player, List<(double[] Left, double[] Right)> frames)
-    {
-        var total = 0;
-        foreach (var (l, _) in frames)
-        {
-            total += l.Length;
-        }
-
-        if (total == 0)
-        {
-            return;
-        }
-
-        // キューを丸ごと消すと上限分（6 秒）が一度に飛ぶので、今回届いた分だけを捨てる
-        var buffered = player.BufferedSampleFrames;
-        if (buffered > PlaybackMaxBufferedFrames)
-        {
-            return;
-        }
-
-        var left = new Complex[total];
-        var right = new Complex[total];
-        var offset = 0;
-        foreach (var (l, r) in frames)
-        {
-            var n = Math.Min(l.Length, r.Length);
-            for (var i = 0; i < n; i++)
-            {
-                left[offset + i] = new Complex(l[i], 0.0);
-                right[offset + i] = new Complex(r[i], 0.0);
-            }
-
-            offset += l.Length;
-        }
-
-        player.AddSamples(left, right);
     }
 
     /// <summary>

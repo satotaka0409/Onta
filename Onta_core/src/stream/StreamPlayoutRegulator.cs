@@ -18,10 +18,15 @@ public sealed class StreamPlayoutRegulator : IDisposable
     /// <summary>調整のあと次の調整までに挟む復号フレーム数。1 回の調整は 20 ms なので、速度の変化は最大 20 ms / 100 ms に収まる。</summary>
     public const int DefaultAdjustIntervalFrames = 5;
 
+    /// <summary>復調が遅れてフレームが届かない間に PLC で埋める上限（20 フレーム = 0.4 秒）。長く続けると不自然な音が続くため、それ以降は無音にする。</summary>
+    public const int DefaultMaxStallConcealFrames = 20;
+
     private readonly OpusDecoder _decoder;
     private readonly int _frameSamples;
     private bool _primed;
     private int _sinceAdjust;
+    private int _stallFrames;
+    private int _stallCredit;
     private bool _disposed;
 
     /// <summary>
@@ -64,6 +69,12 @@ public sealed class StreamPlayoutRegulator : IDisposable
     /// <summary>失われたパケットの区間を埋めた PLC フレーム数。</summary>
     public int ConcealedFrames { get; private set; }
 
+    /// <summary>復調が遅れてフレームが届かない間に PLC で埋められる上限フレーム数。</summary>
+    public int MaxStallConcealFrames { get; set; } = DefaultMaxStallConcealFrames;
+
+    /// <summary>復調の遅れ（フレームが届かない間）を埋めた PLC フレーム数。</summary>
+    public int StallConcealedFrames { get; private set; }
+
     /// <summary>
     /// 1 パケット分の Opus フレームを復号し、充填量に応じて PLC の差し込み・2 フレームの結合を行って output へ追加します。
     /// </summary>
@@ -77,6 +88,8 @@ public sealed class StreamPlayoutRegulator : IDisposable
             return;
         }
 
+        _stallFrames = 0;
+        _stallCredit = 0;
         PrefillOnUnderrun(output);
         (double[] Left, double[] Right)? held = null;
         foreach (var frame in frames)
@@ -121,12 +134,16 @@ public sealed class StreamPlayoutRegulator : IDisposable
 
     /// <summary>
     /// 失われたパケットの区間を PLC フレームで埋めます。まだ 1 フレームも復号していなければ何もしません。
+    /// 直前の復調の遅れで <see cref="ConcealStall"/> が埋めた分は、同じ区間を二重に埋めないよう差し引きます。
     /// </summary>
     /// <param name="frameCount">埋めるフレーム数。</param>
     /// <param name="output">未再生の出力。</param>
     public void ConcealLost(int frameCount, List<(double[] Left, double[] Right)> output)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        var credit = Math.Min(Math.Max(0, frameCount), _stallCredit);
+        _stallCredit -= credit;
+        frameCount -= credit;
         if (!_primed || frameCount <= 0)
         {
             return;
@@ -140,6 +157,26 @@ public sealed class StreamPlayoutRegulator : IDisposable
                 ConcealedFrames++;
             }
         }
+    }
+
+    /// <summary>
+    /// 復調が遅れてフレームが届かない間、PLC で 1 フレーム埋めます。
+    /// 次にフレームが届くまでに <see cref="MaxStallConcealFrames"/> を超えては埋めず、まだ 1 フレームも復号していなければ何もしません。
+    /// </summary>
+    /// <param name="output">追加先。</param>
+    /// <returns>埋めたら true。</returns>
+    public bool ConcealStall(List<(double[] Left, double[] Right)> output)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_primed || _stallFrames >= MaxStallConcealFrames || !Conceal(output))
+        {
+            return false;
+        }
+
+        _stallFrames++;
+        _stallCredit++;
+        StallConcealedFrames++;
+        return true;
     }
 
     /// <summary>

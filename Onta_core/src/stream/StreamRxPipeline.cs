@@ -19,6 +19,13 @@ public sealed record StreamRxPacketReport(
     byte[] IqGroups);
 
 /// <summary>
+/// 受理した 1 パケット分の Opus フレーム（未復号）と、その直前に失われたフレーム数です。
+/// </summary>
+/// <param name="LostFrames">直前に失われたパケットの分として PLC で埋めるフレーム数。</param>
+/// <param name="Frames">パケットが運ぶ Opus フレーム列。</param>
+public sealed record StreamRxAudioPacket(int LostFrames, IReadOnlyList<byte[]> Frames);
+
+/// <summary>
 /// 再生（OFDM→パケット→Opus→PCM）の受信状態です。
 /// </summary>
 /// <remarks>
@@ -93,7 +100,8 @@ public sealed class StreamRxPipeline : IDisposable
     private const int MaxConcealPackets = 2;
 
     private readonly StreamMetaAssembler _meta = new();
-    private readonly StreamPlayoutRegulator _playout;
+    private readonly int _decodedSampleRate;
+    private StreamPlayoutRegulator? _playout;
     private readonly int _sampleRate;
     private readonly int _preambleSamples;
     private readonly List<Complex> _iqPoints = new(DefaultIqPointsPerPacket);
@@ -128,7 +136,7 @@ public sealed class StreamRxPipeline : IDisposable
     {
         _sampleRate = Math.Max(1, sampleRate);
         _preambleSamples = StreamConstants.PreambleSamples(_sampleRate);
-        _playout = new StreamPlayoutRegulator(decodedSampleRate > 0 ? decodedSampleRate : _sampleRate);
+        _decodedSampleRate = decodedSampleRate > 0 ? decodedSampleRate : _sampleRate;
         _leftBuf = new Complex[_sampleRate];
         _rightBuf = new Complex[_sampleRate];
         _power = new double[_sampleRate + 1];
@@ -137,9 +145,6 @@ public sealed class StreamRxPipeline : IDisposable
 
     /// <summary>メタアセンブラ。</summary>
     public StreamMetaAssembler Meta => _meta;
-
-    /// <summary>Opus 復号と再生バッファ充填量に合わせた長さ調整（PLC 差し込み・フレーム結合）。</summary>
-    public StreamPlayoutRegulator Playout => _playout;
 
     /// <summary>検出中の速度 ID。</summary>
     public StreamModeId? DetectedModeId => _modeId;
@@ -227,18 +232,42 @@ public sealed class StreamRxPipeline : IDisposable
     }
 
     /// <summary>
-    /// バッファから揃ったパケットを可能な限り取り出し、復号した PCM を返します。
+    /// バッファから揃ったパケットを可能な限り取り出し、復号した PCM を返します（失ったパケットは PLC で埋める）。
     /// </summary>
     /// <param name="status">速度検出・ストリーム切替・同期喪失などの状態文言（無ければ null）。</param>
     /// <returns>復号した Opus フレームごとの PCM。</returns>
     public List<(double[] Left, double[] Right)> Pump(out string? status)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        status = null;
         var pcmOut = new List<(double[] Left, double[] Right)>();
-        if (_count < _headerCodec.HeaderSectionSamples + TailMargin)
+        var packets = PumpPackets(out status);
+        if (packets.Count == 0)
         {
             return pcmOut;
+        }
+
+        _playout ??= new StreamPlayoutRegulator(_decodedSampleRate);
+        foreach (var packet in packets)
+        {
+            _playout.ConcealLost(packet.LostFrames, pcmOut);
+            _playout.Decode(packet.Frames, pcmOut);
+        }
+
+        return pcmOut;
+    }
+
+    /// <summary>
+    /// バッファから揃ったパケットを可能な限り取り出し、Opus フレームを復号せずに返します（復号は再生側のスレッドで行う）。
+    /// </summary>
+    /// <param name="status">速度検出・ストリーム切替・同期喪失などの状態文言（無ければ null）。</param>
+    /// <returns>受理したパケットごとの Opus フレームと、直前に失われたフレーム数。</returns>
+    public List<StreamRxAudioPacket> PumpPackets(out string? status)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        status = null;
+        var audio = new List<StreamRxAudioPacket>();
+        if (_count < _headerCodec.HeaderSectionSamples + TailMargin)
+        {
+            return audio;
         }
 
         var left = _leftBuf;
@@ -331,15 +360,14 @@ public sealed class StreamRxPipeline : IDisposable
             }
 
             var frames = StreamOpusPayload.Unpack(packet.Payload);
-            _playout.ConcealLost(CountLostFrames(packetStart, speed), pcmOut);
-            _playout.Decode(frames, pcmOut);
+            audio.Add(new StreamRxAudioPacket(CountLostFrames(packetStart, speed), frames));
             _lastPacketStart = packetStart;
             _lastPacketFrames = frames.Count;
         }
 
         Consume(Math.Min(cursor, length));
 
-        return pcmOut;
+        return audio;
     }
 
     /// <summary>
@@ -858,6 +886,6 @@ public sealed class StreamRxPipeline : IDisposable
         }
 
         _disposed = true;
-        _playout.Dispose();
+        _playout?.Dispose();
     }
 }

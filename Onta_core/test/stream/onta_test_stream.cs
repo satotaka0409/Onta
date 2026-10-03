@@ -695,6 +695,38 @@ public sealed class OntaTestStream
     }
 
     /// <summary>
+    /// 復調の遅れでフレームが届かない間の PLC は上限で止まり、その後に失ったパケットを埋めるときは遅れの間に埋めた分を差し引くこと。
+    /// </summary>
+    [Fact]
+    public void PlayoutRegulator_Stall_ConcealsUpToLimitAndCreditsLostFrames()
+    {
+        var frames = EncodeSineFrames(10);
+        using var regulator = new StreamPlayoutRegulator(Onta.Stream.Opus.OpusEncoder.OpusSampleRate) { MaxStallConcealFrames = 4 };
+        var output = new List<(double[] Left, double[] Right)>();
+        Assert.False(regulator.ConcealStall(output));
+
+        regulator.Decode(frames, output);
+        output.Clear();
+        var stalled = 0;
+        while (regulator.ConcealStall(output))
+        {
+            stalled++;
+        }
+
+        Assert.Equal(4, stalled);
+        Assert.Equal(4, output.Count);
+
+        output.Clear();
+        regulator.ConcealLost(10, output);
+        Assert.Equal(6, regulator.ConcealedFrames);
+        Assert.Equal(6, output.Count);
+
+        regulator.Decode(frames, output);
+        output.Clear();
+        Assert.True(regulator.ConcealStall(output));
+    }
+
+    /// <summary>
     /// 1 kHz 正弦波を Opus（48 kHz・20 ms）でエンコードしたフレーム列を返します。
     /// </summary>
     /// <param name="count">フレーム数。</param>
