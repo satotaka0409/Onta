@@ -48,6 +48,13 @@ public sealed class StreamPlayoutRegulator : IDisposable
     /// </summary>
     public Func<int>? BufferedFrames { get; set; }
 
+    /// <summary>
+    /// 入力には取り込み済みで、まだ復調していない音声の長さ（片チャネル・出力サンプリング周波数）。
+    /// 復調が入力に遅れている間は、その分の音声がすぐ続けて届くので、充填量に含めて無音の先詰めと詰め（早回し）を控える。
+    /// 復号するパケットごとに設定する。
+    /// </summary>
+    public int PendingFrames { get; set; }
+
     /// <summary>目標充填量（片チャネルのサンプル数）。</summary>
     public int TargetFrames { get; set; }
 
@@ -90,7 +97,7 @@ public sealed class StreamPlayoutRegulator : IDisposable
 
         _stallFrames = 0;
         _stallCredit = 0;
-        PrefillOnUnderrun(output);
+        PrefillOnUnderrun(output, frames.Count * _frameSamples);
         (double[] Left, double[] Right)? held = null;
         foreach (var frame in frames)
         {
@@ -110,7 +117,7 @@ public sealed class StreamPlayoutRegulator : IDisposable
                 continue;
             }
 
-            var level = Level(output);
+            var level = Level(output) + PendingFrames;
             var canAdjust = BufferedFrames != null && _sinceAdjust >= AdjustIntervalFrames;
             if (canAdjust && level > TargetFrames + ToleranceFrames)
             {
@@ -149,7 +156,7 @@ public sealed class StreamPlayoutRegulator : IDisposable
             return;
         }
 
-        PrefillOnUnderrun(output);
+        PrefillOnUnderrun(output, frameCount * _frameSamples);
         for (var i = 0; i < frameCount; i++)
         {
             if (Conceal(output))
@@ -197,16 +204,19 @@ public sealed class StreamPlayoutRegulator : IDisposable
 
     /// <summary>
     /// 再生バッファがほぼ空（開始直後・長い途切れの後）なら、目標充填量まで無音を先に詰めます。
+    /// 復調待ちの音声（<see cref="PendingFrames"/>）はすぐ届くので、その分は詰めません。
+    /// これから復号するパケットの半分も差し引き、復号後の充填量が目標の上下に振れるようにします（目標まで詰めてから足すと、毎回目標を超えて詰めが入る）。
     /// </summary>
     /// <param name="output">未再生の出力。</param>
-    private void PrefillOnUnderrun(List<(double[] Left, double[] Right)> output)
+    /// <param name="incomingFrames">これから復号するパケットのサンプル数（片チャネル）。</param>
+    private void PrefillOnUnderrun(List<(double[] Left, double[] Right)> output, int incomingFrames)
     {
         if (!IsStarved(output))
         {
             return;
         }
 
-        var silence = TargetFrames - Level(output);
+        var silence = TargetFrames - Level(output) - PendingFrames - (incomingFrames / 2);
         if (silence > 0)
         {
             output.Insert(0, (new double[silence], new double[silence]));

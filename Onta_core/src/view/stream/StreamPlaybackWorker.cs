@@ -38,6 +38,7 @@ internal sealed class StreamPlaybackWorker : IDisposable
     private readonly Queue<StreamRxAudioPacket> _queue = new();
     private readonly RealtimePcmPlayer _player;
     private readonly StreamPlayoutRegulator _regulator;
+    private readonly int _sampleRate;
     private readonly int _maxBufferedFrames;
     private readonly int _stallThresholdFrames;
     private readonly Thread _thread;
@@ -56,6 +57,7 @@ internal sealed class StreamPlaybackWorker : IDisposable
     public StreamPlaybackWorker(RealtimePcmPlayer player, int sampleRate, int targetFrames, int toleranceFrames, int maxBufferedFrames)
     {
         _player = player;
+        _sampleRate = Math.Max(1, sampleRate);
         _maxBufferedFrames = maxBufferedFrames;
         // 復号時の無音先詰め（目標の 1/4 未満）より上で PLC を始め、先詰めと取り合わないようにする
         _stallThresholdFrames = targetFrames / 3;
@@ -140,6 +142,7 @@ internal sealed class StreamPlaybackWorker : IDisposable
                         }
 
                         skippedSeconds = 0.0;
+                        _regulator.PendingFrames = (int)Math.Round(packet.LagSeconds * _sampleRate);
                         _regulator.ConcealLost(packet.LostFrames, output);
                         _regulator.Decode(packet.Frames, output);
                     }

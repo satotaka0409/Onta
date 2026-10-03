@@ -789,7 +789,7 @@ public sealed class OntaTestStream
         Assert.Empty(output);
 
         regulator.Decode(frames, output);
-        Assert.Equal(regulator.TargetFrames, output[0].Left.Length);
+        Assert.Equal(regulator.TargetFrames - (frames.Count * regulator.FrameSamples / 2), output[0].Left.Length);
         Assert.All(output[0].Left, s => Assert.Equal(0.0, s));
 
         buffered = regulator.TargetFrames;
@@ -798,6 +798,34 @@ public sealed class OntaTestStream
         Assert.Equal(5, regulator.ConcealedFrames);
         Assert.Equal(5, output.Count);
         Assert.True(Rms(output[0].Left) > 0.0);
+    }
+
+    /// <summary>
+    /// 受信開始直後に復調が入力へ遅れていて、溜まっていたパケットがまとめて届いても、その分を充填量に数えて詰め（早回し）をしないこと。
+    /// </summary>
+    [Fact]
+    public void PlayoutRegulator_LaggingStart_DoesNotSpeedUpCatchUp()
+    {
+        var frames = EncodeSineFrames(20);
+        using var regulator = new StreamPlayoutRegulator(Onta.Stream.Opus.OpusEncoder.OpusSampleRate);
+        var played = 0;
+        regulator.BufferedFrames = () => played;
+        var packetSamples = frames.Count * regulator.FrameSamples;
+        var output = new List<(double[] Left, double[] Right)>();
+
+        // 復調が 2 パケット分遅れた状態から、溜まっていた分が再生の進む間もなく続けて届く
+        for (var behind = 2; behind >= 0; behind--)
+        {
+            regulator.PendingFrames = behind * packetSamples;
+            regulator.Decode(frames, output);
+            played += output.Sum(f => f.Left.Length);
+            output.Clear();
+        }
+
+        _output.WriteLine($"played={played} target={regulator.TargetFrames} merged={regulator.MergedFrames} inserted={regulator.InsertedFrames}");
+        Assert.Equal(0, regulator.MergedFrames);
+        Assert.Equal(0, regulator.InsertedFrames);
+        Assert.InRange(played, regulator.TargetFrames - regulator.ToleranceFrames, regulator.TargetFrames + regulator.ToleranceFrames);
     }
 
     /// <summary>
