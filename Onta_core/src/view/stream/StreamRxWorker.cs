@@ -18,10 +18,14 @@ internal sealed class StreamRxWorker : IDisposable
     private const int FftSize = 2048;
     private const int MinFftPublishIntervalMs = 80;
     private const int PlaybackSampleRate = Onta.Stream.Opus.OpusEncoder.OpusSampleRate;
-    /// <summary>再生開始時・途切れそうなときに先に積む無音（パケット到着の揺らぎを吸収する）。</summary>
-    private const int PlaybackPrefillFrames = PlaybackSampleRate * 2 / 5;
-    /// <summary>この量を超えて溜まったら捨てて遅延を戻す（テープ速度差で溜まり続けるのを防ぐ）。</summary>
-    private const int PlaybackMaxBufferedFrames = PlaybackSampleRate * 3 / 2;
+    /// <summary>再生バッファの目標充填量（1.6 秒。パケット到着の揺らぎや受信エラーで欠けた分を吸収する）。</summary>
+    private const int PlaybackTargetFrames = PlaybackSampleRate * 8 / 5;
+    /// <summary>目標充填量の不感帯（± 0.2 秒）。この範囲を外れたら PLC 差し込み／フレーム結合で 20 ms ずつ戻す。</summary>
+    private const int PlaybackToleranceFrames = PlaybackSampleRate / 5;
+    /// <summary>この量（6 秒）を超えて溜まったら届いた音声を捨てる（微調整が追いつかないほど溜まったときの保険）。</summary>
+    private const int PlaybackMaxBufferedFrames = PlaybackSampleRate * 6;
+    /// <summary>再生キューの容量。上限まで溜まった状態で無音の先積みと 1 回分の復号音声を足しても、受信ループが空き待ちで止まらない大きさ。</summary>
+    private static readonly TimeSpan PlaybackQueueDuration = TimeSpan.FromSeconds(10);
 
     private readonly object _sync = new();
     private readonly CoreExecutionStatusBoard _status = new();
@@ -221,7 +225,11 @@ internal sealed class StreamRxWorker : IDisposable
             pipeline = new StreamRxPipeline(_captureSampleRate, PlaybackSampleRate) { PacketReported = PublishPacket };
 
             player = new RealtimePcmPlayer();
-            player.Start(settings.OutputDevice, PlaybackSampleRate, ChannelMode.Stereo, settings.OutputVolume);
+            player.Start(settings.OutputDevice, PlaybackSampleRate, ChannelMode.Stereo, settings.OutputVolume, PlaybackQueueDuration);
+            var playing = player;
+            pipeline.Playout.BufferedFrames = () => playing.BufferedSampleFrames;
+            pipeline.Playout.TargetFrames = PlaybackTargetFrames;
+            pipeline.Playout.ToleranceFrames = PlaybackToleranceFrames;
             lock (_sync)
             {
                 _player = player;
@@ -315,7 +323,8 @@ internal sealed class StreamRxWorker : IDisposable
     }
 
     /// <summary>
-    /// 復号した Opus フレームを再生キューへ積みます。受信ループを止めないよう、溜まりすぎたら捨て、途切れそうなら無音を足します。
+    /// 復号した Opus フレームを再生キューへ積みます。充填量の微調整はパイプラインの <see cref="StreamPlayoutRegulator"/> が済ませており、
+    /// ここでは受信ループを止めないよう、それでも溜まりすぎたときだけ届いた分を捨てます。
     /// </summary>
     /// <param name="player">再生先。</param>
     /// <param name="frames">復号した PCM（48 kHz ステレオ）。</param>
@@ -332,17 +341,11 @@ internal sealed class StreamRxWorker : IDisposable
             return;
         }
 
+        // キューを丸ごと消すと上限分（6 秒）が一度に飛ぶので、今回届いた分だけを捨てる
         var buffered = player.BufferedSampleFrames;
         if (buffered > PlaybackMaxBufferedFrames)
         {
-            player.ClearQueuedSamples();
-            buffered = 0;
-        }
-
-        if (buffered < PlaybackPrefillFrames / 4)
-        {
-            var silence = new Complex[PlaybackPrefillFrames - buffered];
-            player.AddSamples(silence, silence);
+            return;
         }
 
         var left = new Complex[total];

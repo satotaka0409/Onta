@@ -334,6 +334,41 @@ public sealed class OntaTestStream
     }
 
     /// <summary>
+    /// テープのドロップアウト（30 ms・−20 dB のレベル低下）がパケットに掛かっても、インターリーブで誤りが散って 16QAM でも受信できること。
+    /// </summary>
+    [Fact]
+    public void Loopback_WithDropouts_16Qam_StillDecodesEveryPacket()
+    {
+        const int DropoutSamples = 1323;
+        const int DropoutInterval = 57330;
+        const double DropoutGain = 0.1;
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 12);
+        var tx = Transmit(StreamModeId.Rate30k, left, right, Title, Artist, cover: null);
+
+        var rxLeft = (Complex[])tx.Left.Clone();
+        var rxRight = (Complex[])tx.Right.Clone();
+        var dropouts = 0;
+        for (var start = 20000; start < rxLeft.Length; start += DropoutInterval)
+        {
+            dropouts++;
+            for (var i = start; i < Math.Min(rxLeft.Length, start + DropoutSamples); i++)
+            {
+                rxLeft[i] *= DropoutGain;
+                rxRight[i] *= DropoutGain;
+            }
+        }
+
+        // 送出信号 RMS に対して SNR 25 dB のホワイトノイズ
+        var noiseSigma = Rms(tx.Left) * Math.Pow(10.0, -25.0 / 20.0);
+        var random = new Random(21);
+        var rx = Receive(AddNoise(rxLeft, noiseSigma, random), AddNoise(rxRight, noiseSigma, random));
+        _output.WriteLine($"dropouts={dropouts} packets={tx.PacketCount} rx={rx.Packets} err={rx.PacketErrors}");
+
+        Assert.Equal(0, rx.PacketErrors);
+        Assert.Equal(tx.PacketCount, rx.Packets);
+    }
+
+    /// <summary>
     /// 受信グラフ用の報告（I-Q・ビタビ中間訂正率）がパケットごとに届き、ノイズで訂正率が上がること。
     /// </summary>
     [Theory]
@@ -426,6 +461,8 @@ public sealed class OntaTestStream
     [InlineData(StreamModeId.Rate18k, -0.01, 0.002, 0.3)]
     [InlineData(StreamModeId.Rate30k, 0.005, 0.001, 0.5)]
     [InlineData(StreamModeId.Rate30k, -0.003, 0.001, 0.25)]
+    [InlineData(StreamModeId.Rate18k, -0.035, 0.0, 0.4)]
+    [InlineData(StreamModeId.Rate30k, 0.038, 0.0, 0.5)]
     public void Receive_WithTapeSpeedErrorAndWow_TracksSpeed(StreamModeId modeId, double speedError, double wowDepth, double delay)
     {
         const double WowHz = 3.0;
@@ -474,6 +511,59 @@ public sealed class OntaTestStream
     }
 
     /// <summary>
+    /// プリアンブル電力で補正したパケット先頭ではヘッダーが読めない信号（ヘッダー直前のプリアンブル末尾に雑音が乗った録音）でも、
+    /// 受信処理が止まらず、すべてのパケットのヘッダーを見つけること。
+    /// </summary>
+    [Fact]
+    public void Receive_RefinedStartUnreadable_DoesNotStallAndFindsEveryHeader()
+    {
+        const int CaptureChunkFrames = 2205;
+        const int BurstSamples = 24;
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 12);
+        var tx = Transmit(StreamModeId.Rate18k, left, right, Title, Artist, cover: null);
+
+        // ヘッダー直前に雑音を置くと、電力による先頭補正はヘッダーが読めない手前の位置を選ぶ
+        var rxLeft = (Complex[])tx.Left.Clone();
+        var rxRight = (Complex[])tx.Right.Clone();
+        var burstSigma = Rms(tx.Left) * 3.0;
+        var random = new Random(31);
+        var preamble = StreamConstants.PreambleSamples(StreamConstants.DefaultSampleRate);
+        foreach (var start in tx.PacketStarts)
+        {
+            var headerStart = start + preamble;
+            for (var i = headerStart - BurstSamples; i < headerStart; i++)
+            {
+                rxLeft[i] = new Complex(burstSigma * ((random.NextDouble() * 2.0) - 1.0), 0.0);
+                rxRight[i] = new Complex(burstSigma * ((random.NextDouble() * 2.0) - 1.0), 0.0);
+            }
+        }
+
+        using var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate, Onta.Stream.Opus.OpusEncoder.OpusSampleRate);
+        var run = Task.Run(() =>
+        {
+            for (var offset = 0; offset < rxLeft.Length; offset += CaptureChunkFrames)
+            {
+                var n = Math.Min(CaptureChunkFrames, rxLeft.Length - offset);
+                pipeline.PushCapture(rxLeft[offset..(offset + n)], rxRight[offset..(offset + n)]);
+                _ = pipeline.Pump(out _);
+            }
+
+            for (var i = 0; i < 10; i++)
+            {
+                pipeline.PushCapture(new Complex[CaptureChunkFrames], new Complex[CaptureChunkFrames]);
+                _ = pipeline.Pump(out _);
+            }
+        });
+
+        var finished = run.Wait(TimeSpan.FromMinutes(3));
+        _output.WriteLine($"finished={finished} tx={tx.PacketCount} rx={pipeline.PacketsReceived} err={pipeline.PacketErrors}");
+
+        Assert.True(finished, "受信処理が同じパケット候補を探し続けて止まりました。");
+        Assert.Equal(tx.PacketCount, pipeline.PacketsReceived + pipeline.PacketErrors);
+        Assert.True(pipeline.PacketsReceived > 0, "1 パケットも受信できませんでした。");
+    }
+
+    /// <summary>
     /// 44.1 kHz で復調しつつ、再生用に復号音声を Opus 本来の 48 kHz で取り出せること。
     /// </summary>
     [Fact]
@@ -492,6 +582,139 @@ public sealed class OntaTestStream
         Assert.True(frames > 0);
         Assert.Equal(frames * Onta.Stream.Opus.OpusEncoder.FrameSamplesPerChannel, rx48.Left.Length);
         Assert.Equal(rx48.Left.Length, rx48.Right.Length);
+    }
+
+    /// <summary>
+    /// パケットを丸ごと失っても（1 個・連続 2 個）、前後のパケット間隔から失った数を求めて PLC で埋め、音声の長さが欠けないこと。
+    /// </summary>
+    [Fact]
+    public void Receive_LostPackets_AreConcealedWithPlc()
+    {
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 12);
+        var tx = Transmit(StreamModeId.Rate18k, left, right, Title, Artist, cover: null);
+        var rxLeft = (Complex[])tx.Left.Clone();
+        var rxRight = (Complex[])tx.Right.Clone();
+        var lost = new[] { 3, 10, 11 };
+        foreach (var k in lost)
+        {
+            Array.Clear(rxLeft, tx.PacketStarts[k], tx.PacketStarts[k + 1] - tx.PacketStarts[k]);
+            Array.Clear(rxRight, tx.PacketStarts[k], tx.PacketStarts[k + 1] - tx.PacketStarts[k]);
+        }
+
+        var rx = Receive(rxLeft, rxRight);
+        _output.WriteLine($"packets={tx.PacketCount} rx={rx.Packets} err={rx.PacketErrors} decoded={rx.Left.Length} expected={ExpectedDecodedSamples(left.Length)}");
+
+        Assert.Equal(tx.PacketCount - lost.Length, rx.Packets);
+        Assert.Equal(ExpectedDecodedSamples(left.Length), rx.Left.Length);
+        Assert.Equal(rx.Left.Length, rx.Right.Length);
+    }
+
+    /// <summary>
+    /// 再生バッファが目標より少ないと PLC フレームを差し込み、出力が復号フレーム数より長くなること。
+    /// </summary>
+    [Fact]
+    public void PlayoutRegulator_LowBuffer_InsertsPlcFrames()
+    {
+        var frames = EncodeSineFrames(40);
+        using var regulator = new StreamPlayoutRegulator(Onta.Stream.Opus.OpusEncoder.OpusSampleRate);
+        var buffered = regulator.TargetFrames / 2;
+        regulator.BufferedFrames = () => buffered;
+        var output = new List<(double[] Left, double[] Right)>();
+        regulator.Decode(frames, output);
+        _output.WriteLine($"inserted={regulator.InsertedFrames} merged={regulator.MergedFrames} out={output.Count}");
+
+        Assert.True(regulator.InsertedFrames > 0);
+        Assert.Equal(0, regulator.MergedFrames);
+        Assert.Equal(frames.Count + regulator.InsertedFrames, output.Count);
+        Assert.All(output, f => Assert.Equal(regulator.FrameSamples, f.Left.Length));
+    }
+
+    /// <summary>
+    /// 再生バッファが目標より多いと連続 2 フレームを 1 フレームに詰め、出力が復号フレーム数より短くなること。
+    /// </summary>
+    [Fact]
+    public void PlayoutRegulator_HighBuffer_MergesFrames()
+    {
+        var frames = EncodeSineFrames(40);
+        using var regulator = new StreamPlayoutRegulator(Onta.Stream.Opus.OpusEncoder.OpusSampleRate);
+        var buffered = regulator.TargetFrames + (regulator.ToleranceFrames * 2);
+        regulator.BufferedFrames = () => buffered;
+        var output = new List<(double[] Left, double[] Right)>();
+        regulator.Decode(frames, output);
+        _output.WriteLine($"inserted={regulator.InsertedFrames} merged={regulator.MergedFrames} out={output.Count}");
+
+        Assert.True(regulator.MergedFrames > 0);
+        Assert.Equal(0, regulator.InsertedFrames);
+        Assert.Equal(frames.Count - regulator.MergedFrames, output.Count);
+        Assert.All(output, f => Assert.Equal(regulator.FrameSamples, f.Left.Length));
+    }
+
+    /// <summary>
+    /// 目標の不感帯内では調整せず、復号フレームをそのまま出すこと。
+    /// </summary>
+    [Fact]
+    public void PlayoutRegulator_WithinTolerance_PassesThrough()
+    {
+        var frames = EncodeSineFrames(10);
+        using var regulator = new StreamPlayoutRegulator(Onta.Stream.Opus.OpusEncoder.OpusSampleRate);
+        var buffered = regulator.TargetFrames - (regulator.ToleranceFrames / 2);
+        regulator.BufferedFrames = () => buffered;
+        var output = new List<(double[] Left, double[] Right)>();
+        regulator.Decode(frames, output);
+
+        Assert.Equal(0, regulator.InsertedFrames);
+        Assert.Equal(0, regulator.MergedFrames);
+        Assert.Equal(frames.Count, output.Count);
+    }
+
+    /// <summary>
+    /// 再生バッファがほぼ空なら目標充填量まで無音を先に詰め、失ったパケットは復号を始めてからだけ PLC で埋めること。
+    /// </summary>
+    [Fact]
+    public void PlayoutRegulator_Underrun_PrefillsSilenceAndConcealsAfterPriming()
+    {
+        var frames = EncodeSineFrames(10);
+        using var regulator = new StreamPlayoutRegulator(Onta.Stream.Opus.OpusEncoder.OpusSampleRate);
+        var buffered = 0;
+        regulator.BufferedFrames = () => buffered;
+        var output = new List<(double[] Left, double[] Right)>();
+
+        regulator.ConcealLost(5, output);
+        Assert.Empty(output);
+
+        regulator.Decode(frames, output);
+        Assert.Equal(regulator.TargetFrames, output[0].Left.Length);
+        Assert.All(output[0].Left, s => Assert.Equal(0.0, s));
+
+        buffered = regulator.TargetFrames;
+        output.Clear();
+        regulator.ConcealLost(5, output);
+        Assert.Equal(5, regulator.ConcealedFrames);
+        Assert.Equal(5, output.Count);
+        Assert.True(Rms(output[0].Left) > 0.0);
+    }
+
+    /// <summary>
+    /// 1 kHz 正弦波を Opus（48 kHz・20 ms）でエンコードしたフレーム列を返します。
+    /// </summary>
+    /// <param name="count">フレーム数。</param>
+    private static List<byte[]> EncodeSineFrames(int count)
+    {
+        const int Rate = Onta.Stream.Opus.OpusEncoder.OpusSampleRate;
+        var samples = (count + 1) * Onta.Stream.Opus.OpusEncoder.FrameSamplesPerChannel;
+        var left = new double[samples];
+        var right = new double[samples];
+        for (var i = 0; i < samples; i++)
+        {
+            left[i] = 0.3 * Math.Sin(2 * Math.PI * 1000.0 * i / Rate);
+            right[i] = 0.3 * Math.Sin(2 * Math.PI * 1500.0 * i / Rate);
+        }
+
+        using var encoder = new Onta.Stream.Opus.OpusEncoder(StreamMode.Resolve(StreamModeId.Rate18k).OpusBitrateBps, Rate);
+        var packets = new List<byte[]>();
+        encoder.EncodePcm(left, right, packets);
+        Assert.True(packets.Count >= count);
+        return packets.Take(count).ToList();
     }
 
     /// <summary>
@@ -711,6 +934,34 @@ public sealed class OntaTestStream
             var u2 = random.NextDouble();
             var gaussian = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
             result[i] = new Complex(samples[i].Real + (gaussian * sigma), 0.0);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 複素 PCM（実部）へ 2 次のノッチフィルタ（Q=8）を掛けた新しい配列を返します（特定キャリア付近が欠けた録再系の模擬）。
+    /// </summary>
+    /// <param name="samples">入力 PCM。</param>
+    /// <param name="centerHz">ノッチの中心周波数。</param>
+    private static Complex[] Notch(Complex[] samples, double centerHz)
+    {
+        var w = 2 * Math.PI * centerHz / StreamConstants.DefaultSampleRate;
+        var alpha = Math.Sin(w) / (2 * 8.0);
+        var cos = Math.Cos(w);
+        var a0 = 1 + alpha;
+        double b0 = 1 / a0, b1 = -2 * cos / a0, b2 = 1 / a0, a1 = -2 * cos / a0, a2 = (1 - alpha) / a0;
+        var result = new Complex[samples.Length];
+        double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        for (var i = 0; i < samples.Length; i++)
+        {
+            var x = samples[i].Real;
+            var y = (b0 * x) + (b1 * x1) + (b2 * x2) - (a1 * y1) - (a2 * y2);
+            x2 = x1;
+            x1 = x;
+            y2 = y1;
+            y1 = y;
+            result[i] = new Complex(y, 0.0);
         }
 
         return result;

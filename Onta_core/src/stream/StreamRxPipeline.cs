@@ -52,11 +52,17 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>速度補正した信号の先頭に置く余白（サンプル）。再試行のずらしとシンボル先頭探索の後戻り用。</summary>
     private const int WarpPad = 32;
 
-    /// <summary>受け付けるテープ速度の偏差の上限（±4%）。</summary>
-    private const double MaxSpeedDeviation = 0.04;
+    /// <summary>キャプチャバッファに溜める最大秒数。受信処理が一時的に遅れても入力を捨てずに追いつけるよう長めに取る。</summary>
+    private const int MaxCaptureSeconds = 32;
 
-    /// <summary>未ロック時にヘッダーで総当たりする速度偏差の範囲と刻み。</summary>
-    private const double SpeedScanRange = 0.03;
+    /// <summary>
+    /// 速度補正の比（受信サンプル数 / 送信サンプル数）の 1 からの許容幅。
+    /// テープ速度 ±4% は比で 1/1.04〜1/0.96（−3.8%〜+4.2%）になるので、それを含むよう広めに取る。
+    /// </summary>
+    private const double MaxSpeedDeviation = 0.045;
+
+    /// <summary>未ロック時にヘッダーで総当たりする速度比の範囲と刻み（テープ速度 ±4% を含む）。</summary>
+    private const double SpeedScanRange = 0.042;
     private const double SpeedScanStep = 0.001;
 
     /// <summary>パケット 1 つで測った速度の残差を推定へ反映する割合。</summary>
@@ -80,8 +86,14 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>連続してこの回数失敗したら速度ロックを外し、総当たりをやり直す。</summary>
     private const int SpeedUnlockFailures = 4;
 
+    /// <summary>Opus 1 フレームの長さ（秒）。</summary>
+    private const double StreamOpusFrameSeconds = OpusEncoder.FrameSamplesPerChannel / (double)OpusEncoder.OpusSampleRate;
+
+    /// <summary>直前のパケットからこの数を超えて間が空いたら、途切れとみなして PLC で埋めない。</summary>
+    private const int MaxConcealPackets = 2;
+
     private readonly StreamMetaAssembler _meta = new();
-    private readonly OpusDecoder _opus;
+    private readonly StreamPlayoutRegulator _playout;
     private readonly int _sampleRate;
     private readonly int _preambleSamples;
     private readonly List<Complex> _iqPoints = new(DefaultIqPointsPerPacket);
@@ -102,6 +114,9 @@ public sealed class StreamRxPipeline : IDisposable
     private double[] _drift = Array.Empty<double>();
     private double[] _tau = Array.Empty<double>();
     private double[] _positions = Array.Empty<double>();
+    private long _consumedTotal;
+    private long _lastPacketStart = -1;
+    private int _lastPacketFrames;
     private bool _disposed;
 
     /// <summary>
@@ -113,7 +128,7 @@ public sealed class StreamRxPipeline : IDisposable
     {
         _sampleRate = Math.Max(1, sampleRate);
         _preambleSamples = StreamConstants.PreambleSamples(_sampleRate);
-        _opus = new OpusDecoder(decodedSampleRate > 0 ? decodedSampleRate : _sampleRate);
+        _playout = new StreamPlayoutRegulator(decodedSampleRate > 0 ? decodedSampleRate : _sampleRate);
         _leftBuf = new Complex[_sampleRate];
         _rightBuf = new Complex[_sampleRate];
         _power = new double[_sampleRate + 1];
@@ -122,6 +137,9 @@ public sealed class StreamRxPipeline : IDisposable
 
     /// <summary>メタアセンブラ。</summary>
     public StreamMetaAssembler Meta => _meta;
+
+    /// <summary>Opus 復号と再生バッファ充填量に合わせた長さ調整（PLC 差し込み・フレーム結合）。</summary>
+    public StreamPlayoutRegulator Playout => _playout;
 
     /// <summary>検出中の速度 ID。</summary>
     public StreamModeId? DetectedModeId => _modeId;
@@ -151,8 +169,8 @@ public sealed class StreamRxPipeline : IDisposable
         Array.Copy(left, 0, _leftBuf, _count, n);
         Array.Copy(right, 0, _rightBuf, _count, n);
         _count += n;
-        // バッファ肥大防止（最大約 8 秒）。同期中に捨てると境界がずれるので再同期させる
-        var max = _sampleRate * 8;
+        // バッファ肥大防止。同期中に捨てると境界がずれるので再同期させる
+        var max = _sampleRate * MaxCaptureSeconds;
         if (_count > max)
         {
             Consume(_count - max);
@@ -205,6 +223,7 @@ public sealed class StreamRxPipeline : IDisposable
         }
 
         _count = remain;
+        _consumedTotal += samples;
     }
 
     /// <summary>
@@ -250,15 +269,20 @@ public sealed class StreamRxPipeline : IDisposable
             }
 
             // ヘッダーは数十サンプルずれても読めるが、データ部はずれに弱いのでプリアンブル終端へ合わせる
-            cursor = RefinePacketStart(power, cursor, length);
-
+            var candidate = cursor;
+            cursor = RefinePacketStart(power, candidate, length, speed);
             if (!TryHeaderAt(left, right, cursor, speed, length, out var modeId))
             {
-                _synced = false;
-                status = "sync lost";
-                CountSpeedFailure();
-                cursor += 1;
-                continue;
+                // 補正は候補より前へ動き得る。補正先から探し直すと同じ候補を見つけ続けて止まるので、候補位置で読み直し、だめなら候補の先から探す
+                cursor = candidate;
+                if (!TryHeaderAt(left, right, cursor, speed, length, out modeId))
+                {
+                    _synced = false;
+                    status = "sync lost";
+                    CountSpeedFailure();
+                    cursor = candidate + 1;
+                    continue;
+                }
             }
 
             var codec = ResolveCodec(modeId);
@@ -267,6 +291,8 @@ public sealed class StreamRxPipeline : IDisposable
             {
                 break;
             }
+
+            var packetStart = _consumedTotal + cursor;
 
             // テープ速度のずれとパケット内のワウを戻した信号で復調する
             var ok = DemodulateWithSpeedTracking(codec, left, right, cursor, length, warpCount, ref speed, out var next, out var tauEnd, out var packet);
@@ -304,18 +330,35 @@ public sealed class StreamRxPipeline : IDisposable
                 status = "stream-id changed";
             }
 
-            foreach (var frame in StreamOpusPayload.Unpack(packet.Payload))
-            {
-                if (_opus.DecodeToPcm(frame, out var l, out var r) > 0)
-                {
-                    pcmOut.Add((l, r));
-                }
-            }
+            var frames = StreamOpusPayload.Unpack(packet.Payload);
+            _playout.ConcealLost(CountLostFrames(packetStart, speed), pcmOut);
+            _playout.Decode(frames, pcmOut);
+            _lastPacketStart = packetStart;
+            _lastPacketFrames = frames.Count;
         }
 
         Consume(Math.Min(cursor, length));
 
         return pcmOut;
+    }
+
+    /// <summary>
+    /// 直前に受理したパケットとの間隔から、間で失われたパケットのフレーム数を求めます。
+    /// 送信側はパケットの先頭間隔を運ぶ音声時間（フレーム数 × 20 ms）に揃えるので、間隔を割れば失った数が分かる。
+    /// </summary>
+    /// <param name="packetStart">今回のパケット先頭（受信開始からの通算サンプル位置）。</param>
+    /// <param name="speed">受信サンプル数 / 送信サンプル数。</param>
+    /// <returns>PLC で埋めるフレーム数。途切れが長すぎる・前のパケットが無いときは 0。</returns>
+    private int CountLostFrames(long packetStart, double speed)
+    {
+        if (_lastPacketStart < 0 || _lastPacketFrames <= 0)
+        {
+            return 0;
+        }
+
+        var interval = _lastPacketFrames * StreamOpusFrameSeconds * _sampleRate * speed;
+        var missing = (int)Math.Round((packetStart - _lastPacketStart) / interval) - 1;
+        return missing is >= 1 and <= MaxConcealPackets ? missing * _lastPacketFrames : 0;
     }
 
     /// <summary>
@@ -365,12 +408,13 @@ public sealed class StreamRxPipeline : IDisposable
             }
 
             // 速度が大きくずれているとヘッダーも読めないので、パケット先頭らしい位置で速度を総当たりする
+            // 電力条件は真の先頭よりヘッダー長近く手前から通るので、先頭はヘッダー長の範囲まで先を探して決める
             if (!_speedLocked && p >= nextScan)
             {
-                var refined = RefinePacketStart(power, p, length);
-                if (TryScanSpeed(left, right, refined, length))
+                var refined = RefinePacketStart(power, p, length, 1.0, headerSpan);
+                if (TryScanSpeed(left, right, power, refined, length, out var scanned))
                 {
-                    return refined;
+                    return scanned;
                 }
 
                 nextScan = refined + _headerCodec.HeaderSectionSamples;
@@ -385,11 +429,14 @@ public sealed class StreamRxPipeline : IDisposable
     /// </summary>
     /// <param name="left">L PCM。</param>
     /// <param name="right">R PCM。</param>
-    /// <param name="packetStart">パケット先頭の候補。</param>
+    /// <param name="power">L²+R² の累積和。</param>
+    /// <param name="candidate">パケット先頭の候補（速度ごとにプリアンブル電力で補正してから試す）。</param>
     /// <param name="length">バッファのサンプル数。</param>
+    /// <param name="packetStart">読めた速度で補正したパケット先頭。</param>
     /// <returns>いずれかの速度でヘッダーが読めたら true。</returns>
-    private bool TryScanSpeed(Complex[] left, Complex[] right, int packetStart, int length)
+    private bool TryScanSpeed(Complex[] left, Complex[] right, double[] power, int candidate, int length, out int packetStart)
     {
+        packetStart = candidate;
         var steps = (int)Math.Round(SpeedScanRange / SpeedScanStep);
         for (var i = 0; i <= steps; i++)
         {
@@ -400,15 +447,12 @@ public sealed class StreamRxPipeline : IDisposable
                     continue;
                 }
 
-                var candidate = 1.0 + (sign * i * SpeedScanStep);
-                if (Math.Abs(candidate - _speed) < SpeedScanStep * 0.5)
+                var speed = 1.0 + (sign * i * SpeedScanStep);
+                var start = RefinePacketStart(power, candidate, length, speed);
+                if (TryHeaderAt(left, right, start, speed, length, out _))
                 {
-                    continue;
-                }
-
-                if (TryHeaderAt(left, right, packetStart, candidate, length, out _))
-                {
-                    _speed = candidate;
+                    _speed = speed;
+                    packetStart = start;
                     return true;
                 }
             }
@@ -651,13 +695,15 @@ public sealed class StreamRxPipeline : IDisposable
     /// <param name="power">L²+R² の累積和（長さ = サンプル数 + 1）。</param>
     /// <param name="start">パケット先頭の候補。</param>
     /// <param name="length">バッファのサンプル数。</param>
+    /// <param name="speed">受信サンプル数 / 送信サンプル数。区間長をこの比で伸縮する（数 % ずれると先頭が十数サンプルずれるため）。</param>
+    /// <param name="forwardRadius">候補より後ろを探す範囲（サンプル）。</param>
     /// <returns>補正後のパケット先頭。</returns>
-    private int RefinePacketStart(double[] power, int start, int length)
+    private int RefinePacketStart(double[] power, int start, int length, double speed, int forwardRadius = RefineRadius)
     {
-        var preamble = _preambleSamples;
-        var section = _headerCodec.HeaderSectionSamples;
+        var preamble = (int)Math.Round(_preambleSamples * speed);
+        var section = (int)Math.Round(_headerCodec.HeaderSectionSamples * speed);
         var from = Math.Max(0, start - RefineRadius);
-        var to = Math.Min(length - section, start + RefineRadius);
+        var to = Math.Min(length - section, start + forwardRadius);
         var best = start;
         var bestScore = double.NegativeInfinity;
         for (var p = from; p <= to; p++)
@@ -812,6 +858,6 @@ public sealed class StreamRxPipeline : IDisposable
         }
 
         _disposed = true;
-        _opus.Dispose();
+        _playout.Dispose();
     }
 }

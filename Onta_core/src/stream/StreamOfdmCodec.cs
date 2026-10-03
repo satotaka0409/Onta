@@ -25,7 +25,14 @@ public readonly record struct StreamBodyDiagnostics(
 public sealed class StreamOfdmCodec
 {
     private const int BodyBytes = StreamConstants.MetaBytes + StreamConstants.PayloadBytes;
-    private const int DataBitInterleaveRows = 32;
+    /// <summary>
+    /// データ部インターリーブで、隣り合う符号ビットを何 OFDM シンボル先へ置くか。
+    /// ドロップアウト（数十 ms のレベル低下）で落ちたシンボルの誤りが、ビタビ入力で連続しないようにする。
+    /// </summary>
+    private const int DataBitInterleaveSymbolStride = 2;
+
+    /// <summary>データ部インターリーブで、隣り合う符号ビットをシンボル内で何ビット先（別キャリア）へ置くか。</summary>
+    private const int DataBitInterleaveBitStride = 32;
     private static readonly byte[] ReverseBitsLut = BuildReverseBitsLut();
 
     private readonly OfdmGenerator _headerOfdm;
@@ -76,7 +83,9 @@ public sealed class StreamOfdmCodec
             BodyBytes * 8,
             terminated: true,
             ConvolutionalCode.PunctureRate.Rate2_3);
-        (_bodyInterleaveMap, _bodyDeinterleaveMap) = BuildBlockInterleaveMaps(_bodyCodedBits, DataBitInterleaveRows);
+        (_bodyInterleaveMap, _bodyDeinterleaveMap) = BuildLinearInterleaveMaps(
+            _bodyCodedBits,
+            (DataBitInterleaveSymbolStride * _dataOfdm.BitsPerOfdmSymbol) + DataBitInterleaveBitStride);
         _headerSectionSamples = _preambleSamples + SectionSamples(_headerOfdm, _headerCodedBits);
         _packetSamples = _headerSectionSamples + _preambleSamples + SectionSamples(_dataOfdm, _bodyCodedBits);
     }
@@ -576,41 +585,51 @@ public sealed class StreamOfdmCodec
     }
 
     /// <summary>
-    /// ブロックインターリーブと逆写像のインデックスを構築します。
+    /// 符号ビット s を送信位置 (s × stride) mod bitCount へ置く線形インターリーブと逆写像のインデックスを構築します。
     /// </summary>
     /// <param name="bitCount">対象ビット数。</param>
-    /// <param name="rows">行列の行数。ビット数を超える場合はビット数に揃えます。</param>
+    /// <param name="stride">隣り合う符号ビットの送信位置の間隔。bitCount と互いに素になるまで 1 ずつ増やします。</param>
     /// <returns>送信順への並びと、受信 LLR を元の並びに戻す逆写像。</returns>
-    private static (int[] InterleaveMap, int[] DeinterleaveMap) BuildBlockInterleaveMaps(int bitCount, int rows)
+    private static (int[] InterleaveMap, int[] DeinterleaveMap) BuildLinearInterleaveMaps(int bitCount, int stride)
     {
         if (bitCount <= 0)
         {
             return (Array.Empty<int>(), Array.Empty<int>());
         }
 
-        var effectiveRows = Math.Max(1, Math.Min(rows, bitCount));
-        var cols = (bitCount + effectiveRows - 1) / effectiveRows;
-        var interleave = new int[bitCount];
-        var index = 0;
-        for (var c = 0; c < cols; c++)
+        // 互いに素でないと送信位置が重なり、全単射にならない
+        var step = Math.Max(1, stride);
+        while (GreatestCommonDivisor(step, bitCount) != 1)
         {
-            for (var r = 0; r < effectiveRows; r++)
-            {
-                var src = (r * cols) + c;
-                if (src < bitCount)
-                {
-                    interleave[index++] = src;
-                }
-            }
+            step++;
         }
 
+        var interleave = new int[bitCount];
         var deinterleave = new int[bitCount];
-        for (var i = 0; i < bitCount; i++)
+        for (var source = 0; source < bitCount; source++)
         {
-            deinterleave[interleave[i]] = i;
+            var position = (int)((long)source * step % bitCount);
+            interleave[position] = source;
+            deinterleave[source] = position;
         }
 
         return (interleave, deinterleave);
+    }
+
+    /// <summary>
+    /// 2 つの正の整数の最大公約数を求めます。
+    /// </summary>
+    /// <param name="a">1 つ目の値。</param>
+    /// <param name="b">2 つ目の値。</param>
+    /// <returns>最大公約数。</returns>
+    private static int GreatestCommonDivisor(int a, int b)
+    {
+        while (b != 0)
+        {
+            (a, b) = (b, a % b);
+        }
+
+        return a;
     }
 
     /// <summary>

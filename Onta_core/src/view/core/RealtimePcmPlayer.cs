@@ -12,6 +12,9 @@ internal sealed class RealtimePcmPlayer : IDisposable
     /// <summary>1回に変換・投入する最大サンプル数です。</summary>
     private const int MaxSliceSamples = 4410;
 
+    /// <summary>再生キューの既定の容量です。</summary>
+    private static readonly TimeSpan DefaultBufferDuration = TimeSpan.FromSeconds(3);
+
     private readonly object _sync = new();
     private WaveOutEvent? _waveOut;
     private BufferedWaveProvider? _buffer;
@@ -23,6 +26,7 @@ internal sealed class RealtimePcmPlayer : IDisposable
     private int _appSampleRate = 44100;
     private int _deviceSampleRate = 44100;
     private double _scale = 1.0;
+    private TimeSpan _bufferDuration = DefaultBufferDuration;
     private bool _disposed;
 
     /// <summary>
@@ -38,11 +42,18 @@ internal sealed class RealtimePcmPlayer : IDisposable
     /// <param name="sampleRate">入力サンプルのサンプリング周波数（変調・WAV 側は 44100）。</param>
     /// <param name="channelMode">モノラル/ステレオ。</param>
     /// <param name="samplePeak">出力振幅スケール。</param>
-    public void Start(int deviceNumber, int sampleRate, Onta.Core.ChannelMode channelMode, double samplePeak)
+    /// <param name="bufferDuration">再生キューの容量（null なら 3 秒）。満杯の間は <see cref="AddSamples"/> が空きを待ちます。</param>
+    public void Start(
+        int deviceNumber,
+        int sampleRate,
+        Onta.Core.ChannelMode channelMode,
+        double samplePeak,
+        TimeSpan? bufferDuration = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         StopInternal();
 
+        _bufferDuration = bufferDuration is { } duration && duration > TimeSpan.Zero ? duration : DefaultBufferDuration;
         _channels = channelMode == Onta.Core.ChannelMode.Stereo ? 2 : 1;
         _appSampleRate = Math.Max(1, sampleRate);
         // 音量バー 0% は無音、それ以外は 0.05〜1.0 に制限する。
@@ -96,7 +107,7 @@ internal sealed class RealtimePcmPlayer : IDisposable
         _buffer = new BufferedWaveProvider(format)
         {
             // 長時間先読みを避け、FFT/進捗と耳の聴感を揃える（エンコードはバッファ満杯で待機）。
-            BufferDuration = TimeSpan.FromSeconds(3),
+            BufferDuration = _bufferDuration,
             DiscardOnBufferOverflow = false
         };
         _waveOut = new WaveOutEvent
