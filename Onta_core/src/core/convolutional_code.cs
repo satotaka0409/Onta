@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.Arm;
@@ -41,6 +42,9 @@ public static class ConvolutionalCode
     private const int TailBits = ConstraintLength - 1;
     private const int StateCount = 1 << MemoryBits;
     private const int StateMask = StateCount - 1;
+    private const int HalfStateCount = StateCount / 2;
+    private const double NegInfMetric = -1e300;
+    private const int TrellisBlockSteps = 128;
     private const int LargeMetric = 1_000_000_000;
     private static readonly bool[] PuncturePatternRate1_2 = [true, true];
     private static readonly bool[] PuncturePatternRate2_3 = [true, true, true, false];
@@ -53,6 +57,9 @@ public static class ConvolutionalCode
     private static readonly byte[] Output1WhenInput1 = BuildOutputBitTable(inputBit: 1, generatorIndex: 1);
     private static readonly byte[] OutputMaskWhenInput0 = BuildOutputMaskTable(inputBit: 0);
     private static readonly byte[] OutputMaskWhenInput1 = BuildOutputMaskTable(inputBit: 1);
+    private static readonly double[] BranchBitMasks = BuildBranchBitMasks();
+    private static readonly int[] HardBranchFromEvenState = BuildHardBranchTable(fromOddState: false);
+    private static readonly int[] HardBranchFromOddState = BuildHardBranchTable(fromOddState: true);
     private static readonly byte[] ByteToBitsLookup = BuildByteToBitsLookup();
     private static readonly byte[] ReverseBitsLut = BuildReverseBitsLut();
     private static readonly int PunctureRate1_2Ones = CountTrue(PuncturePatternRate1_2);
@@ -141,6 +148,27 @@ public static class ConvolutionalCode
         bool terminated = true,
         PunctureRate punctureRate = PunctureRate.Rate1_2)
     {
+        return DecodeHard(encoded, originalByteLength, out metrics, terminated, punctureRate, TrellisKernel.Auto);
+    }
+
+    /// <summary>
+    /// ハード判定ビット列を、指定のカーネルでビタビ復号します。
+    /// </summary>
+    /// <param name="encoded">符号化済みバイト列。</param>
+    /// <param name="originalByteLength">復号後の元バイト長。</param>
+    /// <param name="metrics">復号時のメトリクス。</param>
+    /// <param name="terminated">終端ビット付きとして扱う場合 true。</param>
+    /// <param name="punctureRate">パンクチャ率。</param>
+    /// <param name="kernel">Scalar ならスカラ、それ以外は AVX2 が使えれば AVX2。</param>
+    /// <returns>復号したバイト列。</returns>
+    internal static byte[] DecodeHard(
+        byte[] encoded,
+        int originalByteLength,
+        out DecodeMetrics metrics,
+        bool terminated,
+        PunctureRate punctureRate,
+        TrellisKernel kernel)
+    {
         ArgumentNullException.ThrowIfNull(encoded);
         if (originalByteLength < 0)
         {
@@ -162,6 +190,25 @@ public static class ConvolutionalCode
             presentMask.AsSpan(0, expectedCodeBitLength));
 
         var inputSymbolCount = expectedCodeBitLength / OutputBitsPerInputBit;
+        if (kernel != TrellisKernel.Scalar && Avx2.IsSupported)
+        {
+            try
+            {
+                return DecodeHardAvx2(
+                    encodedBits.AsSpan(0, expectedCodeBitLength),
+                    presentMask.AsSpan(0, expectedCodeBitLength),
+                    originalBitLength,
+                    expectedPuncturedBitLength,
+                    terminated,
+                    out metrics);
+            }
+            finally
+            {
+                ArrayPool<bool>.Shared.Return(encodedBits, clearArray: false);
+                ArrayPool<bool>.Shared.Return(presentMask, clearArray: false);
+            }
+        }
+
         var prevMetric = new int[StateCount];
         var nextMetric = new int[StateCount];
         var traceLength = inputSymbolCount * StateCount;
@@ -281,6 +328,153 @@ public static class ConvolutionalCode
     }
 
     /// <summary>
+    /// ハード判定ビタビ復号を AVX2 で行います（スカラ版と同じ経路・メトリクス）。
+    /// 状態 2j / 2j+1 が次状態 j（入力 0）と j+32（入力 1）へ遷移するので、次状態ごとに 2 候補を 8 レーンずつ比べ、
+    /// 選んだ側（奇数状態なら 1）を 1 段 64 ビットのマスクに記録します。同点は偶数状態（スカラ版で先に評価される側）を残します。
+    /// </summary>
+    /// <param name="encodedBits">デパンクチャ後のコードビット。</param>
+    /// <param name="presentMask">各コードビットが受信済み（パンクチャで抜けていない）か。</param>
+    /// <param name="originalBitLength">復号後の元ビット長。</param>
+    /// <param name="puncturedBitLength">パンクチャ後のコードビット数（メトリクス用）。</param>
+    /// <param name="terminated">終端ビット付きとして扱う場合 true。</param>
+    /// <param name="metrics">復号時のメトリクス。</param>
+    /// <returns>復号したバイト列。</returns>
+    private static byte[] DecodeHardAvx2(
+        ReadOnlySpan<bool> encodedBits,
+        ReadOnlySpan<bool> presentMask,
+        int originalBitLength,
+        int puncturedBitLength,
+        bool terminated,
+        out DecodeMetrics metrics)
+    {
+        var inputSymbolCount = encodedBits.Length / OutputBitsPerInputBit;
+        var decisions = ArrayPool<ulong>.Shared.Rent(Math.Max(1, inputSymbolCount));
+        var decidedBits = ArrayPool<bool>.Shared.Rent(Math.Max(1, inputSymbolCount));
+        try
+        {
+            Span<int> metricA = stackalloc int[StateCount];
+            Span<int> metricB = stackalloc int[StateCount];
+            metricA.Fill(LargeMetric);
+            metricA[0] = 0;
+            ref var prev = ref MemoryMarshal.GetReference(metricA);
+            ref var next = ref MemoryMarshal.GetReference(metricB);
+            ref var branchEven = ref MemoryMarshal.GetArrayDataReference(HardBranchFromEvenState);
+            ref var branchOdd = ref MemoryMarshal.GetArrayDataReference(HardBranchFromOddState);
+            var evenOddOrder = Vector256.Create(0, 2, 4, 6, 1, 3, 5, 7);
+            var large = Vector256.Create(LargeMetric);
+            for (var t = 0; t < inputSymbolCount; t++)
+            {
+                var combo = (encodedBits[t * 2] ? 1 : 0)
+                    | (encodedBits[(t * 2) + 1] ? 2 : 0)
+                    | (presentMask[t * 2] ? 4 : 0)
+                    | (presentMask[(t * 2) + 1] ? 8 : 0);
+                var tableBase = (nuint)(combo * StateCount);
+                ulong decision = 0;
+                for (var k = 0; k < 4; k++)
+                {
+                    var v0 = Avx2.PermuteVar8x32(Vector256.LoadUnsafe(ref prev, (nuint)(16 * k)), evenOddOrder);
+                    var v1 = Avx2.PermuteVar8x32(Vector256.LoadUnsafe(ref prev, (nuint)((16 * k) + 8)), evenOddOrder);
+                    var evenStates = Avx2.Permute2x128(v0, v1, 0x20);
+                    var oddStates = Avx2.Permute2x128(v0, v1, 0x31);
+                    for (var input = 0; input < 2; input++)
+                    {
+                        var ns = (32 * input) + (8 * k);
+                        var fromEven = Avx2.Add(evenStates, Vector256.LoadUnsafe(ref branchEven, tableBase + (nuint)ns));
+                        var fromOdd = Avx2.Add(oddStates, Vector256.LoadUnsafe(ref branchOdd, tableBase + (nuint)ns));
+                        var takeOdd = Avx2.CompareGreaterThan(fromEven, fromOdd);
+                        var best = Avx2.Min(Avx2.BlendVariable(fromEven, fromOdd, takeOdd), large);
+                        best.StoreUnsafe(ref next, (nuint)ns);
+                        decision |= (ulong)(uint)Avx.MoveMask(takeOdd.AsSingle()) << ns;
+                    }
+                }
+
+                decisions[t] = decision;
+                ref var swap = ref prev;
+                prev = ref next;
+                next = ref swap;
+            }
+
+            var finalMetric = new int[StateCount];
+            for (var s = 0; s < StateCount; s++)
+            {
+                finalMetric[s] = Unsafe.Add(ref prev, s);
+            }
+
+            var finalState = terminated ? 0 : FindMinMetricState(finalMetric);
+            var bestMetric = finalMetric[finalState];
+            if (bestMetric >= LargeMetric)
+            {
+                throw new ArgumentException("Failed to decode: no valid Viterbi path.", nameof(encodedBits));
+            }
+
+            var traceState = finalState;
+            for (var t = inputSymbolCount - 1; t >= 0; t--)
+            {
+                decidedBits[t] = traceState >= HalfStateCount;
+                var fromOdd = (int)((decisions[t] >> traceState) & 1UL);
+                traceState = ((traceState & (HalfStateCount - 1)) << 1) | fromOdd;
+            }
+
+            var decoded = BitsToBytes(decidedBits.AsSpan(0, originalBitLength));
+            metrics = new DecodeMetrics(
+                PathHammingDistance: bestMetric,
+                ComparedCodeBitCount: puncturedBitLength,
+                CorrectedCodeBitCount: bestMetric,
+                CorrectionRate: puncturedBitLength == 0 ? 0.0 : (double)bestMetric / puncturedBitLength);
+            return decoded;
+        }
+        finally
+        {
+            ArrayPool<ulong>.Shared.Return(decisions, clearArray: false);
+            ArrayPool<bool>.Shared.Return(decidedBits, clearArray: false);
+        }
+    }
+
+    /// <summary>
+    /// ハード判定の枝距離表を作ります。添字は [受信パターン × 64 + 次状態]。
+    /// 受信パターンは bit0=rx0, bit1=rx1, bit2=rx0 受信済み, bit3=rx1 受信済み。
+    /// </summary>
+    /// <param name="fromOddState">次状態 j / j+32 の前状態として 2j+1 側を使う場合 true（false なら 2j）。</param>
+    /// <returns>枝距離表（16 × 64）。</returns>
+    private static int[] BuildHardBranchTable(bool fromOddState)
+    {
+        var table = new int[16 * StateCount];
+        for (var combo = 0; combo < 16; combo++)
+        {
+            var rx0 = combo & 1;
+            var rx1 = (combo >> 1) & 1;
+            var hasRx0 = (combo & 4) != 0;
+            var hasRx1 = (combo & 8) != 0;
+            for (var ns = 0; ns < StateCount; ns++)
+            {
+                var input = ns >= HalfStateCount ? 1 : 0;
+                var state = ((ns & (HalfStateCount - 1)) << 1) | (fromOddState ? 1 : 0);
+                if ((input == 0 ? NextStateWhenInput0[state] : NextStateWhenInput1[state]) != ns)
+                {
+                    throw new InvalidOperationException("Trellis is not a radix-2 butterfly.");
+                }
+
+                var out0 = input == 0 ? Output0WhenInput0[state] : Output0WhenInput1[state];
+                var out1 = input == 0 ? Output1WhenInput0[state] : Output1WhenInput1[state];
+                var distance = 0;
+                if (hasRx0)
+                {
+                    distance += out0 ^ rx0;
+                }
+
+                if (hasRx1)
+                {
+                    distance += out1 ^ rx1;
+                }
+
+                table[(combo * StateCount) + ns] = distance;
+            }
+        }
+
+        return table;
+    }
+
+    /// <summary>
     /// ソフト判定LLRを用いて復号します。
     /// </summary>
     /// <param name="codeLlrs">受信コードビットのLLR列。</param>
@@ -357,148 +551,19 @@ public static class ConvolutionalCode
         }
 
         var fullCodeLlrsBuffer = ArrayPool<double>.Shared.Rent(expectedCodeBitLength);
-        var fullCodeLlrs = fullCodeLlrsBuffer.AsSpan(0, expectedCodeBitLength);
-        DepunctureSoftInto(codeLlrs, expectedCodeBitLength, punctureRate, fullCodeLlrs);
-
-        var tCount = expectedCodeBitLength / OutputBitsPerInputBit;
-        const double negInf = -1e300;
-
-        var alphaLength = (tCount + 1) * StateCount;
-        var alpha = ArrayPool<double>.Shared.Rent(alphaLength);
         var payloadBitsBuffer = ArrayPool<bool>.Shared.Rent(originalBitLength);
         try
         {
-            Array.Fill(alpha, negInf, 0, StateCount);
-            alpha[0] = 0.0;
-            for (var t = 0; t < tCount; t++)
-            {
-                var llr0 = fullCodeLlrs[t * 2];
-                var llr1 = fullCodeLlrs[(t * 2) + 1];
-                var metric01 = llr0;
-                var metric10 = llr1;
-                var metric11 = llr0 + llr1;
-                var rowBase = t * StateCount;
-                var nextRowBase = (t + 1) * StateCount;
-                for (var ns = 0; ns < StateCount; ns++)
-                {
-                    alpha[nextRowBase + ns] = negInf;
-                }
+            var fullCodeLlrs = fullCodeLlrsBuffer.AsSpan(0, expectedCodeBitLength);
+            DepunctureSoftInto(codeLlrs, expectedCodeBitLength, punctureRate, fullCodeLlrs);
 
-                for (var state = 0; state < StateCount; state++)
-                {
-                    var a = alpha[rowBase + state];
-                    if (a <= negInf / 2)
-                    {
-                        continue;
-                    }
-
-                    var nextState0 = NextStateWhenInput0[state];
-                    var gamma0 = SelectBranchMetric(OutputMaskWhenInput0[state], metric01, metric10, metric11);
-                    var candidate0 = a + gamma0;
-                    var index0 = nextRowBase + nextState0;
-                    if (candidate0 > alpha[index0])
-                    {
-                        alpha[index0] = candidate0;
-                    }
-
-                    var nextState1 = NextStateWhenInput1[state];
-                    var gamma1 = SelectBranchMetric(OutputMaskWhenInput1[state], metric01, metric10, metric11);
-                    var candidate1 = a + gamma1;
-                    var index1 = nextRowBase + nextState1;
-                    if (candidate1 > alpha[index1])
-                    {
-                        alpha[index1] = candidate1;
-                    }
-                }
-            }
+            infoLlrs = new double[originalBitLength];
+            ComputeInfoLlrs(fullCodeLlrs, terminated, infoLlrs);
 
             var payloadBits = payloadBitsBuffer.AsSpan(0, originalBitLength);
-            infoLlrs = new double[originalBitLength];
-            Span<double> betaNext = stackalloc double[StateCount];
-            Span<double> betaCurr = stackalloc double[StateCount];
-            if (terminated)
+            for (var t = 0; t < originalBitLength; t++)
             {
-                for (var state = 0; state < StateCount; state++)
-                {
-                    betaNext[state] = negInf;
-                }
-
-                betaNext[0] = 0.0;
-            }
-            else
-            {
-                for (var state = 0; state < StateCount; state++)
-                {
-                    betaNext[state] = 0.0;
-                }
-            }
-
-            for (var t = tCount - 1; t >= 0; t--)
-            {
-                var llr0 = fullCodeLlrs[t * 2];
-                var llr1 = fullCodeLlrs[(t * 2) + 1];
-                var metric01 = llr0;
-                var metric10 = llr1;
-                var metric11 = llr0 + llr1;
-                var best0 = negInf;
-                var best1 = negInf;
-                var rowBase = t * StateCount;
-
-                for (var state = 0; state < StateCount; state++)
-                {
-                    var gamma0 = SelectBranchMetric(OutputMaskWhenInput0[state], metric01, metric10, metric11);
-                    var gamma1 = SelectBranchMetric(OutputMaskWhenInput1[state], metric01, metric10, metric11);
-
-                    var nextState0 = NextStateWhenInput0[state];
-                    var b0 = betaNext[nextState0];
-                    var candidate0 = b0 > negInf / 2 ? b0 + gamma0 : negInf;
-
-                    var nextState1 = NextStateWhenInput1[state];
-                    var b1 = betaNext[nextState1];
-                    var candidate1 = b1 > negInf / 2 ? b1 + gamma1 : negInf;
-
-                    betaCurr[state] = candidate0 > candidate1 ? candidate0 : candidate1;
-
-                    var a = alpha[rowBase + state];
-                    if (a <= negInf / 2)
-                    {
-                        continue;
-                    }
-
-                    if (candidate0 > negInf / 2)
-                    {
-                        var metric0 = a + candidate0;
-                        if (metric0 > best0)
-                        {
-                            best0 = metric0;
-                        }
-                    }
-
-                    if (candidate1 > negInf / 2)
-                    {
-                        var metric1 = a + candidate1;
-                        if (metric1 > best1)
-                        {
-                            best1 = metric1;
-                        }
-                    }
-                }
-
-                var app = best0 - best1;
-                if (double.IsNaN(app) || double.IsInfinity(app))
-                {
-                    app = 0.0;
-                }
-
-                if (t < originalBitLength)
-                {
-                    infoLlrs[t] = app;
-                    payloadBits[t] = app < 0.0;
-                }
-
-                var betaSwap = betaNext;
-                betaNext = betaCurr;
-                betaCurr = betaSwap;
+                payloadBits[t] = infoLlrs[t] < 0.0;
             }
 
             var decoded = BitsToBytes(payloadBits);
@@ -511,10 +576,643 @@ public static class ConvolutionalCode
         }
         finally
         {
-            ArrayPool<double>.Shared.Return(alpha, clearArray: false);
             ArrayPool<double>.Shared.Return(fullCodeLlrsBuffer, clearArray: false);
             ArrayPool<bool>.Shared.Return(payloadBitsBuffer, clearArray: false);
         }
+    }
+
+    /// <summary>
+    /// Max-Log BCJR の計算経路です（テストで経路ごとの一致を確かめるために指定できる）。
+    /// </summary>
+    internal enum TrellisKernel
+    {
+        /// <summary>CPU が対応する最速の経路。</summary>
+        Auto,
+
+        /// <summary>スカラ。</summary>
+        Scalar,
+
+        /// <summary>128 bit SIMD（SSE2 / AdvSimd）。</summary>
+        Vector128,
+
+        /// <summary>256 bit SIMD（AVX2）。</summary>
+        Vector256
+    }
+
+    /// <summary>
+    /// 指定した経路が現在の CPU で使えるかを返します。
+    /// </summary>
+    /// <param name="kernel">計算経路。</param>
+    /// <returns>使える場合 true。</returns>
+    internal static bool IsTrellisKernelSupported(TrellisKernel kernel) => kernel switch
+    {
+        TrellisKernel.Auto or TrellisKernel.Scalar => true,
+        TrellisKernel.Vector128 => Sse2.IsSupported || AdvSimd.Arm64.IsSupported,
+        TrellisKernel.Vector256 => Avx2.IsSupported,
+        _ => false
+    };
+
+    /// <summary>
+    /// 母符号長の LLR から Max-Log BCJR で情報ビットの事後 LLR を求めます（正がビット 0）。
+    /// </summary>
+    /// <param name="fullCodeLlrs">デパンクチャ済みの母符号 LLR（入力 1 ビットあたり 2 個）。</param>
+    /// <param name="terminated">終端ビット付き（最終状態 0）として扱う場合 true。</param>
+    /// <param name="infoLlrs">情報ビット LLR の出力先（先頭から入力ビット数以下の長さ）。</param>
+    /// <param name="kernel">計算経路。</param>
+    internal static void ComputeInfoLlrs(
+        ReadOnlySpan<double> fullCodeLlrs,
+        bool terminated,
+        Span<double> infoLlrs,
+        TrellisKernel kernel = TrellisKernel.Auto)
+    {
+        var tCount = fullCodeLlrs.Length / OutputBitsPerInputBit;
+        if (infoLlrs.Length > tCount)
+        {
+            throw new ArgumentException("Info LLR length exceeds the trellis length.", nameof(infoLlrs));
+        }
+
+        if (kernel == TrellisKernel.Auto)
+        {
+            kernel = IsTrellisKernelSupported(TrellisKernel.Vector256) ? TrellisKernel.Vector256
+                : IsTrellisKernelSupported(TrellisKernel.Vector128) ? TrellisKernel.Vector128
+                : TrellisKernel.Scalar;
+        }
+        else if (!IsTrellisKernelSupported(kernel))
+        {
+            throw new PlatformNotSupportedException($"Trellis kernel {kernel} is not supported on this CPU.");
+        }
+
+        // α を全段保持するとキャッシュに乗らないため、区間先頭の α だけ残し、後ろ向きの直前に区間ごと再計算する
+        var blockCount = (tCount + TrellisBlockSteps - 1) / TrellisBlockSteps;
+        var checkpoints = ArrayPool<double>.Shared.Rent(Math.Max(1, blockCount) * StateCount);
+        var alpha = ArrayPool<double>.Shared.Rent((TrellisBlockSteps + 1) * StateCount);
+        try
+        {
+            Array.Fill(alpha, NegInfMetric, 0, StateCount);
+            alpha[0] = 0.0;
+            for (var b = 0; b < blockCount; b++)
+            {
+                Array.Copy(alpha, 0, checkpoints, b * StateCount, StateCount);
+                if (b == blockCount - 1)
+                {
+                    break;
+                }
+
+                Forward(kernel, fullCodeLlrs, b * TrellisBlockSteps, TrellisBlockSteps, alpha);
+                Array.Copy(alpha, TrellisBlockSteps * StateCount, alpha, 0, StateCount);
+            }
+
+            Span<double> betaNext = stackalloc double[StateCount];
+            Span<double> betaCurr = stackalloc double[StateCount];
+            betaNext.Fill(terminated ? NegInfMetric : 0.0);
+            betaNext[0] = 0.0;
+            for (var b = blockCount - 1; b >= 0; b--)
+            {
+                var tStart = b * TrellisBlockSteps;
+                var steps = Math.Min(TrellisBlockSteps, tCount - tStart);
+                Array.Copy(checkpoints, b * StateCount, alpha, 0, StateCount);
+                Forward(kernel, fullCodeLlrs, tStart, steps, alpha);
+                Backward(kernel, fullCodeLlrs, tStart, steps, alpha, betaNext, betaCurr, infoLlrs);
+                if ((steps & 1) != 0)
+                {
+                    var swap = betaNext;
+                    betaNext = betaCurr;
+                    betaCurr = swap;
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(checkpoints, clearArray: false);
+            ArrayPool<double>.Shared.Return(alpha, clearArray: false);
+        }
+    }
+
+    /// <summary>
+    /// 指定経路で 1 区間の前向き（α）を求めます。
+    /// </summary>
+    /// <param name="kernel">計算経路。</param>
+    /// <param name="llrs">母符号 LLR（全段）。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart。行 1〜steps を書き込む）。</param>
+    private static void Forward(TrellisKernel kernel, ReadOnlySpan<double> llrs, int tStart, int steps, double[] alpha)
+    {
+        switch (kernel)
+        {
+            case TrellisKernel.Vector256:
+                ForwardVector256(llrs, tStart, steps, alpha);
+                break;
+            case TrellisKernel.Vector128:
+                ForwardVector128(llrs, tStart, steps, alpha);
+                break;
+            default:
+                ForwardScalar(llrs, tStart, steps, alpha);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 指定経路で 1 区間の後ろ向き（β）と情報ビット LLR を求めます。
+    /// </summary>
+    /// <param name="kernel">計算経路。</param>
+    /// <param name="llrs">母符号 LLR（全段）。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart）。</param>
+    /// <param name="betaNext">区間末尾の β（作業領域として書き換える）。</param>
+    /// <param name="betaCurr">β の作業領域。steps が奇数なら区間先頭の β はこちらに残る。</param>
+    /// <param name="infoLlrs">情報ビット LLR の出力先（全段の添字）。</param>
+    private static void Backward(
+        TrellisKernel kernel,
+        ReadOnlySpan<double> llrs,
+        int tStart,
+        int steps,
+        double[] alpha,
+        Span<double> betaNext,
+        Span<double> betaCurr,
+        Span<double> infoLlrs)
+    {
+        switch (kernel)
+        {
+            case TrellisKernel.Vector256:
+                BackwardVector256(llrs, tStart, steps, alpha, betaNext, betaCurr, infoLlrs);
+                break;
+            case TrellisKernel.Vector128:
+                BackwardVector128(llrs, tStart, steps, alpha, betaNext, betaCurr, infoLlrs);
+                break;
+            default:
+                BackwardScalar(llrs, tStart, steps, alpha, betaNext, betaCurr, infoLlrs);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 前向き（α）をスカラで求めます。alpha の先頭行は初期化済みであること。
+    /// </summary>
+    /// <param name="llrs">母符号 LLR。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart。行 1〜steps を書き込む）。</param>
+    private static void ForwardScalar(ReadOnlySpan<double> llrs, int tStart, int steps, double[] alpha)
+    {
+        for (var k = 0; k < steps; k++)
+        {
+            var t = tStart + k;
+            var llr0 = llrs[t * 2];
+            var llr1 = llrs[(t * 2) + 1];
+            var metric01 = llr0;
+            var metric10 = llr1;
+            var metric11 = llr0 + llr1;
+            var rowBase = k * StateCount;
+            var nextRowBase = (k + 1) * StateCount;
+            for (var ns = 0; ns < StateCount; ns++)
+            {
+                alpha[nextRowBase + ns] = NegInfMetric;
+            }
+
+            for (var state = 0; state < StateCount; state++)
+            {
+                var a = alpha[rowBase + state];
+                if (a <= NegInfMetric / 2)
+                {
+                    continue;
+                }
+
+                var candidate0 = a + SelectBranchMetric(OutputMaskWhenInput0[state], metric01, metric10, metric11);
+                var index0 = nextRowBase + NextStateWhenInput0[state];
+                if (candidate0 > alpha[index0])
+                {
+                    alpha[index0] = candidate0;
+                }
+
+                var candidate1 = a + SelectBranchMetric(OutputMaskWhenInput1[state], metric01, metric10, metric11);
+                var index1 = nextRowBase + NextStateWhenInput1[state];
+                if (candidate1 > alpha[index1])
+                {
+                    alpha[index1] = candidate1;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 後ろ向き（β）と情報ビット LLR をスカラで求めます。
+    /// </summary>
+    /// <param name="llrs">母符号 LLR。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart）。</param>
+    /// <param name="betaNext">区間末尾の β（作業領域として書き換える）。</param>
+    /// <param name="betaCurr">β の作業領域。</param>
+    /// <param name="infoLlrs">情報ビット LLR の出力先。</param>
+    private static void BackwardScalar(
+        ReadOnlySpan<double> llrs,
+        int tStart,
+        int steps,
+        double[] alpha,
+        Span<double> betaNext,
+        Span<double> betaCurr,
+        Span<double> infoLlrs)
+    {
+        for (var k = steps - 1; k >= 0; k--)
+        {
+            var t = tStart + k;
+            var llr0 = llrs[t * 2];
+            var llr1 = llrs[(t * 2) + 1];
+            var metric01 = llr0;
+            var metric10 = llr1;
+            var metric11 = llr0 + llr1;
+            var best0 = NegInfMetric;
+            var best1 = NegInfMetric;
+            var rowBase = k * StateCount;
+
+            for (var state = 0; state < StateCount; state++)
+            {
+                var b0 = betaNext[NextStateWhenInput0[state]];
+                var candidate0 = b0 > NegInfMetric / 2
+                    ? b0 + SelectBranchMetric(OutputMaskWhenInput0[state], metric01, metric10, metric11)
+                    : NegInfMetric;
+                var b1 = betaNext[NextStateWhenInput1[state]];
+                var candidate1 = b1 > NegInfMetric / 2
+                    ? b1 + SelectBranchMetric(OutputMaskWhenInput1[state], metric01, metric10, metric11)
+                    : NegInfMetric;
+                betaCurr[state] = candidate0 > candidate1 ? candidate0 : candidate1;
+
+                var a = alpha[rowBase + state];
+                if (a <= NegInfMetric / 2)
+                {
+                    continue;
+                }
+
+                if (candidate0 > NegInfMetric / 2 && a + candidate0 > best0)
+                {
+                    best0 = a + candidate0;
+                }
+
+                if (candidate1 > NegInfMetric / 2 && a + candidate1 > best1)
+                {
+                    best1 = a + candidate1;
+                }
+            }
+
+            if (t < infoLlrs.Length)
+            {
+                infoLlrs[t] = PosteriorLlr(best0, best1);
+            }
+
+            var betaSwap = betaNext;
+            betaNext = betaCurr;
+            betaCurr = betaSwap;
+        }
+    }
+
+    /// <summary>
+    /// 前向き（α）を AVX2 で求めます。状態 2j / 2j+1 から次状態 j（入力 0）/ j+32（入力 1）へのバタフライを 4 本ずつ処理します。
+    /// </summary>
+    /// <param name="llrs">母符号 LLR。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart。行 1〜steps を書き込む）。</param>
+    private static void ForwardVector256(ReadOnlySpan<double> llrs, int tStart, int steps, double[] alpha)
+    {
+        ref var masks = ref MemoryMarshal.GetArrayDataReference(BranchBitMasks);
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+        ref var prev = ref MemoryMarshal.GetArrayDataReference(alpha);
+        for (var k = 0; k < steps; k++)
+        {
+            var t = tStart + k;
+            var l0 = Vector256.Create(Unsafe.Add(ref llrRef, 2 * t));
+            var l1 = Vector256.Create(Unsafe.Add(ref llrRef, (2 * t) + 1));
+            ref var next = ref Unsafe.Add(ref prev, StateCount);
+            for (var j = 0; j < HalfStateCount; j += 4)
+            {
+                Deinterleave256(
+                    Vector256.LoadUnsafe(ref prev, (nuint)(2 * j)),
+                    Vector256.LoadUnsafe(ref prev, (nuint)((2 * j) + 4)),
+                    out var even,
+                    out var odd);
+                var g0 = Gamma256(ref masks, 0, j, l0, l1);
+                var g1 = Gamma256(ref masks, 1, j, l0, l1);
+                var to0 = Avx.Max(Avx.Add(even, g0), Avx.Add(odd, g1));
+                var to1 = Avx.Max(Avx.Add(even, g1), Avx.Add(odd, g0));
+                to0.StoreUnsafe(ref next, (nuint)j);
+                to1.StoreUnsafe(ref next, (nuint)(HalfStateCount + j));
+            }
+
+            prev = ref next;
+        }
+    }
+
+    /// <summary>
+    /// 後ろ向き（β）と情報ビット LLR を AVX2 で求めます。
+    /// </summary>
+    /// <param name="llrs">母符号 LLR。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart）。</param>
+    /// <param name="betaNext">区間末尾の β（作業領域として書き換える）。</param>
+    /// <param name="betaCurr">β の作業領域。</param>
+    /// <param name="infoLlrs">情報ビット LLR の出力先。</param>
+    private static void BackwardVector256(
+        ReadOnlySpan<double> llrs,
+        int tStart,
+        int steps,
+        double[] alpha,
+        Span<double> betaNext,
+        Span<double> betaCurr,
+        Span<double> infoLlrs)
+    {
+        ref var masks = ref MemoryMarshal.GetArrayDataReference(BranchBitMasks);
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+        ref var alphaRef = ref MemoryMarshal.GetArrayDataReference(alpha);
+        var negInf = Vector256.Create(NegInfMetric);
+        for (var k = steps - 1; k >= 0; k--)
+        {
+            var t = tStart + k;
+            var l0 = Vector256.Create(Unsafe.Add(ref llrRef, 2 * t));
+            var l1 = Vector256.Create(Unsafe.Add(ref llrRef, (2 * t) + 1));
+            ref var bn = ref MemoryMarshal.GetReference(betaNext);
+            ref var bc = ref MemoryMarshal.GetReference(betaCurr);
+            ref var a = ref Unsafe.Add(ref alphaRef, k * StateCount);
+            var best0 = negInf;
+            var best1 = negInf;
+            for (var j = 0; j < HalfStateCount; j += 4)
+            {
+                var b0 = Vector256.LoadUnsafe(ref bn, (nuint)j);
+                var b1 = Vector256.LoadUnsafe(ref bn, (nuint)(HalfStateCount + j));
+                var g0 = Gamma256(ref masks, 0, j, l0, l1);
+                var g1 = Gamma256(ref masks, 1, j, l0, l1);
+                var c0Even = Avx.Add(b0, g0);
+                var c1Even = Avx.Add(b1, g1);
+                var c0Odd = Avx.Add(b0, g1);
+                var c1Odd = Avx.Add(b1, g0);
+                Interleave256(Avx.Max(c0Even, c1Even), Avx.Max(c0Odd, c1Odd), out var lo, out var hi);
+                lo.StoreUnsafe(ref bc, (nuint)(2 * j));
+                hi.StoreUnsafe(ref bc, (nuint)((2 * j) + 4));
+
+                Deinterleave256(
+                    Vector256.LoadUnsafe(ref a, (nuint)(2 * j)),
+                    Vector256.LoadUnsafe(ref a, (nuint)((2 * j) + 4)),
+                    out var aEven,
+                    out var aOdd);
+                best0 = Avx.Max(best0, Avx.Max(Avx.Add(aEven, c0Even), Avx.Add(aOdd, c0Odd)));
+                best1 = Avx.Max(best1, Avx.Max(Avx.Add(aEven, c1Even), Avx.Add(aOdd, c1Odd)));
+            }
+
+            if (t < infoLlrs.Length)
+            {
+                infoLlrs[t] = PosteriorLlr(HorizontalMax(best0), HorizontalMax(best1));
+            }
+
+            var betaSwap = betaNext;
+            betaNext = betaCurr;
+            betaCurr = betaSwap;
+        }
+    }
+
+    /// <summary>
+    /// 前向き（α）を 128 bit SIMD で求めます（バタフライを 2 本ずつ処理）。
+    /// </summary>
+    /// <param name="llrs">母符号 LLR。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart。行 1〜steps を書き込む）。</param>
+    private static void ForwardVector128(ReadOnlySpan<double> llrs, int tStart, int steps, double[] alpha)
+    {
+        ref var masks = ref MemoryMarshal.GetArrayDataReference(BranchBitMasks);
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+        ref var prev = ref MemoryMarshal.GetArrayDataReference(alpha);
+        for (var k = 0; k < steps; k++)
+        {
+            var t = tStart + k;
+            var l0 = Vector128.Create(Unsafe.Add(ref llrRef, 2 * t));
+            var l1 = Vector128.Create(Unsafe.Add(ref llrRef, (2 * t) + 1));
+            ref var next = ref Unsafe.Add(ref prev, StateCount);
+            for (var j = 0; j < HalfStateCount; j += 2)
+            {
+                var x = Vector128.LoadUnsafe(ref prev, (nuint)(2 * j));
+                var y = Vector128.LoadUnsafe(ref prev, (nuint)((2 * j) + 2));
+                var even = PairLow128(x, y);
+                var odd = PairHigh128(x, y);
+                var g0 = Gamma128(ref masks, 0, j, l0, l1);
+                var g1 = Gamma128(ref masks, 1, j, l0, l1);
+                var to0 = Vector128.Max(even + g0, odd + g1);
+                var to1 = Vector128.Max(even + g1, odd + g0);
+                to0.StoreUnsafe(ref next, (nuint)j);
+                to1.StoreUnsafe(ref next, (nuint)(HalfStateCount + j));
+            }
+
+            prev = ref next;
+        }
+    }
+
+    /// <summary>
+    /// 後ろ向き（β）と情報ビット LLR を 128 bit SIMD で求めます。
+    /// </summary>
+    /// <param name="llrs">母符号 LLR。</param>
+    /// <param name="tStart">区間先頭の段。</param>
+    /// <param name="steps">区間の段数。</param>
+    /// <param name="alpha">区間の α（行 0 が段 tStart）。</param>
+    /// <param name="betaNext">区間末尾の β（作業領域として書き換える）。</param>
+    /// <param name="betaCurr">β の作業領域。</param>
+    /// <param name="infoLlrs">情報ビット LLR の出力先。</param>
+    private static void BackwardVector128(
+        ReadOnlySpan<double> llrs,
+        int tStart,
+        int steps,
+        double[] alpha,
+        Span<double> betaNext,
+        Span<double> betaCurr,
+        Span<double> infoLlrs)
+    {
+        ref var masks = ref MemoryMarshal.GetArrayDataReference(BranchBitMasks);
+        ref var llrRef = ref MemoryMarshal.GetReference(llrs);
+        ref var alphaRef = ref MemoryMarshal.GetArrayDataReference(alpha);
+        var negInf = Vector128.Create(NegInfMetric);
+        for (var k = steps - 1; k >= 0; k--)
+        {
+            var t = tStart + k;
+            var l0 = Vector128.Create(Unsafe.Add(ref llrRef, 2 * t));
+            var l1 = Vector128.Create(Unsafe.Add(ref llrRef, (2 * t) + 1));
+            ref var bn = ref MemoryMarshal.GetReference(betaNext);
+            ref var bc = ref MemoryMarshal.GetReference(betaCurr);
+            ref var a = ref Unsafe.Add(ref alphaRef, k * StateCount);
+            var best0 = negInf;
+            var best1 = negInf;
+            for (var j = 0; j < HalfStateCount; j += 2)
+            {
+                var b0 = Vector128.LoadUnsafe(ref bn, (nuint)j);
+                var b1 = Vector128.LoadUnsafe(ref bn, (nuint)(HalfStateCount + j));
+                var g0 = Gamma128(ref masks, 0, j, l0, l1);
+                var g1 = Gamma128(ref masks, 1, j, l0, l1);
+                var c0Even = b0 + g0;
+                var c1Even = b1 + g1;
+                var c0Odd = b0 + g1;
+                var c1Odd = b1 + g0;
+                var betaEven = Vector128.Max(c0Even, c1Even);
+                var betaOdd = Vector128.Max(c0Odd, c1Odd);
+                PairLow128(betaEven, betaOdd).StoreUnsafe(ref bc, (nuint)(2 * j));
+                PairHigh128(betaEven, betaOdd).StoreUnsafe(ref bc, (nuint)((2 * j) + 2));
+
+                var x = Vector128.LoadUnsafe(ref a, (nuint)(2 * j));
+                var y = Vector128.LoadUnsafe(ref a, (nuint)((2 * j) + 2));
+                var aEven = PairLow128(x, y);
+                var aOdd = PairHigh128(x, y);
+                best0 = Vector128.Max(best0, Vector128.Max(aEven + c0Even, aOdd + c0Odd));
+                best1 = Vector128.Max(best1, Vector128.Max(aEven + c1Even, aOdd + c1Odd));
+            }
+
+            if (t < infoLlrs.Length)
+            {
+                infoLlrs[t] = PosteriorLlr(
+                    Math.Max(best0.GetElement(0), best0.GetElement(1)),
+                    Math.Max(best1.GetElement(0), best1.GetElement(1)));
+            }
+
+            var betaSwap = betaNext;
+            betaNext = betaCurr;
+            betaCurr = betaSwap;
+        }
+    }
+
+    /// <summary>
+    /// 入力 0 / 1 の最良パスメトリックから事後 LLR を求めます（到達不能側は NegInfMetric に揃える）。
+    /// </summary>
+    /// <param name="best0">入力 0 の最良メトリック。</param>
+    /// <param name="best1">入力 1 の最良メトリック。</param>
+    /// <returns>best0 − best1（非有限なら 0）。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double PosteriorLlr(double best0, double best1)
+    {
+        var app = Math.Max(best0, NegInfMetric) - Math.Max(best1, NegInfMetric);
+        return double.IsFinite(app) ? app : 0.0;
+    }
+
+    /// <summary>
+    /// 偶数状態 2j から入力 input で進む枝の枝メトリック（出力ビットが 1 の位置の LLR の和）を 4 状態分求めます。
+    /// 奇数状態 2j+1 の枝は入力を反転した偶数状態の枝と同じ値になります（<see cref="BuildBranchBitMasks"/>）。
+    /// </summary>
+    /// <param name="masks">枝出力ビットのマスク表。</param>
+    /// <param name="input">入力ビット。</param>
+    /// <param name="j">先頭のバタフライ番号。</param>
+    /// <param name="l0">出力ビット 0 の LLR（全レーン同値）。</param>
+    /// <param name="l1">出力ビット 1 の LLR（全レーン同値）。</param>
+    /// <returns>4 レーンの枝メトリック。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<double> Gamma256(ref double masks, int input, int j, Vector256<double> l0, Vector256<double> l1)
+    {
+        var offset = (input * StateCount) + j;
+        return Avx.Add(
+            Avx.And(l0, Vector256.LoadUnsafe(ref masks, (nuint)offset)),
+            Avx.And(l1, Vector256.LoadUnsafe(ref masks, (nuint)(offset + HalfStateCount))));
+    }
+
+    /// <summary>
+    /// 偶数状態 2j から入力 input で進む枝の枝メトリックを 2 状態分求めます。
+    /// </summary>
+    /// <param name="masks">枝出力ビットのマスク表。</param>
+    /// <param name="input">入力ビット。</param>
+    /// <param name="j">先頭のバタフライ番号。</param>
+    /// <param name="l0">出力ビット 0 の LLR（全レーン同値）。</param>
+    /// <param name="l1">出力ビット 1 の LLR（全レーン同値）。</param>
+    /// <returns>2 レーンの枝メトリック。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<double> Gamma128(ref double masks, int input, int j, Vector128<double> l0, Vector128<double> l1)
+    {
+        var offset = (input * StateCount) + j;
+        return (l0 & Vector128.LoadUnsafe(ref masks, (nuint)offset))
+            + (l1 & Vector128.LoadUnsafe(ref masks, (nuint)(offset + HalfStateCount)));
+    }
+
+    /// <summary>
+    /// 連続 8 状態 [s0..s7] を偶数状態 [s0,s2,s4,s6] と奇数状態 [s1,s3,s5,s7] に分けます。
+    /// </summary>
+    /// <param name="x">状態 s0..s3。</param>
+    /// <param name="y">状態 s4..s7。</param>
+    /// <param name="even">偶数状態。</param>
+    /// <param name="odd">奇数状態。</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Deinterleave256(Vector256<double> x, Vector256<double> y, out Vector256<double> even, out Vector256<double> odd)
+    {
+        even = Avx2.Permute4x64(Avx.UnpackLow(x, y), 0b11_01_10_00);
+        odd = Avx2.Permute4x64(Avx.UnpackHigh(x, y), 0b11_01_10_00);
+    }
+
+    /// <summary>
+    /// 偶数状態と奇数状態を交互に並べ直します（<see cref="Deinterleave256"/> の逆）。
+    /// </summary>
+    /// <param name="even">偶数状態 [e0..e3]。</param>
+    /// <param name="odd">奇数状態 [o0..o3]。</param>
+    /// <param name="lo">[e0,o0,e1,o1]。</param>
+    /// <param name="hi">[e2,o2,e3,o3]。</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Interleave256(Vector256<double> even, Vector256<double> odd, out Vector256<double> lo, out Vector256<double> hi)
+    {
+        var a = Avx.UnpackLow(even, odd);
+        var b = Avx.UnpackHigh(even, odd);
+        lo = Avx.Permute2x128(a, b, 0x20);
+        hi = Avx.Permute2x128(a, b, 0x31);
+    }
+
+    /// <summary>
+    /// 2 つのベクトルの先頭要素どうしを並べます（[x0, y0]）。
+    /// </summary>
+    /// <param name="x">1 つ目。</param>
+    /// <param name="y">2 つ目。</param>
+    /// <returns>[x0, y0]。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<double> PairLow128(Vector128<double> x, Vector128<double> y) =>
+        Sse2.IsSupported ? Sse2.UnpackLow(x, y) : AdvSimd.Arm64.ZipLow(x, y);
+
+    /// <summary>
+    /// 2 つのベクトルの末尾要素どうしを並べます（[x1, y1]）。
+    /// </summary>
+    /// <param name="x">1 つ目。</param>
+    /// <param name="y">2 つ目。</param>
+    /// <returns>[x1, y1]。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<double> PairHigh128(Vector128<double> x, Vector128<double> y) =>
+        Sse2.IsSupported ? Sse2.UnpackHigh(x, y) : AdvSimd.Arm64.ZipHigh(x, y);
+
+    /// <summary>
+    /// 4 レーンの最大値を返します。
+    /// </summary>
+    /// <param name="value">対象。</param>
+    /// <returns>最大値。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double HorizontalMax(Vector256<double> value)
+    {
+        var m = Sse2.Max(value.GetLower(), value.GetUpper());
+        return Math.Max(m.ToScalar(), m.GetElement(1));
+    }
+
+    /// <summary>
+    /// 偶数状態 2j・入力 input の枝出力ビットごとに、1 なら全ビット 1、0 なら 0 の double を並べた表を作ります。
+    /// </summary>
+    /// <returns>（入力, 出力ビット, j）順のマスク表（入力ごとに 64 個）。</returns>
+    private static double[] BuildBranchBitMasks()
+    {
+        var ones = BitConverter.Int64BitsToDouble(-1L);
+        var table = new double[2 * StateCount];
+        for (var j = 0; j < HalfStateCount; j++)
+        {
+            // SIMD 経路は「状態 2j+1 の枝 = 入力を反転した状態 2j の枝」を前提にする（両生成多項式が入力ビットと最古ビットを含むこと）
+            if (OutputMaskWhenInput0[(2 * j) + 1] != OutputMaskWhenInput1[2 * j]
+                || OutputMaskWhenInput1[(2 * j) + 1] != OutputMaskWhenInput0[2 * j])
+            {
+                throw new InvalidOperationException("Generator polynomials must tap both the input bit and the oldest register bit.");
+            }
+
+            for (var input = 0; input < 2; input++)
+            {
+                var mask = (input == 0 ? OutputMaskWhenInput0 : OutputMaskWhenInput1)[2 * j];
+                table[(input * StateCount) + j] = (mask & 1) != 0 ? ones : 0.0;
+                table[(input * StateCount) + HalfStateCount + j] = (mask & 2) != 0 ? ones : 0.0;
+            }
+        }
+
+        return table;
     }
 
     /// <summary>

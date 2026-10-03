@@ -1,4 +1,10 @@
+using System.Collections.Concurrent;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
+using Onta.Core;
 
 namespace Onta.Stream;
 
@@ -33,15 +39,13 @@ public static class StreamTimingDrift
         IReadOnlyList<int> pilotBins,
         Complex[,] destination)
     {
-        var cos = new double[fftSize];
-        var sin = new double[fftSize];
-        for (var n = 0; n < fftSize; n++)
+        var twiddles = new Twiddle[pilotBins.Count];
+        for (var i = 0; i < pilotBins.Count; i++)
         {
-            var a = -2.0 * Math.PI * n / fftSize;
-            cos[n] = Math.Cos(a);
-            sin[n] = Math.Sin(a);
+            twiddles[i] = GetTwiddle(fftSize, pilotBins[i]);
         }
 
+        var reals = new double[fftSize];
         var symbolLength = fftSize + cyclicPrefix;
         for (var s = 0; s < symbolCount; s++)
         {
@@ -52,29 +56,107 @@ public static class StreamTimingDrift
                 return s;
             }
 
-            for (var i = 0; i < pilotBins.Count; i++)
+            SimdMath.CopyComplexReals(samples.AsSpan(start, fftSize), reals);
+            for (var i = 0; i < twiddles.Length; i++)
             {
-                var bin = pilotBins[i];
-                double re = 0, im = 0;
-                var index = 0;
-                for (var n = 0; n < fftSize; n++)
-                {
-                    var x = samples[start + n].Real;
-                    re += x * cos[index];
-                    im += x * sin[index];
-                    index += bin;
-                    if (index >= fftSize)
-                    {
-                        index -= fftSize;
-                    }
-                }
-
-                destination[s, i] = new Complex(re, im);
+                destination[s, i] = new Complex(Dot(reals, twiddles[i].Cos), Dot(reals, twiddles[i].Sin));
             }
         }
 
         return symbolCount;
     }
+
+    /// <summary>
+    /// 1 ビン分の DFT 係数 cos / sin（e^{−j2π·bin·n/N}）です。
+    /// </summary>
+    /// <param name="Cos">実部の係数（長さ N）。</param>
+    /// <param name="Sin">虚部の係数（長さ N）。</param>
+    private sealed record Twiddle(double[] Cos, double[] Sin);
+
+    private static readonly ConcurrentDictionary<(int FftSize, int Bin), Twiddle> TwiddleCache = new();
+
+    /// <summary>
+    /// FFT サイズとビンに対応する DFT 係数を返します（初回だけ作ってキャッシュ）。
+    /// </summary>
+    /// <param name="fftSize">FFT サイズ。</param>
+    /// <param name="bin">ビン番号。</param>
+    /// <returns>長さ fftSize の cos / sin 係数。</returns>
+    private static Twiddle GetTwiddle(int fftSize, int bin) =>
+        TwiddleCache.GetOrAdd((fftSize, bin), static key =>
+        {
+            var cos = new double[key.FftSize];
+            var sin = new double[key.FftSize];
+            var index = 0;
+            var step = ((key.Bin % key.FftSize) + key.FftSize) % key.FftSize;
+            for (var n = 0; n < key.FftSize; n++)
+            {
+                var a = -2.0 * Math.PI * index / key.FftSize;
+                cos[n] = Math.Cos(a);
+                sin[n] = Math.Sin(a);
+                index += step;
+                if (index >= key.FftSize)
+                {
+                    index -= key.FftSize;
+                }
+            }
+
+            return new Twiddle(cos, sin);
+        });
+
+    /// <summary>
+    /// 同じ長さの 2 つの double 列の内積を求めます。
+    /// </summary>
+    /// <param name="a">1 つ目の列。</param>
+    /// <param name="b">2 つ目の列（a 以上の長さ）。</param>
+    /// <returns>内積。</returns>
+    private static double Dot(ReadOnlySpan<double> a, ReadOnlySpan<double> b)
+    {
+        var n = a.Length;
+        var i = 0;
+        var sum = 0.0;
+        if (Avx.IsSupported && n >= 8)
+        {
+            var acc0 = Vector256<double>.Zero;
+            var acc1 = Vector256<double>.Zero;
+            for (; i + 8 <= n; i += 8)
+            {
+                acc0 = MultiplyAdd(SimdMath.LoadAvx(a, i), SimdMath.LoadAvx(b, i), acc0);
+                acc1 = MultiplyAdd(SimdMath.LoadAvx(a, i + 4), SimdMath.LoadAvx(b, i + 4), acc1);
+            }
+
+            sum = SimdMath.HorizontalSum(Avx.Add(acc0, acc1));
+        }
+        else if (AdvSimd.Arm64.IsSupported && n >= 4)
+        {
+            var acc0 = Vector128<double>.Zero;
+            var acc1 = Vector128<double>.Zero;
+            for (; i + 4 <= n; i += 4)
+            {
+                acc0 = AdvSimd.Arm64.FusedMultiplyAdd(acc0, SimdMath.LoadNeon(a, i), SimdMath.LoadNeon(b, i));
+                acc1 = AdvSimd.Arm64.FusedMultiplyAdd(acc1, SimdMath.LoadNeon(a, i + 2), SimdMath.LoadNeon(b, i + 2));
+            }
+
+            sum = SimdMath.HorizontalSum(AdvSimd.Arm64.Add(acc0, acc1));
+        }
+
+        for (; i < n; i++)
+        {
+            sum += a[i] * b[i];
+        }
+
+        return sum;
+    }
+
+    /// <summary>
+    /// a × b + c を求めます（FMA があれば 1 命令で）。
+    /// </summary>
+    /// <param name="a">被乗数。</param>
+    /// <param name="b">乗数。</param>
+    /// <param name="c">加える値。</param>
+    /// <returns>a × b + c。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<double> MultiplyAdd(Vector256<double> a, Vector256<double> b, Vector256<double> c) =>
+        Fma.IsSupported ? Fma.MultiplyAdd(a, b, c) : Avx.Add(Avx.Multiply(a, b), c);
 
     /// <summary>
     /// パイロットごとの「後のシンボル × 前のシンボルの共役」から、1 シンボルあたりのずれ（サンプル）を求めます。

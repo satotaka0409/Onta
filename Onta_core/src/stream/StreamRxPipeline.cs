@@ -533,8 +533,7 @@ public sealed class StreamRxPipeline : IDisposable
         }
 
         var start = packetStart - (WarpPad * speed);
-        StreamSpeedWarp.Warp(left, length, start, speed, _warpL, count);
-        StreamSpeedWarp.Warp(right, length, start, speed, _warpR, count);
+        StreamSpeedWarp.WarpStereo(left, right, length, start, speed, _warpL, _warpR, count);
     }
 
     /// <summary>
@@ -703,8 +702,7 @@ public sealed class StreamRxPipeline : IDisposable
             _positions[m] = origin + ((m + tau) * speed);
         }
 
-        StreamSpeedWarp.WarpAt(left, length, _positions, _warpL, count);
-        StreamSpeedWarp.WarpAt(right, length, _positions, _warpR, count);
+        StreamSpeedWarp.WarpAtStereo(left, right, length, _positions, _warpL, _warpR, count);
         return _tau[pairs];
     }
 

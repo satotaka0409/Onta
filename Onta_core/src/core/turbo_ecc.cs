@@ -436,6 +436,29 @@ public static class TurboEcc1024
         ReadOnlySpan<double> apriori,
         Span<double> extrinsic)
     {
+        if (Avx2.IsSupported)
+        {
+            DecodeSisoMaxLogMapAvx2(systematic, parity, apriori, extrinsic);
+        }
+        else
+        {
+            DecodeSisoMaxLogMapScalar(systematic, parity, apriori, extrinsic);
+        }
+    }
+
+    /// <summary>
+    /// Max-Log-MAP SISO 復号をスカラで行います。
+    /// </summary>
+    /// <param name="systematic">系統ビットLLR。</param>
+    /// <param name="parity">パリティビットLLR。</param>
+    /// <param name="apriori">事前LLR。</param>
+    /// <param name="extrinsic">外部LLRの出力先。</param>
+    internal static void DecodeSisoMaxLogMapScalar(
+        ReadOnlySpan<double> systematic,
+        ReadOnlySpan<double> parity,
+        ReadOnlySpan<double> apriori,
+        Span<double> extrinsic)
+    {
         var n = systematic.Length;
         var rowWidth = StateCount;
         var matrixLength = (n + 1) * rowWidth;
@@ -563,6 +586,105 @@ public static class TurboEcc1024
             ArrayPool<double>.Shared.Return(alpha, clearArray: false);
             ArrayPool<double>.Shared.Return(beta, clearArray: false);
         }
+    }
+
+    /// <summary>
+    /// Max-Log-MAP SISO 復号を AVX2 で行います（結果はスカラ版と同じ）。
+    /// 状態 m（下位 4 状態）と m+4（上位 4 状態）から次状態 2m / 2m+1 へ遷移するので、α・β を 4 レーン×2 本で持ちます。
+    /// 後ろ向きの途中で外部 LLR も求め、β の全段保持を省きます。
+    /// </summary>
+    /// <param name="systematic">系統ビットLLR。</param>
+    /// <param name="parity">パリティビットLLR。</param>
+    /// <param name="apriori">事前LLR。</param>
+    /// <param name="extrinsic">外部LLRの出力先。</param>
+    internal static void DecodeSisoMaxLogMapAvx2(
+        ReadOnlySpan<double> systematic,
+        ReadOnlySpan<double> parity,
+        ReadOnlySpan<double> apriori,
+        Span<double> extrinsic)
+    {
+        var n = systematic.Length;
+        var alpha = ArrayPool<double>.Shared.Rent((n + 1) * StateCount);
+        try
+        {
+            ref var alphaRef = ref MemoryMarshal.GetArrayDataReference(alpha);
+            var low = Vector256.Create(0.0, NegativeInfinity, NegativeInfinity, NegativeInfinity);
+            var high = Vector256.Create(NegativeInfinity);
+            low.StoreUnsafe(ref alphaRef, 0);
+            high.StoreUnsafe(ref alphaRef, 4);
+            for (var k = 0; k < n; k++)
+            {
+                SisoBranchMetrics(systematic[k] + apriori[k], parity[k], out var g1, out var g2);
+                var even = Avx.Max(Avx.Add(low, g1), Avx.Add(high, g2));
+                var odd = Avx.Max(Avx.Add(low, g2), Avx.Add(high, g1));
+                var a = Avx.UnpackLow(even, odd);
+                var b = Avx.UnpackHigh(even, odd);
+                low = Avx.Permute2x128(a, b, 0x20);
+                high = Avx.Permute2x128(a, b, 0x31);
+                low.StoreUnsafe(ref alphaRef, (nuint)((k + 1) * StateCount));
+                high.StoreUnsafe(ref alphaRef, (nuint)(((k + 1) * StateCount) + 4));
+            }
+
+            var betaLow = Vector256<double>.Zero;
+            var betaHigh = Vector256<double>.Zero;
+            for (var k = n - 1; k >= 0; k--)
+            {
+                SisoBranchMetrics(systematic[k] + apriori[k], parity[k], out var g1, out var g2);
+                var betaEven = Avx2.Permute4x64(Avx.UnpackLow(betaLow, betaHigh), 0b11_01_10_00);
+                var betaOdd = Avx2.Permute4x64(Avx.UnpackHigh(betaLow, betaHigh), 0b11_01_10_00);
+                var alphaLow = Vector256.LoadUnsafe(ref alphaRef, (nuint)(k * StateCount));
+                var alphaHigh = Vector256.LoadUnsafe(ref alphaRef, (nuint)((k * StateCount) + 4));
+
+                var lowToEven = Avx.Add(Avx.Add(alphaLow, g1), betaEven);
+                var lowToOdd = Avx.Add(Avx.Add(alphaLow, g2), betaOdd);
+                var highToEven = Avx.Add(Avx.Add(alphaHigh, g2), betaEven);
+                var highToOdd = Avx.Add(Avx.Add(alphaHigh, g1), betaOdd);
+
+                // 入力 0 の枝: 下位→偶数はレーン 0,2、下位→奇数はレーン 1,3、上位はその逆
+                var zero = Avx.Max(Avx.Blend(lowToEven, lowToOdd, 0b1010), Avx.Blend(highToOdd, highToEven, 0b1010));
+                var one = Avx.Max(Avx.Blend(lowToOdd, lowToEven, 0b1010), Avx.Blend(highToEven, highToOdd, 0b1010));
+                var llr = HorizontalMax(one) - HorizontalMax(zero);
+                extrinsic[k] = llr - systematic[k] - apriori[k];
+
+                betaLow = Avx.Max(Avx.Add(g1, betaEven), Avx.Add(g2, betaOdd));
+                betaHigh = Avx.Max(Avx.Add(g2, betaEven), Avx.Add(g1, betaOdd));
+            }
+        }
+        finally
+        {
+            ArrayPool<double>.Shared.Return(alpha, clearArray: false);
+        }
+    }
+
+    /// <summary>
+    /// 1 段分の枝メトリックを、AVX2 版 SISO のレーン配置で求めます。
+    /// </summary>
+    /// <param name="su">系統 LLR + 事前 LLR。</param>
+    /// <param name="p">パリティ LLR。</param>
+    /// <param name="g1">[u0p0, u1p0, u0p1, u1p1]（下位→偶数・上位→奇数の枝）。</param>
+    /// <param name="g2">[u1p1, u0p1, u1p0, u0p0]（下位→奇数・上位→偶数の枝）。</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void SisoBranchMetrics(double su, double p, out Vector256<double> g1, out Vector256<double> g2)
+    {
+        var half = Vector256.Create(0.5);
+        var suPos = Vector256.Create(su);
+        var pPos = Vector256.Create(p);
+        var suNeg = Vector256.Create(-su);
+        var pNeg = Vector256.Create(-p);
+        g1 = Avx.Multiply(half, Avx.Add(Avx.Blend(suPos, suNeg, 0b1010), Avx.Blend(pPos, pNeg, 0b1100)));
+        g2 = Avx.Multiply(half, Avx.Add(Avx.Blend(suNeg, suPos, 0b1010), Avx.Blend(pNeg, pPos, 0b1100)));
+    }
+
+    /// <summary>
+    /// 4 レーンの最大値を返します。
+    /// </summary>
+    /// <param name="value">対象。</param>
+    /// <returns>最大値。</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double HorizontalMax(Vector256<double> value)
+    {
+        var m = Sse2.Max(value.GetLower(), value.GetUpper());
+        return Math.Max(m.ToScalar(), m.GetElement(1));
     }
 
     /// <summary>

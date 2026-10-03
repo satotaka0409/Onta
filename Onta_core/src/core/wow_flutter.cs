@@ -201,87 +201,44 @@ public static class WowFlutterWarp
         var flutterOmega = 2.0 * Math.PI * FlutterFrequencyHz / sampleRate;
         var wowGain = amount * 0.65;
         var flutterGain = amount * 0.35;
-
-        // SumOfSines と同じ解析累積。長尺は速度漸化＋512 サンプル再同期で近似し、
-        // 再同期点では CumulAt で累積を解析値へ戻す。
-        /// <summary>
-        /// 解析的 SumOfSines モデルでの累積時間を計算します。
-        /// </summary>
-        /// <param name="i">サンプルインデックス。</param>
-        /// <returns>累積サンプル相当値。</returns>
-        double CumulAt(int i)
-        {
-            if (i <= 0)
-            {
-                return 0.0;
-            }
-
-            return i
-                + (wowGain * SumOfSines(wowPhase, wowOmega, i))
-                + (flutterGain * SumOfSines(flutterPhase, flutterOmega, i));
-        }
+        var cumulModel = new AnalyticCumulative(wowGain, wowPhase, wowOmega, flutterGain, flutterPhase, flutterOmega);
 
         var count = ArrayPool<int>.Shared.Rent(sampleCount);
         var cumul = ArrayPool<double>.Shared.Rent(sampleCount);
         try
         {
             var last = sampleCount - 1;
-            var cumulEnd = CumulAt(last);
+            var cumulEnd = cumulModel.At(last);
             var scale = cumulEnd > 1e-12 ? last / cumulEnd : 1.0;
             var map = new int[sampleCount];
             Array.Clear(count, 0, sampleCount);
 
-            var cosWowStep = Math.Cos(wowOmega);
-            var sinWowStep = Math.Sin(wowOmega);
-            var cosFlutterStep = Math.Cos(flutterOmega);
-            var sinFlutterStep = Math.Sin(flutterOmega);
-            var wowSin = Math.Sin(wowPhase);
-            var wowCos = Math.Cos(wowPhase);
-            var flutterSin = Math.Sin(flutterPhase);
-            var flutterCos = Math.Cos(flutterPhase);
-            var c = 0.0;
-            const int reanchorEvery = 512;
-            var untilReanchor = reanchorEvery;
-
-            for (var i = 0; i < sampleCount; i++)
+            // SumOfSines と同じ解析累積。速度漸化で進め、ScatterReanchorEvery サンプルごとに解析値へ再同期する。
+            // 再同期点から先は前の区間に依存しないので、区間ごとに独立して（SIMD では 4 区間並列で）計算できる。
+            var walk = new SourceIndexWalk(
+                cumulModel,
+                scale,
+                wowPhase,
+                flutterPhase,
+                wowOmega,
+                flutterOmega,
+                wowGain,
+                flutterGain,
+                cumul.AsSpan(0, sampleCount),
+                map,
+                count.AsSpan(0, sampleCount));
+            var blockStart = 0;
+            if (Avx.IsSupported)
             {
-                cumul[i] = c;
-                var idx = RoundAwayFromZeroPositive(c * scale);
-                if ((uint)idx > (uint)last)
+                for (; blockStart + (4 * ScatterReanchorEvery) <= sampleCount; blockStart += 4 * ScatterReanchorEvery)
                 {
-                    idx = idx < 0 ? 0 : last;
+                    walk.RunBlocksAvx(blockStart);
                 }
+            }
 
-                map[i] = idx;
-                count[idx]++;
-
-                c += 1.0 + (wowGain * wowSin) + (flutterGain * flutterSin);
-
-                var nextWowSin = (wowSin * cosWowStep) + (wowCos * sinWowStep);
-                var nextWowCos = (wowCos * cosWowStep) - (wowSin * sinWowStep);
-                wowSin = nextWowSin;
-                wowCos = nextWowCos;
-
-                var nextFlutterSin = (flutterSin * cosFlutterStep) + (flutterCos * sinFlutterStep);
-                var nextFlutterCos = (flutterCos * cosFlutterStep) - (flutterSin * sinFlutterStep);
-                flutterSin = nextFlutterSin;
-                flutterCos = nextFlutterCos;
-
-                if (--untilReanchor == 0)
-                {
-                    untilReanchor = reanchorEvery;
-                    var next = i + 1;
-                    if (next < sampleCount)
-                    {
-                        c = CumulAt(next);
-                        var wowAngle = wowPhase + (next * wowOmega);
-                        var flutterAngle = flutterPhase + (next * flutterOmega);
-                        wowSin = Math.Sin(wowAngle);
-                        wowCos = Math.Cos(wowAngle);
-                        flutterSin = Math.Sin(flutterAngle);
-                        flutterCos = Math.Cos(flutterAngle);
-                    }
-                }
+            for (; blockStart < sampleCount; blockStart += ScatterReanchorEvery)
+            {
+                walk.RunBlockScalar(blockStart, Math.Min(blockStart + ScatterReanchorEvery, sampleCount));
             }
 
             var missing = new List<int>();
@@ -683,6 +640,18 @@ public static class WowFlutterWarp
             sumScratch[..prefixLength],
             countScratch[..prefixLength]);
 
+        if (Avx.IsSupported && prefixLength >= 8 && energyIdeal > 1e-18)
+        {
+            return AverageAndCorrelateAvx(
+                warped,
+                prefixStart,
+                idealReals[..prefixLength],
+                meanIdeal,
+                energyIdeal,
+                sumScratch[..prefixLength],
+                countScratch[..prefixLength]);
+        }
+
         for (var j = 0; j < prefixLength; j++)
         {
             sumScratch[j] = countScratch[j] > 0
@@ -726,26 +695,10 @@ public static class WowFlutterWarp
         var flutterOmega = 2.0 * Math.PI * FlutterFrequencyHz / sampleRate;
         var wowGain = amount * 0.65;
         var flutterGain = amount * 0.35;
-
-        /// <summary>
-        /// 解析的 SumOfSines モデルでの累積時間を計算します。
-        /// </summary>
-        /// <param name="i">サンプルインデックス。</param>
-        /// <returns>累積サンプル相当値。</returns>
-        double CumulAt(int i)
-        {
-            if (i <= 0)
-            {
-                return 0.0;
-            }
-
-            return i
-                + (wowGain * SumOfSines(wowPhase, wowOmega, i))
-                + (flutterGain * SumOfSines(flutterPhase, flutterOmega, i));
-        }
+        var cumulModel = new AnalyticCumulative(wowGain, wowPhase, wowOmega, flutterGain, flutterPhase, flutterOmega);
 
         var absEnd = referenceLength - 1;
-        var cumulEnd = CumulAt(absEnd);
+        var cumulEnd = cumulModel.At(absEnd);
         var scale = cumulEnd > 1e-12 ? absEnd / cumulEnd : 1.0;
         var prefixEnd = prefixStart + prefixLength;
 
@@ -758,52 +711,561 @@ public static class WowFlutterWarp
         count.Clear();
 
         // SumOfSines 毎サンプルより speed 漸化が安い。さらに Math.Sin 連打を避け、
-        // 複素回転で sin を進め、512 サンプルごとに解析角へ再同期してドリフトを抑える。
-        var cumul = CumulAt(iMin);
-        var cosWowStep = Math.Cos(wowOmega);
-        var sinWowStep = Math.Sin(wowOmega);
-        var cosFlutterStep = Math.Cos(flutterOmega);
-        var sinFlutterStep = Math.Sin(flutterOmega);
-        var wowAngle = wowPhase + (iMin * wowOmega);
-        var flutterAngle = flutterPhase + (iMin * flutterOmega);
-        var wowSin = Math.Sin(wowAngle);
-        var wowCos = Math.Cos(wowAngle);
-        var flutterSin = Math.Sin(flutterAngle);
-        var flutterCos = Math.Cos(flutterAngle);
-        const int reanchorEvery = 512;
-        var untilReanchor = reanchorEvery;
-
-        for (var i = iMin; i < iMax; i++)
+        // 複素回転で sin を進め、ScatterReanchorEvery サンプルごとに解析角へ再同期してドリフトを抑える。
+        // 再同期点から先は前の区間に依存しないので、区間ごとに独立して（SIMD では 4 区間並列で）計算できる。
+        var walk = new ScatterWalk(
+            warped,
+            prefixStart,
+            prefixLength,
+            scale,
+            wowPhase,
+            flutterPhase,
+            wowOmega,
+            flutterOmega,
+            wowGain,
+            flutterGain);
+        Span<int> starts = stackalloc int[4];
+        Span<double> startCumuls = stackalloc double[4];
+        var pending = 0;
+        var cumulBlockStart = cumulModel.At(iMin);
+        for (var blockStart = iMin; blockStart < iMax; blockStart += ScatterReanchorEvery)
         {
-            var src = RoundAwayFromZeroPositive(cumul * scale);
-            if ((uint)(src - prefixStart) < (uint)prefixLength)
+            var blockEnd = Math.Min(blockStart + ScatterReanchorEvery, iMax);
+
+            // 写像先は i について単調増加。区間がまるごとプレフィックスの先／手前なら打ち切る／飛ばす（再同期のずれ分の余裕を持たせる）
+            var cumulStart = cumulBlockStart;
+            if ((cumulStart * scale) + 0.5 >= prefixEnd + ScatterSkipMargin)
             {
-                var local = src - prefixStart;
-                sum[local] += warped[i].Real;
-                count[local]++;
+                break;
             }
 
-            cumul += 1.0 + (wowGain * wowSin) + (flutterGain * flutterSin);
-
-            var nextWowSin = (wowSin * cosWowStep) + (wowCos * sinWowStep);
-            var nextWowCos = (wowCos * cosWowStep) - (wowSin * sinWowStep);
-            wowSin = nextWowSin;
-            wowCos = nextWowCos;
-
-            var nextFlutterSin = (flutterSin * cosFlutterStep) + (flutterCos * sinFlutterStep);
-            var nextFlutterCos = (flutterCos * cosFlutterStep) - (flutterSin * sinFlutterStep);
-            flutterSin = nextFlutterSin;
-            flutterCos = nextFlutterCos;
-
-            if (--untilReanchor == 0)
+            cumulBlockStart = cumulModel.At(blockEnd);
+            if ((cumulBlockStart * scale) + 0.5 < prefixStart - ScatterSkipMargin)
             {
-                untilReanchor = reanchorEvery;
-                wowAngle = wowPhase + ((i + 1) * wowOmega);
-                flutterAngle = flutterPhase + ((i + 1) * flutterOmega);
-                wowSin = Math.Sin(wowAngle);
-                wowCos = Math.Cos(wowAngle);
-                flutterSin = Math.Sin(flutterAngle);
-                flutterCos = Math.Cos(flutterAngle);
+                continue;
+            }
+
+            if (Avx.IsSupported && blockEnd - blockStart == ScatterReanchorEvery)
+            {
+                starts[pending] = blockStart;
+                startCumuls[pending] = cumulStart;
+                pending++;
+                if (pending == starts.Length)
+                {
+                    walk.RunBlocksAvx(starts, startCumuls, sum, count);
+                    pending = 0;
+                }
+
+                continue;
+            }
+
+            walk.RunBlockScalar(blockStart, blockEnd, cumulStart, sum, count);
+        }
+
+        for (var p = 0; p < pending; p++)
+        {
+            walk.RunBlockScalar(starts[p], starts[p] + ScatterReanchorEvery, startCumuls[p], sum, count);
+        }
+    }
+
+    /// <summary>
+    /// 解析的 SumOfSines モデルでの累積時間（サンプル i までの速度の和）を求めます。
+    /// 区間によらず一定の sin(ω/2) を先に求めておきます。
+    /// </summary>
+    private readonly struct AnalyticCumulative
+    {
+        private readonly double _wowGain;
+        private readonly double _wowPhase;
+        private readonly double _wowHalf;
+        private readonly double _wowDenom;
+        private readonly double _flutterGain;
+        private readonly double _flutterPhase;
+        private readonly double _flutterHalf;
+        private readonly double _flutterDenom;
+
+        /// <summary>
+        /// モデルのパラメータを保持します。
+        /// </summary>
+        /// <param name="wowGain">wow 成分の速度振幅。</param>
+        /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+        /// <param name="wowOmega">wow の 1 サンプルあたりの角度。</param>
+        /// <param name="flutterGain">flutter 成分の速度振幅。</param>
+        /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+        /// <param name="flutterOmega">flutter の 1 サンプルあたりの角度。</param>
+        public AnalyticCumulative(
+            double wowGain,
+            double wowPhase,
+            double wowOmega,
+            double flutterGain,
+            double flutterPhase,
+            double flutterOmega)
+        {
+            _wowGain = wowGain;
+            _wowPhase = wowPhase;
+            _wowHalf = wowOmega * 0.5;
+            _wowDenom = Math.Sin(_wowHalf);
+            _flutterGain = flutterGain;
+            _flutterPhase = flutterPhase;
+            _flutterHalf = flutterOmega * 0.5;
+            _flutterDenom = Math.Sin(_flutterHalf);
+        }
+
+        /// <summary>
+        /// サンプル i での累積時間を返します（<see cref="SumOfSines"/> を使った式と同じ値）。
+        /// </summary>
+        /// <param name="i">サンプルインデックス。</param>
+        /// <returns>累積サンプル相当値（i ≤ 0 なら 0）。</returns>
+        public double At(int i)
+        {
+            if (i <= 0)
+            {
+                return 0.0;
+            }
+
+            return i
+                + (_wowGain * SumOfSines(_wowPhase, _wowHalf, _wowDenom, i))
+                + (_flutterGain * SumOfSines(_flutterPhase, _flutterHalf, _flutterDenom, i));
+        }
+
+        /// <summary>
+        /// sin(phase0 + k·ω) を k=0..count-1 で解析的に合計します（count ≥ 1）。
+        /// </summary>
+        /// <param name="phase0">初項の位相（ラジアン）。</param>
+        /// <param name="half">ω/2。</param>
+        /// <param name="denom">sin(ω/2)。</param>
+        /// <param name="count">合計する項数。</param>
+        /// <returns>正弦和。</returns>
+        private static double SumOfSines(double phase0, double half, double denom, int count)
+        {
+            if (Math.Abs(denom) < 1e-12)
+            {
+                return count * Math.Sin(phase0);
+            }
+
+            var numer = Math.Sin(count * half);
+            return numer / denom * Math.Sin(phase0 + ((count - 1) * half));
+        }
+    }
+
+    /// <summary>
+    /// <see cref="BuildSourceIndexMap"/> の 1 区間（再同期点から次の再同期点まで）を進める計算です。
+    /// </summary>
+    private readonly ref struct SourceIndexWalk
+    {
+        private readonly AnalyticCumulative _cumulModel;
+        private readonly double _scale;
+        private readonly double _wowPhase;
+        private readonly double _flutterPhase;
+        private readonly double _wowOmega;
+        private readonly double _flutterOmega;
+        private readonly double _wowGain;
+        private readonly double _flutterGain;
+        private readonly double _cosWowStep;
+        private readonly double _sinWowStep;
+        private readonly double _cosFlutterStep;
+        private readonly double _sinFlutterStep;
+        private readonly Span<double> _cumul;
+        private readonly Span<int> _map;
+        private readonly Span<int> _count;
+
+        /// <summary>
+        /// 共通パラメータと出力先を保持します。
+        /// </summary>
+        /// <param name="cumulModel">解析累積モデル。</param>
+        /// <param name="scale">累積時間から入力インデックスへの倍率。</param>
+        /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+        /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+        /// <param name="wowOmega">wow の 1 サンプルあたりの角度。</param>
+        /// <param name="flutterOmega">flutter の 1 サンプルあたりの角度。</param>
+        /// <param name="wowGain">wow 成分の速度振幅。</param>
+        /// <param name="flutterGain">flutter 成分の速度振幅。</param>
+        /// <param name="cumul">各サンプルの累積時間の出力先（長さ = サンプル数）。</param>
+        /// <param name="map">入力インデックス表の出力先（長さ = サンプル数）。</param>
+        /// <param name="count">参照回数（長さ = サンプル数、0 クリア済み）。</param>
+        public SourceIndexWalk(
+            AnalyticCumulative cumulModel,
+            double scale,
+            double wowPhase,
+            double flutterPhase,
+            double wowOmega,
+            double flutterOmega,
+            double wowGain,
+            double flutterGain,
+            Span<double> cumul,
+            Span<int> map,
+            Span<int> count)
+        {
+            if (map.Length != cumul.Length || count.Length != cumul.Length)
+            {
+                throw new ArgumentException("Output buffers must have the same length.");
+            }
+
+            _cumulModel = cumulModel;
+            _scale = scale;
+            _wowPhase = wowPhase;
+            _flutterPhase = flutterPhase;
+            _wowOmega = wowOmega;
+            _flutterOmega = flutterOmega;
+            _wowGain = wowGain;
+            _flutterGain = flutterGain;
+            _cosWowStep = Math.Cos(wowOmega);
+            _sinWowStep = Math.Sin(wowOmega);
+            _cosFlutterStep = Math.Cos(flutterOmega);
+            _sinFlutterStep = Math.Sin(flutterOmega);
+            _cumul = cumul;
+            _map = map;
+            _count = count;
+        }
+
+        /// <summary>
+        /// 区間先頭での wow/flutter の sin・cos を求めます。
+        /// </summary>
+        /// <param name="start">区間先頭のサンプルインデックス。</param>
+        /// <param name="wowSin">wow の sin。</param>
+        /// <param name="wowCos">wow の cos。</param>
+        /// <param name="flutterSin">flutter の sin。</param>
+        /// <param name="flutterCos">flutter の cos。</param>
+        private void AnglesAt(int start, out double wowSin, out double wowCos, out double flutterSin, out double flutterCos)
+        {
+            var wowAngle = start == 0 ? _wowPhase : _wowPhase + (start * _wowOmega);
+            var flutterAngle = start == 0 ? _flutterPhase : _flutterPhase + (start * _flutterOmega);
+            wowSin = Math.Sin(wowAngle);
+            wowCos = Math.Cos(wowAngle);
+            flutterSin = Math.Sin(flutterAngle);
+            flutterCos = Math.Cos(flutterAngle);
+        }
+
+        /// <summary>
+        /// 写像先を求めて範囲内へ丸めます。
+        /// </summary>
+        /// <param name="c">累積時間。</param>
+        /// <returns>入力インデックス（0〜サンプル数−1）。</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private int IndexOf(double c)
+        {
+            var last = _cumul.Length - 1;
+            var idx = RoundAwayFromZeroPositive(c * _scale);
+            if ((uint)idx > (uint)last)
+            {
+                idx = idx < 0 ? 0 : last;
+            }
+
+            return idx;
+        }
+
+        /// <summary>
+        /// 区間 [start, end) をスカラで進め、累積時間・写像先・参照回数を書き込みます。
+        /// </summary>
+        /// <param name="start">区間先頭（再同期点）。</param>
+        /// <param name="end">区間末尾（含まない）。</param>
+        public void RunBlockScalar(int start, int end)
+        {
+            var c = _cumulModel.At(start);
+            AnglesAt(start, out var wowSin, out var wowCos, out var flutterSin, out var flutterCos);
+            for (var i = start; i < end; i++)
+            {
+                _cumul[i] = c;
+                var idx = IndexOf(c);
+                _map[i] = idx;
+                _count[idx]++;
+
+                c += 1.0 + (_wowGain * wowSin) + (_flutterGain * flutterSin);
+
+                var nextWowSin = (wowSin * _cosWowStep) + (wowCos * _sinWowStep);
+                var nextWowCos = (wowCos * _cosWowStep) - (wowSin * _sinWowStep);
+                wowSin = nextWowSin;
+                wowCos = nextWowCos;
+
+                var nextFlutterSin = (flutterSin * _cosFlutterStep) + (flutterCos * _sinFlutterStep);
+                var nextFlutterCos = (flutterCos * _cosFlutterStep) - (flutterSin * _sinFlutterStep);
+                flutterSin = nextFlutterSin;
+                flutterCos = nextFlutterCos;
+            }
+        }
+
+        /// <summary>
+        /// first から連続する長さ ScatterReanchorEvery の 4 区間を AVX の 4 レーンで並列に進めます（各レーンの演算はスカラ版と同じ順序）。
+        /// </summary>
+        /// <param name="first">先頭区間の開始（再同期点）。4 区間とも出力範囲内であること。</param>
+        public void RunBlocksAvx(int first)
+        {
+            const int Block = ScatterReanchorEvery;
+            if (first < 0 || first > _cumul.Length - (4 * Block))
+            {
+                throw new ArgumentOutOfRangeException(nameof(first));
+            }
+
+            Span<double> init = stackalloc double[4 * 5];
+            for (var lane = 0; lane < 4; lane++)
+            {
+                var start = first + (lane * Block);
+                init[lane] = _cumulModel.At(start);
+                AnglesAt(start, out init[4 + lane], out init[8 + lane], out init[12 + lane], out init[16 + lane]);
+            }
+
+            var c = Vector256.Create<double>(init[..4]);
+            var wowSin = Vector256.Create<double>(init.Slice(4, 4));
+            var wowCos = Vector256.Create<double>(init.Slice(8, 4));
+            var flutterSin = Vector256.Create<double>(init.Slice(12, 4));
+            var flutterCos = Vector256.Create<double>(init.Slice(16, 4));
+            var scale = Vector256.Create(_scale);
+            var half = Vector256.Create(0.5);
+            var one = Vector256.Create(1.0);
+            var wowGain = Vector256.Create(_wowGain);
+            var flutterGain = Vector256.Create(_flutterGain);
+            var cosWowStep = Vector256.Create(_cosWowStep);
+            var sinWowStep = Vector256.Create(_sinWowStep);
+            var cosFlutterStep = Vector256.Create(_cosFlutterStep);
+            var sinFlutterStep = Vector256.Create(_sinFlutterStep);
+            var zero = Vector128<int>.Zero;
+            var lastIndex = Vector128.Create(_cumul.Length - 1);
+
+            ref var cumul0 = ref Unsafe.Add(ref MemoryMarshal.GetReference(_cumul), first);
+            ref var map0 = ref Unsafe.Add(ref MemoryMarshal.GetReference(_map), first);
+            ref var countRef = ref MemoryMarshal.GetReference(_count);
+            for (var j = 0; j < Block; j++)
+            {
+                var idx = Avx.ConvertToVector128Int32WithTruncation(Avx.Add(Avx.Multiply(c, scale), half));
+                idx = Sse41.Min(Sse41.Max(idx, zero), lastIndex);
+                var cLow = c.GetLower();
+                var cHigh = c.GetUpper();
+                Unsafe.Add(ref cumul0, j) = cLow.ToScalar();
+                Unsafe.Add(ref cumul0, Block + j) = cLow.GetElement(1);
+                Unsafe.Add(ref cumul0, (2 * Block) + j) = cHigh.ToScalar();
+                Unsafe.Add(ref cumul0, (3 * Block) + j) = cHigh.GetElement(1);
+                var i0 = idx.ToScalar();
+                var i1 = idx.GetElement(1);
+                var i2 = idx.GetElement(2);
+                var i3 = idx.GetElement(3);
+                Unsafe.Add(ref map0, j) = i0;
+                Unsafe.Add(ref map0, Block + j) = i1;
+                Unsafe.Add(ref map0, (2 * Block) + j) = i2;
+                Unsafe.Add(ref map0, (3 * Block) + j) = i3;
+                Unsafe.Add(ref countRef, i0)++;
+                Unsafe.Add(ref countRef, i1)++;
+                Unsafe.Add(ref countRef, i2)++;
+                Unsafe.Add(ref countRef, i3)++;
+
+                c = Avx.Add(
+                    c,
+                    Avx.Add(Avx.Add(one, Avx.Multiply(wowGain, wowSin)), Avx.Multiply(flutterGain, flutterSin)));
+
+                var nextWowSin = Avx.Add(Avx.Multiply(wowSin, cosWowStep), Avx.Multiply(wowCos, sinWowStep));
+                var nextWowCos = Avx.Subtract(Avx.Multiply(wowCos, cosWowStep), Avx.Multiply(wowSin, sinWowStep));
+                wowSin = nextWowSin;
+                wowCos = nextWowCos;
+
+                var nextFlutterSin = Avx.Add(Avx.Multiply(flutterSin, cosFlutterStep), Avx.Multiply(flutterCos, sinFlutterStep));
+                var nextFlutterCos = Avx.Subtract(Avx.Multiply(flutterCos, cosFlutterStep), Avx.Multiply(flutterSin, sinFlutterStep));
+                flutterSin = nextFlutterSin;
+                flutterCos = nextFlutterCos;
+            }
+        }
+    }
+
+    /// <summary>散乱 Correct で sin を解析角へ再同期する間隔（サンプル）。</summary>
+    private const int ScatterReanchorEvery = 512;
+
+    /// <summary>区間を飛ばす判定の余裕（サンプル）。漸化と解析値のずれより十分大きくする。</summary>
+    private const double ScatterSkipMargin = 2.0;
+
+    /// <summary>
+    /// 散乱 Correct の 1 区間（再同期点から次の再同期点まで）を進める計算です。
+    /// </summary>
+    private readonly ref struct ScatterWalk
+    {
+        private readonly Complex[] _warped;
+        private readonly int _prefixStart;
+        private readonly int _prefixLength;
+        private readonly double _scale;
+        private readonly double _wowPhase;
+        private readonly double _flutterPhase;
+        private readonly double _wowOmega;
+        private readonly double _flutterOmega;
+        private readonly double _wowGain;
+        private readonly double _flutterGain;
+        private readonly double _cosWowStep;
+        private readonly double _sinWowStep;
+        private readonly double _cosFlutterStep;
+        private readonly double _sinFlutterStep;
+
+        /// <summary>
+        /// 散乱 Correct の共通パラメータを保持します。
+        /// </summary>
+        /// <param name="warped">変調済み複素波形。</param>
+        /// <param name="prefixStart">補正対象プレフィックスの開始インデックス。</param>
+        /// <param name="prefixLength">補正対象プレフィックスの長さ。</param>
+        /// <param name="scale">累積時間から入力インデックスへの倍率。</param>
+        /// <param name="wowPhase">wow 初期位相（ラジアン）。</param>
+        /// <param name="flutterPhase">flutter 初期位相（ラジアン）。</param>
+        /// <param name="wowOmega">wow の 1 サンプルあたりの角度。</param>
+        /// <param name="flutterOmega">flutter の 1 サンプルあたりの角度。</param>
+        /// <param name="wowGain">wow 成分の速度振幅。</param>
+        /// <param name="flutterGain">flutter 成分の速度振幅。</param>
+        public ScatterWalk(
+            Complex[] warped,
+            int prefixStart,
+            int prefixLength,
+            double scale,
+            double wowPhase,
+            double flutterPhase,
+            double wowOmega,
+            double flutterOmega,
+            double wowGain,
+            double flutterGain)
+        {
+            _warped = warped;
+            _prefixStart = prefixStart;
+            _prefixLength = prefixLength;
+            _scale = scale;
+            _wowPhase = wowPhase;
+            _flutterPhase = flutterPhase;
+            _wowOmega = wowOmega;
+            _flutterOmega = flutterOmega;
+            _wowGain = wowGain;
+            _flutterGain = flutterGain;
+            _cosWowStep = Math.Cos(wowOmega);
+            _sinWowStep = Math.Sin(wowOmega);
+            _cosFlutterStep = Math.Cos(flutterOmega);
+            _sinFlutterStep = Math.Sin(flutterOmega);
+        }
+
+        /// <summary>
+        /// 再同期点 start から end まで 1 区間をスカラで進め、写像先がプレフィックス内なら sum/count へ加えます。
+        /// </summary>
+        /// <param name="start">区間先頭（再同期点）。</param>
+        /// <param name="end">区間末尾（含まない。start から ScatterReanchorEvery 以内）。</param>
+        /// <param name="cumulStart">start での累積時間（解析値）。</param>
+        /// <param name="sum">プレフィックス各点への寄与合計。</param>
+        /// <param name="count">プレフィックス各点への寄与件数。</param>
+        public void RunBlockScalar(int start, int end, double cumulStart, Span<double> sum, Span<int> count)
+        {
+            var cumul = cumulStart;
+            var wowAngle = _wowPhase + (start * _wowOmega);
+            var flutterAngle = _flutterPhase + (start * _flutterOmega);
+            var wowSin = Math.Sin(wowAngle);
+            var wowCos = Math.Cos(wowAngle);
+            var flutterSin = Math.Sin(flutterAngle);
+            var flutterCos = Math.Cos(flutterAngle);
+            for (var i = start; i < end; i++)
+            {
+                var src = RoundAwayFromZeroPositive(cumul * _scale);
+                if ((uint)(src - _prefixStart) < (uint)_prefixLength)
+                {
+                    var local = src - _prefixStart;
+                    sum[local] += _warped[i].Real;
+                    count[local]++;
+                }
+
+                cumul += 1.0 + (_wowGain * wowSin) + (_flutterGain * flutterSin);
+
+                var nextWowSin = (wowSin * _cosWowStep) + (wowCos * _sinWowStep);
+                var nextWowCos = (wowCos * _cosWowStep) - (wowSin * _sinWowStep);
+                wowSin = nextWowSin;
+                wowCos = nextWowCos;
+
+                var nextFlutterSin = (flutterSin * _cosFlutterStep) + (flutterCos * _sinFlutterStep);
+                var nextFlutterCos = (flutterCos * _cosFlutterStep) - (flutterSin * _sinFlutterStep);
+                flutterSin = nextFlutterSin;
+                flutterCos = nextFlutterCos;
+            }
+        }
+
+        /// <summary>
+        /// 長さ ScatterReanchorEvery の 4 区間を AVX の 4 レーンで並列に進めます（各レーンの演算はスカラ版と同じ順序）。
+        /// </summary>
+        /// <param name="starts">4 区間の先頭（再同期点）。</param>
+        /// <param name="startCumuls">4 区間の先頭での累積時間（解析値）。</param>
+        /// <param name="sum">プレフィックス各点への寄与合計。</param>
+        /// <param name="count">プレフィックス各点への寄与件数。</param>
+        public void RunBlocksAvx(ReadOnlySpan<int> starts, ReadOnlySpan<double> startCumuls, Span<double> sum, Span<int> count)
+        {
+            Span<double> init = stackalloc double[4 * 5];
+            for (var lane = 0; lane < 4; lane++)
+            {
+                var start = starts[lane];
+                var wowAngle = _wowPhase + (start * _wowOmega);
+                var flutterAngle = _flutterPhase + (start * _flutterOmega);
+                init[lane] = startCumuls[lane];
+                init[4 + lane] = Math.Sin(wowAngle);
+                init[8 + lane] = Math.Cos(wowAngle);
+                init[12 + lane] = Math.Sin(flutterAngle);
+                init[16 + lane] = Math.Cos(flutterAngle);
+            }
+
+            var cumul = Vector256.Create<double>(init[..4]);
+            var wowSin = Vector256.Create<double>(init.Slice(4, 4));
+            var wowCos = Vector256.Create<double>(init.Slice(8, 4));
+            var flutterSin = Vector256.Create<double>(init.Slice(12, 4));
+            var flutterCos = Vector256.Create<double>(init.Slice(16, 4));
+            var scale = Vector256.Create(_scale);
+            var half = Vector256.Create(0.5);
+            var one = Vector256.Create(1.0);
+            var wowGain = Vector256.Create(_wowGain);
+            var flutterGain = Vector256.Create(_flutterGain);
+            var cosWowStep = Vector256.Create(_cosWowStep);
+            var sinWowStep = Vector256.Create(_sinWowStep);
+            var cosFlutterStep = Vector256.Create(_cosFlutterStep);
+            var sinFlutterStep = Vector256.Create(_sinFlutterStep);
+            if (sum.Length < _prefixLength || count.Length < _prefixLength)
+            {
+                throw new ArgumentException("Scratch buffers are shorter than prefix length.");
+            }
+
+            for (var lane = 0; lane < 4; lane++)
+            {
+                if (starts[lane] < 0 || starts[lane] > _warped.Length - ScatterReanchorEvery)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(starts));
+                }
+            }
+
+            ref var sumRef = ref MemoryMarshal.GetReference(sum);
+            ref var countRef = ref MemoryMarshal.GetReference(count);
+            ref var warpedRef = ref MemoryMarshal.GetArrayDataReference(_warped);
+            ref var w0 = ref Unsafe.Add(ref warpedRef, starts[0]);
+            ref var w1 = ref Unsafe.Add(ref warpedRef, starts[1]);
+            ref var w2 = ref Unsafe.Add(ref warpedRef, starts[2]);
+            ref var w3 = ref Unsafe.Add(ref warpedRef, starts[3]);
+            for (var j = 0; j < ScatterReanchorEvery; j++)
+            {
+                var src = Avx.ConvertToVector128Int32WithTruncation(Avx.Add(Avx.Multiply(cumul, scale), half));
+                Accumulate(src.ToScalar(), Unsafe.Add(ref w0, j).Real, ref sumRef, ref countRef);
+                Accumulate(src.GetElement(1), Unsafe.Add(ref w1, j).Real, ref sumRef, ref countRef);
+                Accumulate(src.GetElement(2), Unsafe.Add(ref w2, j).Real, ref sumRef, ref countRef);
+                Accumulate(src.GetElement(3), Unsafe.Add(ref w3, j).Real, ref sumRef, ref countRef);
+
+                cumul = Avx.Add(
+                    cumul,
+                    Avx.Add(Avx.Add(one, Avx.Multiply(wowGain, wowSin)), Avx.Multiply(flutterGain, flutterSin)));
+
+                var nextWowSin = Avx.Add(Avx.Multiply(wowSin, cosWowStep), Avx.Multiply(wowCos, sinWowStep));
+                var nextWowCos = Avx.Subtract(Avx.Multiply(wowCos, cosWowStep), Avx.Multiply(wowSin, sinWowStep));
+                wowSin = nextWowSin;
+                wowCos = nextWowCos;
+
+                var nextFlutterSin = Avx.Add(Avx.Multiply(flutterSin, cosFlutterStep), Avx.Multiply(flutterCos, sinFlutterStep));
+                var nextFlutterCos = Avx.Subtract(Avx.Multiply(flutterCos, cosFlutterStep), Avx.Multiply(flutterSin, sinFlutterStep));
+                flutterSin = nextFlutterSin;
+                flutterCos = nextFlutterCos;
+            }
+        }
+
+        /// <summary>
+        /// 写像先 src がプレフィックス内なら、入力の実部を加えます。
+        /// </summary>
+        /// <param name="src">写像先の入力インデックス。</param>
+        /// <param name="value">寄与する入力の実部。</param>
+        /// <param name="sumRef">プレフィックス各点への寄与合計（長さ ≥ プレフィックス長）の先頭。</param>
+        /// <param name="countRef">プレフィックス各点への寄与件数（長さ ≥ プレフィックス長）の先頭。</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void Accumulate(int src, double value, ref double sumRef, ref int countRef)
+        {
+            var local = src - _prefixStart;
+            if ((uint)local < (uint)_prefixLength)
+            {
+                Unsafe.Add(ref sumRef, local) += value;
+                Unsafe.Add(ref countRef, local)++;
             }
         }
     }
@@ -913,12 +1375,100 @@ public static class WowFlutterWarp
             sumA += a[i];
         }
 
-        var meanA = sumA / count;
+        return CorrelateCenteredRealsAvx(a, b, sumA / count, meanB, energyB, count);
+    }
+
+    /// <summary>
+    /// 散乱 Correct の sum/count を平均値（寄与なしの点は入力そのもの）へ置き換え、理想波形との正規化相関を返します。
+    /// 結果は平均化ループの後に <see cref="CorrelateDenseReals"/> を呼ぶのと同じ値です。
+    /// </summary>
+    /// <param name="warped">変調済み複素波形。</param>
+    /// <param name="prefixStart">プレフィックスの開始インデックス。</param>
+    /// <param name="idealReals">理想波形（プレフィックス長）。</param>
+    /// <param name="meanIdeal">理想波形の平均。</param>
+    /// <param name="energyIdeal">理想波形の平均除去後エネルギー。</param>
+    /// <param name="sum">寄与合計（プレフィックス長）。平均値で上書きします。</param>
+    /// <param name="count">寄与件数（プレフィックス長）。</param>
+    /// <returns>正規化相関係数。</returns>
+    private static double AverageAndCorrelateAvx(
+        Complex[] warped,
+        int prefixStart,
+        ReadOnlySpan<double> idealReals,
+        double meanIdeal,
+        double energyIdeal,
+        Span<double> sum,
+        ReadOnlySpan<int> count)
+    {
+        var length = sum.Length;
+        ref var sumRef = ref MemoryMarshal.GetReference(sum);
+        ref var countRef = ref MemoryMarshal.GetReference(count);
+        var sumVec = Vector256<double>.Zero;
+        var ones = Vector128.Create(1);
+        var j = 0;
+        for (; j + 4 <= length; j += 4)
+        {
+            var countVec = Vector128.LoadUnsafe(ref countRef, (nuint)j);
+            var mean = Vector256.LoadUnsafe(ref sumRef, (nuint)j);
+
+            // 寄与 1 件（大半の点）なら x / 1 = x なので除算を省く
+            if (!Vector128.EqualsAll(countVec, ones))
+            {
+                var c = Avx.ConvertToVector256Double(countVec);
+                mean = Avx.Divide(mean, c);
+                mean.StoreUnsafe(ref sumRef, (nuint)j);
+                var empty = Avx.MoveMask(Avx.CompareEqual(c, Vector256<double>.Zero));
+                if (empty != 0)
+                {
+                    for (var lane = 0; lane < 4; lane++)
+                    {
+                        if ((empty & (1 << lane)) != 0)
+                        {
+                            sum[j + lane] = warped[Math.Clamp(prefixStart + j + lane, 0, warped.Length - 1)].Real;
+                        }
+                    }
+
+                    mean = Vector256.LoadUnsafe(ref sumRef, (nuint)j);
+                }
+            }
+
+            sumVec = Avx.Add(sumVec, mean);
+        }
+
+        var sumA = sumVec.GetElement(0) + sumVec.GetElement(1) + sumVec.GetElement(2) + sumVec.GetElement(3);
+        for (; j < length; j++)
+        {
+            sum[j] = count[j] > 0
+                ? sum[j] / count[j]
+                : warped[Math.Clamp(prefixStart + j, 0, warped.Length - 1)].Real;
+            sumA += sum[j];
+        }
+
+        return CorrelateCenteredRealsAvx(sum, idealReals, sumA / length, meanIdeal, energyIdeal, length);
+    }
+
+    /// <summary>
+    /// 平均既知の 2 系列の正規化相関係数を AVX で求めます。
+    /// </summary>
+    /// <param name="a">観測側の実数系列。</param>
+    /// <param name="b">理想側の実数系列。</param>
+    /// <param name="meanA">a の平均。</param>
+    /// <param name="meanB">b の平均。</param>
+    /// <param name="energyB">b の平均除去後エネルギー。</param>
+    /// <param name="count">相関係数に使う有効サンプル数。</param>
+    /// <returns>正規化相関係数。</returns>
+    private static double CorrelateCenteredRealsAvx(
+        ReadOnlySpan<double> a,
+        ReadOnlySpan<double> b,
+        double meanA,
+        double meanB,
+        double energyB,
+        int count)
+    {
         var meanAVec = Vector256.Create(meanA);
         var meanBVec = Vector256.Create(meanB);
         var numVec = Vector256<double>.Zero;
         var energyAVec = Vector256<double>.Zero;
-        i = 0;
+        var i = 0;
         for (; i + 4 <= count; i += 4)
         {
             var xa = Avx.Subtract(LoadAvx(a, i), meanAVec);
@@ -995,31 +1545,6 @@ public static class WowFlutterWarp
         }
 
         return num / Math.Sqrt((energyA * energyB) + 1e-18);
-    }
-
-    /// <summary>
-    /// sin(phase0 + k·ω) を k=0..count-1 で解析的に合計します。
-    /// </summary>
-    /// <param name="phase0">初項の位相（ラジアン）。</param>
-    /// <param name="omega">隣接項の位相差（ラジアン／サンプル）。</param>
-    /// <param name="count">合計する項数。</param>
-    /// <returns>正弦和。</returns>
-    private static double SumOfSines(double phase0, double omega, int count)
-    {
-        if (count <= 0)
-        {
-            return 0.0;
-        }
-
-        var half = omega * 0.5;
-        var denom = Math.Sin(half);
-        if (Math.Abs(denom) < 1e-12)
-        {
-            return count * Math.Sin(phase0);
-        }
-
-        var numer = Math.Sin(count * half);
-        return numer / denom * Math.Sin(phase0 + ((count - 1) * half));
     }
 
     /// <summary>
@@ -1121,7 +1646,13 @@ public static class WowFlutterWarp
                 count[src]++;
             }
 
-            for (var i = 0; i < n; i++)
+            var start = 0;
+            if (Avx.IsSupported)
+            {
+                start = AverageToComplexAvx(sum.AsSpan(0, n), count.AsSpan(0, n), destination.AsSpan(0, n));
+            }
+
+            for (var i = start; i < n; i++)
             {
                 destination[i] = new Complex(sum[i] / count[i], 0.0);
             }
@@ -1131,6 +1662,46 @@ public static class WowFlutterWarp
             ArrayPool<double>.Shared.Return(sum);
             ArrayPool<int>.Shared.Return(count);
         }
+    }
+
+    /// <summary>
+    /// sum / count を実部、0 を虚部とする複素数を AVX で 4 点ずつ書き込みます（スカラの除算と同じ値）。
+    /// </summary>
+    /// <param name="sum">寄与合計。</param>
+    /// <param name="count">寄与件数（sum と同じ長さ）。</param>
+    /// <param name="destination">書き込み先（sum と同じ長さ）。</param>
+    /// <returns>書き込んだ点数（4 の倍数）。残りは呼び出し側で処理する。</returns>
+    private static int AverageToComplexAvx(ReadOnlySpan<double> sum, ReadOnlySpan<int> count, Span<Complex> destination)
+    {
+        var n = sum.Length;
+        if (count.Length != n || destination.Length != n)
+        {
+            throw new ArgumentException("Buffers must have the same length.");
+        }
+
+        ref var sumRef = ref MemoryMarshal.GetReference(sum);
+        ref var countRef = ref MemoryMarshal.GetReference(count);
+        ref var destRef = ref Unsafe.As<Complex, double>(ref MemoryMarshal.GetReference(destination));
+        var ones = Vector128.Create(1);
+        var i = 0;
+        for (; i + 4 <= n; i += 4)
+        {
+            var countVec = Vector128.LoadUnsafe(ref countRef, (nuint)i);
+            var mean = Vector256.LoadUnsafe(ref sumRef, (nuint)i);
+
+            // 寄与 1 件（大半の点）なら x / 1 = x なので除算を省く
+            if (!Vector128.EqualsAll(countVec, ones))
+            {
+                mean = Avx.Divide(mean, Avx.ConvertToVector256Double(countVec));
+            }
+
+            var low = Avx.UnpackLow(mean, Vector256<double>.Zero);
+            var high = Avx.UnpackHigh(mean, Vector256<double>.Zero);
+            Avx.Permute2x128(low, high, 0x20).StoreUnsafe(ref destRef, (nuint)(2 * i));
+            Avx.Permute2x128(low, high, 0x31).StoreUnsafe(ref destRef, (nuint)((2 * i) + 4));
+        }
+
+        return i;
     }
 
     /// <summary>

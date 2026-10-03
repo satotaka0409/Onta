@@ -274,31 +274,47 @@ public sealed class StreamOfdmCodec
     /// <param name="targetPeak">目標ピーク振幅（0〜1）。</param>
     private static void NormalizePeak(Complex[] left, Complex[] right, double targetPeak)
     {
-        var peak = 0.0;
-        for (var i = 0; i < left.Length; i++)
-        {
-            peak = Math.Max(peak, Math.Abs(left[i].Real));
-        }
-
-        for (var i = 0; i < right.Length; i++)
-        {
-            peak = Math.Max(peak, Math.Abs(right[i].Real));
-        }
-
+        var peak = Math.Max(SimdMath.MaxAbsReals(left), SimdMath.MaxAbsReals(right));
         if (peak <= 1e-12)
         {
             return;
         }
 
         var scale = Math.Clamp(targetPeak, 0.0, 1.0) / peak;
-        for (var i = 0; i < left.Length; i++)
+        ScaleRealsZeroImag(left, scale);
+        ScaleRealsZeroImag(right, scale);
+    }
+
+    /// <summary>
+    /// 複素配列の実部を scale 倍し、虚部を 0 にします。
+    /// </summary>
+    /// <param name="samples">対象の PCM（破壊的）。</param>
+    /// <param name="scale">倍率。</param>
+    private static void ScaleRealsZeroImag(Complex[] samples, double scale)
+    {
+        var values = MemoryMarshal.Cast<Complex, double>(samples.AsSpan());
+        var i = 0;
+        if (Vector256.IsHardwareAccelerated)
         {
-            left[i] = new Complex(left[i].Real * scale, 0.0);
+            var factor = Vector256.Create(scale, 0.0, scale, 0.0);
+            for (; i + 4 <= values.Length; i += 4)
+            {
+                (Vector256.Create<double>(values.Slice(i, 4)) * factor).CopyTo(values.Slice(i, 4));
+            }
+        }
+        else if (Vector128.IsHardwareAccelerated)
+        {
+            var factor = Vector128.Create(scale, 0.0);
+            for (; i + 2 <= values.Length; i += 2)
+            {
+                (Vector128.Create<double>(values.Slice(i, 2)) * factor).CopyTo(values.Slice(i, 2));
+            }
         }
 
-        for (var i = 0; i < right.Length; i++)
+        for (; i < values.Length; i += 2)
         {
-            right[i] = new Complex(right[i].Real * scale, 0.0);
+            values[i] *= scale;
+            values[i + 1] = 0.0;
         }
     }
 

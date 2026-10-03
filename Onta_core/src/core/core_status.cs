@@ -517,17 +517,26 @@ public sealed class CoreExecutionStatusBoard
     {
         lock (_sync)
         {
-            for (var n = 0; n < equalizedSymbols.Length; n++)
+            var ring = _iqRing;
+            var capacity = ring.Length;
+            var total = equalizedSymbols.Length;
+
+            // リングに残るのは末尾 capacity 点だけなので、それより前は書き込み位置を進めるだけにする
+            var first = Math.Max(0, total - capacity);
+            var write = (int)(((long)_iqWrite + first) % capacity);
+            for (var n = first; n < total; n++)
             {
                 var s = equalizedSymbols[n];
                 var group = n < groups.Length ? groups[n] : (byte)0;
-                _iqRing[_iqWrite] = new CoreIqSample(s.Real, s.Imaginary, group);
-                _iqWrite = (_iqWrite + 1) % _iqRing.Length;
-                if (_iqCount < _iqRing.Length)
+                ring[write] = new CoreIqSample(s.Real, s.Imaginary, group);
+                if (++write == capacity)
                 {
-                    _iqCount++;
+                    write = 0;
                 }
             }
+
+            _iqWrite = write;
+            _iqCount = (int)Math.Min((long)_iqCount + total, capacity);
         }
     }
 
