@@ -581,6 +581,42 @@ public sealed class OntaTestStream
     }
 
     /// <summary>
+    /// 受理したパケットの復調の遅れ（LagSeconds）が、実時間どおりに少しずつ入力すれば 1 秒未満、
+    /// まとめて入力すれば先頭のパケットほど大きくなること（再生開始時に遅れたパケットを捨てる判断に使う）。
+    /// </summary>
+    [Fact]
+    public void PumpPackets_ReportsDemodulationLag()
+    {
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 6);
+        var tx = Transmit(StreamModeId.Rate18k, left, right, Title, Artist, cover: null);
+
+        var chunked = new List<StreamRxAudioPacket>();
+        using (var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate))
+        {
+            for (var offset = 0; offset < tx.Left.Length; offset += ChunkFrames)
+            {
+                var n = Math.Min(ChunkFrames, tx.Left.Length - offset);
+                pipeline.PushCapture(tx.Left[offset..(offset + n)], tx.Right[offset..(offset + n)]);
+                chunked.AddRange(pipeline.PumpPackets(out _));
+            }
+        }
+
+        List<StreamRxAudioPacket> burst;
+        using (var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate))
+        {
+            pipeline.PushCapture(tx.Left, tx.Right);
+            burst = pipeline.PumpPackets(out _);
+        }
+
+        _output.WriteLine($"chunked max lag={chunked.Max(p => p.LagSeconds):F3}s burst lags={string.Join(",", burst.Select(p => p.LagSeconds.ToString("F2")))}");
+        Assert.True(chunked.Count >= tx.PacketCount - 1);
+        Assert.All(chunked, p => Assert.InRange(p.LagSeconds, 0.0, 1.0));
+        Assert.True(burst.Count >= tx.PacketCount - 1);
+        Assert.True(burst[0].LagSeconds > 3.0);
+        Assert.InRange(burst[^1].LagSeconds, 0.0, 1.0);
+    }
+
+    /// <summary>
     /// プリアンブル電力で補正したパケット先頭ではヘッダーが読めない信号（ヘッダー直前のプリアンブル末尾に雑音が乗った録音）でも、
     /// 受信処理が止まらず、すべてのパケットのヘッダーを見つけること。
     /// </summary>

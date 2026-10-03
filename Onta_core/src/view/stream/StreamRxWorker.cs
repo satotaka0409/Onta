@@ -236,6 +236,7 @@ internal sealed class StreamRxWorker : IDisposable
             }
 
             var queue = new Queue<(Complex[] L, Complex[] R)>();
+            var queuedSamples = 0L;
             var gate = new object();
             capture = new RealtimePcmCapture();
             capture.SamplesAvailable += (l, r) =>
@@ -243,6 +244,7 @@ internal sealed class StreamRxWorker : IDisposable
                 lock (gate)
                 {
                     queue.Enqueue((l, r));
+                    queuedSamples += l.Length;
                 }
             };
             capture.CaptureFailed += msg => throw new InvalidOperationException(msg);
@@ -256,6 +258,7 @@ internal sealed class StreamRxWorker : IDisposable
                     if (queue.Count > 0)
                     {
                         item = queue.Dequeue();
+                        queuedSamples -= item.Value.L.Length;
                     }
                 }
 
@@ -267,7 +270,23 @@ internal sealed class StreamRxWorker : IDisposable
 
                 PublishFft(item.Value.L, item.Value.R);
                 pipeline.PushCapture(item.Value.L, item.Value.R);
-                playback.Enqueue(pipeline.PumpPackets(out var statusMsg));
+                var packets = pipeline.PumpPackets(out var statusMsg);
+                if (packets.Count > 0)
+                {
+                    // 復調中に取り込みキューへ溜まった入力も、復調の遅れに含める
+                    double queuedSeconds;
+                    lock (gate)
+                    {
+                        queuedSeconds = queuedSamples / (double)_captureSampleRate;
+                    }
+
+                    for (var i = 0; i < packets.Count; i++)
+                    {
+                        packets[i] = packets[i] with { LagSeconds = packets[i].LagSeconds + queuedSeconds };
+                    }
+                }
+
+                playback.Enqueue(packets);
                 if (playback.Fault is { } fault)
                 {
                     throw new InvalidOperationException(fault.Message, fault);

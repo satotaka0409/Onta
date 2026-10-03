@@ -201,22 +201,26 @@ public sealed class StreamPlayoutRegulator : IDisposable
     /// <param name="output">未再生の出力。</param>
     private void PrefillOnUnderrun(List<(double[] Left, double[] Right)> output)
     {
-        if (BufferedFrames == null)
+        if (!IsStarved(output))
         {
             return;
         }
 
-        var level = Level(output);
-        if (level >= TargetFrames / 4)
-        {
-            return;
-        }
-
-        var silence = TargetFrames - level;
+        var silence = TargetFrames - Level(output);
         if (silence > 0)
         {
             output.Insert(0, (new double[silence], new double[silence]));
         }
+    }
+
+    /// <summary>
+    /// 再生バッファがほぼ空（開始直後・長い途切れの後。次の復号で無音を先に詰める状態）かを返します。
+    /// </summary>
+    /// <param name="output">未再生の出力。</param>
+    /// <returns>充填量が目標の 1/4 未満なら true。<see cref="BufferedFrames"/> が無ければ false。</returns>
+    public bool IsStarved(List<(double[] Left, double[] Right)> output)
+    {
+        return BufferedFrames != null && Level(output) < TargetFrames / 4;
     }
 
     /// <summary>

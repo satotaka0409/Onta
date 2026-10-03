@@ -20,6 +20,20 @@ internal sealed class StreamPlaybackWorker : IDisposable
     /// <summary>停止時にスレッドの終了を待つ時間（ミリ秒）。</summary>
     private const int StopTimeoutMs = 2000;
 
+    /// <summary>
+    /// 再生バッファがほぼ空のとき、入力からこれより遅れて復調されたパケットは再生せず捨てる（秒）。
+    /// 受信開始直後は速度の総当たりで復調が遅れ、追いついた時点で溜まった分がまとめて届く。無音の先詰めに積み増すと、
+    /// 充填量の微調整（約 20% 速）で溜まりを解消するまで早回しが続くため。
+    /// </summary>
+    private const double MaxStartLagSeconds = 1.0;
+
+    /// <summary>続けて捨てる音声の上限（秒）。復調が実時間に追いつかないままでも、これを超えたら再生する。</summary>
+    private const double MaxStartSkipSeconds = 8.0;
+
+    /// <summary>Opus 1 フレームの長さ（秒）。</summary>
+    private const double OpusFrameSeconds =
+        Onta.Stream.Opus.OpusEncoder.FrameSamplesPerChannel / (double)Onta.Stream.Opus.OpusEncoder.OpusSampleRate;
+
     private readonly object _gate = new();
     private readonly Queue<StreamRxAudioPacket> _queue = new();
     private readonly RealtimePcmPlayer _player;
@@ -101,6 +115,7 @@ internal sealed class StreamPlaybackWorker : IDisposable
     {
         var pending = new List<StreamRxAudioPacket>();
         var output = new List<(double[] Left, double[] Right)>();
+        var skippedSeconds = 0.0;
         try
         {
             while (!_stop)
@@ -116,6 +131,15 @@ internal sealed class StreamPlaybackWorker : IDisposable
                 {
                     foreach (var packet in pending)
                     {
+                        if (packet.LagSeconds > MaxStartLagSeconds
+                            && skippedSeconds < MaxStartSkipSeconds
+                            && _regulator.IsStarved(output))
+                        {
+                            skippedSeconds += packet.Frames.Count * OpusFrameSeconds;
+                            continue;
+                        }
+
+                        skippedSeconds = 0.0;
                         _regulator.ConcealLost(packet.LostFrames, output);
                         _regulator.Decode(packet.Frames, output);
                     }

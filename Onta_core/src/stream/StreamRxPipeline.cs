@@ -23,7 +23,8 @@ public sealed record StreamRxPacketReport(
 /// </summary>
 /// <param name="LostFrames">直前に失われたパケットの分として PLC で埋めるフレーム数。</param>
 /// <param name="Frames">パケットが運ぶ Opus フレーム列。</param>
-public sealed record StreamRxAudioPacket(int LostFrames, IReadOnlyList<byte[]> Frames);
+/// <param name="LagSeconds">受理した時点で、パケット末尾より後にすでに取り込まれていた入力の長さ（秒）。復調が入力に遅れている量。</param>
+public sealed record StreamRxAudioPacket(int LostFrames, IReadOnlyList<byte[]> Frames, double LagSeconds = 0.0);
 
 /// <summary>
 /// 再生（OFDM→パケット→Opus→PCM）の受信状態です。
@@ -361,7 +362,8 @@ public sealed class StreamRxPipeline : IDisposable
             }
 
             var frames = StreamOpusPayload.Unpack(packet.Payload);
-            audio.Add(new StreamRxAudioPacket(CountLostFrames(packetStart, speed), frames));
+            var lagSeconds = Math.Max(0, length - cursor) / (double)_sampleRate;
+            audio.Add(new StreamRxAudioPacket(CountLostFrames(packetStart, speed), frames, lagSeconds));
             _lastPacketStart = packetStart;
             _lastPacketFrames = frames.Count;
             _lastPacketSamples = codec.PacketSamples;
