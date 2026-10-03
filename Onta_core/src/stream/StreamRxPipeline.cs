@@ -157,6 +157,22 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>ヘッダーは読めたがデータ部の復調に失敗したパケット数。</summary>
     public int PacketErrors { get; private set; }
 
+    /// <summary>
+    /// 速度が未ロックで、パケット先頭を速度の総当たりで探している間 true。
+    /// 無音・雑音の中を探すこの状態は重く、入力の実時間に遅れることがある。
+    /// </summary>
+    public bool IsSearching => !_speedLocked;
+
+    /// <summary>
+    /// 取り込み済みで未処理の入力をすべて捨て、次の入力からパケット先頭を探し直します。
+    /// </summary>
+    public void DiscardCapture()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Consume(_count);
+        _synced = false;
+    }
+
     /// <summary>推定した再生速度の偏差（+0.01 なら録音時より 1% 速く再生されている）。</summary>
     public double SpeedDeviation => (1.0 / _speed) - 1.0;
 

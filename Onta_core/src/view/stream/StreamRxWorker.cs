@@ -27,6 +27,11 @@ internal sealed class StreamRxWorker : IDisposable
     private const int PlaybackMaxBufferedFrames = PlaybackSampleRate * 6;
     /// <summary>再生キューの容量。上限まで溜まった状態で無音の先積みと 1 回分の復号音声を足しても、再生スレッドが空き待ちで止まらない大きさ。</summary>
     private static readonly TimeSpan PlaybackQueueDuration = TimeSpan.FromSeconds(10);
+    /// <summary>
+    /// 速度未ロックの探索中に取り込みキューへ溜めておく上限（秒）。超えた古い入力は捨てる。
+    /// 無音・雑音の中の探索は実時間に遅れることがあり、溜めたまま送信が始まると復調の遅れがそのまま残り、詰め（早回し）で取り戻すことになるため。
+    /// </summary>
+    private const double MaxSearchBacklogSeconds = 0.5;
 
     private readonly object _sync = new();
     private readonly CoreExecutionStatusBoard _status = new();
@@ -250,16 +255,31 @@ internal sealed class StreamRxWorker : IDisposable
             capture.CaptureFailed += msg => throw new InvalidOperationException(msg);
             capture.Start(settings.InputDevice, ChannelMode.Stereo, _captureSampleRate, settings.InputVolume);
 
+            var maxSearchBacklog = (long)(_captureSampleRate * MaxSearchBacklogSeconds);
             while (!token.IsCancellationRequested)
             {
                 (Complex[] L, Complex[] R)? item = null;
+                var searching = pipeline.IsSearching;
+                var dropped = false;
                 lock (gate)
                 {
+                    while (searching && queue.Count > 1 && queuedSamples > maxSearchBacklog)
+                    {
+                        queuedSamples -= queue.Dequeue().L.Length;
+                        dropped = true;
+                    }
+
                     if (queue.Count > 0)
                     {
                         item = queue.Dequeue();
                         queuedSamples -= item.Value.L.Length;
                     }
+                }
+
+                if (dropped)
+                {
+                    // 捨てた区間の前後をつなぐと偽のパケット先頭になり得るので、溜めた入力も捨てて探し直す
+                    pipeline.DiscardCapture();
                 }
 
                 if (item is null)

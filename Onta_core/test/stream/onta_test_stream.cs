@@ -617,6 +617,36 @@ public sealed class OntaTestStream
     }
 
     /// <summary>
+    /// 受理するまでは探索中（IsSearching）で、受理したら外れること。
+    /// 探索中に溜めた入力を捨てて（DiscardCapture）途中から入力し直しても、以降のパケットを受理すること（受信ワーカーが探索の遅れを捨てる経路）。
+    /// </summary>
+    [Fact]
+    public void PumpPackets_DiscardWhileSearching_ResumesFromLaterInput()
+    {
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 6);
+        var tx = Transmit(StreamModeId.Rate18k, left, right, Title, Artist, cover: null);
+        var resumeAt = tx.Left.Length / 2;
+
+        using var pipeline = new StreamRxPipeline(StreamConstants.DefaultSampleRate);
+        Assert.True(pipeline.IsSearching);
+        pipeline.PushCapture(tx.Left[..(ChunkFrames * 2)], tx.Right[..(ChunkFrames * 2)]);
+        pipeline.DiscardCapture();
+
+        var accepted = new List<StreamRxAudioPacket>();
+        for (var offset = resumeAt; offset < tx.Left.Length; offset += ChunkFrames)
+        {
+            var n = Math.Min(ChunkFrames, tx.Left.Length - offset);
+            pipeline.PushCapture(tx.Left[offset..(offset + n)], tx.Right[offset..(offset + n)]);
+            accepted.AddRange(pipeline.PumpPackets(out _));
+        }
+
+        var remaining = tx.PacketStarts.Count(s => s >= resumeAt);
+        _output.WriteLine($"remaining={remaining} accepted={accepted.Count}");
+        Assert.False(pipeline.IsSearching);
+        Assert.InRange(accepted.Count, remaining - 2, remaining);
+    }
+
+    /// <summary>
     /// プリアンブル電力で補正したパケット先頭ではヘッダーが読めない信号（ヘッダー直前のプリアンブル末尾に雑音が乗った録音）でも、
     /// 受信処理が止まらず、すべてのパケットのヘッダーを見つけること。
     /// </summary>
