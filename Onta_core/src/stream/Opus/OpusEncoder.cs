@@ -49,6 +49,16 @@ public sealed class OpusEncoder : IDisposable
     }
 
     /// <summary>
+    /// 目標ビットレート（CBR）を変更します。次に符号化するフレームから反映されます。
+    /// </summary>
+    /// <param name="bitrateBps">目標ビットレート。8000〜128000 に制限します。</param>
+    public void SetBitrate(int bitrateBps)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        OpusNative.opus_encoder_ctl(_encoder, OpusNative.SetBitrateRequest, Math.Clamp(bitrateBps, 8000, 128000));
+    }
+
+    /// <summary>
     /// sampleRate 指定のステレオ PCM を追加し、完成した Opus パケットを <paramref name="packets"/> へ追加します。
     /// </summary>
     /// <param name="left">L PCM。</param>

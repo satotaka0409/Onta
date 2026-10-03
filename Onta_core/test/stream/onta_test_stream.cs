@@ -315,6 +315,45 @@ public sealed class OntaTestStream
         Assert.True(correlation > 0.9, $"復号音声のエンベロープ相関が低すぎます: {correlation:F3}");
     }
 
+    /// <summary>
+    /// 送信の途中で速度を切り替えても、切替前後のパケットをすべて受信し、音声フレームを欠かさず復号できること。
+    /// </summary>
+    [Theory]
+    [InlineData(StreamModeId.Rate18k, StreamModeId.Rate30k)]
+    [InlineData(StreamModeId.Rate30k, StreamModeId.Rate20k)]
+    [InlineData(StreamModeId.Rate30k, StreamModeId.Rate18k)]
+    public void Loopback_ModeChangedMidStream_DecodesEveryFrame(StreamModeId firstMode, StreamModeId secondMode)
+    {
+        var (left, right) = ReadPcm(ResolveInput(WavFileName), maxSeconds: 8);
+        var switchAt = left.Length / 2 / ChunkFrames * ChunkFrames;
+
+        using var pipeline = new StreamTxPipeline(firstMode, Title, Artist, null, StreamConstants.DefaultSampleRate, TestStreamId);
+        var packets = new List<(Complex[] Left, Complex[] Right)>();
+        for (var offset = 0; offset < left.Length; offset += ChunkFrames)
+        {
+            if (offset == switchAt)
+            {
+                pipeline.ChangeMode(secondMode);
+                Assert.Equal(secondMode, pipeline.Mode.Id);
+            }
+
+            var count = Math.Min(ChunkFrames, left.Length - offset);
+            packets.AddRange(pipeline.PushPcm(left.AsSpan(offset, count), right.AsSpan(offset, count)));
+        }
+
+        packets.AddRange(pipeline.Flush());
+        var rx = Receive(packets.SelectMany(p => p.Left).ToArray(), packets.SelectMany(p => p.Right).ToArray());
+        _output.WriteLine(
+            $"{firstMode}->{secondMode}: packets={packets.Count} rx={rx.Packets} err={rx.PacketErrors} "
+            + $"decoded={rx.Left.Length} expected={ExpectedDecodedSamples(left.Length)}");
+
+        Assert.Equal(0, rx.PacketErrors);
+        Assert.Equal(packets.Count, rx.Packets);
+        Assert.Equal(secondMode, rx.ModeId);
+        Assert.Equal(ExpectedDecodedSamples(left.Length), rx.Left.Length);
+        Assert.Equal(Title, rx.Title);
+    }
+
     [Fact]
     public void Loopback_Mp3FullMinute_DeliversCoverInOrder()
     {

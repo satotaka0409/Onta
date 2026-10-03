@@ -125,6 +125,7 @@ public sealed class StreamRxPipeline : IDisposable
     private long _consumedTotal;
     private long _lastPacketStart = -1;
     private int _lastPacketFrames;
+    private int _lastPacketSamples;
     private bool _disposed;
 
     /// <summary>
@@ -363,6 +364,7 @@ public sealed class StreamRxPipeline : IDisposable
             audio.Add(new StreamRxAudioPacket(CountLostFrames(packetStart, speed), frames));
             _lastPacketStart = packetStart;
             _lastPacketFrames = frames.Count;
+            _lastPacketSamples = codec.PacketSamples;
         }
 
         Consume(Math.Min(cursor, length));
@@ -373,6 +375,7 @@ public sealed class StreamRxPipeline : IDisposable
     /// <summary>
     /// 直前に受理したパケットとの間隔から、間で失われたパケットのフレーム数を求めます。
     /// 送信側はパケットの先頭間隔を運ぶ音声時間（フレーム数 × 20 ms）に揃えるので、間隔を割れば失った数が分かる。
+    /// ただし運ぶ音声がパケットの送出時間より短いとき（速度切替直後など）は、送出時間より詰めては送れない。
     /// </summary>
     /// <param name="packetStart">今回のパケット先頭（受信開始からの通算サンプル位置）。</param>
     /// <param name="speed">受信サンプル数 / 送信サンプル数。</param>
@@ -384,7 +387,7 @@ public sealed class StreamRxPipeline : IDisposable
             return 0;
         }
 
-        var interval = _lastPacketFrames * StreamOpusFrameSeconds * _sampleRate * speed;
+        var interval = Math.Max(_lastPacketFrames * StreamOpusFrameSeconds * _sampleRate, _lastPacketSamples) * speed;
         var missing = (int)Math.Round((packetStart - _lastPacketStart) / interval) - 1;
         return missing is >= 1 and <= MaxConcealPackets ? missing * _lastPacketFrames : 0;
     }

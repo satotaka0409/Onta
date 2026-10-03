@@ -7,10 +7,15 @@ namespace Onta.View.Core;
 /// <summary>
 /// メインウィンドウ全体の永続化設定です。
 /// </summary>
+/// <param name="Send">ファイル画面の送信設定。</param>
+/// <param name="Receive">ファイル画面の受信設定。</param>
+/// <param name="Performance">性能測定画面の設定。</param>
+/// <param name="Stream">ストリーム画面の設定（保存されていなければ null）。</param>
 internal readonly record struct MainWindowSettings(
     SendSettingsSnapshot Send,
     ReceivePanel.ReceiveSettingsSnapshot Receive,
-    PerformanceUiSettingsSnapshot Performance);
+    PerformanceUiSettingsSnapshot Performance,
+    Onta.View.Stream.StreamUiSettings? Stream);
 
 /// <summary>
 /// <c>Onta_setting.bin</c> の読み書きです（現行フォーマットのみ）。
@@ -83,13 +88,15 @@ internal static class MainWindowSettingsStore
                 OutputDirectory: receiveOutputDir,
                 AudioDeviceNumber: receiveAudioDeviceNumber,
                 AudioVolume: receiveAudioVolume),
-            Performance: ReadPerformance(reader));
+            Performance: ReadPerformance(reader),
+            Stream: null);
         var sendWavSampleRate = ReadOptionalWavSampleRate(reader);
         var performanceWavSampleRate = ReadOptionalWavSampleRate(reader);
         var (rxSubcarriers, rxModulation) = ReadOptionalPerformanceRxModulation(reader, settings.Performance);
         var rxModulated = ReadOptionalPerformanceRxModulated(reader, settings.Performance);
         settings = settings with
         {
+            Stream = Onta.View.Stream.StreamUiSettings.TryReadBlock(reader),
             Send = settings.Send with
             {
                 WavSampleRate = sendWavSampleRate
@@ -201,6 +208,7 @@ internal static class MainWindowSettingsStore
         writer.Write(PerformanceSignalGenerator.ClampSubcarriers(settings.Performance.RxActiveSubcarriers));
         writer.Write((byte)settings.Performance.RxModulationScheme);
         writer.Write(settings.Performance.RxModulated);
+        settings.Stream?.WriteBlock(writer);
     }
 
     /// <summary>

@@ -56,7 +56,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// メイン設定ファイルを読み込み、送信・受信・性能測定パネルへ反映します。
+    /// メイン設定ファイルを読み込み、送信・受信・性能測定・ストリームパネルへ反映します。
     /// </summary>
     private void LoadMainSettings()
     {
@@ -70,6 +70,10 @@ public partial class MainWindow : Window
             SendPanel.ApplySnapshot(settings.Send);
             ReceivePanel.ApplySettings(settings.Receive);
             PerformancePanel.ApplySettings(settings.Performance);
+            if (settings.Stream is { } stream)
+            {
+                StreamPanel.ApplySettings(stream);
+            }
         }
         catch
         {
@@ -87,7 +91,8 @@ public partial class MainWindow : Window
             var settings = new MainWindowSettings(
                 Send: SendPanel.CreateSnapshot(),
                 Receive: ReceivePanel.CaptureSettings(),
-                Performance: PerformancePanel.CaptureSettings());
+                Performance: PerformancePanel.CaptureSettings(),
+                Stream: StreamPanel.CaptureSettings());
             MainWindowSettingsStore.Save(AppPaths.MainSettingsFilePath, settings);
         }
         catch

@@ -16,7 +16,16 @@ internal sealed class StreamTxWorker : IDisposable
     private const int FftSize = 2048;
     private const int MinFftPublishIntervalMs = 80;
 
+    /// <summary>出力デバイスの変更要求が無いことを表す値。</summary>
+    private const int NoDeviceRequest = int.MinValue;
+
     private readonly object _sync = new();
+    private RealtimePcmPlayer? _player;
+    private RealtimePcmCapture? _capture;
+    private int _requestedModeId;
+    private int _requestedOutputDevice = NoDeviceRequest;
+    private double _outputVolume;
+    private double _inputVolume;
     private readonly CoreExecutionStatusBoard _status = new();
     private readonly double[] _pcmLeft = new double[PcmCap];
     private readonly double[] _pcmRight = new double[PcmCap];
@@ -93,8 +102,62 @@ internal sealed class StreamTxWorker : IDisposable
             _completion = null;
             _pcmWriteTotal = 0;
             _lastFftPublishMs = -1;
+            _outputVolume = settings.OutputVolume;
+            _inputVolume = settings.InputVolume;
+            _requestedModeId = 0;
+            _requestedOutputDevice = NoDeviceRequest;
             _worker = Task.Run(() => Run(settings, token), token);
         }
+    }
+
+    /// <summary>
+    /// 送信中にストリーム速度を切り替えます。送信ループの次のチャンクの切れ目で反映されます。
+    /// </summary>
+    /// <param name="modeId">新しいストリーム速度 ID。</param>
+    public void RequestModeChange(StreamModeId modeId)
+    {
+        Interlocked.Exchange(ref _requestedModeId, (int)modeId);
+    }
+
+    /// <summary>
+    /// 送信中に出力デバイスを切り替えます。送信ループの次のチャンクの切れ目で開き直します（切替の瞬間は音が途切れる）。
+    /// </summary>
+    /// <param name="deviceNumber">WaveOut デバイス番号（-1 は既定）。</param>
+    public void RequestOutputDevice(int deviceNumber)
+    {
+        Interlocked.Exchange(ref _requestedOutputDevice, deviceNumber);
+    }
+
+    /// <summary>
+    /// 送信中の出力音量を変更します。
+    /// </summary>
+    /// <param name="volume">出力音量 0〜1。</param>
+    public void SetOutputVolume(double volume)
+    {
+        lock (_sync)
+        {
+            _outputVolume = volume;
+            _player?.SetOutputVolume(volume);
+        }
+    }
+
+    /// <summary>
+    /// 送信中の入力音量（ファイル入力のゲイン／音声入力の取り込みゲイン）を変更します。
+    /// </summary>
+    /// <param name="volume">入力音量 0〜1。</param>
+    public void SetInputVolume(double volume)
+    {
+        lock (_sync)
+        {
+            _inputVolume = volume;
+            _capture?.SetInputGain(volume);
+        }
+    }
+
+    /// <summary>今の入力音量。</summary>
+    private double InputVolume
+    {
+        get { lock (_sync) { return _inputVolume; } }
     }
 
     /// <summary>
@@ -132,8 +195,7 @@ internal sealed class StreamTxWorker : IDisposable
                 cover = StreamCoverImage.EncodeFile(settings.CoverPath, settings.CoverFormat, out _);
             }
 
-            var mode = StreamMode.Resolve(settings.ModeId);
-
+            var outputDevice = settings.OutputDevice;
             if (settings.UseWavInput)
             {
                 if (string.IsNullOrWhiteSpace(settings.WavPath) || !File.Exists(settings.WavPath))
@@ -146,28 +208,18 @@ internal sealed class StreamTxWorker : IDisposable
                 var streamSampleRate = reader.SampleRate;
                 _vizSampleRate = streamSampleRate;
                 pipeline = new StreamTxPipeline(settings.ModeId, settings.Title, settings.Artist, cover, streamSampleRate);
-
-                player = new RealtimePcmPlayer();
-                player.Start(settings.OutputDevice, streamSampleRate, ChannelMode.Stereo, settings.OutputVolume);
+                player = OpenPlayer(outputDevice, streamSampleRate);
 
                 var chunk = Math.Max(1, streamSampleRate / 10);
                 while (!token.IsCancellationRequested && reader.TryRead(chunk, out var leftC, out var rightC))
                 {
+                    player = ApplyPendingChanges(pipeline, player, ref outputDevice, streamSampleRate);
                     var left = ToDouble(leftC);
                     var right = ToDouble(rightC.Length > 0 ? rightC : leftC);
-                    Scale(left, settings.InputVolume);
-                    Scale(right, settings.InputVolume);
-                    foreach (var (l, r) in pipeline.PushPcm(left, right))
-                    {
-                        token.ThrowIfCancellationRequested();
-                        if (ReferenceEquals(l, r))
-                        {
-                            throw new InvalidOperationException("Stream TX returned identical L/R buffers.");
-                        }
-
-                        PublishPcmForViz(l, r, mode);
-                        player.AddSamples(l, r);
-                    }
+                    var inputVolume = InputVolume;
+                    Scale(left, inputVolume);
+                    Scale(right, inputVolume);
+                    Emit(pipeline.PushPcm(left, right), pipeline.Mode, player, token);
 
                     _status.SetProgress(new CoreProgressInfo(
                         CurrentFrame: CoreFrameKind.Bd,
@@ -180,11 +232,7 @@ internal sealed class StreamTxWorker : IDisposable
 
                 if (!token.IsCancellationRequested)
                 {
-                    foreach (var (l, r) in pipeline.Flush())
-                    {
-                        PublishPcmForViz(l, r, mode);
-                        player.AddSamples(l, r);
-                    }
+                    Emit(pipeline.Flush(), pipeline.Mode, player, token);
                 }
             }
             else
@@ -193,9 +241,7 @@ internal sealed class StreamTxWorker : IDisposable
                 var streamSampleRate = StreamConstants.DefaultSampleRate;
                 _vizSampleRate = streamSampleRate;
                 pipeline = new StreamTxPipeline(settings.ModeId, settings.Title, settings.Artist, cover, streamSampleRate);
-
-                player = new RealtimePcmPlayer();
-                player.Start(settings.OutputDevice, streamSampleRate, ChannelMode.Stereo, settings.OutputVolume);
+                player = OpenPlayer(outputDevice, streamSampleRate);
 
                 var queue = new Queue<(Complex[] L, Complex[] R)>();
                 var gate = new object();
@@ -208,10 +254,15 @@ internal sealed class StreamTxWorker : IDisposable
                     }
                 };
                 capture.CaptureFailed += msg => throw new InvalidOperationException(msg);
-                capture.Start(settings.InputDevice, ChannelMode.Stereo, streamSampleRate, settings.InputVolume);
+                capture.Start(settings.InputDevice, ChannelMode.Stereo, streamSampleRate, InputVolume);
+                lock (_sync)
+                {
+                    _capture = capture;
+                }
 
                 while (!token.IsCancellationRequested)
                 {
+                    player = ApplyPendingChanges(pipeline, player, ref outputDevice, streamSampleRate);
                     (Complex[] L, Complex[] R)? item = null;
                     lock (gate)
                     {
@@ -229,17 +280,7 @@ internal sealed class StreamTxWorker : IDisposable
 
                     var left = ToDouble(item.Value.L);
                     var right = ToDouble(item.Value.R);
-                    foreach (var (l, r) in pipeline.PushPcm(left, right))
-                    {
-                        token.ThrowIfCancellationRequested();
-                        if (ReferenceEquals(l, r))
-                        {
-                            throw new InvalidOperationException("Stream TX returned identical L/R buffers.");
-                        }
-
-                        PublishPcmForViz(l, r, mode);
-                        player.AddSamples(l, r);
-                    }
+                    Emit(pipeline.PushPcm(left, right), pipeline.Mode, player, token);
 
                     _status.SetProgress(new CoreProgressInfo(
                         CurrentFrame: CoreFrameKind.Bd,
@@ -266,9 +307,91 @@ internal sealed class StreamTxWorker : IDisposable
         }
         finally
         {
+            lock (_sync)
+            {
+                _player = null;
+                _capture = null;
+            }
+
             capture?.Dispose();
             player?.Dispose();
             pipeline?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 出力デバイスを開き、画面から音量を変えられるよう保持します。
+    /// </summary>
+    /// <param name="deviceNumber">WaveOut デバイス番号（-1 は既定）。</param>
+    /// <param name="sampleRate">変調のサンプリング周波数。</param>
+    /// <returns>開いた再生先。</returns>
+    private RealtimePcmPlayer OpenPlayer(int deviceNumber, int sampleRate)
+    {
+        var player = new RealtimePcmPlayer();
+        lock (_sync)
+        {
+            player.Start(deviceNumber, sampleRate, ChannelMode.Stereo, _outputVolume);
+            _player = player;
+        }
+
+        return player;
+    }
+
+    /// <summary>
+    /// 送信中に画面から要求された速度・出力デバイスの変更を、チャンクの切れ目で反映します。
+    /// </summary>
+    /// <param name="pipeline">送信パイプライン。</param>
+    /// <param name="player">今の再生先。</param>
+    /// <param name="outputDevice">今の出力デバイス番号（切り替えたら更新）。</param>
+    /// <param name="sampleRate">変調のサンプリング周波数。</param>
+    /// <returns>以降に使う再生先（出力デバイスを切り替えたら新しいもの）。</returns>
+    private RealtimePcmPlayer ApplyPendingChanges(
+        StreamTxPipeline pipeline,
+        RealtimePcmPlayer player,
+        ref int outputDevice,
+        int sampleRate)
+    {
+        var modeRequest = Interlocked.Exchange(ref _requestedModeId, 0);
+        if (modeRequest != 0)
+        {
+            pipeline.ChangeMode((StreamModeId)modeRequest);
+        }
+
+        var deviceRequest = Interlocked.Exchange(ref _requestedOutputDevice, NoDeviceRequest);
+        if (deviceRequest == NoDeviceRequest || deviceRequest == outputDevice)
+        {
+            return player;
+        }
+
+        lock (_sync)
+        {
+            _player = null;
+        }
+
+        player.Dispose();
+        outputDevice = deviceRequest;
+        return OpenPlayer(outputDevice, sampleRate);
+    }
+
+    /// <summary>
+    /// 変調済みチャンクを FFT / I-Q 表示へ載せ、再生先へ送ります。
+    /// </summary>
+    /// <param name="chunks">変調済み OFDM チャンク。</param>
+    /// <param name="mode">チャンクを変調したストリームモード。</param>
+    /// <param name="player">再生先。</param>
+    /// <param name="token">停止用のキャンセルトークン。</param>
+    private void Emit(List<(Complex[] Left, Complex[] Right)> chunks, StreamModeInfo mode, RealtimePcmPlayer player, CancellationToken token)
+    {
+        foreach (var (l, r) in chunks)
+        {
+            token.ThrowIfCancellationRequested();
+            if (ReferenceEquals(l, r))
+            {
+                throw new InvalidOperationException("Stream TX returned identical L/R buffers.");
+            }
+
+            PublishPcmForViz(l, r, mode);
+            player.AddSamples(l, r);
         }
     }
 

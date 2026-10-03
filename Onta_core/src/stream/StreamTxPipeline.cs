@@ -9,7 +9,9 @@ namespace Onta.Stream;
 /// </summary>
 public sealed class StreamTxPipeline : IDisposable
 {
-    private readonly StreamOfdmCodec _codec;
+    private StreamOfdmCodec _codec;
+    private OfdmGenerator.TxSpectrumHandler? _spectrumObserver;
+    private int _spectrumStride = 1;
     private readonly StreamMetaRotator _meta;
     private readonly OpusEncoder _opus;
     private readonly ushort _streamId;
@@ -51,13 +53,47 @@ public sealed class StreamTxPipeline : IDisposable
     /// </summary>
     /// <param name="observer">L/R 周波数ビン通知。</param>
     /// <param name="stride">何シンボルごとに通知するか（1=毎シンボル）。</param>
-    public void AttachTxSpectrumObserver(OfdmGenerator.TxSpectrumHandler observer, int stride = 1) =>
+    public void AttachTxSpectrumObserver(OfdmGenerator.TxSpectrumHandler observer, int stride = 1)
+    {
+        _spectrumObserver = observer;
+        _spectrumStride = stride;
         _codec.AttachTxSpectrumObserver(observer, stride);
+    }
 
     /// <summary>
     /// 送信スペクトル監視を外します。
     /// </summary>
-    public void ClearTxSpectrumObserver() => _codec.ClearTxSpectrumObserver();
+    public void ClearTxSpectrumObserver()
+    {
+        _spectrumObserver = null;
+        _codec.ClearTxSpectrumObserver();
+    }
+
+    /// <summary>
+    /// 送信中にストリーム速度を切り替えます。以降のパケットを新しい速度で変調し、以降のフレームを新しいビットレートで符号化します。
+    /// </summary>
+    /// <remarks>
+    /// 詰めかけのペイロードは次のパケットへそのまま持ち越す（Opus フレームはビットレートによらず復号でき、
+    /// 少ないフレームだけで 1 パケット送ると送出時間に対して音声が足りず、受信側が欠落と誤認する）。
+    /// ストリーム ID と曲情報のローテーションは引き継ぐ（受信側はヘッダーの速度 ID でパケットごとに復調を切り替える）。
+    /// </remarks>
+    /// <param name="modeId">新しいストリーム速度 ID。</param>
+    public void ChangeMode(StreamModeId modeId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (modeId == _codec.Mode.Id)
+        {
+            return;
+        }
+
+        _codec = new StreamOfdmCodec(modeId, _codec.SampleRate);
+        if (_spectrumObserver is not null)
+        {
+            _codec.AttachTxSpectrumObserver(_spectrumObserver, _spectrumStride);
+        }
+
+        _opus.SetBitrate(_codec.Mode.OpusBitrateBps);
+    }
 
     /// <summary>
     /// PCM を取り込み、変調済み OFDM チャンクがあれば返します。

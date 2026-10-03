@@ -38,6 +38,9 @@ public partial class StreamPanel : UserControl
     private int _lastRxCoverBlocks = -1;
     private int _lastRxCoverTotal = -1;
     private byte[]? _lastRxCover;
+    private int _pendingTxInputDevice = -1;
+    private int _pendingTxOutputDevice = -1;
+    private int _pendingRxInputDevice = -1;
 
     /// <summary>
     /// パネルを初期化します。
@@ -58,10 +61,11 @@ public partial class StreamPanel : UserControl
     /// <param name="e">イベントデータ。</param>
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        FillDevices(TxInputDeviceBox, isInput: true);
-        FillDevices(TxOutputDeviceBox, isInput: false);
-        FillDevices(RxInputDeviceBox, isInput: true);
-        FillDevices(RxOutputDeviceBox, isInput: false);
+        // タブを切り替えるたびに Loaded が来るので、作り直す前の選択（初回は設定ファイルの値）を戻す
+        RefillDevices(TxInputDeviceBox, isInput: true, _pendingTxInputDevice);
+        RefillDevices(TxOutputDeviceBox, isInput: false, _pendingTxOutputDevice);
+        RefillDevices(RxInputDeviceBox, isInput: true, _pendingRxInputDevice);
+        RefillDevices(RxOutputDeviceBox, isInput: false, -1);
         UpdateTxInputModeUi();
         RxErrorChart.Series = _errorChart.Series;
         RxErrorChart.XAxes = _errorChart.XAxes;
@@ -249,15 +253,13 @@ public partial class StreamPanel : UserControl
         var rxBusy = _rx.IsBusy;
         var coverOver = _coverByteCount > StreamCoverImage.MaxBytes;
 
-        // 送信中はストップ以外（速度・入出力・曲情報）を無効化
-        if (TxSpeedHost is not null)
+        // 送信中も速度・出力デバイス・音量は変えられる。入力元・入力ファイル・入力デバイス・曲情報は固定
+        foreach (var inputControl in new FrameworkElement?[] { TxWavRadio, TxAudioRadio, TxWavInputPanel, TxInputDeviceBox })
         {
-            TxSpeedHost.IsEnabled = !txBusy;
-        }
-
-        if (TxIoHost is not null)
-        {
-            TxIoHost.IsEnabled = !txBusy;
+            if (inputControl is not null)
+            {
+                inputControl.IsEnabled = !txBusy;
+            }
         }
 
         if (TxMetaHost is not null)
@@ -285,6 +287,38 @@ public partial class StreamPanel : UserControl
 
         _runningNotified = running;
         RunningStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// デバイス一覧を作り直し、作り直す前の選択（一覧が空なら initialDevice）を選び直します。
+    /// </summary>
+    /// <param name="box">対象コンボボックス。</param>
+    /// <param name="isInput">true なら入力デバイス。</param>
+    /// <param name="initialDevice">一覧がまだ無いときに選ぶデバイス番号（-1 は既定）。</param>
+    private static void RefillDevices(ComboBox box, bool isInput, int initialDevice)
+    {
+        var device = box.Items.Count > 0 ? ReadDeviceNumber(box) : initialDevice;
+        FillDevices(box, isInput);
+        SelectDevice(box, device);
+    }
+
+    /// <summary>
+    /// デバイス番号が一致する項目を選びます。見つからなければ既定デバイスです。
+    /// </summary>
+    /// <param name="box">対象コンボボックス。</param>
+    /// <param name="deviceNumber">選ぶデバイス番号。</param>
+    private static void SelectDevice(ComboBox box, int deviceNumber)
+    {
+        for (var i = 0; i < box.Items.Count; i++)
+        {
+            if (box.Items[i] is StreamDeviceItem item && item.DeviceNumber == deviceNumber)
+            {
+                box.SelectedIndex = i;
+                return;
+            }
+        }
+
+        box.SelectedIndex = box.Items.Count > 0 ? 0 : -1;
     }
 
     /// <summary>
@@ -338,6 +372,40 @@ public partial class StreamPanel : UserControl
         if (ReferenceEquals(sender, RxOutputVolume))
         {
             _rx.SetOutputVolume(e.NewValue / 100.0);
+        }
+        else if (ReferenceEquals(sender, TxOutputVolume))
+        {
+            _tx.SetOutputVolume(e.NewValue / 100.0);
+        }
+        else if (ReferenceEquals(sender, TxInputVolume))
+        {
+            _tx.SetInputVolume(e.NewValue / 100.0);
+        }
+    }
+
+    /// <summary>
+    /// 送信中に速度が変わったら、送信ワーカーへ切替を要求します。
+    /// </summary>
+    /// <param name="sender">速度のラジオボタン。</param>
+    /// <param name="e">イベントデータ。</param>
+    private void OnTxRateChanged(object sender, RoutedEventArgs e)
+    {
+        if (_tx.IsBusy && sender is RadioButton { IsChecked: true })
+        {
+            _tx.RequestModeChange(ReadModeId());
+        }
+    }
+
+    /// <summary>
+    /// 送信中に出力デバイスが変わったら、送信ワーカーへ切替を要求します。
+    /// </summary>
+    /// <param name="sender">出力デバイスのコンボボックス。</param>
+    /// <param name="e">イベントデータ。</param>
+    private void OnTxOutputDeviceChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_tx.IsBusy && TxOutputDeviceBox.SelectedItem is StreamDeviceItem item)
+        {
+            _tx.RequestOutputDevice(item.DeviceNumber);
         }
     }
 
@@ -836,10 +904,9 @@ public partial class StreamPanel : UserControl
     /// <returns>選択中のモード。未選択時は 18Kbps。</returns>
     private StreamModeId ReadModeId()
     {
-        foreach (var child in FindVisualChildren<RadioButton>(this))
+        foreach (var child in FindRadioButtons(this, "StreamRate"))
         {
-            if (child.GroupName == "StreamRate" && child.IsChecked == true && child.Tag is string tag
-                && byte.TryParse(tag, out var id))
+            if (child.IsChecked == true && child.Tag is string tag && byte.TryParse(tag, out var id))
             {
                 return (StreamModeId)id;
             }
@@ -847,6 +914,134 @@ public partial class StreamPanel : UserControl
 
         return StreamModeId.Rate18k;
     }
+
+    /// <summary>
+    /// 論理ツリーから指定グループのラジオボタンを列挙します（タブが一度も表示されておらず、ビジュアルツリーが無くても使える）。
+    /// </summary>
+    /// <param name="root">探索の起点。</param>
+    /// <param name="groupName">ラジオボタンの GroupName。</param>
+    /// <returns>見つかったラジオボタン。</returns>
+    private static IEnumerable<RadioButton> FindRadioButtons(DependencyObject root, string groupName)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root))
+        {
+            if (child is not DependencyObject node)
+            {
+                continue;
+            }
+
+            if (node is RadioButton radio && radio.GroupName == groupName)
+            {
+                yield return radio;
+            }
+
+            foreach (var nested in FindRadioButtons(node, groupName))
+            {
+                yield return nested;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 保存しておいたストリーム設定（送信: 速度・入出力・デバイス・曲情報、受信: 入力デバイス・音量）を画面へ反映します。
+    /// </summary>
+    /// <remarks>デバイス一覧は表示時（Loaded）に作るため、デバイスはそのときに選びます。</remarks>
+    /// <param name="settings">設定ファイルから読んだストリーム設定。</param>
+    internal void ApplySettings(StreamUiSettings settings)
+    {
+        if (settings.RxInputDeviceNumber is { } rxInputDevice)
+        {
+            _pendingRxInputDevice = rxInputDevice;
+            if (RxInputDeviceBox.Items.Count > 0)
+            {
+                SelectDevice(RxInputDeviceBox, rxInputDevice);
+            }
+        }
+
+        if (settings.RxInputVolume is { } rxInputVolume)
+        {
+            RxInputVolume.Value = rxInputVolume * 100.0;
+        }
+
+        var modeTag = ((byte)settings.ModeId).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var radio in FindRadioButtons(this, "StreamRate"))
+        {
+            if (radio.Tag as string == modeTag)
+            {
+                radio.IsChecked = true;
+            }
+        }
+
+        _txWavPath = settings.WavPath ?? string.Empty;
+        SetTxWavPathBoxes(_txWavPath);
+        TxWavRadio.IsChecked = settings.UseWavInput;
+        TxAudioRadio.IsChecked = !settings.UseWavInput;
+        UpdateTxInputModeUi();
+
+        _pendingTxInputDevice = settings.InputDeviceNumber;
+        _pendingTxOutputDevice = settings.OutputDeviceNumber;
+        if (TxInputDeviceBox.Items.Count > 0)
+        {
+            SelectDevice(TxInputDeviceBox, settings.InputDeviceNumber);
+            SelectDevice(TxOutputDeviceBox, settings.OutputDeviceNumber);
+        }
+
+        TxInputVolume.Value = settings.InputVolume * 100.0;
+        TxOutputVolume.Value = settings.OutputVolume * 100.0;
+        TxTitleBox.Text = settings.Title ?? string.Empty;
+        TxArtistBox.Text = settings.Artist ?? string.Empty;
+
+        _coverFormat = settings.CoverFormat;
+        var coverTag = CoverFormatTag(settings.CoverFormat);
+        foreach (var radio in FindRadioButtons(this, "CoverFmt"))
+        {
+            if (radio.Tag as string == coverTag)
+            {
+                radio.IsChecked = true;
+            }
+        }
+
+        _coverPath = settings.CoverPath ?? string.Empty;
+        TxCoverPathBox.Text = _coverPath;
+        RefreshCoverPreview();
+    }
+
+    /// <summary>
+    /// 現在のストリーム設定（送信: 速度・入出力・デバイス・曲情報、受信: 入力デバイス・音量）を取り出します。
+    /// </summary>
+    /// <returns>設定ファイルへ保存するストリーム設定。</returns>
+    internal StreamUiSettings CaptureSettings()
+    {
+        var devicesReady = TxInputDeviceBox.Items.Count > 0;
+        return new StreamUiSettings(
+            ModeId: ReadModeId(),
+            UseWavInput: TxWavRadio.IsChecked == true,
+            WavPath: _txWavPath,
+            InputDeviceNumber: devicesReady ? ReadDeviceNumber(TxInputDeviceBox) : _pendingTxInputDevice,
+            InputVolume: ReadVolume(TxInputVolume),
+            OutputDeviceNumber: devicesReady ? ReadDeviceNumber(TxOutputDeviceBox) : _pendingTxOutputDevice,
+            OutputVolume: ReadVolume(TxOutputVolume),
+            Title: TxTitleBox.Text ?? string.Empty,
+            Artist: TxArtistBox.Text ?? string.Empty,
+            CoverPath: _coverPath,
+            CoverFormat: _coverFormat,
+            RxInputDeviceNumber: RxInputDeviceBox.Items.Count > 0 ? ReadDeviceNumber(RxInputDeviceBox) : _pendingRxInputDevice,
+            RxInputVolume: ReadVolume(RxInputVolume));
+    }
+
+    /// <summary>
+    /// ジャケ写形式に対応するラジオボタンの Tag を返します（32x32 カラーは Tag なし）。
+    /// </summary>
+    /// <param name="format">ジャケ写形式。</param>
+    /// <returns>ラジオボタンの Tag。32x32 カラーは null。</returns>
+    private static string? CoverFormatTag(StreamCoverFormat format) =>
+        format switch
+        {
+            StreamCoverFormat.Color48 => "Color48",
+            StreamCoverFormat.Gray48 => "Gray48",
+            StreamCoverFormat.Gray64 => "Gray64",
+            _ => null,
+        };
 
     /// <summary>
     /// 送受信の完了と、曲情報・グラフを定期的に画面へ反映します。
@@ -966,35 +1161,6 @@ public partial class StreamPanel : UserControl
         {
             RxCoverSizeText.Text = CoreViewText.SizeLabelUnknown;
             RxCoverImage.Source = null;
-        }
-    }
-
-    /// <summary>
-    /// ビジュアルツリー配下から指定型の要素を列挙します。
-    /// </summary>
-    /// <param name="root">探索の起点。</param>
-    /// <returns>一致した子孫要素。</returns>
-    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
-        where T : DependencyObject
-    {
-        if (root is null)
-        {
-            yield break;
-        }
-
-        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-        {
-            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
-            if (child is T typed)
-            {
-                yield return typed;
-            }
-
-            foreach (var nested in FindVisualChildren<T>(child))
-            {
-                yield return nested;
-            }
         }
     }
 

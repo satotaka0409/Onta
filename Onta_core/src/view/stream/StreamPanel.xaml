@@ -38,28 +38,28 @@
             <UniformGrid Columns="3"
                          Margin="2">
               <RadioButton x:Name="Rate18Radio"
-                           GroupName="StreamRate"
+                           GroupName="StreamRate" Checked="OnTxRateChanged"
                            Content="18Kbps"
                            Tag="1"
                            IsChecked="True"
                            Margin="0,0,8,4"/>
-              <RadioButton GroupName="StreamRate"
+              <RadioButton GroupName="StreamRate" Checked="OnTxRateChanged"
                            Content="20Kbps"
                            Tag="2"
                            Margin="0,0,8,4"/>
-              <RadioButton GroupName="StreamRate"
+              <RadioButton GroupName="StreamRate" Checked="OnTxRateChanged"
                            Content="23Kbps"
                            Tag="3"
                            Margin="0,0,8,4"/>
-              <RadioButton GroupName="StreamRate"
+              <RadioButton GroupName="StreamRate" Checked="OnTxRateChanged"
                            Content="24Kbps"
                            Tag="4"
                            Margin="0,0,8,4"/>
-              <RadioButton GroupName="StreamRate"
+              <RadioButton GroupName="StreamRate" Checked="OnTxRateChanged"
                            Content="28Kbps"
                            Tag="5"
                            Margin="0,0,8,4"/>
-              <RadioButton GroupName="StreamRate"
+              <RadioButton GroupName="StreamRate" Checked="OnTxRateChanged"
                            Content="30Kbps"
                            Tag="6"
                            Margin="0,0,8,4"/>
@@ -160,7 +160,8 @@
                            VerticalAlignment="Center"
                            Margin="0,0,8,0"/>
                 <ComboBox x:Name="TxOutputDeviceBox"
-                          Width="140">
+                          Width="140"
+                          SelectionChanged="OnTxOutputDeviceChanged">
                   <ComboBox.ItemTemplate>
                     <DataTemplate>
                       <TextBlock Text="{Binding Name}"
