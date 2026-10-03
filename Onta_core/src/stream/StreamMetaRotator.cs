@@ -9,7 +9,7 @@ namespace Onta.Stream;
 public sealed class StreamMetaRotator
 {
     /// <summary>1 周でジャケ写を続けて送るブロック数。ジャケ写はタイトル・アーティストよりずっと大きく、等分では曲の間に送り切れないため。</summary>
-    public const int CoverRepeat = 4;
+    public const int CoverRepeat = 8;
 
     private readonly List<Slot> _schedule = new();
     private int _phase;
