@@ -78,6 +78,33 @@ public sealed class OntaTestStream
         Assert.Equal(cover, assembler.GetCoverBytes());
     }
 
+    /// <summary>
+    /// 1 周がタイトル 1 → アーティスト 1 → ジャケ写 4 ブロックで、各種別はブロック位置を続きから送り、送り切ったら 0 に戻ること。
+    /// </summary>
+    [Fact]
+    public void MetaRotator_SendsCoverFourTimesPerCycle()
+    {
+        var rotator = new StreamMetaRotator("タイトル名がちょっと長い曲です", "Artist", BuildPng(200));
+        var sequence = Enumerable.Range(0, 24).Select(_ => rotator.Next()).ToList();
+        foreach (var item in sequence)
+        {
+            _output.WriteLine($"{item.Kind} {item.BlockIndex}/{item.TotalBlocks}");
+        }
+
+        var expectedKinds = Enumerable.Range(0, 24)
+            .Select(i => (i % 6) switch { 0 => StreamMetaKind.Title, 1 => StreamMetaKind.Artist, _ => StreamMetaKind.Cover })
+            .ToArray();
+        Assert.Equal(expectedKinds, sequence.Select(s => s.Kind).ToArray());
+
+        var titleBlocks = sequence.First(s => s.Kind == StreamMetaKind.Title).TotalBlocks;
+        Assert.Equal(3, titleBlocks);
+        Assert.Equal(new byte[] { 0, 1, 2, 0 }, sequence.Where(s => s.Kind == StreamMetaKind.Title).Select(s => s.BlockIndex).ToArray());
+        Assert.Equal(new byte[] { 0, 0, 0, 0 }, sequence.Where(s => s.Kind == StreamMetaKind.Artist).Select(s => s.BlockIndex).ToArray());
+        Assert.Equal(
+            Enumerable.Range(0, 16).Select(i => (byte)(i % 13)).ToArray(),
+            sequence.Where(s => s.Kind == StreamMetaKind.Cover).Select(s => s.BlockIndex).ToArray());
+    }
+
     [Fact]
     public void MetaAssembler_BrokenData_IsDiscardedAndReacquired()
     {
@@ -295,9 +322,11 @@ public sealed class OntaTestStream
         var tx = Transmit(StreamModeId.Rate18k, left, right, Title, Artist, cover);
         var rx = Receive(tx.Left, tx.Right);
 
-        // タイトル → アーティスト → ジャケ写の順に 1 パケット 1 ブロックずつ回る
+        // タイトル → アーティスト → ジャケ写 × 4 の順に 1 パケット 1 ブロックずつ回る
+        const int Cycle = 2 + StreamMetaRotator.CoverRepeat;
         var coverBlocks = (cover.Length + StreamConstants.MetaBlockDataBytes - 1) / StreamConstants.MetaBlockDataBytes;
-        var sentBlocks = Math.Min(coverBlocks, tx.PacketCount / 3);
+        var coverSlots = (tx.PacketCount / Cycle * StreamMetaRotator.CoverRepeat) + Math.Clamp((tx.PacketCount % Cycle) - 2, 0, StreamMetaRotator.CoverRepeat);
+        var sentBlocks = Math.Min(coverBlocks, coverSlots);
         _output.WriteLine(
             $"packets={tx.PacketCount} cover={cover.Length} B ({coverBlocks} blocks) sent={sentBlocks} blocks "
             + $"received={rx.Cover.Length} B complete={rx.CoverComplete} rx={rx.Packets} err={rx.PacketErrors}");
