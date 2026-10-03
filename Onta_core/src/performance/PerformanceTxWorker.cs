@@ -27,9 +27,14 @@ internal sealed class PerformanceTxWorker : IDisposable
     private bool _pcmStereo;
     private bool _disposed;
 
+    /// <summary>音声出力で繰り返す変調信号の最低長（秒）。</summary>
+    private const double ModulatedLoopSeconds = 4.0;
+
     private PerformanceSignalMode _liveMode;
     private double _liveToneHz = 315.0;
     private double _liveAmplitude = 0.8;
+    private int _liveSubcarriers = 16;
+    private ModulationScheme _liveModulation = ModulationScheme.Bpsk;
     private int _fftSize = PerformanceFftAnalyzer.DefaultSize;
     private PerformanceFftWindowKind _fftWindowKind = PerformanceFftWindowKind.Hanning;
     private bool _flushPlayback;
@@ -112,6 +117,8 @@ internal sealed class PerformanceTxWorker : IDisposable
             _liveMode = settings.SignalMode;
             _liveToneHz = settings.ToneHz > 0 ? settings.ToneHz : 315.0;
             _liveAmplitude = Math.Clamp(settings.SignalAmplitude, 0.10, 1.0);
+            _liveSubcarriers = PerformanceSignalGenerator.ClampSubcarriers(settings.ActiveSubcarriers);
+            _liveModulation = PerformanceSignalGenerator.ClampModulation(settings.ModulationScheme);
             _flushPlayback = false;
             _noiseFilterLeft = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
             _noiseFilterRight = WhiteNoiseBandFilter.Create(PerformanceSignalGenerator.SampleRate);
@@ -163,22 +170,32 @@ internal sealed class PerformanceTxWorker : IDisposable
     }
 
     /// <summary>
-    /// 再生中の周波数・レベル・基準／スイープを更新します（UI スレッドから呼び出し可）。
+    /// 再生中の信号（基準信号／変調、周波数・レベル、変調時のサブキャリア数・変調方式）を更新します（UI スレッドから呼び出し可）。
     /// 値が変わった場合は再生キューを破棄して即反映します。
     /// </summary>
-    /// <param name="mode">トーン／スイープ／変調。</param>
-    /// <param name="toneHz">トーン周波数（Hz）。スイープ時は無視。</param>
-    /// <param name="amplitude">正弦波振幅（0.1〜1）。</param>
-    public void UpdateLiveSignal(PerformanceSignalMode mode, double toneHz, double amplitude)
+    /// <param name="mode">トーン／スイープ／ホワイトノイズ／変調。</param>
+    /// <param name="toneHz">トーン周波数（Hz）。トーン以外では無視。</param>
+    /// <param name="amplitude">信号振幅（0.1〜1）。</param>
+    /// <param name="activeSubcarriers">変調時のサブキャリア数。</param>
+    /// <param name="modulation">変調時の変調方式。</param>
+    public void UpdateLiveSignal(
+        PerformanceSignalMode mode,
+        double toneHz,
+        double amplitude,
+        int activeSubcarriers,
+        ModulationScheme modulation)
     {
         RealtimePcmPlayer? playerToFlush = null;
         lock (_sync)
         {
             var nextAmp = Math.Clamp(amplitude, 0.10, 1.0);
             var nextHz = toneHz > 1.0 ? toneHz : _liveToneHz;
+            var nextSc = PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers);
+            var nextMod = PerformanceSignalGenerator.ClampModulation(modulation);
             var changed = mode != _liveMode
                 || Math.Abs(nextAmp - _liveAmplitude) > 1e-6
-                || (mode == PerformanceSignalMode.Tone && Math.Abs(nextHz - _liveToneHz) > 1e-6);
+                || (mode == PerformanceSignalMode.Tone && Math.Abs(nextHz - _liveToneHz) > 1e-6)
+                || (mode == PerformanceSignalMode.Modulated && (nextSc != _liveSubcarriers || nextMod != _liveModulation));
 
             _liveMode = mode;
             if (toneHz > 1.0)
@@ -187,8 +204,11 @@ internal sealed class PerformanceTxWorker : IDisposable
             }
 
             _liveAmplitude = nextAmp;
+            _liveSubcarriers = nextSc;
+            _liveModulation = nextMod;
             if (changed)
             {
+                _vizStatus.BeginIqCapture(nextSc, nextMod);
                 _flushPlayback = true;
                 Array.Clear(_pcmLeft);
                 Array.Clear(_pcmRight);
@@ -271,18 +291,10 @@ internal sealed class PerformanceTxWorker : IDisposable
         try
         {
             token.ThrowIfCancellationRequested();
-            Complex[]? left = null;
-            Complex[]? right = null;
-            var needsBuffer = settings.WriteWav
-                || (settings.PlayAudio && settings.SignalMode == PerformanceSignalMode.Modulated);
-            if (needsBuffer)
-            {
-                (left, right) = Generate(settings);
-                token.ThrowIfCancellationRequested();
-            }
-
             if (settings.WriteWav)
             {
+                var (left, right) = Generate(settings);
+                token.ThrowIfCancellationRequested();
                 var path = string.IsNullOrWhiteSpace(settings.WavPath)
                     ? Path.Combine(AppPaths.OutputDir, $"perf_{DateTime.Now:yyyyMMdd_HHmmss}.wav")
                     : settings.WavPath;
@@ -290,8 +302,8 @@ internal sealed class PerformanceTxWorker : IDisposable
                 WavWriter.WritePcm16(
                     path,
                     PerformanceConstants.NormalizeWavSampleRate(settings.WavSampleRate),
-                    left!,
-                    right ?? Array.Empty<Complex>(),
+                    left,
+                    right,
                     peakTarget: Math.Clamp(settings.SignalAmplitude, 0.05, 1.0),
                     channelMode: settings.ChannelMode);
             }
@@ -310,15 +322,7 @@ internal sealed class PerformanceTxWorker : IDisposable
                     settings.ChannelMode,
                     settings.OutputVolume);
 
-                if (settings.SignalMode == PerformanceSignalMode.Modulated && left is not null)
-                {
-                    PlayBuffered(settings, left, right ?? Array.Empty<Complex>(), player, token);
-                }
-                else
-                {
-                    PlayLiveReference(settings, player, token);
-                }
-
+                PlayLive(settings, player, token);
                 player.FinishAndWait(TimeSpan.FromSeconds(Math.Max(2.0, settings.DurationSeconds * 0.1)));
             }
 
@@ -356,12 +360,13 @@ internal sealed class PerformanceTxWorker : IDisposable
     }
 
     /// <summary>
-    /// トーン／スイープ／ホワイトノイズをチャンク生成しながら再生します（周波数・レベルをライブ反映）。
+    /// トーン／スイープ／ホワイトノイズ／変調をチャンク生成しながら再生します（信号の種類・周波数・レベル・SC・変調方式をライブ反映）。
     /// </summary>
+    /// <remarks>変調は約 4 秒の乱数ペイロード信号を繰り返し、SC・変調方式が変わったら作り直す。</remarks>
     /// <param name="settings">送信設定。</param>
     /// <param name="player">再生プレイヤー。</param>
     /// <param name="token">取消トークン。</param>
-    private void PlayLiveReference(
+    private void PlayLive(
         PerformanceTxSettings settings,
         RealtimePcmPlayer player,
         CancellationToken token)
@@ -373,6 +378,11 @@ internal sealed class PerformanceTxWorker : IDisposable
         var rightChunk = settings.ChannelMode == ChannelMode.Stereo ? new Complex[chunk] : Array.Empty<Complex>();
         var phase = 0.0;
         var sampleIndex = 0;
+        Complex[]? loopLeft = null;
+        var loopRight = Array.Empty<Complex>();
+        var loopSubcarriers = 0;
+        var loopModulation = ModulationScheme.Bpsk;
+        var loopOffset = 0;
 
         while (sampleIndex < total)
         {
@@ -380,18 +390,45 @@ internal sealed class PerformanceTxWorker : IDisposable
             PerformanceSignalMode mode;
             double toneHz;
             double amp;
+            int subcarriers;
+            ModulationScheme modulation;
             lock (_sync)
             {
                 mode = _liveMode;
                 toneHz = _liveToneHz;
                 amp = _liveAmplitude;
+                subcarriers = _liveSubcarriers;
+                modulation = _liveModulation;
             }
 
             ConsumeFlushRequest(player);
 
             var len = Math.Min(chunk, total - sampleIndex);
             var dest = leftChunk.AsSpan(0, len);
-            if (mode == PerformanceSignalMode.Sweep)
+            var modulated = mode == PerformanceSignalMode.Modulated;
+            if (modulated)
+            {
+                if (loopLeft is null || loopSubcarriers != subcarriers || loopModulation != modulation)
+                {
+                    (loopLeft, loopRight) = PerformanceSignalGenerator.GenerateModulatedLoop(
+                        subcarriers,
+                        modulation,
+                        settings.ChannelMode,
+                        ModulatedLoopSeconds);
+                    loopSubcarriers = subcarriers;
+                    loopModulation = modulation;
+                    loopOffset = 0;
+                }
+
+                CopyLoop(loopLeft, loopOffset, dest, amp);
+                if (settings.ChannelMode == ChannelMode.Stereo)
+                {
+                    CopyLoop(loopRight, loopOffset, rightChunk.AsSpan(0, len), amp);
+                }
+
+                loopOffset = (loopOffset + len) % loopLeft.Length;
+            }
+            else if (mode == PerformanceSignalMode.Sweep)
             {
                 PerformanceSignalGenerator.FillLogSweepChunk(
                     dest,
@@ -420,7 +457,6 @@ internal sealed class PerformanceTxWorker : IDisposable
             }
             else
             {
-                // 変調ラジオは送信中ロック。トーン扱いに落とす。
                 PerformanceSignalGenerator.FillToneChunk(dest, toneHz, amp, ref phase);
                 if (settings.ChannelMode == ChannelMode.Stereo)
                 {
@@ -433,82 +469,45 @@ internal sealed class PerformanceTxWorker : IDisposable
                 ? rightChunk.AsSpan(0, len)
                 : ReadOnlySpan<Complex>.Empty;
             player.AddSamples(leftSlice, rightSlice);
-            PublishPcmAndFft(settings, leftSlice, rightSlice, pcmCap);
+            PublishPcmAndFft(
+                settings.ChannelMode,
+                leftSlice,
+                rightSlice,
+                pcmCap,
+                modulated ? (subcarriers, modulation) : null);
             sampleIndex += len;
         }
     }
 
     /// <summary>
-    /// 事前生成バッファをチャンク再生します（変調）。
+    /// 繰り返し信号を読み位置から折り返しながらコピーし、振幅を掛けます。
     /// </summary>
-    /// <param name="settings">送信設定。</param>
-    /// <param name="left">L PCM。</param>
-    /// <param name="right">R PCM。</param>
-    /// <param name="player">再生プレイヤー。</param>
-    /// <param name="token">取消トークン。</param>
-    private void PlayBuffered(
-        PerformanceTxSettings settings,
-        Complex[] left,
-        Complex[] right,
-        RealtimePcmPlayer player,
-        CancellationToken token)
+    /// <param name="loop">繰り返す信号。</param>
+    /// <param name="offset">読み始め位置。</param>
+    /// <param name="destination">出力先。</param>
+    /// <param name="gain">振幅。</param>
+    private static void CopyLoop(Complex[] loop, int offset, Span<Complex> destination, double gain)
     {
-        const int chunk = 4096;
-        var pcmCap = PerformanceConstants.ScopeCaptureSamples;
-        var scaleBuf = new Complex[chunk];
-        var scaleRight = settings.ChannelMode == ChannelMode.Stereo ? new Complex[chunk] : Array.Empty<Complex>();
-        var baseAmp = Math.Max(1e-6, Math.Clamp(settings.SignalAmplitude, 0.05, 1.0));
-
-        for (var offset = 0; offset < left.Length; offset += chunk)
+        for (var i = 0; i < destination.Length; i++)
         {
-            token.ThrowIfCancellationRequested();
-            ConsumeFlushRequest(player);
-            var len = Math.Min(chunk, left.Length - offset);
-            double liveAmp;
-            lock (_sync)
-            {
-                liveAmp = _liveAmplitude;
-            }
-
-            var gain = liveAmp / baseAmp;
-            for (var i = 0; i < len; i++)
-            {
-                scaleBuf[i] = new Complex(left[offset + i].Real * gain, 0.0);
-            }
-
-            ReadOnlySpan<Complex> rightSlice;
-            if (settings.ChannelMode == ChannelMode.Stereo)
-            {
-                for (var i = 0; i < len; i++)
-                {
-                    scaleRight[i] = new Complex(right[offset + i].Real * gain, 0.0);
-                }
-
-                rightSlice = scaleRight.AsSpan(0, len);
-            }
-            else
-            {
-                rightSlice = ReadOnlySpan<Complex>.Empty;
-            }
-
-            var leftSlice = scaleBuf.AsSpan(0, len);
-            player.AddSamples(leftSlice, rightSlice);
-            PublishPcmAndFft(settings, leftSlice, rightSlice, pcmCap);
+            destination[i] = new Complex(loop[(offset + i) % loop.Length].Real * gain, 0.0);
         }
     }
 
     /// <summary>
-    /// 再生チャンクをリング／FFT 可視化へ載せます。
+    /// 再生チャンクをリング／FFT 可視化へ載せ、変調時は I-Q も更新します。
     /// </summary>
-    /// <param name="settings">送信設定。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
     /// <param name="leftSlice">L チャンク。</param>
     /// <param name="rightSlice">R チャンク。</param>
     /// <param name="pcmCap">PCM リング容量。</param>
+    /// <param name="iq">変調時のサブキャリア数と変調方式（基準信号なら null）。</param>
     private void PublishPcmAndFft(
-        PerformanceTxSettings settings,
+        ChannelMode channelMode,
         ReadOnlySpan<Complex> leftSlice,
         ReadOnlySpan<Complex> rightSlice,
-        int pcmCap)
+        int pcmCap,
+        (int Subcarriers, ModulationScheme Modulation)? iq)
     {
         int fftSize;
         PerformanceFftWindowKind windowKind;
@@ -549,11 +548,11 @@ internal sealed class PerformanceTxWorker : IDisposable
             _lastFftPublishMs = now;
         }
 
-        _vizStatus.SetFftStereoMode(settings.ChannelMode == ChannelMode.Stereo);
+        _vizStatus.SetFftStereoMode(channelMode == ChannelMode.Stereo);
         PerformanceFftAnalyzer.ComputeSpectrumInPlace(exact, windowKind);
         _vizStatus.SetFftFrame(exact, isRightChannel: false, PerformanceSignalGenerator.SampleRate);
 
-        if (settings.ChannelMode == ChannelMode.Stereo)
+        if (channelMode == ChannelMode.Stereo)
         {
             lock (_sync)
             {
@@ -565,9 +564,9 @@ internal sealed class PerformanceTxWorker : IDisposable
         }
 
         // 変調送信時は I-Q も更新（トーン／スイープは OFDM キャリアが無いので省略）
-        if (settings.SignalMode == PerformanceSignalMode.Modulated)
+        if (iq is { } target)
         {
-            PublishIqFromPcm(settings);
+            PublishIqFromPcm(channelMode, target.Subcarriers, target.Modulation);
         }
     }
 
@@ -588,11 +587,11 @@ internal sealed class PerformanceTxWorker : IDisposable
     /// <summary>
     /// 送信 PCM リングから等化 I-Q を抽出し可視化ボードへ載せます。
     /// </summary>
-    /// <param name="settings">送信設定。</param>
-    private void PublishIqFromPcm(PerformanceTxSettings settings)
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="sc">送信中のサブキャリア数。</param>
+    /// <param name="mod">送信中の変調方式。</param>
+    private void PublishIqFromPcm(ChannelMode channelMode, int sc, ModulationScheme mod)
     {
-        var sc = PerformanceSignalGenerator.ClampSubcarriers(settings.ActiveSubcarriers);
-        var mod = PerformanceSignalGenerator.ClampModulation(settings.ModulationScheme);
 
         int leftPcmCount;
         lock (_sync)
@@ -614,7 +613,7 @@ internal sealed class PerformanceTxWorker : IDisposable
             _iqGroups.AsSpan());
         var count = leftCount;
 
-        if (settings.ChannelMode == ChannelMode.Stereo)
+        if (channelMode == ChannelMode.Stereo)
         {
             int rightPcmCount;
             lock (_sync)

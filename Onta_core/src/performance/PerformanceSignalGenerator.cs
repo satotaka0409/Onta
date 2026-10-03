@@ -304,16 +304,58 @@ internal static class PerformanceSignalGenerator
     {
         var fs = sampleRate > 0 ? sampleRate : SampleRate;
         var totalSamples = Math.Max(1, (int)Math.Round(durationSeconds * fs));
+        var (leftChunks, rightChunks, _) = GenerateModulatedFrames(activeSubcarriers, modulation, channelMode, totalSamples, fs);
+        return ConcatModulated(leftChunks, rightChunks, channelMode, totalSamples, amplitude);
+    }
+
+    /// <summary>
+    /// 繰り返し再生用の OFDM 変調信号を、OFDM フレーム単位（末尾を切らない）で指定秒数以上生成します。
+    /// </summary>
+    /// <remarks>フレームの途中で切ると、先頭へ戻る位置でシンボル境界がずれて受信側の I-Q が乱れる。</remarks>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="modulation">変調方式。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="minSeconds">最低限の長さ（秒）。</param>
+    /// <param name="amplitude">ピーク振幅（0〜1）。</param>
+    /// <returns>L/R PCM（44.1 kHz。モノラル時 Right は空）。</returns>
+    public static (Complex[] Left, Complex[] Right) GenerateModulatedLoop(
+        int activeSubcarriers,
+        ModulationScheme modulation,
+        ChannelMode channelMode,
+        double minSeconds,
+        double amplitude = 1.0)
+    {
+        var minSamples = Math.Max(1, (int)Math.Round(minSeconds * SampleRate));
+        var (leftChunks, rightChunks, produced) = GenerateModulatedFrames(activeSubcarriers, modulation, channelMode, minSamples, SampleRate);
+        return ConcatModulated(leftChunks, rightChunks, channelMode, produced, amplitude);
+    }
+
+    /// <summary>
+    /// 乱数ペイロードの OFDM フレームを、合計が指定サンプル数以上になるまで生成します。
+    /// </summary>
+    /// <param name="activeSubcarriers">サブキャリア数。</param>
+    /// <param name="modulation">変調方式。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="minSamples">最低限のサンプル数。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <returns>L/R のフレーム列と合計サンプル数（モノラル時 Right は空リスト）。</returns>
+    private static (List<Complex[]> Left, List<Complex[]> Right, int Produced) GenerateModulatedFrames(
+        int activeSubcarriers,
+        ModulationScheme modulation,
+        ChannelMode channelMode,
+        int minSamples,
+        int sampleRate)
+    {
         var ofdm = CreateOfdmGenerator(
             activeSubcarriers,
             modulation,
             channelMode,
             ofdmSymbolCount: 8,
-            sampleRate: fs);
+            sampleRate: sampleRate);
         var leftChunks = new List<Complex[]>(capacity: 64);
         var rightChunks = new List<Complex[]>(capacity: 64);
         var produced = 0;
-        while (produced < totalSamples)
+        while (produced < minSamples)
         {
             if (channelMode == ChannelMode.Stereo)
             {
@@ -330,14 +372,33 @@ internal static class PerformanceSignalGenerator
             }
         }
 
-        var left = ConcatAndTrim(leftChunks, totalSamples);
+        return (leftChunks, rightChunks, produced);
+    }
+
+    /// <summary>
+    /// OFDM フレーム列を連結して指定長へ切り詰め、ピーク振幅をそろえます。
+    /// </summary>
+    /// <param name="leftChunks">L フレーム列。</param>
+    /// <param name="rightChunks">R フレーム列。</param>
+    /// <param name="channelMode">モノラル／ステレオ。</param>
+    /// <param name="sampleCount">出力サンプル数。</param>
+    /// <param name="amplitude">ピーク振幅（0〜1）。</param>
+    /// <returns>L/R PCM（モノラル時 Right は空）。</returns>
+    private static (Complex[] Left, Complex[] Right) ConcatModulated(
+        List<Complex[]> leftChunks,
+        List<Complex[]> rightChunks,
+        ChannelMode channelMode,
+        int sampleCount,
+        double amplitude)
+    {
+        var left = ConcatAndTrim(leftChunks, sampleCount);
         ScaleInPlace(left, amplitude);
         if (channelMode == ChannelMode.Mono)
         {
             return (left, Array.Empty<Complex>());
         }
 
-        var right = ConcatAndTrim(rightChunks, totalSamples);
+        var right = ConcatAndTrim(rightChunks, sampleCount);
         ScaleInPlace(right, amplitude);
         return (left, right);
     }

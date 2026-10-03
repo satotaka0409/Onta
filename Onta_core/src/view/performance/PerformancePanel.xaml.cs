@@ -1447,6 +1447,37 @@ public partial class PerformancePanel : UserControl
     private void OnSignalModeChanged(object sender, RoutedEventArgs e)
     {
         UpdateSignalModeUi();
+        if (sender is RadioButton { IsChecked: true })
+        {
+            PushLiveTxSignalAndClearIq();
+        }
+    }
+
+    /// <summary>
+    /// 送信のサブキャリア数／変調方式の切替を、送信中ならライブ反映します。
+    /// </summary>
+    /// <param name="sender">イベント送信元。</param>
+    /// <param name="e">イベント引数。</param>
+    private void OnTxModulatedSelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { IsChecked: true })
+        {
+            PushLiveTxSignalAndClearIq();
+        }
+    }
+
+    /// <summary>
+    /// 送信中なら信号の種類・SC・変調方式の変更をワーカーへ反映し、切替前の信号の I-Q 表示を消します。
+    /// </summary>
+    private void PushLiveTxSignalAndClearIq()
+    {
+        if (!_txWorker.IsBusy)
+        {
+            return;
+        }
+
+        PushLiveTxSignal();
+        ClearIqCharts();
     }
 
     /// <summary>
@@ -1624,17 +1655,7 @@ public partial class PerformancePanel : UserControl
             }
         }
 
-        _iqLeft.Clear();
-        _iqRight.Clear();
-        if (IqLeftTitle is not null)
-        {
-            IqLeftTitle.Text = "L I-Q";
-        }
-
-        if (IqRightTitle is not null)
-        {
-            IqRightTitle.Text = "R I-Q";
-        }
+        ClearIqCharts();
 
         _wowChart.Clear();
         _lastWowSampleUtc = DateTime.MinValue;
@@ -1665,6 +1686,24 @@ public partial class PerformancePanel : UserControl
         if (LissThdRightText is not null)
         {
             LissThdRightText.Text = "--.-- %";
+        }
+    }
+
+    /// <summary>
+    /// L/R の I-Q グラフとタイトルを空へ戻します。
+    /// </summary>
+    private void ClearIqCharts()
+    {
+        _iqLeft.Clear();
+        _iqRight.Clear();
+        if (IqLeftTitle is not null)
+        {
+            IqLeftTitle.Text = "L I-Q";
+        }
+
+        if (IqRightTitle is not null)
+        {
+            IqRightTitle.Text = "R I-Q";
         }
     }
 
@@ -2369,8 +2408,6 @@ public partial class PerformancePanel : UserControl
         TxStopButton.IsEnabled = running;
         // 騾∽ｿ｡荳ｭ縺ｯ蜿嶺ｿ｡繧ｹ繧ｿ繝ｼ繝井ｸ榊庄縲・
         RxStartButton.IsEnabled = !running && !_rxWorker.IsBusy;
-        ReferenceSignalRadio.IsEnabled = !running;
-        ModulatedSignalRadio.IsEnabled = !running;
         WriteWavRadio.IsEnabled = !running;
         PlayAudioRadio.IsEnabled = !running;
         if (WavSampleRateCombo is not null)
@@ -2397,7 +2434,7 @@ public partial class PerformancePanel : UserControl
             if (string.Equals(radio.GroupName, "PerfSubcarrier", StringComparison.Ordinal)
                 || string.Equals(radio.GroupName, "PerfModulation", StringComparison.Ordinal))
             {
-                radio.IsEnabled = !running;
+                radio.IsEnabled = true;
             }
         }
 
@@ -2433,7 +2470,7 @@ public partial class PerformancePanel : UserControl
         var amplitude = SignalLevelSlider is null
             ? 0.80
             : Math.Clamp(SignalLevelSlider.Value, 0.10, 1.0);
-        _txWorker.UpdateLiveSignal(mode, toneHz, amplitude);
+        _txWorker.UpdateLiveSignal(mode, toneHz, amplitude, ReadSubcarriers(), ReadModulation());
     }
 
     /// <summary>
