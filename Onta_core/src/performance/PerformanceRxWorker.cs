@@ -18,6 +18,8 @@ internal sealed class PerformanceRxWorker : IDisposable
     private Complex[] _fftExact = new Complex[PerformanceFftAnalyzer.DefaultSize];
     private readonly Complex[] _iqScratch = new Complex[128];
     private readonly byte[] _iqGroups = new byte[128];
+    private readonly HeldIqPoints _iqHeldLeft = new(128);
+    private readonly HeldIqPoints _iqHeldRight = new(128);
     private readonly double[] _iqPcmScratch = new double[PerformanceIqExtractor.SymbolLength * 8];
     private readonly double[] _iqDeviceScratch = new double[8192];
     private readonly Complex[] _iqTimeScratch = new Complex[PerformanceIqExtractor.FftSize];
@@ -111,6 +113,8 @@ internal sealed class PerformanceRxWorker : IDisposable
             _lastPublishMs = -1;
             _wowLeft.Reset();
             _wowRight.Reset();
+            _iqHeldLeft.Clear();
+            _iqHeldRight.Clear();
             Array.Clear(_leftRing);
             Array.Clear(_rightRing);
             _status.BeginRun(CoreText.PerformanceRxRun);
@@ -209,6 +213,8 @@ internal sealed class PerformanceRxWorker : IDisposable
             // 前の設定の点・ロック先が残らないようにする。
             _wowLeft.Reset();
             _wowRight.Reset();
+            _iqHeldLeft.Clear();
+            _iqHeldRight.Clear();
             _status.SetWowFlutterPercent(0, 0);
             _status.BeginIqCapture(
                 PerformanceSignalGenerator.ClampSubcarriers(activeSubcarriers),
@@ -484,6 +490,7 @@ internal sealed class PerformanceRxWorker : IDisposable
 
     /// <summary>
     /// リング末尾から等化 I-Q を抽出し共有ボードへ載せます。
+    /// 信号が区間全体に続いていないチャネルは直前の点を載せ直し、L/R とも無ければボードを更新しません（表示が止まる）。
     /// </summary>
     private void PublishIqFromCarriersUnlocked()
     {
@@ -494,38 +501,18 @@ internal sealed class PerformanceRxWorker : IDisposable
         var modulationClock = alignToSynthesis ? PerformanceSignalGenerator.SampleRate : _sampleRate;
         var sc = PerformanceSignalGenerator.ClampSubcarriers(_settings.ActiveSubcarriers);
         var mod = PerformanceSignalGenerator.ClampModulation(_settings.ModulationScheme);
-        if (!TryReadIqPcmUnlocked(_leftRing, alignToSynthesis, out var leftPcm))
-        {
-            return;
-        }
 
-        var leftCount = PerformanceIqExtractor.ExtractEqualized(
-            leftPcm.Span,
-            sc,
-            useRightCarriers: false,
-            _iqTimeScratch,
-            _iqFftScratch,
-            _iqScratch.AsSpan(),
-            _iqGroups.AsSpan(),
-            sampleRate: modulationClock);
+        var leftCount = FillIqChannelUnlocked(
+            _leftRing, alignToSynthesis, sc, useRightCarriers: false, modulationClock, offset: 0, _iqHeldLeft, out var leftFresh);
         var count = leftCount;
-
-        if (_settings.ChannelMode == ChannelMode.Stereo
-            && TryReadIqPcmUnlocked(_rightRing, alignToSynthesis, out var rightPcm))
+        var rightFresh = false;
+        if (_settings.ChannelMode == ChannelMode.Stereo)
         {
-            var rightCount = PerformanceIqExtractor.ExtractEqualized(
-                rightPcm.Span,
-                sc,
-                useRightCarriers: true,
-                _iqTimeScratch,
-                _iqFftScratch,
-                _iqScratch.AsSpan(leftCount),
-                _iqGroups.AsSpan(leftCount),
-                sampleRate: modulationClock);
-            count = leftCount + rightCount;
+            count += FillIqChannelUnlocked(
+                _rightRing, alignToSynthesis, sc, useRightCarriers: true, modulationClock, offset: leftCount, _iqHeldRight, out rightFresh);
         }
 
-        if (count <= 0)
+        if (count <= 0 || (!leftFresh && !rightFresh))
         {
             return;
         }
@@ -533,6 +520,56 @@ internal sealed class PerformanceRxWorker : IDisposable
         _status.BeginIqCapture(sc, mod);
         _status.AppendIqFrame(_iqScratch.AsSpan(0, count), _iqGroups.AsSpan(0, count));
         _status.SetIqLeftPointCount(leftCount);
+    }
+
+    /// <summary>
+    /// 1 チャネル分の等化 I-Q を <see cref="_iqScratch"/> の指定位置へ書きます。
+    /// 区間全体に信号が続いていれば抽出して保持し直し、そうでなければ（低レベル・信号の出始めや止まり際）直前に保持した点を書きます。
+    /// 低レベルの雑音も等化で振幅がそろえられ、点がグラフ全体に散らばるため。
+    /// </summary>
+    /// <param name="ring">そのチャネルの PCM リング。</param>
+    /// <param name="alignToSynthesis">変調クロックへ戻すか。</param>
+    /// <param name="sc">サブキャリア数。</param>
+    /// <param name="useRightCarriers">R 搬送波を使うか。</param>
+    /// <param name="modulationClock">変調クロック（Hz）。</param>
+    /// <param name="offset"><see cref="_iqScratch"/> の書き込み開始位置。</param>
+    /// <param name="held">そのチャネルの保持点。</param>
+    /// <param name="fresh">今回の PCM から抽出したとき true。</param>
+    /// <returns>書いた点数（保持点も無ければ 0）。</returns>
+    private int FillIqChannelUnlocked(
+        double[] ring,
+        bool alignToSynthesis,
+        int sc,
+        bool useRightCarriers,
+        int modulationClock,
+        int offset,
+        HeldIqPoints held,
+        out bool fresh)
+    {
+        fresh = false;
+        var dest = _iqScratch.AsSpan(offset);
+        var groups = _iqGroups.AsSpan(offset);
+        if (TryReadIqPcmUnlocked(ring, alignToSynthesis, out var pcm)
+            && PerformanceSignalLevel.IsSteady(pcm.Span))
+        {
+            var count = PerformanceIqExtractor.ExtractEqualized(
+                pcm.Span,
+                sc,
+                useRightCarriers,
+                _iqTimeScratch,
+                _iqFftScratch,
+                dest,
+                groups,
+                sampleRate: modulationClock);
+            if (count > 0)
+            {
+                held.Store(dest[..count], groups[..count]);
+                fresh = true;
+                return count;
+            }
+        }
+
+        return held.CopyTo(dest, groups);
     }
 
     /// <summary>
@@ -826,6 +863,60 @@ internal sealed class PerformanceRxWorker : IDisposable
         /// <returns>表示用の状態。</returns>
         public PerformanceWowChannelView ToView(bool running) =>
             new(running && Active, RefHz > 1.0 ? RefHz : 0, Kind);
+    }
+
+    /// <summary>
+    /// 1 チャネル分の直近に表示した I-Q 点です（_sync の内側でだけ触る）。
+    /// </summary>
+    private sealed class HeldIqPoints
+    {
+        private readonly Complex[] _points;
+        private readonly byte[] _groups;
+        private int _count;
+
+        /// <summary>
+        /// 指定点数まで保持できる領域を作ります。
+        /// </summary>
+        /// <param name="capacity">保持できる最大点数。</param>
+        public HeldIqPoints(int capacity)
+        {
+            _points = new Complex[capacity];
+            _groups = new byte[capacity];
+        }
+
+        /// <summary>
+        /// 保持点を捨てます（受信開始・設定変更時）。
+        /// </summary>
+        public void Clear()
+        {
+            _count = 0;
+        }
+
+        /// <summary>
+        /// 点とグループを保持し直します。
+        /// </summary>
+        /// <param name="points">等化後の点。</param>
+        /// <param name="groups">各点のサブキャリアグループ。</param>
+        public void Store(ReadOnlySpan<Complex> points, ReadOnlySpan<byte> groups)
+        {
+            _count = Math.Min(points.Length, _points.Length);
+            points[.._count].CopyTo(_points);
+            groups[.._count].CopyTo(_groups);
+        }
+
+        /// <summary>
+        /// 保持点を書き出します。
+        /// </summary>
+        /// <param name="points">点の書き込み先。</param>
+        /// <param name="groups">グループの書き込み先。</param>
+        /// <returns>書いた点数。</returns>
+        public int CopyTo(Span<Complex> points, Span<byte> groups)
+        {
+            var n = Math.Min(_count, Math.Min(points.Length, groups.Length));
+            _points.AsSpan(0, n).CopyTo(points);
+            _groups.AsSpan(0, n).CopyTo(groups);
+            return n;
+        }
     }
 }
 

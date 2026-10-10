@@ -191,6 +191,7 @@ While the input is silent (below −60 dBFS), the displays stop so that noise do
 - Wow/Flutter: the value of a silent channel stops. If both L and R are silent, the time graph also stops scrolling. It also stops while a signal is just starting or ending, because the values swing at those moments
 - Lissajous: stops when both L and R are silent
 - Frequency Counter and Distortion Rate: the value of a silent channel stops
+- I-Q graph (receive): a silent channel keeps its last points. It also stops while a signal is just starting or ending, because the points scatter at those moments
 
 ![Receive panel (Lissajous)](./picture/performance_receive03.png)
 

@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace Onta.View.Core;
 
 /// <summary>
@@ -11,34 +9,25 @@ namespace Onta.View.Core;
 /// </remarks>
 internal static class DesktopShortcutSetting
 {
-    /// <summary>ClickOnce の起動ツール（Launcher）が、ClickOnce から起動したときに "true" を設定する環境変数です。</summary>
-    private const string ClickOnceDeployedVariable = "ClickOnce_IsNetworkDeployed";
-
     /// <summary>ClickOnce ショートカットの拡張子です。</summary>
     private const string ShortcutExtension = ".appref-ms";
 
     /// <summary>
-    /// ClickOnce から起動しているときに、インストーラーの選択をデスクトップへ反映します。失敗しても起動は続けます。
+    /// インストーラーの選択をデスクトップへ反映します（ClickOnce から起動したときに <see cref="ClickOnceRegistration"/> が呼ぶ）。失敗しても起動は続けます。
     /// </summary>
-    public static void ApplyInstallerChoice()
+    /// <param name="entry">このアプリの ClickOnce 登録（ショートカット名・スタートメニューのフォルダー名を使う）。</param>
+    public static void ApplyInstallerChoice(ClickOnceUninstallEntry entry)
     {
-        if (!string.Equals(Environment.GetEnvironmentVariable(ClickOnceDeployedVariable), "true", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(entry.ShortcutFileName) || string.IsNullOrWhiteSpace(entry.ShortcutFolderName))
         {
             return;
         }
 
         try
         {
-            var product = typeof(DesktopShortcutSetting).Assembly.GetCustomAttribute<AssemblyProductAttribute>()?.Product;
-            var company = typeof(DesktopShortcutSetting).Assembly.GetCustomAttribute<AssemblyCompanyAttribute>()?.Company;
-            if (string.IsNullOrWhiteSpace(product) || string.IsNullOrWhiteSpace(company))
-            {
-                return;
-            }
-
-            var shortcutFileName = product + ShortcutExtension;
+            var shortcutFileName = entry.ShortcutFileName + ShortcutExtension;
             var startMenuShortcut = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.Programs), company, shortcutFileName);
+                Environment.GetFolderPath(Environment.SpecialFolder.Programs), entry.ShortcutFolderName, shortcutFileName);
             Apply(
                 AppPaths.DesktopShortcutChoiceFilePath,
                 Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),

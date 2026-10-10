@@ -1998,7 +1998,7 @@ public partial class PerformancePanel : UserControl
     }
 
     /// <summary>
-    /// 共有状態の I-Q 点を L/R チャートへ載せます。
+    /// 共有状態の I-Q 点を L/R チャートへ載せます。ステレオは先頭 LeftPointCount 点を L、残りを R とし、モノラルは L/R に同じ点を出します。
     /// </summary>
     /// <param name="status">共有ボードの状態。</param>
     private void ApplyIqFromStatus(CoreExecutionStatus status)
@@ -2009,16 +2009,24 @@ public partial class PerformancePanel : UserControl
             return;
         }
 
-        var leftCount = status.IqGraph.LeftPointCount;
-        if (leftCount <= 0 || leftCount >= iq.Count)
+        var leftCount = Math.Min(status.IqGraph.LeftPointCount, iq.Count);
+        if (status.FftGraph.IsStereo)
         {
-            _iqLeft.ReplacePoints(iq, status.IqGraph.ModulationScheme);
-            _iqRight.ReplacePoints(iq, status.IqGraph.ModulationScheme);
+            // 点の無いチャネル（まだ信号を受けていない）は描き換えない
+            if (leftCount > 0)
+            {
+                _iqLeft.ReplacePoints(iq.Take(leftCount).ToList(), status.IqGraph.ModulationScheme);
+            }
+
+            if (leftCount < iq.Count)
+            {
+                _iqRight.ReplacePoints(iq.Skip(leftCount).ToList(), status.IqGraph.ModulationScheme);
+            }
         }
         else
         {
-            _iqLeft.ReplacePoints(iq.Take(leftCount).ToList(), status.IqGraph.ModulationScheme);
-            _iqRight.ReplacePoints(iq.Skip(leftCount).ToList(), status.IqGraph.ModulationScheme);
+            _iqLeft.ReplacePoints(iq, status.IqGraph.ModulationScheme);
+            _iqRight.ReplacePoints(iq, status.IqGraph.ModulationScheme);
         }
 
         if (status.IqGraph.ActiveSubcarrierCount > 0)

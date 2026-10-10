@@ -8,7 +8,7 @@ namespace Onta.Core.Tests.View;
 /// </summary>
 public sealed class DesktopShortcutSettingTest : IDisposable
 {
-    private const string ShortcutFileName = "音多 (Onta).appref-ms";
+    private const string ShortcutFileName = "Onta x64.appref-ms";
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "onta_shortcut_test_" + Guid.NewGuid().ToString("N"));
     private readonly string _desktop;

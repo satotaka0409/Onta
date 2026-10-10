@@ -50,8 +50,9 @@ alwaysApply: true
     - `README-ja.txt` / `README-en.txt`（元は `Installer/dist-README-ja.txt` / `dist-README-en.txt`）、`THIRD-PARTY-NOTICES.txt`
   - 同梱物は `Onta_core/Onta_core.csproj` の `Content`（`manual\` 配下）で指定する。マニュアルを増やしたらここも更新する
   - マニフェスト署名は既定でオフ（`Onta_core/Properties/PublishProfiles/ClickOnceFolder.pubxml`）
-  - デスクトップショートカット: ClickOnce が作る（pubxml `CreateDesktopShortcut`。アンインストールで消える）。インストーラーで作らないを選ぶと、ClickOnce からの初回起動でアプリが消す（`Onta_core/src/view/core/DesktopShortcutSetting.cs`）
+  - デスクトップショートカット: ClickOnce が作る（pubxml `CreateDesktopShortcut`。アンインストールで消える）。インストーラーで作らないを選ぶと、ClickOnce からの初回起動でアプリが消す（`Onta_core/src/view/core/DesktopShortcutSetting.cs`。ショートカット名は HKCU のアンインストール情報から取る。CPU ごとに「Onta x64」「Onta ARM64」）
   - アプリアイコン: `Onta_core/icon/Onta.ico`（csproj `ApplicationIcon` ＋ ClickOnce の iconFile 用に Content 同梱）。作り直しは同フォルダーの `Make-OntaIcon.ps1`（元画像 `onta_icon_source.jpg`）
+  - 「アプリと機能」のアイコン: ClickOnce は `DisplayIcon` を `dfshim.dll,2` 固定で書くため、ClickOnce から起動するたびにアプリが `Onta.exe,0` へ書き換える（`Onta_core/src/view/core/ClickOnceRegistration.cs`）
 
 ## AIへの依頼テンプレート
 
