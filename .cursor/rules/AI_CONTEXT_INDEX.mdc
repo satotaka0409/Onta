@@ -45,11 +45,13 @@ alwaysApply: true
   - 出力: `Installer/Onta/` と、それを 7-Zip の GUI 自己解凍形式にまとめたインストーラー `Installer/Onta-install-v<バージョン>.exe`（バージョンは `Onta_core.csproj` の `<Version>`。例: `Onta-install-v1.0.0.exe`。配布はこの exe 1 本。実行すると展開先に `Onta` フォルダーができる。発行のたびに作り直す。`Installer/obj/app/` は中間出力で配布不要）
   - `Installer/Onta/` の中身:
     - `Install-Onta.cmd`: 入口。`Install-Onta.ps1` を起動する（`publish.ps1` が生成）
-    - `Install-Onta.ps1`: 言語選択（初期値は OS が日本語なら日本語、それ以外は English）→ `Onta_language.txt` 保存 → CPU 判定して `x64\setup.exe` / `arm64\setup.exe` を起動（ソースは `Installer/Install-Onta.ps1`。日本語を含むため UTF-8 BOM 付きで保存）
+    - `Install-Onta.ps1`: 言語選択（初期値は OS が日本語なら日本語、それ以外は English）とデスクトップショートカットの有無（既定オン）→ `Onta_language.txt`・`Onta_desktop_shortcut.txt`（1 / 0）保存 → CPU 判定して `x64\setup.exe` / `arm64\setup.exe` を起動（ソースは `Installer/Install-Onta.ps1`。日本語を含むため UTF-8 BOM 付きで保存）
     - `x64\` / `arm64\`: 各 CPU 用 ClickOnce（自己完結、`manual\ja` / `manual\en` / `manual\99_licence.md` / `manual\THIRD-PARTY-NOTICES.txt` 同梱。ClickOnce は同じ元ファイルを複数の場所へ同梱できないので、日英共通のファイルは言語フォルダーの外に 1 つだけ置く）
     - `README-ja.txt` / `README-en.txt`（元は `Installer/dist-README-ja.txt` / `dist-README-en.txt`）、`THIRD-PARTY-NOTICES.txt`
   - 同梱物は `Onta_core/Onta_core.csproj` の `Content`（`manual\` 配下）で指定する。マニュアルを増やしたらここも更新する
   - マニフェスト署名は既定でオフ（`Onta_core/Properties/PublishProfiles/ClickOnceFolder.pubxml`）
+  - デスクトップショートカット: ClickOnce が作る（pubxml `CreateDesktopShortcut`。アンインストールで消える）。インストーラーで作らないを選ぶと、ClickOnce からの初回起動でアプリが消す（`Onta_core/src/view/core/DesktopShortcutSetting.cs`）
+  - アプリアイコン: `Onta_core/icon/Onta.ico`（csproj `ApplicationIcon` ＋ ClickOnce の iconFile 用に Content 同梱）。作り直しは同フォルダーの `Make-OntaIcon.ps1`（元画像 `onta_icon_source.jpg`）
 
 ## AIへの依頼テンプレート
 

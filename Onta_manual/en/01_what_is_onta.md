@@ -71,6 +71,7 @@ The same technologies are used every day in digital TV, smartphones, and Wi-Fi, 
 The screens are available in Japanese and English.
 
 - At the start of installation (`Install-Onta.cmd` in the `Onta` folder extracted from the distributed installer `Onta-install-vX.Y.Z.exe`), you choose the display language (日本語 / English). The initial choice is Japanese if Windows is set to Japanese, English otherwise. Onta then starts in that language
+  - On the same screen, you can choose whether to create a desktop shortcut (checked by default). If you clear it, the desktop shortcut is removed the first time Onta starts after installation
 - If no language was chosen (for example, when `setup.exe` was run directly), Onta follows the Windows display language: Japanese if Windows is set to Japanese, English otherwise
 - You can also choose the language with the `--lang` startup option. It takes priority over the language chosen at installation
   - `Onta.exe --lang ja`: start in Japanese

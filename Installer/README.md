@@ -28,7 +28,7 @@ cd C:\proj\Onta\Installer
 | パス                                                               | 説明                                                            |
 | :----------------------------------------------------------------- | :-------------------------------------------------------------- |
 | `Install-Onta.cmd`                                                 | `Install-Onta.ps1` を起動する入口                               |
-| `Install-Onta.ps1`                                                 | 表示言語を選ばせて保存し、CPU を判定して該当する `setup.exe` を起動 |
+| `Install-Onta.ps1`                                                 | 表示言語とデスクトップショートカットの有無を選ばせて保存し、CPU を判定して該当する `setup.exe` を起動 |
 | `x64\setup.exe`                                                    | Intel / AMD 64bit 用 ClickOnce                                  |
 | `arm64\setup.exe`                                                  | Windows on ARM 用 ClickOnce                                     |
 | `x64\` / `arm64\` 配下の `Onta.application` / `Application Files\` | 各アーキテクチャの実体（`manual\` 含む）                        |
@@ -49,6 +49,22 @@ ClickOnce の `setup.exe` の画面には言語選択を足せないため、`In
 - OK で `%LOCALAPPDATA%\Onta\Onta_language.txt` に `ja` / `en` を書き、`setup.exe` を起動する。キャンセルならインストールしない
 - アプリは起動時に `--lang` → `Onta_language.txt` → OS の表示言語 の順で言語を決める（`AppLanguage`）
 - `Install-Onta.ps1` は日本語を含むため **UTF-8（BOM 付き）** で保存する（Windows PowerShell 5.1 が BOM なしの UTF-8 を誤読するため）
+
+## デスクトップショートカット
+
+同じダイアログの「デスクトップにショートカットを作成する」（既定はオン。文言は選んだ言語に合わせる）で選ばせます。
+
+- ClickOnce はデスクトップショートカットを作る設定にしている（pubxml の `CreateDesktopShortcut`）。ClickOnce が作ったものはアンインストールで消える
+- `Install-Onta.ps1` は選択を `%LOCALAPPDATA%\Onta\Onta_desktop_shortcut.txt` に `1`（作る）/ `0`（作らない）で書く
+- アプリは ClickOnce から起動したとき（環境変数 `ClickOnce_IsNetworkDeployed`）にこのファイルを読み、`0` ならデスクトップの `音多 (Onta).appref-ms` を消し、`1` で無ければスタートメニューのものをコピーして、ファイルを消す（`DesktopShortcutSetting`。インストール直後の自動起動で反映される）
+- `setup.exe` を直接実行したときはファイルを書かないので、ショートカットはそのまま残る
+
+## アプリアイコン
+
+`Onta_core\icon\Onta.ico` を `ApplicationIcon` に指定している（exe・ウィンドウ・スタートメニュー・デスクトップ・「アプリと機能」）。ClickOnce のマニフェストは `iconFile` をファイルとして参照するため、ico も `Content` で同梱する。
+
+- 作り直し: `Onta_core\icon\onta_icon_source.jpg`（1:1 の角丸タイル。角の外は白）を差し替えて `Onta_core\icon\Make-OntaIcon.ps1` を実行する。角の外を透明にした `Onta_icon_1024.png` と、16〜256 px の `Onta.ico`（256 px は PNG、それ未満は 32bit DIB）ができる
+- 自己解凍インストーラー（`Onta-install-v*.exe`）と `setup.exe` のアイコンは 7-Zip / ClickOnce の既定のまま
 
 ## Visual Studio から発行する場合
 

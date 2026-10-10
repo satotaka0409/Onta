@@ -6,12 +6,13 @@
 public partial class App : System.Windows.Application
 {
     /// <summary>
-    /// 起動時に表示言語を決め、コアホストを開始し、スプラッシュのあとメインウィンドウを表示します。
+    /// 起動時に表示言語を決め、インストール時のデスクトップショートカットの選択を反映し、コアホストを開始し、スプラッシュのあとメインウィンドウを表示します。
     /// </summary>
     /// <param name="e">起動引数（--lang ja / --lang en で表示言語を指定。無ければ OS の言語で、日本語以外は英語）。</param>
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
         Onta.View.Language.AppLanguage.ApplyFromArgs(e.Args);
+        DesktopShortcutSetting.ApplyInstallerChoice();
         CoreBackgroundHost.Start();
         CoreBackgroundHost.QueueWarmup();
         base.OnStartup(e);

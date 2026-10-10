@@ -25,6 +25,9 @@ internal static class AppPaths
     /// <summary>インストール時に選んだ表示言語（ja / en）のファイルです。インストーラー（Install-Onta.ps1）が書きます。</summary>
     public static string LanguageSettingFilePath => Path.Combine(DataDir, "Onta_language.txt");
 
+    /// <summary>インストール時に選んだデスクトップショートカットの有無（1 / 0）のファイルです。インストーラー（Install-Onta.ps1）が書き、初回起動で反映して消します。</summary>
+    public static string DesktopShortcutChoiceFilePath => Path.Combine(DataDir, "Onta_desktop_shortcut.txt");
+
     /// <summary>マニュアル（Markdown）フォルダーです。</summary>
     public static string ManualDir => ResolveManualDir();
 

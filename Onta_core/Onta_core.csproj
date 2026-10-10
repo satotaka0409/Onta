@@ -15,6 +15,8 @@
     <Company>Onta Project</Company>
     <Version>1.0.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- exe・ウィンドウ・ClickOnce のスタートメニュー／アプリと機能のアイコン（作り直しは icon\Make-OntaIcon.ps1） -->
+    <ApplicationIcon>icon\Onta.ico</ApplicationIcon>
     <!-- ClickOnce 配布: x64 / ARM64 の両方を publish.ps1 で発行 -->
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
   </PropertyGroup>
@@ -30,6 +32,10 @@
 
   <!-- ClickOnce / 実行時に同梱するマニュアルとスプラッシュ -->
   <ItemGroup>
+    <!-- ClickOnce のマニフェストは iconFile をファイルとして参照するため同梱する -->
+    <Content Include="icon\Onta.ico"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\LICENSE"
              Link="LICENSE"
              CopyToOutputDirectory="PreserveNewest"
