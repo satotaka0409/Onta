@@ -1,0 +1,136 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- LiveCharts2 / SkiaSharp 3 向けに Windows 10 SDK を明示 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Onta.Core</RootNamespace>
+    <AssemblyName>Onta</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Product>音多 (Onta)</Product>
+    <AssemblyTitle>音多</AssemblyTitle>
+    <Company>Onta Project</Company>
+    <Version>1.0.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- ClickOnce 配布: x64 / ARM64 の両方を publish.ps1 で発行 -->
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.5" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Onta_core.Tests" />
+  </ItemGroup>
+
+  <!-- ClickOnce / 実行時に同梱するマニュアルとスプラッシュ -->
+  <ItemGroup>
+    <Content Include="..\LICENSE"
+             Link="LICENSE"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <!-- ClickOnce は同じ元ファイルを複数の場所へ同梱できない（1 か所にまとめられる）ため、言語フォルダーの外に 1 つだけ置く -->
+    <Content Include="..\Installer\THIRD-PARTY-NOTICES.txt"
+             Link="manual\THIRD-PARTY-NOTICES.txt"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Onta_manual\ja\*.md"
+             Link="manual\ja\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Onta_manual\ja\picture\*.png"
+             Link="manual\ja\picture\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Onta_manual\en\*.md"
+             Link="manual\en\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Onta_manual\en\picture\*.png"
+             Link="manual\en\picture\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Onta_manual\99_licence.md"
+             Link="manual\99_licence.md"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\Onta_manual\onta_splash_512x256.png"
+             Link="manual\onta_splash_512x256.png"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\data_struct.mdc"
+             Link="manual\ja\specification\data_struct.mdc"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\modulation.mdc"
+             Link="manual\ja\specification\modulation.mdc"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\stream.mdc"
+             Link="manual\ja\specification\stream.mdc"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\.cursor\rules\history_info.mdc"
+             Link="manual\ja\specification\history_info.mdc"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="test\**" />
+    <Compile Remove="test_host\**" />
+    <Compile Remove="bench\**" />
+    <None Include="test\**" Exclude="test\bin\**;test\obj\**" />
+    <None Include="test_host\**" Exclude="test_host\bin\**;test_host\obj\**" />
+    <None Include="bench\**" Exclude="bench\bin\**;bench\obj\**" />
+    <Page Remove="test\**" />
+    <Page Remove="test_host\**" />
+    <Page Remove="bench\**" />
+  </ItemGroup>
+
+  <!-- 通常ビルドと ClickOnce 発行の前に、仕様 mdc をマニュアルへコピーする -->
+  <ItemGroup>
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\data_struct.mdc" />
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\modulation.mdc" />
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\stream.mdc" />
+    <SpecificationDoc Include="$(MSBuildProjectDirectory)\..\.cursor\rules\history_info.mdc" />
+  </ItemGroup>
+
+  <Target Name="CopySpecificationDocs"
+          BeforeTargets="BeforeBuild;PrepareForPublish"
+          Inputs="@(SpecificationDoc)"
+          Outputs="@(SpecificationDoc->'$(MSBuildProjectDirectory)\..\Onta_manual\ja\specification\%(Filename)%(Extension)')">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\..\Onta_manual\ja\specification" />
+    <Copy SourceFiles="@(SpecificationDoc)"
+          DestinationFiles="@(SpecificationDoc->'$(MSBuildProjectDirectory)\..\Onta_manual\ja\specification\%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Message Importance="high"
+             Text="仕様ファイルを Onta_manual\ja\specification へコピーしました。" />
+  </Target>
+
+  <!-- native libopus と、opus.dll が依存する VC++ ランタイム（あれば出力へコピー。無くてもビルド可）。
+       RID が win-arm64 のときだけ arm64 版を使い、それ以外（RID なしの通常ビルドを含む）は x64 版を使う -->
+  <PropertyGroup>
+    <OntaNativeRid Condition="'$(RuntimeIdentifier)' == 'win-arm64'">win-arm64</OntaNativeRid>
+    <OntaNativeRid Condition="'$(OntaNativeRid)' == ''">win-x64</OntaNativeRid>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="native\opus\$(OntaNativeRid)\opus.dll"
+          Condition="Exists('native\opus\$(OntaNativeRid)\opus.dll')">
+      <Link>opus.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="native\vcruntime\$(OntaNativeRid)\vcruntime140.dll"
+          Condition="Exists('native\vcruntime\$(OntaNativeRid)\vcruntime140.dll')">
+      <Link>vcruntime140.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+</Project>

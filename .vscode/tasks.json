@@ -1,0 +1,177 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-onta-debug",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"build",
+				"Onta_core/Onta_core.csproj",
+				"-c",
+				"Debug",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": "$msCompile",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "run-onta",
+			"dependsOn": "build-onta-debug",
+			"dependsOrder": "sequence",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"run",
+				"--project",
+				"Onta_core/Onta_core.csproj",
+				"-c",
+				"Debug",
+				"--no-build"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"focus": false
+			}
+		},
+		{
+			"label": "build-testhost-debug",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"build",
+				"Onta_core/test_host/Onta_core.TestHost.csproj",
+				"-c",
+				"Debug",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": "$msCompile",
+			"group": "build"
+		},
+		{
+			"label": "test-onta-all",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--blame-hang",
+				"--blame-hang-timeout",
+				"15m",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "test-onta-all-process-clean",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "test-onta-all-process",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "test-onta-all-process-blame-hang",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--blame-hang",
+				"--blame-hang-timeout",
+				"15m",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "test-onta-short-process",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--filter",
+				"FullyQualifiedName!~OntaTest5.InterleaveX2_DecodeSucceeds_AfterSilencingSomePass1Blocks&FullyQualifiedName!~OntaTest5.InterleaveX2_MiddleBlockError_DoesNotPreventFollowingBlocks",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "test-onta-long-process",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"test",
+				"Onta_core/test/Onta_core.Tests.csproj",
+				"-c",
+				"Debug",
+				"--blame-hang",
+				"--blame-hang-timeout",
+				"15m",
+				"--filter",
+				"FullyQualifiedName~OntaTest5.InterleaveX2_DecodeSucceeds_AfterSilencingSomePass1Blocks|FullyQualifiedName~OntaTest5.InterleaveX2_MiddleBlockError_DoesNotPreventFollowingBlocks",
+				"--logger",
+				"console;verbosity=normal"
+			],
+			"options": {
+				"cwd": "C:/proj/Onta"
+			},
+			"problemMatcher": []
+		}
+	]
+}

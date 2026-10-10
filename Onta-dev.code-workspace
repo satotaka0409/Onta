@@ -1,0 +1,85 @@
+{
+	"folders": [
+		{
+			"name": "Onta_core",
+			"path": "./Onta_core"
+		},
+		{
+			"name": "manual",
+			"path": "./Onta_manual",
+		},
+		{
+			"name": "cursor rules",
+			"path": "./.cursor/rules",
+		},
+		{
+			"name": "root",
+			"path": "./"
+		}
+	],
+	"settings": {
+		"workbench.settings.useSplitJSON": true,
+		"dotnetAcquisitionExtension.sharedExistingDotnetPath": "C:\\Program Files\\dotnet\\dotnet.exe",
+		"dotnet.defaultSolution": "C:\\proj\\Onta\\Onta.slnx",
+		"debug.allowBreakpointsEverywhere": true,
+		"files.encoding": "utf8",
+		"files.autoGuessEncoding": false,
+		"terminal.integrated.defaultProfile.windows": "PowerShell (UTF-8)",
+		"terminal.integrated.profiles.windows": {
+			"PowerShell (UTF-8)": {
+				"source": "PowerShell",
+				"args": [
+					"-NoLogo",
+					"-NoExit",
+					"-Command",
+					"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding"
+				]
+			}
+		},
+		"editor.fontSize": 12,
+		"git.ignoreLimitWarning": true,
+		"editor.trimAutoWhitespace": false,
+		"diffEditor.ignoreTrimWhitespace": true,
+		"files.trimTrailingWhitespace": true,
+		"github.copilot.nextEditSuggestions.enabled": true,
+		"github.copilot.enable": {
+			"csharp": true
+		},
+		"editor.inlineSuggest.enabled": true,
+		"editor.formatOnSave": true,
+		"files.associations": {
+			"*.conf": "ini",
+			"*.config": "ini",
+			"*.properties": "ini",
+			"*.mdc": "markdown"
+		},
+		"search.exclude": {
+			"**/bin": true,
+			"**/obj": true
+		},
+		"prettier.documentSelectors": [
+			"**/*.md",
+			"**/*.mdc",
+			"**/*.markdown"
+		],
+		"[markdown]": {
+			"editor.formatOnSave": true,
+			"editor.defaultFormatter": "esbenp.prettier-vscode"
+		}
+	},
+	"extensions": {
+		"recommendations": [
+			"MS-CEINTL.vscode-language-pack-ja",
+			"esbenp.prettier-vscode",
+			"donjayamanne.githistory",
+			"mhutchie.git-graph",
+			"GitHub.copilot-chat",
+			"mattpocock.ts-error-translator",
+			"usernamehw.errorlens",
+			"anysphere.csharp",
+			"ms-dotnettools.vscode-dotnet-runtime",
+			"stescobedo.wpf-xml-preview",
+			"ms-dotnettools.csharp"
+		]
+	}
+}

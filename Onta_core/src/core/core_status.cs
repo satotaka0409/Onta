@@ -1,0 +1,937 @@
+using System.Numerics;
+
+namespace Onta.Core;
+
+/// <summary>
+/// 処理中フレーム種別を表します。
+/// </summary>
+public enum CoreFrameKind : byte
+{
+    Fh = 0,
+    Bh = 1,
+    Bd = 2
+}
+
+/// <summary>
+/// 進捗表示に必要な最小情報を保持します。
+/// </summary>
+/// <param name="CurrentFrame">現在処理中のフレーム種別（FH / BH / BD）。</param>
+/// <param name="CurrentBlockIndex">現在処理中のブロック番号（未処理時は -1）。</param>
+/// <param name="PassIndex">インターリーブのパス番号（0 始まり）。</param>
+/// <param name="AcceptedBlockCount">受理済みブロック数。</param>
+/// <param name="TotalBlockCount">ファイル全体のブロック数。</param>
+/// <param name="ProgressPercent">0 から 100 の全体進捗率。</param>
+/// <param name="CurrentBlockProgressPercent">現在ブロック内の局所進捗（0..100）。BH/BD メーター用。</param>
+public readonly record struct CoreProgressInfo(
+    CoreFrameKind CurrentFrame,
+    int CurrentBlockIndex,
+    int PassIndex,
+    int AcceptedBlockCount,
+    int TotalBlockCount,
+    double ProgressPercent,
+    double CurrentBlockProgressPercent = 0)
+{
+    /// <summary>
+    /// 待機状態を表す初期値です。
+    /// </summary>
+    public static CoreProgressInfo Idle { get; } = new(
+        CurrentFrame: CoreFrameKind.Fh,
+        CurrentBlockIndex: -1,
+        PassIndex: 0,
+        AcceptedBlockCount: 0,
+        TotalBlockCount: 0,
+        ProgressPercent: 0,
+        CurrentBlockProgressPercent: 0);
+}
+
+/// <summary>
+/// エラー率グラフ上の誤り訂正段階です。
+/// </summary>
+public enum CoreEccDecoderKind : byte
+{
+    /// <summary>畳み込み（ビタビ / BCJR）。</summary>
+    Viterbi = 0,
+    /// <summary>ターボ符号（データ部）。</summary>
+    Turbo = 1,
+    /// <summary>Reed-Solomon（ヘッダー部）。グラフ上はターボと同色の外符号系列。</summary>
+    ReedSolomon = 2
+}
+
+/// <summary>
+/// 最新エラー率と対象フレーム種別を保持します。
+/// </summary>
+/// <param name="LatestPercent">左（または単一）チャネルの推定エラー率（0 から 100）。</param>
+/// <param name="FrameKind">エラー率の対象フレーム種別。</param>
+/// <param name="DecoderKind">誤り訂正段階（ビタビ / ターボ / RS）。</param>
+/// <param name="Sequence">更新連番（グラフ時系列の順序付け用）。</param>
+/// <param name="RightPercent">右チャネルの推定エラー率（ステレオ時）。null の場合は単一系列。</param>
+public readonly record struct CoreErrorRateInfo(
+    double LatestPercent,
+    CoreFrameKind FrameKind,
+    CoreEccDecoderKind DecoderKind,
+    int Sequence,
+    double? RightPercent = null)
+{
+    /// <summary>
+    /// 初期エラー率情報です。
+    /// </summary>
+    public static CoreErrorRateInfo Idle { get; } = new(0, CoreFrameKind.Fh, CoreEccDecoderKind.Viterbi, 0);
+}
+
+/// <summary>
+/// I/Q 平面上の1サンプルです。
+/// </summary>
+/// <param name="I">同相成分 I。</param>
+/// <param name="Q">直交成分 Q。</param>
+/// <param name="Group">サブキャリアグループ番号（0=A .. 5=F、性能測定時は 6=G / 7=H も可）。</param>
+public readonly record struct CoreIqSample(double I, double Q, byte Group = 0);
+
+/// <summary>
+/// IQグラフ描画に必要な系列情報です。
+/// </summary>
+/// <param name="Points">等化後の I/Q サンプル列。</param>
+/// <param name="ActiveSubcarrierCount">表示上の有効サブキャリア数。</param>
+/// <param name="ModulationScheme">現在受信中の変調方式（星座グリッド切替用）。</param>
+/// <param name="LeftPointCount">先頭から左チャネルとして扱う点数（性能測定の L/R 分割用。0 は未分割）。</param>
+public readonly record struct CoreIqGraphInfo(
+    IReadOnlyList<CoreIqSample> Points,
+    int ActiveSubcarrierCount,
+    ModulationScheme ModulationScheme,
+    int LeftPointCount = 0)
+{
+    /// <summary>
+    /// 空状態のIQグラフ情報です。
+    /// </summary>
+    public static CoreIqGraphInfo Empty { get; } = new(Array.Empty<CoreIqSample>(), 0, ModulationScheme.Bpsk);
+}
+
+/// <summary>
+/// FFTグラフ描画用の1ビンサンプルです。
+/// </summary>
+/// <param name="FrequencyHz">ビン中心周波数（Hz）。整数丸めせず連続値で保持する。</param>
+/// <param name="MagnitudeDb">振幅（dBFS、フルスケール正弦波≈0 dB）。</param>
+public readonly record struct CoreFftSample(double FrequencyHz, double MagnitudeDb);
+
+/// <summary>
+/// 左右FFTの描画データとモード情報を保持します。
+/// </summary>
+/// <param name="LeftPoints">左チャネルの FFT ビン列。</param>
+/// <param name="RightPoints">右チャネルの FFT ビン列（モノラル時は空）。</param>
+/// <param name="IsStereo">ステレオ表示モードなら true。</param>
+/// <param name="FftSize">FFT サイズ（ビン数）。</param>
+public readonly record struct CoreFftGraphInfo(
+    IReadOnlyList<CoreFftSample> LeftPoints,
+    IReadOnlyList<CoreFftSample> RightPoints,
+    bool IsStereo,
+    int FftSize)
+{
+    /// <summary>
+    /// 空状態のFFTグラフ情報です。
+    /// </summary>
+    public static CoreFftGraphInfo Empty { get; } = new(
+        Array.Empty<CoreFftSample>(),
+        Array.Empty<CoreFftSample>(),
+        false,
+        0);
+}
+
+/// <summary>
+/// UI表示向けに集約した実行状態です。
+/// </summary>
+/// <param name="IsRunning">コア処理が実行中なら true。</param>
+/// <param name="IsCompleted">処理が完了（成功／失敗問わず）したら true。</param>
+/// <param name="IsFaulted">失敗終了なら true。</param>
+/// <param name="IsAnalyzing">FH ワウ推定など、ヘッダー確定前の解析中は true。</param>
+/// <param name="Progress">進捗表示用の最小情報。</param>
+/// <param name="ErrorRate">最新のエラー率情報。</param>
+/// <param name="ErrorRateSamples">前回 Read 以降にコアが書き込んだエラー率サンプル（ビタビ/RS/ターボ）。</param>
+/// <param name="IqGraph">I-Q グラフ描画用データ。</param>
+/// <param name="FftGraph">FFT グラフ描画用データ。</param>
+/// <param name="WowLeftPercent">左チャネルの速度偏差（%）。</param>
+/// <param name="WowRightPercent">右チャネルの速度偏差（%）。</param>
+/// <param name="WowTrackingActive">推定ワウモデルが有効なら true（UI が瞬間速度を連続評価する）。</param>
+/// <param name="WowAmount">ワウ／フラッター変調量（相対速度振幅）。</param>
+/// <param name="WowPhase">wow 成分の初期位相（ラジアン）。</param>
+/// <param name="FlutterPhase">flutter 成分の初期位相（ラジアン）。</param>
+/// <param name="WowSampleRate">ワウ評価に使うサンプリング周波数（Hz）。</param>
+/// <param name="WowSampleIndex">ワウ評価の基準サンプル位置。</param>
+/// <param name="FileName">表示用ファイル名。</param>
+/// <param name="FileSizeText">表示用ファイルサイズ文字列。</param>
+/// <param name="BlockCountText">表示用ブロック数文字列。</param>
+/// <param name="LastError">直近のエラーメッセージ。なければ null。</param>
+public readonly record struct CoreExecutionStatus(
+    bool IsRunning,
+    bool IsCompleted,
+    bool IsFaulted,
+    bool IsAnalyzing,
+    CoreProgressInfo Progress,
+    CoreErrorRateInfo ErrorRate,
+    IReadOnlyList<CoreErrorRateInfo> ErrorRateSamples,
+    CoreIqGraphInfo IqGraph,
+    CoreFftGraphInfo FftGraph,
+    double WowLeftPercent,
+    double WowRightPercent,
+    bool WowTrackingActive,
+    double WowAmount,
+    double WowPhase,
+    double FlutterPhase,
+    int WowSampleRate,
+    long WowSampleIndex,
+    string FileName,
+    string FileSizeText,
+    string BlockCountText,
+    string? LastError)
+{
+    /// <summary>
+    /// 待機状態の初期実行ステータスです。
+    /// </summary>
+    public static CoreExecutionStatus Idle { get; } = new(
+        IsRunning: false,
+        IsCompleted: false,
+        IsFaulted: false,
+        IsAnalyzing: false,
+        Progress: CoreProgressInfo.Idle,
+        ErrorRate: CoreErrorRateInfo.Idle,
+        ErrorRateSamples: Array.Empty<CoreErrorRateInfo>(),
+        IqGraph: CoreIqGraphInfo.Empty,
+        FftGraph: CoreFftGraphInfo.Empty,
+        WowLeftPercent: 0,
+        WowRightPercent: 0,
+        WowTrackingActive: false,
+        WowAmount: 0,
+        WowPhase: 0,
+        FlutterPhase: 0,
+        WowSampleRate: OfdmConfig.ModemSampleRate,
+        WowSampleIndex: 0,
+        FileName: CoreText.NotReceived,
+        FileSizeText: "-",
+        BlockCountText: "-",
+        LastError: null);
+}
+
+/// <summary>
+/// コアと画面の共有実行状態メモリです。
+/// コアが進捗・グラフ用データを書き込み、画面は定期的に <see cref="Read"/> で読み取ります（画面→コア問い合わせは行いません）。
+/// </summary>
+public sealed class CoreExecutionStatusBoard
+{
+    public const int DefaultIqCapacity = 4096;
+    public const int DefaultFftCapacity = 256;
+
+    private readonly object _sync = new();
+    /// <summary>エラー率の SPSC リング（コア=producer、画面 Read=consumer）。</summary>
+    private readonly CoreErrorRateInfo[] _errorRateRing = new CoreErrorRateInfo[MaxPendingErrorRates];
+    private long _errorRateWriteSeq;
+    private long _errorRateReadSeq;
+    private const int MaxPendingErrorRates = 256;
+    private CoreIqSample[] _iqRing;
+    private int _iqCount;
+    private int _iqWrite;
+    private ModulationScheme _iqModulationScheme = ModulationScheme.Bpsk;
+    private int _iqActiveSubcarrierCount;
+    private int _iqLeftPointCount;
+    private CoreFftSample[] _fftLeftBins;
+    private CoreFftSample[] _fftRightBins;
+    private int _fftLeftCount;
+    private int _fftRightCount;
+    private bool _fftIsStereo;
+    private int _fftSize;
+    private CoreExecutionStatus _status = CoreExecutionStatus.Idle;
+
+    /// <summary>
+    /// 現在の対象ファイル名を返します。
+    /// </summary>
+    public string FileName
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _status.FileName;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 状態ボードを生成します。
+    /// </summary>
+    /// <param name="iqCapacity">保持するIQサンプルの最大数。</param>
+    public CoreExecutionStatusBoard(int iqCapacity = DefaultIqCapacity)
+    {
+        if (iqCapacity <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(iqCapacity));
+        }
+
+        _iqRing = new CoreIqSample[iqCapacity];
+        _fftLeftBins = new CoreFftSample[DefaultFftCapacity];
+        _fftRightBins = new CoreFftSample[DefaultFftCapacity];
+    }
+
+    /// <summary>
+    /// 実行状態を初期化します。
+    /// </summary>
+    /// <param name="fileName">初期表示するファイル名。null のとき「(未受信)」。</param>
+    public void Reset(string? fileName = null)
+    {
+        lock (_sync)
+        {
+            _iqCount = 0;
+            _iqWrite = 0;
+            _iqModulationScheme = ModulationScheme.Bpsk;
+            _iqActiveSubcarrierCount = 0;
+            _iqLeftPointCount = 0;
+            _fftLeftCount = 0;
+            _fftRightCount = 0;
+            _fftIsStereo = false;
+            _fftSize = 0;
+            ResetErrorRateRingUnlocked();
+            _status = CoreExecutionStatus.Idle with { FileName = fileName ?? CoreText.NotReceived };
+        }
+    }
+
+    /// <summary>
+    /// 新しい処理開始時の状態へ遷移します。
+    /// </summary>
+    /// <param name="fileName">対象ファイル名。</param>
+    /// <param name="fileSizeText">表示用ファイルサイズ文字列。</param>
+    /// <param name="blockCountText">表示用ブロック数文字列。</param>
+    public void BeginRun(string fileName, string fileSizeText = "-", string blockCountText = "-")
+    {
+        lock (_sync)
+        {
+            _iqCount = 0;
+            _iqWrite = 0;
+            _iqModulationScheme = ModulationScheme.Bpsk;
+            _iqActiveSubcarrierCount = 0;
+            _iqLeftPointCount = 0;
+            _fftLeftCount = 0;
+            _fftRightCount = 0;
+            _fftIsStereo = false;
+            _fftSize = 0;
+            ResetErrorRateRingUnlocked();
+            _status = new CoreExecutionStatus(
+                IsRunning: true,
+                IsCompleted: false,
+                IsFaulted: false,
+                IsAnalyzing: true,
+                Progress: CoreProgressInfo.Idle,
+                ErrorRate: CoreErrorRateInfo.Idle,
+                ErrorRateSamples: Array.Empty<CoreErrorRateInfo>(),
+                IqGraph: CoreIqGraphInfo.Empty,
+                FftGraph: CoreFftGraphInfo.Empty,
+                WowLeftPercent: 0,
+                WowRightPercent: 0,
+                WowTrackingActive: false,
+                WowAmount: 0,
+                WowPhase: 0,
+                FlutterPhase: 0,
+                WowSampleRate: OfdmConfig.ModemSampleRate,
+                WowSampleIndex: 0,
+                FileName: fileName,
+                FileSizeText: fileSizeText,
+                BlockCountText: blockCountText,
+                LastError: null);
+        }
+    }
+
+    /// <summary>
+    /// FH ワウ推定などの解析フェーズかどうかを設定します。
+    /// </summary>
+    /// <param name="analyzing">解析中なら true。</param>
+    public void SetAnalyzing(bool analyzing)
+    {
+        lock (_sync)
+        {
+            _status = _status with { IsAnalyzing = analyzing };
+        }
+    }
+
+    /// <summary>
+    /// ファイル情報表示を更新します。
+    /// </summary>
+    /// <param name="fileName">対象ファイル名。</param>
+    /// <param name="fileSizeText">表示用ファイルサイズ文字列。</param>
+    /// <param name="blockCountText">表示用ブロック数文字列。</param>
+    public void SetFileInfo(string fileName, string fileSizeText, string blockCountText)
+    {
+        lock (_sync)
+        {
+            _status = _status with
+            {
+                FileName = fileName,
+                FileSizeText = fileSizeText,
+                BlockCountText = blockCountText
+            };
+        }
+    }
+
+    /// <summary>
+    /// 進捗情報を更新します。
+    /// </summary>
+    /// <param name="progress">更新する進捗情報。</param>
+    public void SetProgress(CoreProgressInfo progress)
+    {
+        lock (_sync)
+        {
+            _status = _status with { Progress = progress };
+        }
+    }
+
+    /// <summary>
+    /// エラー率と対象フレーム種別を更新します。
+    /// </summary>
+    /// <param name="percent">誤り訂正段階の推定エラー率（0 から 100）。</param>
+    /// <param name="frameKind">エラー率の対象フレーム種別。</param>
+    /// <param name="decoderKind">誤り訂正段階（ビタビ / ターボ / RS）。</param>
+    /// <param name="rightPercent">右チャネルの推定エラー率（ステレオ時）。null の場合は単一系列として扱います。</param>
+    public void SetErrorRate(
+        double percent,
+        CoreFrameKind frameKind,
+        CoreEccDecoderKind decoderKind = CoreEccDecoderKind.Viterbi,
+        double? rightPercent = null)
+    {
+        lock (_sync)
+        {
+            var info = new CoreErrorRateInfo(
+                Math.Clamp(percent, 0.0, 100.0),
+                frameKind,
+                decoderKind,
+                _status.ErrorRate.Sequence + 1,
+                rightPercent is null ? null : Math.Clamp(rightPercent.Value, 0.0, 100.0));
+            _status = _status with { ErrorRate = info };
+            // コアが共有リングへ追記。画面の Read が追いつかない場合は最古を上書きする。
+            var nextWrite = _errorRateWriteSeq + 1;
+            if (nextWrite - _errorRateReadSeq > MaxPendingErrorRates)
+            {
+                _errorRateReadSeq = nextWrite - MaxPendingErrorRates;
+            }
+
+            _errorRateRing[(int)(_errorRateWriteSeq % MaxPendingErrorRates)] = info;
+            _errorRateWriteSeq = nextWrite;
+        }
+    }
+
+    /// <summary>
+    /// エラー率表示の対象フレーム種別のみ更新します。
+    /// </summary>
+    /// <param name="frameKind">対象フレーム種別。</param>
+    public void SetErrorFrameKind(CoreFrameKind frameKind)
+    {
+        lock (_sync)
+        {
+            _status = _status with
+            {
+                ErrorRate = _status.ErrorRate with { FrameKind = frameKind }
+            };
+        }
+    }
+
+    /// <summary>
+    /// WOW/Flutter 推定値を更新します。
+    /// </summary>
+    /// <param name="leftPercent">左チャネル推定値（%）。</param>
+    /// <param name="rightPercent">右チャネル推定値（%）。</param>
+    public void SetWowFlutterPercent(double leftPercent, double rightPercent)
+    {
+        lock (_sync)
+        {
+            _status = _status with
+            {
+                WowLeftPercent = leftPercent,
+                WowRightPercent = rightPercent,
+                WowTrackingActive = false
+            };
+        }
+    }
+
+    /// <summary>
+    /// 推定ワウモデルを公開し、瞬間速度偏差（%）も更新します。
+    /// UI はこのモデルから連続的にメーターを動かします。
+    /// </summary>
+    /// <param name="amount">ワウ／フラッター変調量（相対速度振幅。0 で無変調）。</param>
+    /// <param name="wowPhase">wow 成分の初期位相（ラジアン）。</param>
+    /// <param name="flutterPhase">flutter 成分の初期位相（ラジアン）。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    /// <param name="sampleIndex">評価するサンプル位置（0 始まり）。</param>
+    public void SetWowFlutterTracking(
+        double amount,
+        double wowPhase,
+        double flutterPhase,
+        int sampleRate,
+        long sampleIndex)
+    {
+        var sr = Math.Max(1, sampleRate);
+        var pct = WowFlutterWarp.EvaluateSpeedDeviationPercent(
+            sr, amount, wowPhase, flutterPhase, sampleIndex);
+        lock (_sync)
+        {
+            _status = _status with
+            {
+                WowLeftPercent = pct,
+                WowRightPercent = pct,
+                WowTrackingActive = true,
+                WowAmount = amount,
+                WowPhase = wowPhase,
+                FlutterPhase = flutterPhase,
+                WowSampleRate = sr,
+                WowSampleIndex = Math.Max(0L, sampleIndex)
+            };
+        }
+    }
+
+    /// <summary>
+    /// 単一IQサンプルを追加します。
+    /// </summary>
+    /// <param name="equalizedSymbol">等化後の複素シンボル。</param>
+    public void PushIq(Complex equalizedSymbol)
+    {
+        PushIq(equalizedSymbol.Real, equalizedSymbol.Imaginary);
+    }
+
+    /// <summary>
+    /// I/Q 成分を指定して単一サンプルを追加します。
+    /// </summary>
+    /// <param name="i">同相成分 I。</param>
+    /// <param name="q">直交成分 Q。</param>
+    /// <param name="group">サブキャリアグループ（0=A..5=F）。</param>
+    public void PushIq(double i, double q, byte group = 0)
+    {
+        lock (_sync)
+        {
+            _iqRing[_iqWrite] = new CoreIqSample(i, q, group);
+            _iqWrite = (_iqWrite + 1) % _iqRing.Length;
+            if (_iqCount < _iqRing.Length)
+            {
+                _iqCount++;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 複数のIQサンプルをまとめて追加します。
+    /// </summary>
+    /// <param name="equalizedSymbols">等化後シンボル列。</param>
+    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..5=F）。null 時は 0。</param>
+    public void PushIqMany(ReadOnlySpan<Complex> equalizedSymbols, ReadOnlySpan<byte> groups = default)
+    {
+        lock (_sync)
+        {
+            var ring = _iqRing;
+            var capacity = ring.Length;
+            var total = equalizedSymbols.Length;
+
+            // リングに残るのは末尾 capacity 点だけなので、それより前は書き込み位置を進めるだけにする
+            var first = Math.Max(0, total - capacity);
+            var write = (int)(((long)_iqWrite + first) % capacity);
+            for (var n = first; n < total; n++)
+            {
+                var s = equalizedSymbols[n];
+                var group = n < groups.Length ? groups[n] : (byte)0;
+                ring[write] = new CoreIqSample(s.Real, s.Imaginary, group);
+                if (++write == capacity)
+                {
+                    write = 0;
+                }
+            }
+
+            _iqWrite = write;
+            _iqCount = (int)Math.Min((long)_iqCount + total, capacity);
+        }
+    }
+
+    /// <summary>
+    /// IQ リングを空にして、新しいブロック／試行の取り込みを開始します。
+    /// </summary>
+    /// <param name="activeSubcarriers">データ部の有効サブキャリア数。</param>
+    /// <param name="modulationScheme">表示する変調方式。</param>
+    public void BeginIqCapture(int activeSubcarriers, ModulationScheme modulationScheme)
+    {
+        lock (_sync)
+        {
+            _iqCount = 0;
+            _iqWrite = 0;
+            _iqActiveSubcarrierCount = Math.Max(0, activeSubcarriers);
+            _iqLeftPointCount = 0;
+            _iqModulationScheme = modulationScheme;
+        }
+    }
+
+    /// <summary>
+    /// IQ リング先頭の左チャネル点数を記録します（性能測定の L/R 分割用）。
+    /// </summary>
+    /// <param name="leftPointCount">左チャネルとして並べた点数。</param>
+    public void SetIqLeftPointCount(int leftPointCount)
+    {
+        lock (_sync)
+        {
+            _iqLeftPointCount = Math.Max(0, leftPointCount);
+        }
+    }
+
+    /// <summary>
+    /// IQ表示用フレームを丸ごと差し替えます。
+    /// </summary>
+    /// <param name="equalizedSymbols">等化後シンボル列。</param>
+    /// <param name="modulationScheme">表示対象の変調方式。</param>
+    public void SetIqFrame(ReadOnlySpan<Complex> equalizedSymbols, ModulationScheme modulationScheme)
+    {
+        lock (_sync)
+        {
+            EnsureIqCapacityUnlocked(Math.Max(equalizedSymbols.Length, DefaultIqCapacity));
+            _iqCount = 0;
+            _iqWrite = 0;
+            for (var n = 0; n < equalizedSymbols.Length; n++)
+            {
+                var s = equalizedSymbols[n];
+                _iqRing[_iqWrite] = new CoreIqSample(s.Real, s.Imaginary, 0);
+                _iqWrite++;
+                _iqCount++;
+            }
+
+            if (_iqWrite >= _iqRing.Length)
+            {
+                _iqWrite = 0;
+            }
+
+            _iqModulationScheme = modulationScheme;
+            if (_iqActiveSubcarrierCount <= 0)
+            {
+                _iqActiveSubcarrierCount = equalizedSymbols.Length;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 等化後シンボルを IQ リングへ追記します（コンスタレーション蓄積用）。
+    /// </summary>
+    /// <param name="equalizedSymbols">等化後シンボル列。</param>
+    /// <param name="groups">各シンボルのサブキャリアグループ（0=A..5=F）。</param>
+    public void AppendIqFrame(ReadOnlySpan<Complex> equalizedSymbols, ReadOnlySpan<byte> groups = default)
+    {
+        if (equalizedSymbols.IsEmpty)
+        {
+            return;
+        }
+
+        PushIqMany(equalizedSymbols, groups);
+    }
+
+    /// <summary>
+    /// FFT表示用フレームを更新します。
+    /// 横軸は正周波数（Hz）、ビン0（DC）を左端に置きます。
+    /// </summary>
+    /// <param name="freqBins">周波数ビン列。</param>
+    /// <param name="isRightChannel">右チャネル更新時は true。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    public void SetFftFrame(ReadOnlySpan<Complex> freqBins, bool isRightChannel, int sampleRate = OfdmConfig.ModemSampleRate)
+    {
+        lock (_sync)
+        {
+            WriteFftChannelUnlocked(freqBins, isRightChannel, sampleRate);
+        }
+    }
+
+    /// <summary>
+    /// FFT スペクトル 1 チャネル分をボードへ書き込みます（呼び出し元が _sync を保持）。
+    /// </summary>
+    /// <param name="freqBins">周波数ビン列。</param>
+    /// <param name="isRightChannel">右チャネル更新時は true。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    private void WriteFftChannelUnlocked(ReadOnlySpan<Complex> freqBins, bool isRightChannel, int sampleRate)
+    {
+        var n = freqBins.Length;
+        _fftSize = n;
+        if (n < 2)
+        {
+            if (isRightChannel)
+            {
+                if (_fftIsStereo)
+                {
+                    _fftRightCount = 0;
+                }
+            }
+            else
+            {
+                _fftLeftCount = 0;
+                if (!_fftIsStereo)
+                {
+                    _fftRightCount = 0;
+                }
+            }
+
+            return;
+        }
+
+        var half = n / 2;
+        var sr = Math.Max(1, sampleRate);
+        var pointCount = half;
+        EnsureFftCapacityUnlocked(pointCount, isRightChannel);
+
+        if (isRightChannel)
+        {
+            if (!_fftIsStereo)
+            {
+                return;
+            }
+
+            _fftRightCount = pointCount;
+        }
+        else
+        {
+            _fftLeftCount = pointCount;
+            if (!_fftIsStereo)
+            {
+                _fftRightCount = 0;
+            }
+        }
+
+        var dest = isRightChannel ? _fftRightBins : _fftLeftBins;
+        var scale = 2.0 / n;
+
+        for (var bin = 0; bin < half; bin++)
+        {
+            var c = freqBins[bin];
+            var magnitude = Math.Sqrt((c.Real * c.Real) + (c.Imaginary * c.Imaginary)) * scale;
+            if (bin == 0)
+            {
+                magnitude *= 0.5;
+            }
+
+            var magnitudeDb = 20.0 * Math.Log10(magnitude + 1e-12);
+            var hz = bin * (double)sr / n;
+            dest[bin] = new CoreFftSample(hz, magnitudeDb);
+        }
+    }
+
+    /// <summary>
+    /// FFTのステレオ表示モードを設定します。
+    /// </summary>
+    /// <param name="isStereo">ステレオ表示にする場合 true。</param>
+    public void SetFftStereoMode(bool isStereo)
+    {
+        lock (_sync)
+        {
+            _fftIsStereo = isStereo;
+            if (!isStereo)
+            {
+                _fftRightCount = 0;
+            }
+        }
+    }
+
+    /// <summary>
+    /// L/R FFT を同一ロック内でまとめて更新します（片側だけ古くなるのを防ぐ）。
+    /// </summary>
+    /// <param name="leftFreqBins">L スペクトル。</param>
+    /// <param name="rightFreqBins">R スペクトル。</param>
+    /// <param name="sampleRate">サンプリング周波数（Hz）。</param>
+    public void SetFftStereoFrames(
+        ReadOnlySpan<Complex> leftFreqBins,
+        ReadOnlySpan<Complex> rightFreqBins,
+        int sampleRate = OfdmConfig.ModemSampleRate)
+    {
+        lock (_sync)
+        {
+            _fftIsStereo = true;
+            WriteFftChannelUnlocked(leftFreqBins, isRightChannel: false, sampleRate);
+            WriteFftChannelUnlocked(rightFreqBins, isRightChannel: true, sampleRate);
+        }
+    }
+
+    /// <summary>
+    /// 処理完了状態へ遷移します。
+    /// </summary>
+    /// <param name="faulted">失敗終了時は true。</param>
+    /// <param name="lastError">失敗理由メッセージ。</param>
+    public void Complete(bool faulted, string? lastError = null)
+    {
+        lock (_sync)
+        {
+            var progress = _status.Progress;
+            if (!faulted)
+            {
+                progress = progress with { ProgressPercent = 100.0 };
+            }
+
+            _status = _status with
+            {
+                IsRunning = false,
+                IsCompleted = true,
+                IsFaulted = faulted,
+                IsAnalyzing = false,
+                Progress = progress,
+                LastError = lastError
+            };
+        }
+    }
+
+    /// <summary>
+    /// 最終エラーメッセージを更新します。
+    /// </summary>
+    /// <param name="lastError">設定するエラー文字列。</param>
+    public void SetLastError(string? lastError)
+    {
+        lock (_sync)
+        {
+            _status = _status with { LastError = lastError };
+        }
+    }
+
+    /// <summary>
+    /// 共有状態のスナップショットを読み取ります（画面スレッド用）。
+    /// 進捗・IQ・FFT・ワウは最新値のコピー、エラー率サンプルは未読分のみ取り出します。
+    /// </summary>
+    /// <returns>現在の実行状態。</returns>
+    public CoreExecutionStatus Read()
+    {
+        lock (_sync)
+        {
+            var samples = ConsumeErrorRateSamplesUnlocked();
+            var iqCount = _iqActiveSubcarrierCount > 0 ? _iqActiveSubcarrierCount : _iqCount;
+            var iqGraph = new CoreIqGraphInfo(
+                CopyIqPointsUnlocked(),
+                iqCount,
+                _iqModulationScheme,
+                _iqLeftPointCount);
+            var fftGraph = new CoreFftGraphInfo(
+                CopyFftPointsUnlocked(false),
+                CopyFftPointsUnlocked(true),
+                _fftIsStereo,
+                _fftSize);
+
+            return _status with
+            {
+                ErrorRateSamples = samples,
+                IqGraph = iqGraph,
+                FftGraph = fftGraph
+            };
+        }
+    }
+
+    /// <summary>
+    /// <see cref="Read"/> の互換エイリアスです。
+    /// </summary>
+    /// <returns>現在の実行状態スナップショット。</returns>
+    public CoreExecutionStatus Query() => Read();
+
+    /// <summary>
+    /// エラー率リングの読み書き位置をリセットします。
+    /// </summary>
+    private void ResetErrorRateRingUnlocked()
+    {
+        _errorRateWriteSeq = 0;
+        _errorRateReadSeq = 0;
+        Array.Clear(_errorRateRing);
+    }
+
+    /// <summary>
+    /// 未読のエラー率サンプルをリングから取り出します。
+    /// </summary>
+    /// <returns>未読分のエラー率情報配列。</returns>
+    private CoreErrorRateInfo[] ConsumeErrorRateSamplesUnlocked()
+    {
+        var unread = _errorRateWriteSeq - _errorRateReadSeq;
+        if (unread <= 0)
+        {
+            return [];
+        }
+
+        if (unread > MaxPendingErrorRates)
+        {
+            _errorRateReadSeq = _errorRateWriteSeq - MaxPendingErrorRates;
+            unread = MaxPendingErrorRates;
+        }
+
+        var samples = new CoreErrorRateInfo[unread];
+        for (var i = 0; i < unread; i++)
+        {
+            samples[i] = _errorRateRing[(int)((_errorRateReadSeq + i) % MaxPendingErrorRates)];
+        }
+
+        _errorRateReadSeq = _errorRateWriteSeq;
+        return samples;
+    }
+
+    /// <summary>
+    /// IQ リング容量が不足する場合に拡張します。
+    /// </summary>
+    /// <param name="required">必要容量。</param>
+    private void EnsureIqCapacityUnlocked(int required)
+    {
+        if (required <= _iqRing.Length)
+        {
+            return;
+        }
+
+        _iqRing = new CoreIqSample[required];
+        _iqCount = 0;
+        _iqWrite = 0;
+    }
+
+    /// <summary>
+    /// 指定チャネルの FFT バッファ容量が不足する場合に拡張します。
+    /// </summary>
+    /// <param name="required">必要容量。</param>
+    /// <param name="isRightChannel">true のとき右チャネル、false のとき左チャネルを対象にします。</param>
+    private void EnsureFftCapacityUnlocked(int required, bool isRightChannel)
+    {
+        var target = isRightChannel ? _fftRightBins : _fftLeftBins;
+        if (required <= target.Length)
+        {
+            return;
+        }
+
+        if (isRightChannel)
+        {
+            _fftRightBins = new CoreFftSample[required];
+            _fftRightCount = 0;
+        }
+        else
+        {
+            _fftLeftBins = new CoreFftSample[required];
+            _fftLeftCount = 0;
+        }
+    }
+
+    /// <summary>
+    /// IQ リング内容を時系列順の配列として返します。
+    /// </summary>
+    /// <returns>時系列順の IQ サンプル配列。</returns>
+    private CoreIqSample[] CopyIqPointsUnlocked()
+    {
+        if (_iqCount == 0)
+        {
+            return [];
+        }
+
+        var points = new CoreIqSample[_iqCount];
+        var start = _iqCount == _iqRing.Length ? _iqWrite : 0;
+        for (var i = 0; i < _iqCount; i++)
+        {
+            points[i] = _iqRing[(start + i) % _iqRing.Length];
+        }
+
+        return points;
+    }
+
+    /// <summary>
+    /// 指定チャネルの FFT 表示点をコピーして返します。
+    /// </summary>
+    /// <param name="isRightChannel">true のとき右チャネル、false のとき左チャネル。</param>
+    /// <returns>FFT 表示点配列。</returns>
+    private CoreFftSample[] CopyFftPointsUnlocked(bool isRightChannel)
+    {
+        var count = isRightChannel ? _fftRightCount : _fftLeftCount;
+        if (count == 0)
+        {
+            return [];
+        }
+
+        var source = isRightChannel ? _fftRightBins : _fftLeftBins;
+        var points = new CoreFftSample[count];
+        Array.Copy(source, 0, points, 0, count);
+        return points;
+    }
+}
+

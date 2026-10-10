@@ -1,0 +1,109 @@
+namespace Onta.Stream;
+
+/// <summary>
+/// ストリーム用のビット／バイト変換です（MSB ファースト）。
+/// </summary>
+internal static class StreamBitUtil
+{
+    /// <summary>
+    /// バイト列を MSB ファーストで <paramref name="bits"/> の先頭へ書き込みます。
+    /// </summary>
+    /// <param name="bytes">入力バイト列。</param>
+    /// <param name="bits">書き込み先。足りない分は書きません。</param>
+    /// <returns>書き込んだビット数。</returns>
+    public static int WriteBytesToBitsMsb(ReadOnlySpan<byte> bytes, Span<bool> bits)
+    {
+        var count = Math.Min(bits.Length, bytes.Length * 8);
+        for (var i = 0; i < count; i++)
+        {
+            bits[i] = ((bytes[i >> 3] >> (7 - (i & 7))) & 1) != 0;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// バイト列を MSB ファーストのビット列へ展開します。
+    /// </summary>
+    /// <param name="bytes">入力バイト列。</param>
+    /// <returns>展開したビット列。</returns>
+    public static bool[] BytesToBitsMsb(ReadOnlySpan<byte> bytes)
+    {
+        var bits = new bool[bytes.Length * 8];
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            for (var b = 0; b < 8; b++)
+            {
+                bits[(i * 8) + b] = ((bytes[i] >> (7 - b)) & 1) == 1;
+            }
+        }
+
+        return bits;
+    }
+
+    /// <summary>
+    /// MSB ファーストのビット列をバイト列へパックします。
+    /// </summary>
+    /// <param name="bits">MSB ファーストのビット列。</param>
+    /// <returns>パックしたバイト列。</returns>
+    public static byte[] BitsToBytesMsb(ReadOnlySpan<bool> bits)
+    {
+        var bytes = new byte[(bits.Length + 7) / 8];
+        for (var i = 0; i < bits.Length; i++)
+        {
+            if (!bits[i])
+            {
+                continue;
+            }
+
+            bytes[i / 8] |= (byte)(1 << (7 - (i % 8)));
+        }
+
+        return bytes;
+    }
+
+    /// <summary>
+    /// ソフト判定結果（0/1 バイト）をバイト列へパックします。
+    /// </summary>
+    /// <param name="softBytes">ソフト判定の 0/1 バイト列。</param>
+    /// <param name="payloadLength">返すバイト数。足りなければ 0 で埋めます。</param>
+    /// <returns>長さを揃えたバイト列。</returns>
+    public static byte[] SoftBytesToPayload(ReadOnlySpan<byte> softBytes, int payloadLength)
+    {
+        if (softBytes.Length < payloadLength)
+        {
+            var padded = new byte[payloadLength];
+            softBytes.CopyTo(padded);
+            return padded;
+        }
+
+        return softBytes[..payloadLength].ToArray();
+    }
+
+    /// <summary>
+    /// ビット列を L/R へ半分ずつ分割します（余りは L 側）。
+    /// </summary>
+    /// <param name="bits">分割するビット列。</param>
+    /// <returns>前半を Left、後半を Right とした組。</returns>
+    public static (bool[] Left, bool[] Right) SplitStereoBits(ReadOnlySpan<bool> bits)
+    {
+        var mid = (bits.Length + 1) / 2;
+        var left = bits[..mid].ToArray();
+        var right = bits[mid..].ToArray();
+        return (left, right);
+    }
+
+    /// <summary>
+    /// L/R ビット（または LLR）を結合します。
+    /// </summary>
+    /// <param name="left">先頭に置く列。</param>
+    /// <param name="right">末尾に置く列。</param>
+    /// <returns>結合した配列。</returns>
+    public static T[] Concat<T>(ReadOnlySpan<T> left, ReadOnlySpan<T> right)
+    {
+        var result = new T[left.Length + right.Length];
+        left.CopyTo(result);
+        right.CopyTo(result.AsSpan(left.Length));
+        return result;
+    }
+}

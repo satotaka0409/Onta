@@ -1,0 +1,17 @@
+obj/
+bin/
+out_files/
+TestResults/
+**/BenchmarkDotNet.Artifacts
+Installer/publish/
+Installer/Onta/
+Installer/Onta-install-*.exe
+Installer/obj/
+Onta_manual/ja/specification
+*.bin
+*.log
+*.tmp
+*.cache
+*.bak
+*.swp
+*.swo

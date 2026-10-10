@@ -1,0 +1,9 @@
+0123456789
+abcdefghijklmnopqrstuvwxyz
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+!"#$%&'()-=^~\|
+０１２３４５６７８９
+あいうえおかきくけこ
+アイウエオカキクケコ
+！”＃＄％＆’（）ー＝＾～￥｜
+sample=3

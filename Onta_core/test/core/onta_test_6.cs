@@ -1,0 +1,429 @@
+using System.Numerics;
+using System.Reflection;
+using Onta.Core;
+using Xunit;
+
+namespace Onta.Core.Tests.Core;
+
+/// <summary>
+/// ブロックヘッダー起点の復号パラメータ選択を検証するテストです。
+/// </summary>
+public sealed class OntaTest6
+{
+    [Fact]
+    public void Decode_UsesBlockHeaderModulationMode_InsteadOfReceiverProfile()
+    {
+        const string testTitle = "test6:" + nameof(Decode_UsesBlockHeaderModulationMode_InsteadOfReceiverProfile);
+        var txProfile = new FileWavCodecProfile(
+            ActiveSubcarriers: 32,
+            ModulationScheme: ModulationScheme.Qam16,
+            ChannelMode: ChannelMode.Stereo,
+            BlockInterleaveFactor: 1);
+        // 受信プロファイルを意図的に不一致にしても、ヘッダー情報で復号できることを確認する。
+        var rxProfile = new FileWavCodecProfile(
+            ActiveSubcarriers: 16,
+            ModulationScheme: ModulationScheme.Qam64,
+            ChannelMode: ChannelMode.Stereo,
+            BlockInterleaveFactor: 1);
+
+        var txCodec = new FileWavCodec(txProfile);
+        var rxCodec = new FileWavCodec(rxProfile);
+        var inputPath = TestPaths.ResolveInputPng();
+        var inputInfo = new FileInfo(inputPath);
+        var outputPath = TestPaths.ResolveOutputPath("Sample1_test6_from_samples.wav");
+        var payload = new byte[1024];
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)((i * 37) & 0xFF);
+        }
+
+        var (left, right) = txCodec.EncodeFileToSamples(payload, inputInfo);
+        var decoded = rxCodec.DecodePcmSamplesToFileBytes(left, right, correctWow: false);
+
+        PrintDecodeStageMetrics(rxCodec.LastDecodeStageMetrics, testTitle);
+
+        Assert.Equal(payload, decoded);
+        HistoryAssert.SaveSendAndAssertRegistered(testTitle, inputPath, outputPath);
+    }
+
+    private static void PrintDecodeStageMetrics(DecodeStageMetrics metrics, string testTitle)
+    {
+        var accepted = Math.Max(1, metrics.DataBlocksAccepted);
+        var decoded = Math.Max(1, metrics.DataBlocksDecoded);
+        var viterbiPercent = metrics.DataAcceptedViaViterbi * 100.0 / accepted;
+        var turboPercent = metrics.DataAcceptedViaTurbo * 100.0 / accepted;
+        var acceptPercent = metrics.DataBlocksAccepted * 100.0 / decoded;
+        var attemptsPerBlock = metrics.DataBlocksDecoded > 0
+            ? metrics.DataTotalAttempts / (double)metrics.DataBlocksDecoded
+            : 0.0;
+        Console.WriteLine(
+            $"[DECODE-STAGE] test={testTitle} rsHeaderDecode={metrics.HeaderRsDecodeCount} dataDecoded={metrics.DataBlocksDecoded} dataAccepted={metrics.DataBlocksAccepted} acceptPercent={acceptPercent:F2}% viterbiAccepted={metrics.DataAcceptedViaViterbi} turboAccepted={metrics.DataAcceptedViaTurbo} fallbackUsed={metrics.DataFallbackUsed} attemptsPerBlock={attemptsPerBlock:F2}");
+        Console.WriteLine(
+            $"[DECODE-STAGE-RATE] test={testTitle} viterbiShare={viterbiPercent:F2}% turboShare={turboPercent:F2}%");
+    }
+
+    [Fact]
+    public void HeaderOfdm_IsMonoEvenWhenProfileIsStereo()
+    {
+        var codec = new FileWavCodec(new FileWavCodecProfile(
+            ActiveSubcarriers: 32,
+            ModulationScheme: ModulationScheme.Qam64,
+            ChannelMode: ChannelMode.Stereo));
+
+        var method = typeof(FileWavCodec).GetMethod(
+            "CreateHeaderOfdm",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var headerOfdm = (OfdmGenerator?)method!.Invoke(codec, [null]);
+        Assert.NotNull(headerOfdm);
+        Assert.Equal(ChannelMode.Mono, headerOfdm!.ChannelMode);
+    }
+
+    [Fact]
+    public void StereoProfile_HeaderPreambleWaveform_IsIdenticalOnLeftAndRight()
+    {
+        var profile = new FileWavCodecProfile(
+            ActiveSubcarriers: 32,
+            ModulationScheme: ModulationScheme.Qam64,
+            ChannelMode: ChannelMode.Stereo,
+            BlockInterleaveFactor: 1);
+
+        var codec = new FileWavCodec(profile);
+        var inputInfo = new FileInfo(TestPaths.ResolveInputPng());
+        var (left, right) = codec.EncodeFileToSamples([0x5A], inputInfo);
+
+        var compareSamples = profile.LeadingSilenceSamples + profile.UnmodulatedPreambleSamples;
+        Assert.True(left.Length > compareSamples);
+        Assert.Equal(left.Length, right.Length);
+        for (var i = 0; i < compareSamples; i++)
+        {
+            Assert.InRange(Math.Abs(left[i].Real - right[i].Real), 0.0, 1e-12);
+            Assert.InRange(Math.Abs(left[i].Imaginary - right[i].Imaginary), 0.0, 1e-12);
+        }
+    }
+
+    [Fact]
+    public void Sc40Qam64_NoDowngrade_BitsPerOfdmSymbolMatchesFullCapacity()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(40, ChannelMode.Mono),
+            activeSubcarriers: 40,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qam64,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 7,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 40SC: 10 pilot + 30 data。G/H未使用のため全データキャリアが64QAMで 180bit/symbol。
+        Assert.Equal(180, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
+    public void Sc48Qam64_NoDowngrade_BitsPerOfdmSymbolMatchesFullCapacity()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(48, ChannelMode.Mono),
+            activeSubcarriers: 48,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qam64,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 7,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 48SC: 12 pilot + 36 data。G/H未使用のため全データキャリアが64QAMで 216bit/symbol。
+        Assert.Equal(216, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
+    public void Sc40Psk8_NoDowngrade_BitsPerOfdmSymbolMatchesFullCapacity()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(40, ChannelMode.Mono),
+            activeSubcarriers: 40,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Psk8,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 7,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 40SC: 10 pilot + 30 data。G/H未使用のため全データキャリアが8PSKで 90bit/symbol。
+        Assert.Equal(90, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
+    public void Sc64Psk8_GhDowngradeToQpsk_BitsPerOfdmSymbolIsReduced()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(64, ChannelMode.Mono),
+            activeSubcarriers: 64,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Psk8,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 8,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 64SC: 16 pilot + 48 data。A-F の 36 本は 8PSK、G/H の 12 本は QPSK へ 1段階ダウン。
+        // 36*3 + 12*2 = 132bit/symbol（非ダウングレードなら 144）。
+        Assert.Equal(132, ofdm.BitsPerOfdmSymbol);
+    }
+
+    [Fact]
+    public void SampleCountForBitCount_UsesDowngradedGroupGHCapacity()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(64, ChannelMode.Mono),
+            activeSubcarriers: 64,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qam64,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 8,
+            carrierGrid: OfdmCarrierGrid.Sc24Family);
+
+        var ofdm = new OfdmGenerator(config);
+
+        // 64SC: 16 pilot + 48 data。G/H の12本を16QAMへ落として 264bit/symbol（非ダウングレードなら 288）。
+        // 529bit は 264bit/symbol なら 3 symbol 必要（288bit/symbol 前提なら 2）。
+        Assert.Equal(3 * ofdm.SamplesPerOfdmSymbol, ofdm.SampleCountForBitCount(529));
+    }
+
+    [Fact]
+    public void PilotBins_AreGroupLocalCh2AndCh6()
+    {
+        foreach (var (sc, grid) in new[]
+                 {
+                     (16, OfdmCarrierGrid.Sc8Family),
+                     (40, OfdmCarrierGrid.Sc24Family),
+                     (48, OfdmCarrierGrid.Sc24Family),
+                     (56, OfdmCarrierGrid.Sc24Family),
+                     (64, OfdmCarrierGrid.Sc24Family)
+                 })
+        {
+            var config = new OfdmConfig(
+                fftSize: OfdmConfig.ResolveFftSize(sc, ChannelMode.Mono),
+                activeSubcarriers: sc,
+                cyclicPrefixLength: 16,
+                ofdmSymbolCount: 1,
+                modulationScheme: ModulationScheme.Qpsk,
+                channelMode: ChannelMode.Mono,
+                pilotSpacing: 8,
+                randomSeed: 1,
+                carrierGrid: grid);
+            var ofdm = new OfdmGenerator(config);
+            var allCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
+            var pilotSet = GetPrivateField<List<int>>(ofdm, "_leftPilotBins").ToHashSet();
+
+            Assert.Equal(sc / 4, pilotSet.Count); // グループあたり2本
+            for (var start = 0; start < allCarriers.Count; start += 8)
+            {
+                Assert.Contains(allCarriers[start + 2], pilotSet);
+                Assert.Contains(allCarriers[start + 6], pilotSet);
+                Assert.DoesNotContain(allCarriers[start + 1], pilotSet);
+                Assert.DoesNotContain(allCarriers[start + 5], pilotSet);
+            }
+        }
+    }
+
+    [Fact]
+    public void PilotCoverage_IsTwoBelowOneAboveWithinGroup()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(16, ChannelMode.Mono),
+            activeSubcarriers: 16,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qpsk,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 1,
+            carrierGrid: OfdmCarrierGrid.Sc8Family);
+        var ofdm = new OfdmGenerator(config);
+        var allCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
+        var grouped = GetPrivateField<int[][]>(ofdm, "_leftPilotGroupedCarriers");
+        var pilots = GetPrivateField<List<int>>(ofdm, "_leftPilotBins");
+
+        Assert.Equal(4, grouped.Length);
+        for (var g = 0; g < 2; g++)
+        {
+            var baseIdx = g * 8;
+            // CH2 パイロット → CH0..CH3
+            var lowPilot = allCarriers[baseIdx + 2];
+            var lowGroup = pilots.IndexOf(lowPilot);
+            Assert.Equal(
+                new[]
+                {
+                    allCarriers[baseIdx],
+                    allCarriers[baseIdx + 1],
+                    allCarriers[baseIdx + 2],
+                    allCarriers[baseIdx + 3]
+                },
+                grouped[lowGroup]);
+
+            // CH6 パイロット → CH4..CH7
+            var highPilot = allCarriers[baseIdx + 6];
+            var highGroup = pilots.IndexOf(highPilot);
+            Assert.Equal(
+                new[]
+                {
+                    allCarriers[baseIdx + 4],
+                    allCarriers[baseIdx + 5],
+                    allCarriers[baseIdx + 6],
+                    allCarriers[baseIdx + 7]
+                },
+                grouped[highGroup]);
+        }
+    }
+
+    [Fact]
+    public void PilotEqualizer_IsClosedWithinTwoBelowOneAboveCoverage()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(16, ChannelMode.Mono),
+            activeSubcarriers: 16,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qpsk,
+            channelMode: ChannelMode.Mono,
+            pilotSpacing: 8,
+            randomSeed: 1,
+            carrierGrid: OfdmCarrierGrid.Sc8Family);
+        var ofdm = new OfdmGenerator(config);
+
+        var allCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
+        var pilotBins = GetPrivateField<List<int>>(ofdm, "_leftPilotBins").OrderBy(x => x).ToList();
+        // 16SC = 2グループ × CH2/CH6 = 4パイロット
+        Assert.Equal(4, pilotBins.Count);
+
+        var pilotGains = new[] { 0.5, 2.0, 0.7, 1.6 };
+        var freqBins = new Complex[config.FftSize];
+        for (var i = 0; i < pilotBins.Count; i++)
+        {
+            freqBins[pilotBins[i]] = new Complex(pilotGains[i], 0.0);
+        }
+
+        var estimateMethod = typeof(OfdmGenerator).GetMethod(
+            "EstimatePilotEqualizers",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(estimateMethod);
+
+        var equalizers = (Complex[]?)estimateMethod!.Invoke(ofdm, [freqBins, pilotBins, false, null]);
+        Assert.NotNull(equalizers);
+
+        var groupMethod = typeof(OfdmGenerator).GetMethod(
+            "ResolvePilotGroupIndex",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(groupMethod);
+
+        Assert.True((equalizers![pilotBins[0]] - equalizers[pilotBins[1]]).Magnitude > 0.3);
+
+        foreach (var carrier in allCarriers)
+        {
+            var group = (int)groupMethod!.Invoke(null, [carrier, allCarriers, pilotBins])!;
+            Assert.InRange(group, 0, pilotBins.Count - 1);
+            var expected = equalizers[pilotBins[group]];
+            Assert.InRange((equalizers[carrier] - expected).Magnitude, 0.0, 1e-9);
+        }
+
+        // CH3 と CH4 は別パイロット担当（下2上1の境界）
+        Assert.True((equalizers[allCarriers[3]] - equalizers[allCarriers[4]]).Magnitude > 0.3);
+    }
+
+    [Fact]
+    public void PilotEqualizer_IsClosedWithinTwoBelowOneAboveCoverage_ForStereoLeftAndRight()
+    {
+        var config = new OfdmConfig(
+            fftSize: OfdmConfig.ResolveFftSize(16, ChannelMode.Stereo),
+            activeSubcarriers: 16,
+            cyclicPrefixLength: 16,
+            ofdmSymbolCount: 1,
+            modulationScheme: ModulationScheme.Qpsk,
+            channelMode: ChannelMode.Stereo,
+            pilotSpacing: 8,
+            stereoFrequencyShiftBins: 1,
+            randomSeed: 2,
+            carrierGrid: OfdmCarrierGrid.Sc8Family);
+        var ofdm = new OfdmGenerator(config);
+
+        var leftCarriers = GetPrivateField<List<int>>(ofdm, "_leftAllCarrierBins");
+        var rightCarriers = GetPrivateField<List<int>>(ofdm, "_rightAllCarrierBins");
+        var leftPilots = GetPrivateField<List<int>>(ofdm, "_leftPilotBins").OrderBy(x => x).ToList();
+        var rightPilots = GetPrivateField<List<int>>(ofdm, "_rightPilotBins").OrderBy(x => x).ToList();
+        Assert.Equal(4, leftPilots.Count);
+        Assert.Equal(4, rightPilots.Count);
+
+        var estimateMethod = typeof(OfdmGenerator).GetMethod(
+            "EstimatePilotEqualizers",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(estimateMethod);
+
+        var groupMethod = typeof(OfdmGenerator).GetMethod(
+            "ResolvePilotGroupIndex",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(groupMethod);
+
+        var leftGains = new[] { 0.6, 1.8, 0.5, 1.4 };
+        var leftFreqBins = new Complex[config.FftSize];
+        for (var i = 0; i < leftPilots.Count; i++)
+        {
+            leftFreqBins[leftPilots[i]] = new Complex(leftGains[i], 0.0);
+        }
+
+        var leftEqualizers = (Complex[]?)estimateMethod!.Invoke(ofdm, [leftFreqBins, leftPilots, false, null]);
+        Assert.NotNull(leftEqualizers);
+
+        Assert.True((leftEqualizers![leftPilots[0]] - leftEqualizers[leftPilots[1]]).Magnitude > 0.2);
+        foreach (var carrier in leftCarriers)
+        {
+            var group = (int)groupMethod!.Invoke(null, [carrier, leftCarriers, leftPilots])!;
+            var expected = leftEqualizers[leftPilots[group]];
+            Assert.InRange((leftEqualizers[carrier] - expected).Magnitude, 0.0, 1e-9);
+        }
+
+        var rightGains = new[] { 1.4, 0.4, 1.7, 0.55 };
+        var rightFreqBins = new Complex[config.FftSize];
+        for (var i = 0; i < rightPilots.Count; i++)
+        {
+            rightFreqBins[rightPilots[i]] = new Complex(rightGains[i], 0.0);
+        }
+
+        var rightEqualizers = (Complex[]?)estimateMethod.Invoke(ofdm, [rightFreqBins, rightPilots, true, null]);
+        Assert.NotNull(rightEqualizers);
+
+        Assert.True((rightEqualizers![rightPilots[0]] - rightEqualizers[rightPilots[1]]).Magnitude > 0.2);
+        foreach (var carrier in rightCarriers)
+        {
+            var group = (int)groupMethod.Invoke(null, [carrier, rightCarriers, rightPilots])!;
+            var expected = rightEqualizers[rightPilots[group]];
+            Assert.InRange((rightEqualizers[carrier] - expected).Magnitude, 0.0, 1e-9);
+        }
+
+        Assert.True((leftEqualizers[leftPilots[0]] - rightEqualizers[rightPilots[0]]).Magnitude > 0.01);
+    }
+
+    private static T GetPrivateField<T>(object instance, string fieldName)
+    {
+        var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var value = field!.GetValue(instance);
+        Assert.IsType<T>(value);
+        return (T)value!;
+    }
+}

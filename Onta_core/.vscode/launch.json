@@ -1,0 +1,95 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Onta (WPF)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-onta-debug",
+      "program": "C:/proj/Onta/Onta_core/bin/Debug/net8.0-windows10.0.19041.0/Onta.dll",
+      "cwd": "C:/proj/Onta/Onta_core/bin/Debug/net8.0-windows10.0.19041.0",
+      "console": "externalTerminal",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    },
+    {
+      "name": "Onta (WPF) 日本語で起動",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-onta-debug",
+      "program": "C:/proj/Onta/Onta_core/bin/Debug/net8.0-windows10.0.19041.0/Onta.dll",
+      "args": ["--lang", "ja"],
+      "cwd": "C:/proj/Onta/Onta_core/bin/Debug/net8.0-windows10.0.19041.0",
+      "console": "externalTerminal",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    },
+    {
+      "name": "Onta (WPF) 英語で起動",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-onta-debug",
+      "program": "C:/proj/Onta/Onta_core/bin/Debug/net8.0-windows10.0.19041.0/Onta.dll",
+      "args": ["--lang", "en"],
+      "cwd": "C:/proj/Onta/Onta_core/bin/Debug/net8.0-windows10.0.19041.0",
+      "console": "externalTerminal",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    },
+    {
+      "name": "Debug OntaTest1",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-testhost-debug",
+      "program": "C:/proj/Onta/Onta_core/test_host/bin/Debug/net8.0-windows10.0.19041.0/Onta_core.TestHost.dll",
+      "args": ["1"],
+      "cwd": "C:/proj/Onta",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    },
+    {
+      "name": "Debug OntaTest2",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-testhost-debug",
+      "program": "C:/proj/Onta/Onta_core/test_host/bin/Debug/net8.0-windows10.0.19041.0/Onta_core.TestHost.dll",
+      "args": ["2"],
+      "cwd": "C:/proj/Onta",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    },
+    {
+      "name": "Debug OntaTest3",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-testhost-debug",
+      "program": "C:/proj/Onta/Onta_core/test_host/bin/Debug/net8.0-windows10.0.19041.0/Onta_core.TestHost.dll",
+      "args": ["3"],
+      "cwd": "C:/proj/Onta",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    },
+    {
+      "name": "Debug OntaTest4",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-testhost-debug",
+      "program": "C:/proj/Onta/Onta_core/test_host/bin/Debug/net8.0-windows10.0.19041.0/Onta_core.TestHost.dll",
+      "args": ["4"],
+      "cwd": "C:/proj/Onta",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "justMyCode": false,
+      "requireExactSource": false
+    }
+  ]
+}

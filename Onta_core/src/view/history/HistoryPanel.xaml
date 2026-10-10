@@ -1,0 +1,240 @@
+<UserControl x:Class="Onta.View.History.HistoryPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lang="clr-namespace:Onta.View.Language">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0"
+                    Orientation="Horizontal"
+                    Margin="0,0,0,8">
+            <Button x:Name="ReloadButton"
+                    Content="{x:Static lang:CoreViewText.Reload}"
+                    Width="90"
+                    Click="OnReloadClick"/>
+            <Button x:Name="DeleteButton"
+                    Content="{x:Static lang:CoreViewText.DeleteHistory}"
+                    Width="110"
+                    Margin="8,0,0,0"
+                    Click="OnDeleteClick"/>
+            <TextBlock x:Name="StatusText"
+                       Margin="12,5,0,0"
+                       Foreground="{StaticResource BrushTextMuted}"/>
+        </StackPanel>
+
+        <TabControl Grid.Row="1"
+                    x:Name="HistoryTabs"
+                    SelectedIndex="0"
+                    SelectionChanged="OnSelectionChanged">
+            <TabItem x:Name="ReceiveHistoryTab"
+                     Header="{x:Static lang:CoreViewText.ReceiveHistory}">
+                <DataGrid x:Name="ReceiveHistoryGrid"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserResizeRows="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          RowDetailsVisibilityMode="Collapsed"
+                          SelectionChanged="OnSelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="{x:Static lang:CoreViewText.ReceivedAt}"
+                                                Width="120">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding TimestampText}"
+                                               Cursor="Hand"
+                                               TextDecorations="Underline"
+                                               VerticalAlignment="Center"
+                                               ToolTip="{x:Static lang:CoreViewText.TooltipToggleBlockDetails}"
+                                               PreviewMouseLeftButtonDown="OnReceiveTimestampClick"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileNameHeader}"
+                                            Binding="{Binding FileName}"
+                                            Width="3*"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileSizeHeader}"
+                                            Binding="{Binding FileSizeText}"
+                                            Width="80"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Result}"
+                                            Binding="{Binding ResultText}"
+                                            Width="70"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockCount}"
+                                            Binding="{Binding BlockCountText}"
+                                            Width="65"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.AudioWav}"
+                                            Binding="{Binding InputDeviceText}"
+                                            Width="70"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.WavFileName}"
+                                            Binding="{Binding SourceWavFileName}"
+                                            Width="4*"/>
+                        <DataGridTemplateColumn Header="{x:Static lang:CoreViewText.Download}"
+                                                Width="80">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="{x:Static lang:CoreViewText.Download}"
+                                            Padding="8,2"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Click="OnRowDownloadClick"
+                                            Tag="{Binding Entry}">
+                                        <Button.Style>
+                                            <Style TargetType="Button"
+                                                   BasedOn="{StaticResource {x:Type Button}}">
+                                                <Setter Property="Visibility"
+                                                        Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding CanDownload}"
+                                                                 Value="True">
+                                                        <Setter Property="Visibility"
+                                                                Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.CreatedTimestamp}"
+                                            Binding="{Binding CreatedAtText}"
+                                            Width="130"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.UpdatedTimestamp}"
+                                            Binding="{Binding UpdatedAtText}"
+                                            Width="130"/>
+                    </DataGrid.Columns>
+                    <DataGrid.RowDetailsTemplate>
+                        <DataTemplate>
+                            <Border Margin="8,0,8,8"
+                                    BorderBrush="{StaticResource BrushBorder}"
+                                    BorderThickness="1"
+                                    Padding="6">
+                                <DataGrid AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          CanUserDeleteRows="False"
+                                          CanUserResizeRows="False"
+                                          IsReadOnly="True"
+                                          ItemsSource="{Binding BlockRows}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="BLK"
+                                                            Binding="{Binding BlockIndexText}"
+                                                            Width="50"/>
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Result}"
+                                                            Binding="{Binding ResultText}"
+                                                            Width="50"/>
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.GridSubcarrierCount}"
+                                                            Binding="{Binding SubcarrierText}"
+                                                            Width="90"/>
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Modulation}"
+                                                            Binding="{Binding ModulationText}"
+                                                            Width="60"/>
+                                        <DataGridTextColumn Header="Stereo/mono"
+                                                            Binding="{Binding ChannelText}"
+                                                            Width="90"/>
+                                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockSize}"
+                                                            Binding="{Binding BlockSizeText}"
+                                                            Width="90"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Border>
+                        </DataTemplate>
+                    </DataGrid.RowDetailsTemplate>
+                </DataGrid>
+            </TabItem>
+
+            <TabItem x:Name="SendHistoryTab"
+                     Header="{x:Static lang:CoreViewText.SendHistory}">
+                <DataGrid x:Name="SendHistoryGrid"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserResizeRows="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          SelectionChanged="OnSelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.SentAt}"
+                                            Binding="{Binding TimestampText}"
+                                            Width="130"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileNameHeader}"
+                                            Binding="{Binding FileName}"
+                                            Width="3*"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileSizeHeader}"
+                                            Binding="{Binding FileSizeText}"
+                                            Width="80"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.AudioWav}"
+                                            Binding="{Binding OutputDeviceText}"
+                                            Width="70"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.WavFileName}"
+                                            Binding="{Binding OutputWavFileName}"
+                                            Width="4*"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.GridSubcarrierCount}"
+                                            Binding="{Binding SubcarrierText}"
+                                            Width="80"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Modulation}"
+                                            Binding="{Binding ModulationText}"
+                                            Width="60"/>
+                        <DataGridTextColumn Header="Stereo/mono"
+                                            Binding="{Binding ChannelText}"
+                                            Width="90"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.CreatedTimestamp}"
+                                            Binding="{Binding CreatedAtText}"
+                                            Width="130"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.UpdatedTimestamp}"
+                                            Binding="{Binding UpdatedAtText}"
+                                            Width="130"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+
+            <TabItem x:Name="UncompleteBlockTab"
+                     Header="{x:Static lang:CoreViewText.UnknownBlock}">
+                <DataGrid x:Name="UncompleteBlockGrid"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserResizeRows="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          SelectionChanged="OnSelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.ReceivedAt}"
+                                            Binding="{Binding TimestampText}"
+                                            Width="170"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Result}"
+                                            Binding="{Binding ResultText}"
+                                            Width="110"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.AudioWavInput}"
+                                            Binding="{Binding InputDeviceText}"
+                                            Width="110"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.GridSubcarrierCount}"
+                                            Binding="{Binding SubcarrierText}"
+                                            Width="110"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.Modulation}"
+                                            Binding="{Binding ModulationText}"
+                                            Width="100"/>
+                        <DataGridTextColumn Header="Stereo/mono"
+                                            Binding="{Binding ChannelText}"
+                                            Width="110"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockPosition}"
+                                            Binding="{Binding BlockPositionText}"
+                                            Width="90"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.FileHash}"
+                                            Binding="{Binding FileHashText}"
+                                            Width="2*"/>
+                        <DataGridTextColumn Header="{x:Static lang:CoreViewText.BlockHash}"
+                                            Binding="{Binding BlockHashText}"
+                                            Width="2*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>

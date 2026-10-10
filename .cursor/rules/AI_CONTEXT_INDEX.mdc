@@ -1,0 +1,62 @@
+---
+alwaysApply: true
+---
+
+# AI Context Index
+
+このファイルは、AIが仕様文書を探すための入口です。
+
+## 目的別の参照先
+
+- 全体仕様
+  - `.cursor/rules/Onta.mdc`
+- データ仕様
+  - `.cursor/rules/data_struct.mdc`
+  - 要点: 1 ブロック最大 16384Byte（ターボ符号は 1024Byte 単位で分けて符号化）、FH/BH のファイル全体ハッシュは SHA-256（32Byte。FH=840Byte / BH=88Byte）
+- 変調仕様
+  - `.cursor/rules/modulation.mdc`
+  - 要点: SC 16/24/32/40/48/56/64/72、Δf=223.9Hz、SC-24族起点550Hz / SC-16族起点650Hz、GROUP G/H/I（k=49..72）は変調1段下げ、FFT=256固定。変調 BPSK〜64QAM（**256QAM は性能測定のみ**）
+- 画面仕様
+  - `.cursor/rules/画面仕様.mdc`（実装: WPF + LiveCharts2、`Onta_core/src/view/`）
+  - 送信ラジオ（ファイル・性能測定）は 16–72 SC、I-Q 点色は A–I（青/緑/白/オレンジ/茶/紫/黄/赤/ピンク）。ストリームは速度 ID 01〜09（48〜72 SC / 8PSK・16QAM・64QAM、64QAM は R=3/4）
+  - 性能測定: UI `Onta_core/src/view/performance/`、処理 `Onta_core/src/performance/`（無変調/変調はタブ切替。変調ラジオは BPSK〜256QAM。受信パネルにも「変調」チェック＋送信と同じ SC／変調ラジオがあり、その選択で復調。L/R は FFT⇔オシロ⇔**リサージュ（アジマス・L→X/R→Y）**をタブ切替・I-Q はタブ外、オシロは AUTO 起立＋L/R 別レンジスライダー）
+- 履歴仕様
+  - `.cursor/rules/履歴情報.mdc`（実装: `Onta_core/src/history/`）
+  - 要点: `Onta_history.bin`（Version=1）に送受信/未完了を保存、受信ブロックは Hash/BlockIndex で紐付け。不明ブロック（親のいないブロック）は未完了エントリとして受信エントリと独立に持ち、ファイルハッシュが一致する受信エントリができたらそちらへ移して消す
+- ユーザマニュアル
+  - `Onta_manual/ja/README.md`
+  - `Onta_manual/ja/00_index.md`（アプリのマニュアルタブで最初に表示する目次。バージョン表記）
+  - `Onta_manual/ja/01_音多とは何か.md`
+  - `Onta_manual/ja/02_ファイル画面の説明.md`
+  - `Onta_manual/ja/03_履歴画面の説明.md`
+  - `Onta_manual/ja/04_ストリーム画面の説明.md`
+  - `Onta_manual/ja/05_性能測定画面の説明.md`
+  - `Onta_manual/ja/06_ファイル画面の使い方.md`
+  - `Onta_manual/ja/07_履歴画面の使い方.md`
+  - `Onta_manual/ja/08_ストリーム画面の使い方.md`
+  - `Onta_manual/ja/09_性能測定画面の使い方.md`
+  - `Onta_manual/en/`（英語版。画面の説明と使い方のみで仕様章なし。アプリは表示言語が日本語以外のときに表示）
+  - `Onta_manual/99_licence.md`（ライセンス。日英共通で言語フォルダーの外に置く）
+- 表示言語
+  - 起動オプション `--lang ja` / `--lang en` → インストール時に選んだ言語（`%LOCALAPPDATA%\Onta\Onta_language.txt`。`Installer/Install-Onta.ps1` が書く）→ OS の表示言語、の順。日本語以外は英語（`Onta_core/src/view/language/AppLanguage.cs`。文言は `CoreViewText`）
+- インストーラー（ClickOnce。詳細は `Installer/README.md`）
+  - 前提: .NET 8 SDK、Visual Studio 2022 Build Tools（MSBuild ＋ ClickOnce Build Tools）。`dotnet msbuild` では ClickOnce の Bootstrapper / Launcher が動かないため Framework 版 MSBuild を使う（`publish.ps1` が vswhere で自動選択）。7-Zip（`7z.exe` と同じフォルダーに `7z.sfx`。`Program Files\7-Zip` か PATH から探し、無ければ発行前に止まる）
+  - ビルド: `cd C:\proj\Onta\Installer` → `.\publish.ps1`（`publish.cmd` でも可）。`-Configuration Debug|Release`（既定 Release）、`-Clean` で `Onta` / `obj\app` を消してから作り直す
+  - 出力: `Installer/Onta/` と、それを 7-Zip の GUI 自己解凍形式にまとめたインストーラー `Installer/Onta-install-v<バージョン>.exe`（バージョンは `Onta_core.csproj` の `<Version>`。例: `Onta-install-v1.0.0.exe`。配布はこの exe 1 本。実行すると展開先に `Onta` フォルダーができる。発行のたびに作り直す。`Installer/obj/app/` は中間出力で配布不要）
+  - `Installer/Onta/` の中身:
+    - `Install-Onta.cmd`: 入口。`Install-Onta.ps1` を起動する（`publish.ps1` が生成）
+    - `Install-Onta.ps1`: 言語選択（初期値は OS が日本語なら日本語、それ以外は English）→ `Onta_language.txt` 保存 → CPU 判定して `x64\setup.exe` / `arm64\setup.exe` を起動（ソースは `Installer/Install-Onta.ps1`。日本語を含むため UTF-8 BOM 付きで保存）
+    - `x64\` / `arm64\`: 各 CPU 用 ClickOnce（自己完結、`manual\ja` / `manual\en` / `manual\99_licence.md` / `manual\THIRD-PARTY-NOTICES.txt` 同梱。ClickOnce は同じ元ファイルを複数の場所へ同梱できないので、日英共通のファイルは言語フォルダーの外に 1 つだけ置く）
+    - `README-ja.txt` / `README-en.txt`（元は `Installer/dist-README-ja.txt` / `dist-README-en.txt`）、`THIRD-PARTY-NOTICES.txt`
+  - 同梱物は `Onta_core/Onta_core.csproj` の `Content`（`manual\` 配下）で指定する。マニュアルを増やしたらここも更新する
+  - マニフェスト署名は既定でオフ（`Onta_core/Properties/PublishProfiles/ClickOnceFolder.pubxml`）
+
+## AIへの依頼テンプレート
+
+以下のように依頼すると、参照漏れを減らせます。
+
+## 運用ルール
+
+- 仕様を更新したら、該当mdの変更に合わせてこの索引も更新する。
+- 重要仕様は、文書本文だけでなく `.cursor/rules/copilot-instructions.md` にも短く要約する。
+- 実装時は、回答で参照した文書名を明示する。
